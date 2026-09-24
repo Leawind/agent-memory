@@ -61,6 +61,14 @@ impl Server {
             }
         }
     }
+
+    /// 读取下一条响应，不管它的 id 是什么（用于 id 非法/缺失的用例）。
+    fn read_next(&mut self) -> Value {
+        let mut line = String::new();
+        let n = self.reader.read_line(&mut line).expect("read line");
+        assert!(n > 0, "server closed stdout");
+        serde_json::from_str(line.trim()).expect("server sent valid JSON")
+    }
 }
 
 impl Drop for Server {
@@ -309,6 +317,33 @@ fn protocol_error_handling() {
         .unwrap();
     assert_eq!(dups.len(), 1);
     assert_eq!(dups[0], "m1");
+
+    // 对抗性输入样本（模糊探针的代表用例）：非法 id 类型、params 数组、深嵌套、标量整行
+    s.send_raw(r#"{"jsonrpc":"2.0","id":{"o":1},"method":"ping"}"#);
+    let obj_id = s.read_next();
+    assert_eq!(obj_id["result"], json!({}));
+    assert_eq!(obj_id["id"]["o"], 1);
+
+    s.send_raw(r#"{"jsonrpc":"2.0","id":30,"method":"ping","params":[1,2]}"#);
+    let arr_params = s.read_response(30);
+    assert_eq!(arr_params["result"], json!({}));
+
+    // 深嵌套超过 serde_json 递归限制 → 解析错误而不是崩溃
+    let mut deep = String::from(r#"{"jsonrpc":"2.0","id":31,"method":"ping","params":{"d":"#);
+    deep.push_str(&"[".repeat(200));
+    deep.push_str(&"]".repeat(200));
+    deep.push_str("}}");
+    s.send_raw(&deep);
+    let deep_r = s.read_next();
+    assert_eq!(deep_r["error"]["code"], -32700);
+
+    // 无 id 无 method 的标量整行：静默丢弃
+    s.send_raw("42");
+    s.send_raw("null");
+
+    // 风暴后服务器仍然完全可用
+    let after = s.rpc(32, "tools/list", json!({}));
+    assert_eq!(after["result"]["tools"].as_array().unwrap().len(), 10);
 
     drop(s);
     cleanup(&data);
