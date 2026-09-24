@@ -102,6 +102,10 @@ fn ceil_boundary(s: &str, mut i: usize) -> usize {
 }
 
 /// 生成匹配位置附近的单行片段；没有正文命中时回退为正文开头。
+///
+/// 已知小缺陷：匹配位置取自 to_lowercase 后的字符串，个别 Unicode 字符
+/// （如 U+0130）小写化会改变字节长度，此时片段窗口可能轻微偏移。
+/// floor/ceil 边界保证不会切在字符中间，影响仅限显示、不会 panic。
 fn make_snippet(content: &str, pos: Option<usize>) -> String {
     let (start, end) = match pos {
         None => (0, SNIPPET_AFTER.min(content.len())),

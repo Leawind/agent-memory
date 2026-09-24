@@ -379,6 +379,59 @@ mod tests {
     }
 
     #[test]
+    fn tag_rename_supports_case_only_rename() {
+        let path = temp_file("case-rename");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": "c", "tags": ["rust"]}),
+        )
+        .unwrap();
+
+        // 仅大小写改名是 similar_existing 提示的指定修复路径，必须可用
+        let r = call(
+            &path,
+            "tag_rename",
+            json!({"old_name": "rust", "new_name": "Rust"}),
+        )
+        .unwrap();
+        assert_eq!(r["memories_updated"], 1);
+        let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
+        assert_eq!(got["memories"][0]["tags"][0], "Rust");
+
+        // 改名后再建任何其他大小写拼写的变体：提示都应触发（这正是防碎片化的场景）
+        let back = call(&path, "tag_create", json!({"name": "rust"})).unwrap();
+        assert_eq!(back["similar_existing"], "Rust");
+        let hint = call(&path, "tag_create", json!({"name": "RUST"})).unwrap();
+        assert_eq!(hint["similar_existing"], "Rust");
+        // 而精确重名仍然报错
+        assert!(call(&path, "tag_create", json!({"name": "Rust"})).is_err());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn every_listed_tool_has_a_dispatch_arm() {
+        // 同步防线：TOOL_NAMES 与 execute 的 match 分支必须一一对应。
+        // 漏掉任何一端时（加工具忘改清单/清单加了没实现），此测试都会失败。
+        let mut st = Store::empty(PathBuf::from("unused.json"));
+        for name in TOOL_NAMES {
+            match execute(&mut st, name, &json!({})) {
+                Ok(_) => {} // tag_list / memory_list 等无参数可用的工具
+                Err(e) => assert!(
+                    !e.contains("unknown tool"),
+                    "tool '{}' is listed but has no dispatch arm: {}",
+                    name,
+                    e
+                ),
+            }
+        }
+        assert!(execute(&mut st, "nonexistent", &json!({}))
+            .unwrap_err()
+            .contains("unknown tool"));
+    }
+
+    #[test]
     fn duplicate_summary_is_flagged() {
         let path = temp_file("dup");
         call(

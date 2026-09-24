@@ -19,9 +19,9 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
       - name: Tests
-        run: cargo test
+        run: cargo test --locked
 
   msrv:
     # 校验 Cargo.toml 声明的 rust-version 真实可用，防止意外引入更新的 std API

@@ -140,7 +140,7 @@ pub fn tool_definitions() -> Value {
                     "id": {"type": "string"},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content."},
-                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append (auto-created if unknown)."},
+                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append (auto-created if unknown). Applied before remove_tags, so a tag present in both lists ends up removed."},
                     "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."}
                 },
                 "required": ["id"],
