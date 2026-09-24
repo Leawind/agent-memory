@@ -30,6 +30,8 @@ enum Command {
     Stats,
     /// 导出可读的 JSON 备份到指定路径（已存在则拒绝覆盖）
     Export(PathBuf),
+    /// 数据体检：孤儿标签引用、大小写冲突组、空字段等（只读）
+    Doctor,
 }
 
 fn run() -> i32 {
@@ -63,6 +65,7 @@ fn run() -> i32 {
                     return 2;
                 }
             },
+            "doctor" => command = Command::Doctor,
             other => {
                 eprintln!("agent-memory: unknown argument '{}'", other);
                 print_help();
@@ -75,6 +78,7 @@ fn run() -> i32 {
         Command::Serve => serve(&data_path),
         Command::Stats => cmd_stats(&data_path),
         Command::Export(out) => cmd_export(&data_path, &out),
+        Command::Doctor => cmd_doctor(&data_path),
     }
 }
 
@@ -152,6 +156,38 @@ fn cmd_stats(data_path: &Path) -> i32 {
             let file_size = std::fs::metadata(data_path).map(|m| m.len()).unwrap_or(0);
             print!("{}", stats_report(&st, file_size));
             0
+        }
+    }
+}
+
+/// 数据体检：0 = 无问题，1 = 发现问题（便于脚本判断）。
+fn cmd_doctor(data_path: &Path) -> i32 {
+    match store::Store::load(data_path.to_path_buf()) {
+        Err(e) => {
+            eprintln!(
+                "agent-memory: cannot load store at {} ({}).",
+                data_path.display(),
+                e
+            );
+            1
+        }
+        Ok(st) => {
+            let issues = st.hygiene_issues();
+            if issues.is_empty() {
+                println!(
+                    "no issues found in {} ({} memories, {} tags)",
+                    data_path.display(),
+                    st.memories.len(),
+                    st.tags.len()
+                );
+                0
+            } else {
+                for issue in &issues {
+                    println!("- {}", issue);
+                }
+                println!("{} issue(s) found in {}", issues.len(), data_path.display());
+                1
+            }
         }
     }
 }
@@ -261,6 +297,7 @@ fn print_help() {
     println!("Usage:");
     println!("  agent-memory [serve] [--data <path>]      run as MCP stdio server (default)");
     println!("  agent-memory stats [--data <path>]        print store summary");
+    println!("  agent-memory doctor [--data <path>]       check store hygiene (exit 1 on issues)");
     println!("  agent-memory export <file> [--data <path>]  export readable JSON backup");
     println!("  agent-memory --version");
     println!();

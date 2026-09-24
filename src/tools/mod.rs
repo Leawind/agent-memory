@@ -365,6 +365,20 @@ mod tests {
     }
 
     #[test]
+    fn tag_create_warns_on_case_collision() {
+        let path = temp_file("case-collision");
+        call(&path, "tag_create", json!({"name": "rust"})).unwrap();
+        let second = call(&path, "tag_create", json!({"name": "Rust"})).unwrap();
+        assert_eq!(second["similar_existing"], "rust");
+        assert!(second["note"].as_str().unwrap().contains("tag_rename"));
+        // 非阻塞：两个标签都创建成功
+        let tl = call(&path, "tag_list", json!({})).unwrap();
+        assert_eq!(tl["tags"].as_array().unwrap().len(), 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
     fn duplicate_summary_is_flagged() {
         let path = temp_file("dup");
         call(

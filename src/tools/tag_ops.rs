@@ -25,7 +25,17 @@ pub fn tag_create(st: &mut Store, args: &Map<String, Value>) -> Result<Value, St
             created_at: now(),
         },
     );
-    Ok(json!({"created": true, "tag": tag_view(st, &name)}))
+    // 非阻塞提示：已存在仅大小写不同的标签时提醒 agent，避免分类体系碎片化
+    // （如 "rust" 与 "Rust" 并存）。是否合并由 agent 通过 tag_rename 自行决定。
+    let mut out = json!({"created": true, "tag": tag_view(st, &name)});
+    if let Some(existing) = st.find_tag_case_insensitive(&name) {
+        out["similar_existing"] = json!(existing);
+        out["note"] = json!(format!(
+            "tag '{}' also exists (differs only by case); consider tag_rename to merge them and keep the taxonomy tidy",
+            existing
+        ));
+    }
+    Ok(out)
 }
 
 pub fn tag_list(st: &mut Store) -> Result<Value, String> {

@@ -1,6 +1,6 @@
 [package]
 name = "agent-memory"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Self-hosted, low-footprint MCP memory server for AI agents: tags + summaries + full content, progressive disclosure, keyword search."

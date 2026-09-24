@@ -22,3 +22,11 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test
+
+  msrv:
+    # 校验 Cargo.toml 声明的 rust-version 真实可用，防止意外引入更新的 std API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.82.0
+      - run: cargo check

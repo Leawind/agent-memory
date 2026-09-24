@@ -59,13 +59,14 @@ src/
 测试：
 
 ```bash
-cargo test   # 31 个单元测试 + 6 个端到端测试（真实进程走 stdio，含多进程并发与竞态写入）
+cargo test   # 34 个单元测试 + 6 个端到端测试（真实进程走 stdio，含多进程并发与竞态写入）
 ```
 
 ## 运维子命令
 
 ```bash
 ./bin/agent-memory.exe stats                    # 数据概况：条数、标签数、文件大小、最近更新
+./bin/agent-memory.exe doctor                   # 数据体检：孤儿引用/大小写冲突标签组/空字段（有问题时退出码 1）
 ./bin/agent-memory.exe export backup.json       # 导出可读 JSON 备份（文件已存在则拒绝覆盖）
 ```
 
@@ -126,7 +127,7 @@ cargo test   # 31 个单元测试 + 6 个端到端测试（真实进程走 stdio
 
 | 工具 | 只读 | 说明 |
 |---|---|---|
-| `tag_create(name, description?)` | | 新建标签，重名报错 |
+| `tag_create(name, description?)` | | 新建标签，重名报错；存在仅大小写不同的标签时在 `similar_existing` 里提示（非阻塞） |
 | `tag_list()` | ✓ | 全部标签 + 记忆计数 + 最后使用时间 |
 | `tag_rename(old_name, new_name?, description?)` | | 重命名（同步所有引用）/ 改描述 |
 | `tag_delete(name, mode?)` | | `detach`（默认，只摘标签）/ `purge`（连带删除记忆） |

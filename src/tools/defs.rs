@@ -24,7 +24,7 @@ pub fn tool_definitions() -> Value {
     Value::Array(vec![
         def(
             "tag_create",
-            "Create a new tag. Tags are labels used to organize memories; you own the taxonomy. Fails if the tag already exists (check with tag_list).",
+            "Create a new tag. Tags are labels used to organize memories; you own the taxonomy. Fails if the tag already exists (check with tag_list). If a tag differing only by case exists, it is created anyway but reported in similar_existing - prefer merging to keep the taxonomy tidy.",
             json!({
                 "type": "object",
                 "properties": {

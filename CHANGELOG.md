@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 (2026-09-25)
+
+- 新增：`doctor` CLI 子命令——只读数据体检（孤儿标签引用、大小写冲突标签组、空摘要/正文），发现问题时退出码为 1，便于脚本化巡检
+- 新增：`tag_create` 在存在仅大小写不同的既有标签时返回 `similar_existing` 与 `note`（非阻塞），引导 agent 保持分类体系整洁
+- 新增：`Store::hygiene_issues()` 体检逻辑与单元测试
+- CI：新增 MSRV job，在 Rust 1.82 上执行 `cargo check`，校验 `rust-version` 声明真实可用
+- 新增：真并发多进程写入竞态端到端测试（两个进程同时争抢文件锁，断言零丢失）；性能包络实测并写入 README（千条记忆时单次创建 ~17ms）
+
 ## 0.2.0 (2026-09-25)
 
 - 新增：`memory_create` 响应携带 `duplicate_of` —— 摘要归一化后与既有记忆相同时列出其 id，引导改用 `memory_update` 而非重复存储

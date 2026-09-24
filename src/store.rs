@@ -116,6 +116,69 @@ impl Store {
         id
     }
 
+    /// 查找与给定名字仅大小写不同的既有标签（用于分类体系防碎片化提示）。
+    pub fn find_tag_case_insensitive(&self, name: &str) -> Option<String> {
+        let fold = name.to_lowercase();
+        self.tags
+            .keys()
+            .find(|k| k.to_lowercase() == fold && k.as_str() != name)
+            .cloned()
+    }
+
+    /// 体检：报告数据中的隐患（不修改任何内容）。
+    /// 覆盖 API 不可能产生、但手工编辑或未来 bug 可能引入的问题。
+    pub fn hygiene_issues(&self) -> Vec<String> {
+        use std::collections::BTreeSet;
+
+        let mut issues = Vec::new();
+
+        // 记忆引用了标签表里不存在的标签
+        let mut orphans: BTreeSet<&str> = BTreeSet::new();
+        for m in &self.memories {
+            for t in &m.tags {
+                if !self.tags.contains_key(t) {
+                    orphans.insert(t.as_str());
+                }
+            }
+        }
+        if !orphans.is_empty() {
+            let list: Vec<&str> = orphans.into_iter().collect();
+            issues.push(format!(
+                "memories reference tags missing from the tag table: {} (fix with tag_create, or remove the references)",
+                list.join(", ")
+            ));
+        }
+
+        // 仅大小写不同的标签组（分类体系碎片化）
+        let mut by_fold: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for name in self.tags.keys() {
+            by_fold
+                .entry(name.to_lowercase())
+                .or_default()
+                .push(name.clone());
+        }
+        for group in by_fold.values() {
+            if group.len() > 1 {
+                issues.push(format!(
+                    "case-conflicting tag group: {} (keep one and merge the rest with tag_rename)",
+                    group.join(" / ")
+                ));
+            }
+        }
+
+        // 空摘要 / 空正文（API 层已拦截，这里兜底手工编辑的情况）
+        for m in &self.memories {
+            if m.summary.trim().is_empty() {
+                issues.push(format!("memory {} has an empty summary", m.id));
+            }
+            if m.content.trim().is_empty() {
+                issues.push(format!("memory {} has empty content", m.id));
+            }
+        }
+
+        issues
+    }
+
     /// 原子保存：先写 .tmp，旧文件拷为 .bak，再用 rename 原子替换主文件。
     /// 任何时刻主文件要么是完整的旧内容，要么是完整的新内容。
     pub fn save(&self) -> io::Result<()> {
@@ -351,5 +414,52 @@ mod tests {
         drop(_holder);
         assert!(!lock.exists());
         let _ = fs::remove_file(&lock);
+    }
+
+    #[test]
+    fn case_insensitive_tag_lookup() {
+        let mut st = Store::empty(PathBuf::from("unused.json"));
+        st.tags.insert("Rust".to_string(), Tag::new("Rust".into()));
+        assert_eq!(
+            st.find_tag_case_insensitive("rust"),
+            Some("Rust".to_string())
+        );
+        assert_eq!(st.find_tag_case_insensitive("Rust"), None);
+        assert_eq!(st.find_tag_case_insensitive("go"), None);
+    }
+
+    #[test]
+    fn hygiene_issues_reports_real_problems_only() {
+        let mut st = Store::empty(PathBuf::from("unused.json"));
+        // 干净的库：零问题
+        let mut m = sample("m1");
+        m.tags = vec!["rust".into()];
+        st.memories.push(m);
+        st.tags.insert("rust".to_string(), Tag::new("rust".into()));
+        assert!(st.hygiene_issues().is_empty());
+
+        // 注入三类问题：孤儿引用、大小写冲突组、空摘要
+        st.memories[0].tags.push("ghost".into());
+        st.tags.insert("Rust".to_string(), Tag::new("Rust".into()));
+        let mut bad = sample("m2");
+        bad.summary = "   ".into();
+        st.memories.push(bad);
+
+        let issues = st.hygiene_issues().join("\n");
+        assert!(
+            issues.contains("ghost"),
+            "missing orphan report: {}",
+            issues
+        );
+        assert!(
+            issues.contains("case-conflicting"),
+            "missing case group report: {}",
+            issues
+        );
+        assert!(
+            issues.contains("m2 has an empty summary"),
+            "missing empty summary report: {}",
+            issues
+        );
     }
 }
