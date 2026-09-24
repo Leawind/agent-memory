@@ -1,0 +1,6 @@
+/target
+/bin
+/memory.json
+*.json.tmp
+*.json.bak
+*.json.lock
