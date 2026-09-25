@@ -19,10 +19,6 @@ export default {
     create: 'New Memory',
     searchPlaceholder: 'Keyword search (space-separated, all must match; Chinese matches by substring)',
     tagFilter: 'Filter by tag',
-    sortUpdated: 'By updated time',
-    sortCreated: 'By created time',
-    orderDesc: 'Descending',
-    orderAsc: 'Ascending',
     colId: 'ID',
     colSummary: 'Summary',
     colTags: 'Tags',
@@ -130,7 +126,7 @@ export default {
   },
   access: {
     title: 'Access',
-    subtitle: 'A token is an identity (no account system); toggle each of the six capabilities per identity',
+    subtitle: 'A token is an identity (no account system); capabilities are toggled per identity',
     needAdmin: 'Admin permission is required to manage identities and settings',
     openMode:
       'Open mode: no identities configured, all requests are unauthenticated (fine for personal local deployments). Once the first identity exists, every /mcp and /api request must carry Authorization: Bearer <token>. Make the first identity an admin.',
@@ -165,8 +161,13 @@ export default {
     saved: 'Saved',
     settingsTitle: 'Custom instructions (initialize instructions)',
     settingsHint:
-      'Instructions returned to agents on initialize. Leave empty for the built-in default; use it to describe this store (team-shared vs personal) and contribution rules.',
-    settingsPlaceholder: 'Leave empty = built-in default instructions',
+      'Instructions returned to agents on initialize. An empty base prompt falls back to the built-in default; the conventions section is appended after the base.',
+    instructionsLabel: 'Base prompt (overrides the built-in default)',
+    instructionsPlaceholder: 'Leave empty = built-in default instructions',
+    conventionsLabel: 'Conventions (appended after the base)',
+    conventionsPlaceholder: 'e.g. tag naming rules, summary style; leave empty = none',
+    restoreDefault: 'Restore default',
+    viewDefault: 'View built-in default',
     empty: 'No identities yet. Create the first one to enable token auth.',
   },
 }

@@ -19,10 +19,6 @@ export default {
     create: '新建记忆',
     searchPlaceholder: '关键词搜索（空格分隔、全部命中；中文按子串匹配）',
     tagFilter: '按标签过滤',
-    sortUpdated: '按更新时间',
-    sortCreated: '按创建时间',
-    orderDesc: '倒序',
-    orderAsc: '正序',
     colId: 'ID',
     colSummary: '摘要',
     colTags: '标签',
@@ -127,7 +123,7 @@ export default {
   },
   access: {
     title: '身份与访问',
-    subtitle: 'token 即身份（无账号体系）；每个身份可单独开关六项能力',
+    subtitle: 'token 即身份（无账号体系）；每个身份的能力逐项开关',
     needAdmin: '需要 admin 权限才能管理身份与设置',
     openMode:
       '开放模式：当前未配置任何身份，所有请求免鉴权（适合个人本地部署）。创建第一个身份后，所有 /mcp 与 /api 请求必须携带 Authorization: Bearer <token>。第一个身份建议设为管理员。',
@@ -161,9 +157,13 @@ export default {
     deleted: '已删除',
     saved: '已保存',
     settingsTitle: '自定义提示词（initialize instructions）',
-    settingsHint:
-      '返回给 agent 的 initialize 指令。留空使用内置默认文案；可用于说明这是团队共享库还是个人私有库，以及提交规范。',
-    settingsPlaceholder: '留空 = 使用内置默认提示词',
+    settingsHint: '返回给 agent 的 initialize 指令。基础提示词留空时使用内置默认；附加规范会追加在基础之后。',
+    instructionsLabel: '基础提示词（覆盖内置默认）',
+    instructionsPlaceholder: '留空 = 使用内置默认提示词',
+    conventionsLabel: '附加规范（追加在基础之后）',
+    conventionsPlaceholder: '如：标签命名约定、摘要书写要求；留空 = 不追加',
+    restoreDefault: '恢复默认',
+    viewDefault: '查看内置默认',
     empty: '尚无身份。创建第一个身份以启用 token 鉴权。',
   },
 }

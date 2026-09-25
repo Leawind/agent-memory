@@ -1,11 +1,11 @@
-import { provide as Ge, inject as Xe, ref as w, computed as de, onMounted as ce, watch as ye, onUnmounted as Ze, defineComponent as te, openBlock as b, createElementBlock as x, createBlock as z, unref as e, withCtx as l, createVNode as a, createElementVNode as M, toDisplayString as d, createTextVNode as v, Fragment as Z, renderList as ae, createCommentVNode as W, withKeys as et, isRef as X, withDirectives as oe, reactive as tt, renderSlot as at, vShow as ve } from "vue";
-import { createI18n as ot } from "vue-i18n";
-import { ElDialog as Ue, ElForm as Ve, ElFormItem as $e, ElInput as be, ElRadioGroup as he, ElRadioButton as De, ElSelect as xe, ElOption as ze, ElButton as ue, ElDrawer as lt, ElTag as we, ElDivider as nt, ElTooltip as ke, ElIcon as me, ElAlert as Ie, ElTable as Le, ElTableColumn as Ne, ElLoadingDirective as Ae, ElPagination as st, ElRadio as it, ElRow as rt, ElCol as dt, ElCard as ct, ElStatistic as ut, ElDescriptions as mt, ElDescriptionsItem as pt, ElEmpty as ft, ElContainer as gt, ElAside as vt, ElMenu as _t, ElMenuItem as yt, ElMain as bt, ElTabs as ht, ElTabPane as wt } from "element-plus/es";
-import { InfoFilled as ne, Plus as Re, Search as Be, Refresh as kt, Download as Ct, UploadFilled as Tt, Collection as St, Notebook as Pt, PriceTag as Mt, Odometer as Et } from "@element-plus/icons-vue";
-import { ElMessage as A, ElMessageBox as Oe } from "element-plus";
-import { Marked as Ut } from "marked";
-import Fe from "dompurify";
-const Vt = {
+import { provide as Xe, inject as Ze, ref as w, computed as re, onMounted as de, watch as _e, onUnmounted as et, defineComponent as X, openBlock as b, createElementBlock as V, createBlock as L, unref as e, withCtx as l, createVNode as a, createElementVNode as E, toDisplayString as d, createTextVNode as v, Fragment as Y, renderList as te, createCommentVNode as J, withKeys as tt, isRef as ee, withDirectives as ae, reactive as at, renderSlot as ot, vShow as ge } from "vue";
+import { createI18n as lt } from "vue-i18n";
+import { ElDialog as Ee, ElForm as Ue, ElFormItem as De, ElInput as ye, ElRadioGroup as be, ElRadioButton as $e, ElSelect as xe, ElOption as ze, ElButton as ce, ElDrawer as nt, ElTag as he, ElDivider as st, ElTooltip as we, ElIcon as ue, ElAlert as Ve, ElTable as Le, ElTableColumn as Ie, ElLoadingDirective as Ne, ElPagination as it, ElRadio as rt, ElRow as dt, ElCol as ct, ElCard as ut, ElStatistic as mt, ElDescriptions as pt, ElDescriptionsItem as ft, ElEmpty as gt, ElContainer as vt, ElAside as _t, ElMenu as yt, ElMenuItem as bt, ElMain as ht, ElTabs as wt, ElTabPane as kt } from "element-plus/es";
+import { InfoFilled as le, Plus as Ae, Search as Re, Refresh as Ct, Download as Tt, UploadFilled as St, Collection as Pt, Notebook as Mt, PriceTag as Et, Odometer as Ut } from "@element-plus/icons-vue";
+import { ElMessage as R, ElMessageBox as Oe } from "element-plus";
+import { Marked as Dt } from "marked";
+import Be from "dompurify";
+const $t = {
   nav: {
     memories: "记忆管理",
     tags: "标签管理",
@@ -25,10 +25,6 @@ const Vt = {
     create: "新建记忆",
     searchPlaceholder: "关键词搜索（空格分隔、全部命中；中文按子串匹配）",
     tagFilter: "按标签过滤",
-    sortUpdated: "按更新时间",
-    sortCreated: "按创建时间",
-    orderDesc: "倒序",
-    orderAsc: "正序",
     colId: "ID",
     colSummary: "摘要",
     colTags: "标签",
@@ -133,7 +129,7 @@ const Vt = {
   },
   access: {
     title: "身份与访问",
-    subtitle: "token 即身份（无账号体系）；每个身份可单独开关六项能力",
+    subtitle: "token 即身份（无账号体系）；每个身份的能力逐项开关",
     needAdmin: "需要 admin 权限才能管理身份与设置",
     openMode: "开放模式：当前未配置任何身份，所有请求免鉴权（适合个人本地部署）。创建第一个身份后，所有 /mcp 与 /api 请求必须携带 Authorization: Bearer <token>。第一个身份建议设为管理员。",
     colName: "名称",
@@ -166,11 +162,16 @@ const Vt = {
     deleted: "已删除",
     saved: "已保存",
     settingsTitle: "自定义提示词（initialize instructions）",
-    settingsHint: "返回给 agent 的 initialize 指令。留空使用内置默认文案；可用于说明这是团队共享库还是个人私有库，以及提交规范。",
-    settingsPlaceholder: "留空 = 使用内置默认提示词",
+    settingsHint: "返回给 agent 的 initialize 指令。基础提示词留空时使用内置默认；附加规范会追加在基础之后。",
+    instructionsLabel: "基础提示词（覆盖内置默认）",
+    instructionsPlaceholder: "留空 = 使用内置默认提示词",
+    conventionsLabel: "附加规范（追加在基础之后）",
+    conventionsPlaceholder: "如：标签命名约定、摘要书写要求；留空 = 不追加",
+    restoreDefault: "恢复默认",
+    viewDefault: "查看内置默认",
     empty: "尚无身份。创建第一个身份以启用 token 鉴权。"
   }
-}, $t = {
+}, xt = {
   nav: {
     memories: "Memories",
     tags: "Tags",
@@ -190,10 +191,6 @@ const Vt = {
     create: "New Memory",
     searchPlaceholder: "Keyword search (space-separated, all must match; Chinese matches by substring)",
     tagFilter: "Filter by tag",
-    sortUpdated: "By updated time",
-    sortCreated: "By created time",
-    orderDesc: "Descending",
-    orderAsc: "Ascending",
     colId: "ID",
     colSummary: "Summary",
     colTags: "Tags",
@@ -298,7 +295,7 @@ const Vt = {
   },
   access: {
     title: "Access",
-    subtitle: "A token is an identity (no account system); toggle each of the six capabilities per identity",
+    subtitle: "A token is an identity (no account system); capabilities are toggled per identity",
     needAdmin: "Admin permission is required to manage identities and settings",
     openMode: "Open mode: no identities configured, all requests are unauthenticated (fine for personal local deployments). Once the first identity exists, every /mcp and /api request must carry Authorization: Bearer <token>. Make the first identity an admin.",
     colName: "Name",
@@ -331,251 +328,256 @@ const Vt = {
     deleted: "Deleted",
     saved: "Saved",
     settingsTitle: "Custom instructions (initialize instructions)",
-    settingsHint: "Instructions returned to agents on initialize. Leave empty for the built-in default; use it to describe this store (team-shared vs personal) and contribution rules.",
-    settingsPlaceholder: "Leave empty = built-in default instructions",
+    settingsHint: "Instructions returned to agents on initialize. An empty base prompt falls back to the built-in default; the conventions section is appended after the base.",
+    instructionsLabel: "Base prompt (overrides the built-in default)",
+    instructionsPlaceholder: "Leave empty = built-in default instructions",
+    conventionsLabel: "Conventions (appended after the base)",
+    conventionsPlaceholder: "e.g. tag naming rules, summary style; leave empty = none",
+    restoreDefault: "Restore default",
+    viewDefault: "View built-in default",
     empty: "No identities yet. Create the first one to enable token auth."
   }
 };
-function He() {
+function Fe() {
   var t;
   return typeof navigator > "u" || (t = navigator.language) != null && t.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
-const pe = ot({
+const me = lt({
   legacy: !1,
-  locale: He(),
+  locale: Fe(),
   fallbackLocale: "zh",
-  messages: { zh: Vt, en: $t },
+  messages: { zh: $t, en: xt },
   // 面向宿主组件库，缺 key 时静默回退即可，不刷控制台
   missingWarn: !1,
   fallbackWarn: !1
-}), { t: o } = pe.global;
-function Dt(t) {
-  pe.global.locale.value = t;
+}), { t: o } = me.global;
+function zt(t) {
+  me.global.locale.value = t;
 }
-function xt(t) {
-  Dt(t === "auto" ? He() : t);
+function Vt(t) {
+  zt(t === "auto" ? Fe() : t);
 }
-function ja() {
-  return pe.global.locale.value;
+function Ja() {
+  return me.global.locale.value;
 }
-const qe = Symbol("memory-ui-config"), re = {
+const He = Symbol("memory-ui-config"), ie = {
   baseUrl: "",
   fetch: (...t) => globalThis.fetch(...t),
   defaultPageSize: 20,
   locale: "auto"
 };
-function Ja(t) {
-  t.locale && xt(t.locale), Ge(qe, t);
+function Ka(t) {
+  t.locale && Vt(t.locale), Xe(He, t);
 }
-function je() {
-  const t = Xe(qe);
+function qe() {
+  const t = Ze(He);
   return {
-    baseUrl: ((t == null ? void 0 : t.baseUrl) ?? re.baseUrl).replace(/\/+$/, ""),
-    fetch: (t == null ? void 0 : t.fetch) ?? re.fetch,
-    defaultPageSize: (t == null ? void 0 : t.defaultPageSize) ?? re.defaultPageSize,
-    locale: (t == null ? void 0 : t.locale) ?? re.locale
+    baseUrl: ((t == null ? void 0 : t.baseUrl) ?? ie.baseUrl).replace(/\/+$/, ""),
+    fetch: (t == null ? void 0 : t.fetch) ?? ie.fetch,
+    defaultPageSize: (t == null ? void 0 : t.defaultPageSize) ?? ie.defaultPageSize,
+    locale: (t == null ? void 0 : t.locale) ?? ie.locale
   };
 }
-function se(t) {
+function ne(t) {
   if (!t) return "—";
-  const s = pe.global.locale.value === "en" ? "en-US" : "zh-CN";
+  const s = me.global.locale.value === "en" ? "en-US" : "zh-CN";
   return new Date(t * 1e3).toLocaleString(s, { hour12: !1 });
 }
-function zt(t) {
+function Lt(t) {
   return t == null ? "—" : t < 1024 ? `${t} B` : t < 1024 * 1024 ? `${(t / 1024).toFixed(1)} KB` : `${(t / 1024 / 1024).toFixed(2)} MB`;
 }
 function It(t) {
-  async function s(r, m = {}) {
-    const p = await t.fetch(t.baseUrl + r, {
+  async function s(r, u = {}) {
+    const g = await t.fetch(t.baseUrl + r, {
       headers: { "Content-Type": "application/json" },
-      ...m
-    }), h = await p.text();
+      ...u
+    }), h = await g.text();
     let i = null;
     try {
       i = h ? JSON.parse(h) : null;
     } catch {
       i = null;
     }
-    if (!p.ok) {
-      const C = (i == null ? void 0 : i.error) ?? o("errors.http", { status: p.status });
+    if (!g.ok) {
+      const C = (i == null ? void 0 : i.error) ?? o("errors.http", { status: g.status });
       throw new Error(C);
     }
     return i;
   }
   async function n(r) {
-    var p;
-    const m = await t.fetch(t.baseUrl + r);
-    if (!m.ok) {
-      const h = await m.text().catch(() => "");
-      let i = o("errors.http", { status: m.status });
+    var g;
+    const u = await t.fetch(t.baseUrl + r);
+    if (!u.ok) {
+      const h = await u.text().catch(() => "");
+      let i = o("errors.http", { status: u.status });
       try {
-        i = ((p = JSON.parse(h)) == null ? void 0 : p.error) ?? i;
+        i = ((g = JSON.parse(h)) == null ? void 0 : g.error) ?? i;
       } catch {
       }
       throw new Error(i);
     }
-    return m.blob();
+    return u.blob();
   }
   return {
     get: (r) => s(r),
-    post: (r, m) => s(r, { method: "POST", body: JSON.stringify(m ?? {}) }),
-    put: (r, m) => s(r, { method: "PUT", body: JSON.stringify(m ?? {}) }),
+    post: (r, u) => s(r, { method: "POST", body: JSON.stringify(u ?? {}) }),
+    put: (r, u) => s(r, { method: "PUT", body: JSON.stringify(u ?? {}) }),
     del: (r) => s(r, { method: "DELETE" }),
     getBlob: n
   };
 }
-function ie() {
-  return It(je());
+function se() {
+  return It(qe());
 }
-function Lt(t) {
-  const s = _e(t.query), n = new URLSearchParams();
+function Nt(t) {
+  const s = ve(t.query), n = new URLSearchParams();
   return s ? (n.set("query", t.query.trim()), t.tagFilter && n.set("tags", t.tagFilter)) : (t.tagFilter && n.set("tag", t.tagFilter), n.set("sort", t.sort), n.set("order", t.order)), n.set("offset", String((t.page - 1) * t.pageSize)), n.set("limit", String(t.pageSize)), n.toString();
 }
-function _e(t) {
+function ve(t) {
   return t.trim().length > 0;
 }
-const Nt = new Ut();
-function At(t) {
-  const s = Nt.parse(t, { async: !1 });
-  return Fe.sanitize(s);
-}
+const At = new Dt();
 function Rt(t) {
-  return Fe.sanitize(t);
+  const s = At.parse(t, { async: !1 });
+  return Be.sanitize(s);
 }
-function Ce(t, s) {
+function Ot(t) {
+  return Be.sanitize(t);
+}
+function ke(t, s) {
   return t.get(`/api/memories/${encodeURIComponent(s)}`);
 }
-function Je(t, s) {
+function je(t, s) {
   return t.post("/api/memories", s);
 }
-function Ke(t, s, n) {
+function Je(t, s, n) {
   return t.put(`/api/memories/${encodeURIComponent(s)}`, n);
 }
 function Bt(t, s) {
   return t.del(`/api/memories/${encodeURIComponent(s)}`);
 }
-function We(t) {
+function Ke(t) {
   return t.get("/api/tags");
 }
-function Ot(t, s, n) {
+function Ft(t, s, n) {
   return t.post("/api/tags", { name: s, description: n });
 }
-function Ft(t, s, n, r) {
-  const m = { description: r }, p = n.trim();
-  return p && p !== s && (m.new_name = p), t.put(`/api/tags/${encodeURIComponent(s)}`, m);
+function Ht(t, s, n, r) {
+  const u = { description: r }, g = n.trim();
+  return g && g !== s && (u.new_name = g), t.put(`/api/tags/${encodeURIComponent(s)}`, u);
 }
-function Ht(t, s, n) {
+function qt(t, s, n) {
   return t.del(`/api/tags/${encodeURIComponent(s)}?mode=${n}`);
 }
-function qt() {
-  const t = ie(), { defaultPageSize: s } = je(), n = w(""), r = w(""), m = w("updated_at"), p = w("desc"), h = w(1), i = w(s), C = w([]), D = w([]), S = w(0), f = w(""), _ = w(!1), $ = w([]), V = de(() => _e(n.value));
+function jt() {
+  const t = se(), { defaultPageSize: s } = qe(), n = w(""), r = w(""), u = w("updated_at"), g = w("desc"), h = w(1), i = w(s), C = w([]), z = w([]), P = w(0), m = w(""), _ = w(!1), $ = w([]), D = re(() => ve(n.value));
   function T() {
-    return h.value = 1, O();
+    return h.value = 1, F();
   }
-  function L() {
-    return Lt({
+  function N() {
+    return Nt({
       query: n.value,
       tagFilter: r.value,
-      sort: m.value,
-      order: p.value,
+      sort: u.value,
+      order: g.value,
       page: h.value,
       pageSize: i.value
     });
   }
   let B = 0;
-  async function O() {
-    var P;
-    const g = ++B;
+  async function F() {
+    var M;
+    const p = ++B;
     _.value = !0;
     try {
-      const R = L();
-      if (_e(n.value)) {
-        const k = await t.get(`/api/memories?${R}`);
-        if (g !== B) return;
-        D.value = (k.results ?? []).map((I) => ({ ...I, snippet: Rt(I.snippet) })), S.value = k.total_matches ?? 0, f.value = "";
+      const O = N();
+      if (ve(n.value)) {
+        const k = await t.get(`/api/memories?${O}`);
+        if (p !== B) return;
+        z.value = (k.results ?? []).map((I) => ({ ...I, snippet: Ot(I.snippet) })), P.value = k.total_matches ?? 0, m.value = "";
       } else {
-        const k = await t.get(`/api/memories?${R}`);
-        if (g !== B) return;
+        const k = await t.get(`/api/memories?${O}`);
+        if (p !== B) return;
         const I = Math.max(1, Math.ceil(k.total / i.value));
-        if (((P = k.memories) == null ? void 0 : P.length) === 0 && k.total > 0 && h.value > I)
-          return h.value = I, _.value = !1, O();
-        C.value = k.memories ?? [], S.value = k.total ?? 0, f.value = k.note ?? "";
+        if (((M = k.memories) == null ? void 0 : M.length) === 0 && k.total > 0 && h.value > I)
+          return h.value = I, _.value = !1, F();
+        C.value = k.memories ?? [], P.value = k.total ?? 0, m.value = k.note ?? "";
       }
     } finally {
-      g === B && (_.value = !1);
+      p === B && (_.value = !1);
     }
   }
-  async function N() {
+  async function A() {
     try {
-      const g = await We(t);
-      $.value = (g.tags ?? []).map((P) => P.name);
+      const p = await Ke(t);
+      $.value = (p.tags ?? []).map((M) => M.name);
     } catch {
     }
   }
-  async function E(g) {
-    if (g.id) {
-      const P = await Ce(t, g.id), R = new Set(P.tags), k = new Set(g.tags);
-      await Ke(t, g.id, {
-        summary: g.summary,
-        content: g.content,
-        add_tags: [...k].filter((I) => !R.has(I)),
-        remove_tags: [...R].filter((I) => !k.has(I))
+  async function U(p) {
+    if (p.id) {
+      const M = await ke(t, p.id), O = new Set(M.tags), k = new Set(p.tags);
+      await Je(t, p.id, {
+        summary: p.summary,
+        content: p.content,
+        add_tags: [...k].filter((I) => !O.has(I)),
+        remove_tags: [...O].filter((I) => !k.has(I))
       });
     } else
-      await Je(t, { summary: g.summary, content: g.content, tags: g.tags });
-    await Promise.all([O(), N()]);
+      await je(t, { summary: p.summary, content: p.content, tags: p.tags });
+    await Promise.all([F(), A()]);
   }
-  async function y(g) {
-    await Bt(t, g), await O();
+  async function y(p) {
+    await Bt(t, p), await F();
   }
-  return ce(() => {
-    O().catch(() => {
-    }), N();
+  return de(() => {
+    F().catch(() => {
+    }), A();
   }), {
     query: n,
     tagFilter: r,
-    sort: m,
-    order: p,
+    sort: u,
+    order: g,
     page: h,
     pageSize: i,
     rows: C,
-    searchResults: D,
-    total: S,
-    note: f,
+    searchResults: z,
+    total: P,
+    note: m,
     loading: _,
     tagOptions: $,
-    searching: V,
+    searching: D,
     onSearch: T,
-    reload: O,
-    loadTagOptions: N,
-    saveMemory: E,
+    reload: F,
+    loadTagOptions: A,
+    saveMemory: U,
     removeMemory: y
   };
 }
-function Te(t, s = 720) {
+function Ce(t, s = 720) {
   const n = w(0);
   let r = null;
-  function m(p) {
-    r == null || r.disconnect(), r = null, !(!p || typeof ResizeObserver > "u") && (r = new ResizeObserver((h) => {
+  function u(g) {
+    r == null || r.disconnect(), r = null, !(!g || typeof ResizeObserver > "u") && (r = new ResizeObserver((h) => {
       var i;
       n.value = ((i = h[0]) == null ? void 0 : i.contentRect.width) ?? 0;
-    }), r.observe(p));
+    }), r.observe(g));
   }
-  return ce(() => m(t.value)), ye(t, (p) => m(p)), Ze(() => r == null ? void 0 : r.disconnect()), { width: n, compact: de(() => n.value > 0 && n.value < s) };
+  return de(() => u(t.value)), _e(t, (g) => u(g)), et(() => r == null ? void 0 : r.disconnect()), { width: n, compact: re(() => n.value > 0 && n.value < s) };
 }
-const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
+const Jt = ["innerHTML"], We = /* @__PURE__ */ X({
   __name: "MarkdownView",
   props: {
     source: {}
   },
   setup(t) {
-    const s = t, n = de(() => At(s.source));
-    return (r, m) => (b(), x("div", {
+    const s = t, n = re(() => Rt(s.source));
+    return (r, u) => (b(), V("div", {
       class: "md-body",
       innerHTML: n.value
-    }, null, 8, jt));
+    }, null, 8, Jt));
   }
-}), Jt = { class: "content-label" }, Kt = /* @__PURE__ */ te({
+}), Kt = { class: "content-label" }, Wt = /* @__PURE__ */ X({
   __name: "MemoryEditorDialog",
   props: {
     visible: { type: Boolean },
@@ -585,68 +587,68 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
   },
   emits: ["update:visible", "saved"],
   setup(t, { emit: s }) {
-    const n = t, r = s, m = ie(), p = w(!1), h = w("edit"), i = w({ id: null, summary: "", content: "", tags: [] });
+    const n = t, r = s, u = se(), g = w(!1), h = w("edit"), i = w({ id: null, summary: "", content: "", tags: [] });
     let C = [];
-    ye(
+    _e(
       () => n.visible,
-      async (S) => {
-        if (S)
+      async (P) => {
+        if (P)
           if (h.value = "edit", n.memoryId)
             try {
-              const f = await Ce(m, n.memoryId);
-              i.value = { id: f.id, summary: f.summary, content: f.content, tags: [...f.tags] }, C = [...f.tags];
-            } catch (f) {
-              A.error(f instanceof Error ? f.message : String(f)), r("update:visible", !1);
+              const m = await ke(u, n.memoryId);
+              i.value = { id: m.id, summary: m.summary, content: m.content, tags: [...m.tags] }, C = [...m.tags];
+            } catch (m) {
+              R.error(m instanceof Error ? m.message : String(m)), r("update:visible", !1);
             }
           else
             i.value = { id: null, summary: "", content: "", tags: [] }, C = [];
       }
     );
-    async function D() {
-      p.value = !0;
+    async function z() {
+      g.value = !0;
       try {
         if (i.value.id) {
-          const S = new Set(C), f = new Set(i.value.tags);
-          await Ke(m, i.value.id, {
+          const P = new Set(C), m = new Set(i.value.tags);
+          await Je(u, i.value.id, {
             summary: i.value.summary,
             content: i.value.content,
-            add_tags: [...f].filter((_) => !S.has(_)),
-            remove_tags: [...S].filter((_) => !f.has(_))
-          }), A.success(o("editor.updated"));
+            add_tags: [...m].filter((_) => !P.has(_)),
+            remove_tags: [...P].filter((_) => !m.has(_))
+          }), R.success(o("editor.updated"));
         } else
-          await Je(m, {
+          await je(u, {
             summary: i.value.summary,
             content: i.value.content,
             tags: i.value.tags
-          }), A.success(o("editor.created"));
+          }), R.success(o("editor.created"));
         r("update:visible", !1), r("saved");
-      } catch (S) {
-        A.error(S instanceof Error ? S.message : String(S));
+      } catch (P) {
+        R.error(P instanceof Error ? P.message : String(P));
       } finally {
-        p.value = !1;
+        g.value = !1;
       }
     }
-    return (S, f) => {
-      const _ = be, $ = $e, V = De, T = he, L = ze, B = xe, O = Ve, N = ue, E = Ue;
-      return b(), z(E, {
+    return (P, m) => {
+      const _ = ye, $ = De, D = $e, T = be, N = ze, B = xe, F = Ue, A = ce, U = Ee;
+      return b(), L(U, {
         "model-value": t.visible,
         title: i.value.id ? e(o)("editor.editTitle") : e(o)("editor.createTitle"),
         width: t.width,
-        "onUpdate:modelValue": f[5] || (f[5] = (y) => r("update:visible", y))
+        "onUpdate:modelValue": m[5] || (m[5] = (y) => r("update:visible", y))
       }, {
         footer: l(() => [
-          a(N, {
-            onClick: f[4] || (f[4] = (y) => r("update:visible", !1))
+          a(A, {
+            onClick: m[4] || (m[4] = (y) => r("update:visible", !1))
           }, {
             default: l(() => [
               v(d(e(o)("common.cancel")), 1)
             ]),
             _: 1
           }),
-          a(N, {
+          a(A, {
             type: "primary",
-            loading: p.value,
-            onClick: D
+            loading: g.value,
+            onClick: z
           }, {
             default: l(() => [
               v(d(e(o)("common.save")), 1)
@@ -655,7 +657,7 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
           }, 8, ["loading"])
         ]),
         default: l(() => [
-          a(O, { "label-position": "top" }, {
+          a(F, { "label-position": "top" }, {
             default: l(() => [
               a($, {
                 label: e(o)("editor.summaryLabel")
@@ -663,7 +665,7 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
                 default: l(() => [
                   a(_, {
                     modelValue: i.value.summary,
-                    "onUpdate:modelValue": f[0] || (f[0] = (y) => i.value.summary = y),
+                    "onUpdate:modelValue": m[0] || (m[0] = (y) => i.value.summary = y),
                     maxlength: "512",
                     "show-word-limit": "",
                     placeholder: e(o)("editor.summaryPlaceholder")
@@ -673,21 +675,21 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
               }, 8, ["label"]),
               a($, null, {
                 label: l(() => [
-                  M("div", Jt, [
-                    M("span", null, d(e(o)("editor.contentLabel")), 1),
+                  E("div", Kt, [
+                    E("span", null, d(e(o)("editor.contentLabel")), 1),
                     a(T, {
                       modelValue: h.value,
-                      "onUpdate:modelValue": f[1] || (f[1] = (y) => h.value = y),
+                      "onUpdate:modelValue": m[1] || (m[1] = (y) => h.value = y),
                       size: "small"
                     }, {
                       default: l(() => [
-                        a(V, { value: "edit" }, {
+                        a(D, { value: "edit" }, {
                           default: l(() => [
                             v(d(e(o)("editor.tabEdit")), 1)
                           ]),
                           _: 1
                         }),
-                        a(V, { value: "preview" }, {
+                        a(D, { value: "preview" }, {
                           default: l(() => [
                             v(d(e(o)("editor.tabPreview")), 1)
                           ]),
@@ -699,16 +701,16 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
                   ])
                 ]),
                 default: l(() => [
-                  h.value === "edit" ? (b(), z(_, {
+                  h.value === "edit" ? (b(), L(_, {
                     key: 0,
                     modelValue: i.value.content,
-                    "onUpdate:modelValue": f[2] || (f[2] = (y) => i.value.content = y),
+                    "onUpdate:modelValue": m[2] || (m[2] = (y) => i.value.content = y),
                     type: "textarea",
                     rows: 12,
                     maxlength: "200000",
                     "show-word-limit": "",
                     placeholder: e(o)("editor.contentPlaceholder")
-                  }, null, 8, ["modelValue", "placeholder"])) : (b(), z(Qe, {
+                  }, null, 8, ["modelValue", "placeholder"])) : (b(), L(We, {
                     key: 1,
                     class: "content-preview",
                     source: i.value.content
@@ -722,7 +724,7 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
                 default: l(() => [
                   a(B, {
                     modelValue: i.value.tags,
-                    "onUpdate:modelValue": f[3] || (f[3] = (y) => i.value.tags = y),
+                    "onUpdate:modelValue": m[3] || (m[3] = (y) => i.value.tags = y),
                     multiple: "",
                     filterable: "",
                     "allow-create": "",
@@ -731,7 +733,7 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
                     class: "tags-select"
                   }, {
                     default: l(() => [
-                      (b(!0), x(Z, null, ae(t.tagOptions, (y) => (b(), z(L, {
+                      (b(!0), V(Y, null, te(t.tagOptions, (y) => (b(), L(N, {
                         key: y,
                         label: y,
                         value: y
@@ -750,15 +752,15 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
       }, 8, ["model-value", "title", "width"]);
     };
   }
-}), le = (t, s) => {
+}), oe = (t, s) => {
   const n = t.__vccOpts || t;
-  for (const [r, m] of s)
-    n[r] = m;
+  for (const [r, u] of s)
+    n[r] = u;
   return n;
-}, Wt = /* @__PURE__ */ le(Kt, [["__scopeId", "data-v-602bada0"]]), Qt = { class: "detail-summary" }, Yt = { class: "detail-tags" }, Gt = { class: "detail-toolbar" }, Xt = {
+}, Qt = /* @__PURE__ */ oe(Wt, [["__scopeId", "data-v-602bada0"]]), Yt = { class: "detail-summary" }, Gt = { class: "detail-tags" }, Xt = { class: "detail-toolbar" }, Zt = {
   key: 1,
   class: "detail-content"
-}, Zt = /* @__PURE__ */ te({
+}, ea = /* @__PURE__ */ X({
   __name: "MemoryDetailDrawer",
   props: {
     visible: { type: Boolean },
@@ -767,33 +769,33 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
   },
   emits: ["update:visible"],
   setup(t, { emit: s }) {
-    const n = t, r = s, m = ie(), p = w(null), h = w("rendered");
-    return ye(
+    const n = t, r = s, u = se(), g = w(null), h = w("rendered");
+    return _e(
       () => [n.visible, n.memoryId],
       async ([i]) => {
         if (!(!i || !n.memoryId)) {
           h.value = "rendered";
           try {
-            p.value = await Ce(m, n.memoryId);
+            g.value = await ke(u, n.memoryId);
           } catch (C) {
-            A.error(C instanceof Error ? C.message : String(C)), r("update:visible", !1);
+            R.error(C instanceof Error ? C.message : String(C)), r("update:visible", !1);
           }
         }
       }
     ), (i, C) => {
-      var V;
-      const D = we, S = nt, f = De, _ = he, $ = lt;
-      return b(), z($, {
+      var D;
+      const z = he, P = st, m = $e, _ = be, $ = nt;
+      return b(), L($, {
         "model-value": t.visible,
-        title: e(o)("drawer.title", { id: ((V = p.value) == null ? void 0 : V.id) ?? t.memoryId ?? "" }),
+        title: e(o)("drawer.title", { id: ((D = g.value) == null ? void 0 : D.id) ?? t.memoryId ?? "" }),
         size: t.size,
         "onUpdate:modelValue": C[1] || (C[1] = (T) => r("update:visible", T))
       }, {
         default: l(() => [
-          p.value ? (b(), x(Z, { key: 0 }, [
-            M("h3", Qt, d(p.value.summary), 1),
-            M("div", Yt, [
-              (b(!0), x(Z, null, ae(p.value.tags, (T) => (b(), z(D, {
+          g.value ? (b(), V(Y, { key: 0 }, [
+            E("h3", Yt, d(g.value.summary), 1),
+            E("div", Gt, [
+              (b(!0), V(Y, null, te(g.value.tags, (T) => (b(), L(z, {
                 key: T,
                 size: "small",
                 class: "am-tag"
@@ -804,21 +806,21 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
                 _: 2
               }, 1024))), 128))
             ]),
-            a(S),
-            M("div", Gt, [
+            a(P),
+            E("div", Xt, [
               a(_, {
                 modelValue: h.value,
                 "onUpdate:modelValue": C[0] || (C[0] = (T) => h.value = T),
                 size: "small"
               }, {
                 default: l(() => [
-                  a(f, { value: "rendered" }, {
+                  a(m, { value: "rendered" }, {
                     default: l(() => [
                       v(d(e(o)("drawer.rendered")), 1)
                     ]),
                     _: 1
                   }),
-                  a(f, { value: "source" }, {
+                  a(m, { value: "source" }, {
                     default: l(() => [
                       v(d(e(o)("drawer.source")), 1)
                     ]),
@@ -828,26 +830,26 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
                 _: 1
               }, 8, ["modelValue"])
             ]),
-            h.value === "rendered" ? (b(), z(Qe, {
+            h.value === "rendered" ? (b(), L(We, {
               key: 0,
-              source: p.value.content
-            }, null, 8, ["source"])) : (b(), x("pre", Xt, d(p.value.content), 1))
-          ], 64)) : W("", !0)
+              source: g.value.content
+            }, null, 8, ["source"])) : (b(), V("pre", Zt, d(g.value.content), 1))
+          ], 64)) : J("", !0)
         ]),
         _: 1
       }, 8, ["model-value", "title", "size"]);
     };
   }
-}), ea = /* @__PURE__ */ le(Zt, [["__scopeId", "data-v-b634d116"]]), ta = {
+}), ta = /* @__PURE__ */ oe(ea, [["__scopeId", "data-v-b634d116"]]), aa = {
   key: 0,
   class: "am-panel-header"
-}, aa = { class: "am-heading" }, oa = { class: "am-panel-title" }, la = { class: "am-toolbar" }, na = { class: "am-summary" }, sa = ["innerHTML"], ia = {
+}, oa = { class: "am-heading" }, la = { class: "am-panel-title" }, na = { class: "am-toolbar" }, sa = { class: "am-summary" }, ia = ["innerHTML"], ra = {
   key: 4,
   class: "am-pager"
-}, ra = {
+}, da = {
   key: 5,
   class: "am-pager"
-}, da = /* @__PURE__ */ te({
+}, ca = /* @__PURE__ */ X({
   __name: "MemoriesPanel",
   props: {
     showHeader: { type: Boolean, default: !0 },
@@ -858,69 +860,72 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
     const s = t, {
       query: n,
       tagFilter: r,
-      sort: m,
-      order: p,
+      sort: u,
+      order: g,
       page: h,
       pageSize: i,
       rows: C,
-      searchResults: D,
-      total: S,
-      note: f,
+      searchResults: z,
+      total: P,
+      note: m,
       loading: _,
       tagOptions: $,
-      searching: V,
+      searching: D,
       onSearch: T,
-      reload: L,
+      reload: N,
       loadTagOptions: B,
-      removeMemory: O
-    } = qt(), N = w(null), { compact: E } = Te(N), y = w(!1), g = w(null), P = w(!1), R = w(null);
-    function k(F) {
-      return F().catch((c) => A.error(c instanceof Error ? c.message : String(c)));
+      removeMemory: F
+    } = jt(), A = w(null), { compact: U } = Ce(A), y = w(!1), p = w(null), M = w(!1), O = w(null);
+    function k(x) {
+      return x().catch((c) => R.error(c instanceof Error ? c.message : String(c)));
     }
     function I() {
-      g.value = null, y.value = !0;
+      p.value = null, y.value = !0;
     }
-    function J(F) {
-      g.value = F, y.value = !0;
+    function j(x) {
+      p.value = x, y.value = !0;
     }
-    function Q(F) {
-      R.value = F, P.value = !0;
+    function K(x) {
+      O.value = x, M.value = !0;
     }
-    function ee() {
-      k(L), B();
+    function G() {
+      k(N), B();
     }
-    async function Y(F) {
+    function W({ prop: x, order: c }) {
+      c && (x === "updated_at" || x === "created_at") ? (u.value = x, c.value = c === "ascending" ? "asc" : "desc") : (u.value = "updated_at", c.value = "desc"), k(N);
+    }
+    async function Z(x) {
       try {
-        await Oe.confirm(o("memories.deleteConfirm", { id: F.id }), o("memories.deleteTitle"), {
+        await Oe.confirm(o("memories.deleteConfirm", { id: x.id }), o("memories.deleteTitle"), {
           type: "warning"
         });
       } catch {
         return;
       }
       try {
-        await O(F.id), A.success(o("memories.deleted"));
+        await F(x.id), R.success(o("memories.deleted"));
       } catch (c) {
-        A.error(c instanceof Error ? c.message : String(c));
+        R.error(c instanceof Error ? c.message : String(c));
       }
     }
-    return (F, c) => {
-      const G = me, fe = ke, K = ue, U = be, H = ze, ge = xe, Ye = Ie, q = Ne, Se = we, Pe = Le, Me = st, Ee = Ae;
-      return b(), x("div", {
+    return (x, c) => {
+      const pe = ue, fe = we, S = ce, Q = ye, Qe = ze, Ye = xe, Ge = Ve, H = Ie, Te = he, Se = Le, Pe = it, Me = Ne;
+      return b(), V("div", {
         ref_key: "rootRef",
-        ref: N,
+        ref: A,
         class: "am-panel"
       }, [
-        t.showHeader ? (b(), x("div", ta, [
-          M("div", aa, [
-            M("h2", oa, d(s.title ?? e(o)("memories.title")), 1),
+        t.showHeader ? (b(), V("div", aa, [
+          E("div", oa, [
+            E("h2", la, d(s.title ?? e(o)("memories.title")), 1),
             a(fe, {
               content: s.subtitle ?? e(o)("memories.subtitle"),
               placement: "top"
             }, {
               default: l(() => [
-                a(G, { class: "am-info" }, {
+                a(pe, { class: "am-info" }, {
                   default: l(() => [
-                    a(e(ne))
+                    a(e(le))
                   ]),
                   _: 1
                 })
@@ -928,9 +933,9 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
               _: 1
             }, 8, ["content"])
           ]),
-          a(K, {
+          a(S, {
             type: "primary",
-            icon: e(Re),
+            icon: e(Ae),
             onClick: I
           }, {
             default: l(() => [
@@ -938,172 +943,136 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
             ]),
             _: 1
           }, 8, ["icon"])
-        ])) : W("", !0),
-        M("div", la, [
-          a(U, {
+        ])) : J("", !0),
+        E("div", na, [
+          a(Q, {
             modelValue: e(n),
-            "onUpdate:modelValue": c[1] || (c[1] = (u) => X(n) ? n.value = u : null),
+            "onUpdate:modelValue": c[1] || (c[1] = (f) => ee(n) ? n.value = f : null),
             placeholder: e(o)("memories.searchPlaceholder"),
             clearable: "",
             class: "search",
-            onKeyup: c[2] || (c[2] = et((u) => k(e(T)), ["enter"])),
-            onClear: c[3] || (c[3] = (u) => k(e(T)))
+            onKeyup: c[2] || (c[2] = tt((f) => k(e(T)), ["enter"])),
+            onClear: c[3] || (c[3] = (f) => k(e(T)))
           }, {
             append: l(() => [
-              a(K, {
-                icon: e(Be),
-                onClick: c[0] || (c[0] = (u) => k(e(T)))
+              a(S, {
+                icon: e(Re),
+                onClick: c[0] || (c[0] = (f) => k(e(T)))
               }, null, 8, ["icon"])
             ]),
             _: 1
           }, 8, ["modelValue", "placeholder"]),
-          a(ge, {
+          a(Ye, {
             modelValue: e(r),
-            "onUpdate:modelValue": c[4] || (c[4] = (u) => X(r) ? r.value = u : null),
+            "onUpdate:modelValue": c[4] || (c[4] = (f) => ee(r) ? r.value = f : null),
             placeholder: e(o)("memories.tagFilter"),
             clearable: "",
             filterable: "",
             class: "tag-filter",
-            onChange: c[5] || (c[5] = (u) => k(e(T)))
+            onChange: c[5] || (c[5] = (f) => k(e(T)))
           }, {
             default: l(() => [
-              (b(!0), x(Z, null, ae(e($), (u) => (b(), z(H, {
-                key: u,
-                label: u,
-                value: u
+              (b(!0), V(Y, null, te(e($), (f) => (b(), L(Qe, {
+                key: f,
+                label: f,
+                value: f
               }, null, 8, ["label", "value"]))), 128))
             ]),
             _: 1
-          }, 8, ["modelValue", "placeholder"]),
-          a(ge, {
-            modelValue: e(m),
-            "onUpdate:modelValue": c[6] || (c[6] = (u) => X(m) ? m.value = u : null),
-            class: "sort",
-            onChange: c[7] || (c[7] = (u) => k(e(L)))
-          }, {
-            default: l(() => [
-              a(H, {
-                label: e(o)("memories.sortUpdated"),
-                value: "updated_at"
-              }, null, 8, ["label"]),
-              a(H, {
-                label: e(o)("memories.sortCreated"),
-                value: "created_at"
-              }, null, 8, ["label"])
-            ]),
-            _: 1
-          }, 8, ["modelValue"]),
-          a(ge, {
-            modelValue: e(p),
-            "onUpdate:modelValue": c[8] || (c[8] = (u) => X(p) ? p.value = u : null),
-            class: "order",
-            onChange: c[9] || (c[9] = (u) => k(e(L)))
-          }, {
-            default: l(() => [
-              a(H, {
-                label: e(o)("memories.orderDesc"),
-                value: "desc"
-              }, null, 8, ["label"]),
-              a(H, {
-                label: e(o)("memories.orderAsc"),
-                value: "asc"
-              }, null, 8, ["label"])
-            ]),
-            _: 1
-          }, 8, ["modelValue"])
+          }, 8, ["modelValue", "placeholder"])
         ]),
-        e(f) ? (b(), z(Ye, {
+        e(m) ? (b(), L(Ge, {
           key: 1,
-          title: e(f),
+          title: e(m),
           type: "info",
           "show-icon": "",
           closable: !1
-        }, null, 8, ["title"])) : W("", !0),
-        e(V) ? oe((b(), z(Pe, {
+        }, null, 8, ["title"])) : J("", !0),
+        e(D) ? ae((b(), L(Se, {
           key: 2,
-          data: e(D)
+          data: e(z)
         }, {
           default: l(() => [
-            a(q, {
+            a(H, {
               prop: "id",
               label: e(o)("memories.colId"),
               width: "80"
             }, null, 8, ["label"]),
-            a(q, {
+            a(H, {
               label: e(o)("memories.colSummary")
             }, {
-              default: l(({ row: u }) => [
-                M("div", na, d(u.summary), 1),
-                M("div", {
+              default: l(({ row: f }) => [
+                E("div", sa, d(f.summary), 1),
+                E("div", {
                   class: "am-snippet",
-                  innerHTML: u.snippet
-                }, null, 8, sa)
+                  innerHTML: f.snippet
+                }, null, 8, ia)
               ]),
               _: 1
             }, 8, ["label"]),
-            a(q, {
+            a(H, {
               label: e(o)("memories.colTags"),
               width: "220"
             }, {
-              default: l(({ row: u }) => [
-                (b(!0), x(Z, null, ae(u.tags, (j) => (b(), z(Se, {
-                  key: j,
+              default: l(({ row: f }) => [
+                (b(!0), V(Y, null, te(f.tags, (q) => (b(), L(Te, {
+                  key: q,
                   size: "small",
                   class: "am-tag"
                 }, {
                   default: l(() => [
-                    v(d(j), 1)
+                    v(d(q), 1)
                   ]),
                   _: 2
                 }, 1024))), 128))
               ]),
               _: 1
             }, 8, ["label"]),
-            a(q, {
+            a(H, {
               prop: "score",
               label: e(o)("memories.colScore"),
               width: "80",
               sortable: ""
             }, null, 8, ["label"]),
-            a(q, {
+            a(H, {
               label: e(o)("memories.colUpdatedAt"),
               width: "170"
             }, {
-              default: l(({ row: u }) => [
-                v(d(e(se)(u.updated_at)), 1)
+              default: l(({ row: f }) => [
+                v(d(e(ne)(f.updated_at)), 1)
               ]),
               _: 1
             }, 8, ["label"]),
-            a(q, {
+            a(H, {
               label: e(o)("memories.colActions"),
               width: "190",
               fixed: "right"
             }, {
-              default: l(({ row: u }) => [
-                a(K, {
+              default: l(({ row: f }) => [
+                a(S, {
                   link: "",
                   type: "primary",
-                  onClick: (j) => Q(u.id)
+                  onClick: (q) => K(f.id)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.detail")), 1)
                   ]),
                   _: 1
                 }, 8, ["onClick"]),
-                a(K, {
+                a(S, {
                   link: "",
                   type: "primary",
-                  onClick: (j) => J(u.id)
+                  onClick: (q) => j(f.id)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.edit")), 1)
                   ]),
                   _: 1
                 }, 8, ["onClick"]),
-                a(K, {
+                a(S, {
                   link: "",
                   type: "danger",
-                  onClick: (j) => Y(u)
+                  onClick: (q) => Z(f)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.delete")), 1)
@@ -1116,91 +1085,96 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
           ]),
           _: 1
         }, 8, ["data"])), [
-          [Ee, e(_)]
-        ]) : oe((b(), z(Pe, {
+          [Me, e(_)]
+        ]) : ae((b(), L(Se, {
           key: 3,
-          data: e(C)
+          data: e(C),
+          "default-sort": { prop: e(u), order: e(g) === "asc" ? "ascending" : "descending" },
+          onSortChange: W
         }, {
           default: l(() => [
-            a(q, {
+            a(H, {
               prop: "id",
               label: e(o)("memories.colId"),
               width: "80"
             }, null, 8, ["label"]),
-            a(q, {
+            a(H, {
               prop: "summary",
               label: e(o)("memories.colSummary"),
               "min-width": "300",
               "show-overflow-tooltip": ""
             }, null, 8, ["label"]),
-            a(q, {
+            a(H, {
               label: e(o)("memories.colTags"),
               width: "220"
             }, {
-              default: l(({ row: u }) => [
-                (b(!0), x(Z, null, ae(u.tags, (j) => (b(), z(Se, {
-                  key: j,
+              default: l(({ row: f }) => [
+                (b(!0), V(Y, null, te(f.tags, (q) => (b(), L(Te, {
+                  key: q,
                   size: "small",
                   class: "am-tag"
                 }, {
                   default: l(() => [
-                    v(d(j), 1)
+                    v(d(q), 1)
                   ]),
                   _: 2
                 }, 1024))), 128))
               ]),
               _: 1
             }, 8, ["label"]),
-            e(E) ? W("", !0) : (b(), z(q, {
+            e(U) ? J("", !0) : (b(), L(H, {
               key: 0,
               prop: "created_at",
               label: e(o)("memories.colCreatedAt"),
-              width: "170"
+              width: "170",
+              sortable: "custom"
             }, {
-              default: l(({ row: u }) => [
-                v(d(e(se)(u.created_at)), 1)
+              default: l(({ row: f }) => [
+                v(d(e(ne)(f.created_at)), 1)
               ]),
               _: 1
             }, 8, ["label"])),
-            a(q, {
+            a(H, {
+              prop: "updated_at",
               label: e(o)("memories.colUpdatedAt"),
-              width: "170"
+              width: "170",
+              sortable: "custom"
             }, {
-              default: l(({ row: u }) => [
-                v(d(e(se)(u.updated_at)), 1)
+              default: l(({ row: f }) => [
+                v(d(e(ne)(f.updated_at)), 1)
               ]),
               _: 1
             }, 8, ["label"]),
-            a(q, {
+            a(H, {
               label: e(o)("memories.colActions"),
               width: "190",
               fixed: "right"
             }, {
-              default: l(({ row: u }) => [
-                a(K, {
+              default: l(({ row: f }) => [
+                a(S, {
                   link: "",
                   type: "primary",
-                  onClick: (j) => Q(u.id)
+                  onClick: (q) => K(f.id)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.detail")), 1)
                   ]),
                   _: 1
                 }, 8, ["onClick"]),
-                a(K, {
+                a(S, {
                   link: "",
                   type: "primary",
-                  onClick: (j) => J(u.id)
+                  onClick: (q) => j(f.id)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.edit")), 1)
                   ]),
                   _: 1
                 }, 8, ["onClick"]),
-                a(K, {
+                a(S, {
                   link: "",
                   type: "danger",
-                  onClick: (j) => Y(u)
+                  onClick: (q) => Z(f)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.delete")), 1)
@@ -1212,81 +1186,81 @@ const jt = ["innerHTML"], Qe = /* @__PURE__ */ te({
             }, 8, ["label"])
           ]),
           _: 1
-        }, 8, ["data"])), [
-          [Ee, e(_)]
+        }, 8, ["data", "default-sort"])), [
+          [Me, e(_)]
         ]),
-        e(V) ? (b(), x("div", ra, [
-          a(Me, {
+        e(D) ? (b(), V("div", da, [
+          a(Pe, {
             "current-page": e(h),
-            "onUpdate:currentPage": c[14] || (c[14] = (u) => X(h) ? h.value = u : null),
+            "onUpdate:currentPage": c[10] || (c[10] = (f) => ee(h) ? h.value = f : null),
             "page-size": e(i),
-            "onUpdate:pageSize": c[15] || (c[15] = (u) => X(i) ? i.value = u : null),
-            total: e(S),
+            "onUpdate:pageSize": c[11] || (c[11] = (f) => ee(i) ? i.value = f : null),
+            total: e(P),
             "page-sizes": [10, 20, 50],
             layout: "total, sizes, prev, pager, next",
-            onCurrentChange: c[16] || (c[16] = (u) => k(e(L))),
-            onSizeChange: c[17] || (c[17] = (u) => k(e(L)))
+            onCurrentChange: c[12] || (c[12] = (f) => k(e(N))),
+            onSizeChange: c[13] || (c[13] = (f) => k(e(N)))
           }, null, 8, ["current-page", "page-size", "total"])
-        ])) : (b(), x("div", ia, [
-          a(Me, {
+        ])) : (b(), V("div", ra, [
+          a(Pe, {
             "current-page": e(h),
-            "onUpdate:currentPage": c[10] || (c[10] = (u) => X(h) ? h.value = u : null),
+            "onUpdate:currentPage": c[6] || (c[6] = (f) => ee(h) ? h.value = f : null),
             "page-size": e(i),
-            "onUpdate:pageSize": c[11] || (c[11] = (u) => X(i) ? i.value = u : null),
-            total: e(S),
+            "onUpdate:pageSize": c[7] || (c[7] = (f) => ee(i) ? i.value = f : null),
+            total: e(P),
             "page-sizes": [20, 50, 100, 200],
             layout: "total, sizes, prev, pager, next",
-            onCurrentChange: c[12] || (c[12] = (u) => k(e(L))),
-            onSizeChange: c[13] || (c[13] = (u) => k(e(L)))
+            onCurrentChange: c[8] || (c[8] = (f) => k(e(N))),
+            onSizeChange: c[9] || (c[9] = (f) => k(e(N)))
           }, null, 8, ["current-page", "page-size", "total"])
         ])),
-        a(Wt, {
+        a(Qt, {
           visible: y.value,
-          "onUpdate:visible": c[18] || (c[18] = (u) => y.value = u),
-          "memory-id": g.value,
+          "onUpdate:visible": c[14] || (c[14] = (f) => y.value = f),
+          "memory-id": p.value,
           "tag-options": e($),
-          width: e(E) ? "96%" : "640px",
-          onSaved: ee
+          width: e(U) ? "96%" : "640px",
+          onSaved: G
         }, null, 8, ["visible", "memory-id", "tag-options", "width"]),
-        a(ea, {
-          visible: P.value,
-          "onUpdate:visible": c[19] || (c[19] = (u) => P.value = u),
-          "memory-id": R.value,
-          size: e(E) ? "100%" : "45%"
+        a(ta, {
+          visible: M.value,
+          "onUpdate:visible": c[15] || (c[15] = (f) => M.value = f),
+          "memory-id": O.value,
+          size: e(U) ? "100%" : "45%"
         }, null, 8, ["visible", "memory-id", "size"])
       ], 512);
     };
   }
-}), ca = /* @__PURE__ */ le(da, [["__scopeId", "data-v-37a950a7"]]);
-function ua() {
-  const t = ie(), s = w([]), n = w(!1);
+}), ua = /* @__PURE__ */ oe(ca, [["__scopeId", "data-v-2d2fb0ab"]]);
+function ma() {
+  const t = se(), s = w([]), n = w(!1);
   async function r() {
     n.value = !0;
     try {
-      const i = await We(t);
+      const i = await Ke(t);
       s.value = i.tags ?? [];
     } finally {
       n.value = !1;
     }
   }
-  async function m(i, C) {
-    await Ot(t, i, C), await r();
+  async function u(i, C) {
+    await Ft(t, i, C), await r();
   }
-  async function p(i, C, D) {
-    await Ft(t, i, C, D), await r();
+  async function g(i, C, z) {
+    await Ht(t, i, C, z), await r();
   }
   async function h(i, C) {
-    await Ht(t, i, C), await r();
+    await qt(t, i, C), await r();
   }
-  return ce(() => {
+  return de(() => {
     r().catch(() => {
     });
-  }), { rows: s, loading: n, reload: r, create: m, rename: p, remove: h };
+  }), { rows: s, loading: n, reload: r, create: u, rename: g, remove: h };
 }
-const ma = {
+const pa = {
   key: 0,
   class: "am-panel-header"
-}, pa = { class: "am-heading" }, fa = { class: "am-panel-title" }, ga = { class: "delete-body" }, va = /* @__PURE__ */ te({
+}, fa = { class: "am-heading" }, ga = { class: "am-panel-title" }, va = { class: "delete-body" }, _a = /* @__PURE__ */ X({
   __name: "TagsPanel",
   props: {
     showHeader: { type: Boolean, default: !0 },
@@ -1294,32 +1268,32 @@ const ma = {
     subtitle: {}
   },
   setup(t) {
-    const s = t, { rows: n, loading: r, reload: m, create: p, rename: h, remove: i } = ua(), C = w(null), { compact: D } = Te(C), S = w(!1), f = w(!1), _ = tt({ oldName: null, name: "", newName: "", description: "" }), $ = w(!1), V = w("detach"), T = w(null);
-    function L() {
-      Object.assign(_, { oldName: null, name: "", newName: "", description: "" }), f.value = !0;
+    const s = t, { rows: n, loading: r, reload: u, create: g, rename: h, remove: i } = ma(), C = w(null), { compact: z } = Ce(C), P = w(!1), m = w(!1), _ = at({ oldName: null, name: "", newName: "", description: "" }), $ = w(!1), D = w("detach"), T = w(null);
+    function N() {
+      Object.assign(_, { oldName: null, name: "", newName: "", description: "" }), m.value = !0;
     }
     function B(y) {
-      Object.assign(_, { oldName: y.name, name: y.name, newName: "", description: y.description ?? "" }), f.value = !0;
+      Object.assign(_, { oldName: y.name, name: y.name, newName: "", description: y.description ?? "" }), m.value = !0;
     }
-    async function O() {
-      S.value = !0;
+    async function F() {
+      P.value = !0;
       try {
-        _.oldName ? (await h(_.oldName, _.newName, _.description), A.success(o("tags.saved"))) : (await p(_.name, _.description), A.success(o("tags.created"))), f.value = !1;
+        _.oldName ? (await h(_.oldName, _.newName, _.description), R.success(o("tags.saved"))) : (await g(_.name, _.description), R.success(o("tags.created"))), m.value = !1;
       } catch (y) {
-        A.error(y instanceof Error ? y.message : String(y));
+        R.error(y instanceof Error ? y.message : String(y));
       } finally {
-        S.value = !1;
+        P.value = !1;
       }
     }
-    function N(y) {
-      T.value = y, V.value = "detach", $.value = !0;
+    function A(y) {
+      T.value = y, D.value = "detach", $.value = !0;
     }
-    async function E() {
-      var y, g;
-      if (V.value === "purge")
+    async function U() {
+      var y, p;
+      if (D.value === "purge")
         try {
           await Oe.confirm(
-            o("tags.purgeConfirm", { name: (y = T.value) == null ? void 0 : y.name, count: ((g = T.value) == null ? void 0 : g.memory_count) ?? 0 }),
+            o("tags.purgeConfirm", { name: (y = T.value) == null ? void 0 : y.name, count: ((p = T.value) == null ? void 0 : p.memory_count) ?? 0 }),
             o("tags.purgeConfirmTitle"),
             { type: "error", confirmButtonText: o("tags.purgeButton") }
           );
@@ -1327,34 +1301,34 @@ const ma = {
           return;
         }
       if (T.value) {
-        S.value = !0;
+        P.value = !0;
         try {
-          await i(T.value.name, V.value), A.success(o("tags.deleted")), $.value = !1;
-        } catch (P) {
-          A.error(P instanceof Error ? P.message : String(P));
+          await i(T.value.name, D.value), R.success(o("tags.deleted")), $.value = !1;
+        } catch (M) {
+          R.error(M instanceof Error ? M.message : String(M));
         } finally {
-          S.value = !1;
+          P.value = !1;
         }
       }
     }
-    return (y, g) => {
-      const P = me, R = ke, k = ue, I = we, J = Ne, Q = Le, ee = be, Y = $e, F = Ve, c = Ue, G = it, fe = he, K = Ae;
-      return b(), x("div", {
+    return (y, p) => {
+      const M = ue, O = we, k = ce, I = he, j = Ie, K = Le, G = ye, W = De, Z = Ue, x = Ee, c = rt, pe = be, fe = Ne;
+      return b(), V("div", {
         ref_key: "rootRef",
         ref: C,
         class: "am-panel"
       }, [
-        t.showHeader ? (b(), x("div", ma, [
-          M("div", pa, [
-            M("h2", fa, d(s.title ?? e(o)("tags.title")), 1),
-            a(R, {
+        t.showHeader ? (b(), V("div", pa, [
+          E("div", fa, [
+            E("h2", ga, d(s.title ?? e(o)("tags.title")), 1),
+            a(O, {
               content: s.subtitle ?? e(o)("tags.subtitle"),
               placement: "top"
             }, {
               default: l(() => [
-                a(P, { class: "am-info" }, {
+                a(M, { class: "am-info" }, {
                   default: l(() => [
-                    a(e(ne))
+                    a(e(le))
                   ]),
                   _: 1
                 })
@@ -1364,68 +1338,68 @@ const ma = {
           ]),
           a(k, {
             type: "primary",
-            icon: e(Re),
-            onClick: L
+            icon: e(Ae),
+            onClick: N
           }, {
             default: l(() => [
               v(d(e(o)("tags.create")), 1)
             ]),
             _: 1
           }, 8, ["icon"])
-        ])) : W("", !0),
-        oe((b(), z(Q, { data: e(n) }, {
+        ])) : J("", !0),
+        ae((b(), L(K, { data: e(n) }, {
           default: l(() => [
-            a(J, {
+            a(j, {
               prop: "name",
               label: e(o)("tags.colName"),
               "min-width": "160"
             }, {
-              default: l(({ row: U }) => [
+              default: l(({ row: S }) => [
                 a(I, null, {
                   default: l(() => [
-                    v(d(U.name), 1)
+                    v(d(S.name), 1)
                   ]),
                   _: 2
                 }, 1024)
               ]),
               _: 1
             }, 8, ["label"]),
-            a(J, {
+            a(j, {
               prop: "description",
               label: e(o)("tags.colDescription"),
               "min-width": "300",
               "show-overflow-tooltip": ""
             }, {
-              default: l(({ row: U }) => [
-                v(d(U.description || "—"), 1)
+              default: l(({ row: S }) => [
+                v(d(S.description || "—"), 1)
               ]),
               _: 1
             }, 8, ["label"]),
-            a(J, {
+            a(j, {
               prop: "memory_count",
               label: e(o)("tags.colMemoryCount"),
               width: "100",
               sortable: ""
             }, null, 8, ["label"]),
-            a(J, {
+            a(j, {
               label: e(o)("tags.colLastUsed"),
               width: "170"
             }, {
-              default: l(({ row: U }) => [
-                v(d(e(se)(U.last_used_at)), 1)
+              default: l(({ row: S }) => [
+                v(d(e(ne)(S.last_used_at)), 1)
               ]),
               _: 1
             }, 8, ["label"]),
-            a(J, {
+            a(j, {
               label: e(o)("memories.colActions"),
               width: "150",
               fixed: "right"
             }, {
-              default: l(({ row: U }) => [
+              default: l(({ row: S }) => [
                 a(k, {
                   link: "",
                   type: "primary",
-                  onClick: (H) => B(U)
+                  onClick: (Q) => B(S)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.edit")), 1)
@@ -1435,7 +1409,7 @@ const ma = {
                 a(k, {
                   link: "",
                   type: "danger",
-                  onClick: (H) => N(U)
+                  onClick: (Q) => A(S)
                 }, {
                   default: l(() => [
                     v(d(e(o)("common.delete")), 1)
@@ -1448,17 +1422,17 @@ const ma = {
           ]),
           _: 1
         }, 8, ["data"])), [
-          [K, e(r)]
+          [fe, e(r)]
         ]),
-        a(c, {
-          modelValue: f.value,
-          "onUpdate:modelValue": g[4] || (g[4] = (U) => f.value = U),
+        a(x, {
+          modelValue: m.value,
+          "onUpdate:modelValue": p[4] || (p[4] = (S) => m.value = S),
           title: _.oldName ? e(o)("tags.editTitle") : e(o)("tags.createTitle"),
-          width: e(D) ? "96%" : "480px"
+          width: e(z) ? "96%" : "480px"
         }, {
           footer: l(() => [
             a(k, {
-              onClick: g[3] || (g[3] = (U) => f.value = !1)
+              onClick: p[3] || (p[3] = (S) => m.value = !1)
             }, {
               default: l(() => [
                 v(d(e(o)("common.cancel")), 1)
@@ -1467,8 +1441,8 @@ const ma = {
             }),
             a(k, {
               type: "primary",
-              loading: S.value,
-              onClick: O
+              loading: P.value,
+              onClick: F
             }, {
               default: l(() => [
                 v(d(e(o)("common.save")), 1)
@@ -1477,15 +1451,15 @@ const ma = {
             }, 8, ["loading"])
           ]),
           default: l(() => [
-            a(F, { "label-position": "top" }, {
+            a(Z, { "label-position": "top" }, {
               default: l(() => [
-                a(Y, {
+                a(W, {
                   label: e(o)("tags.nameLabel")
                 }, {
                   default: l(() => [
-                    a(ee, {
+                    a(G, {
                       modelValue: _.name,
-                      "onUpdate:modelValue": g[0] || (g[0] = (U) => _.name = U),
+                      "onUpdate:modelValue": p[0] || (p[0] = (S) => _.name = S),
                       disabled: !!_.oldName,
                       maxlength: "100",
                       "show-word-limit": "",
@@ -1494,28 +1468,28 @@ const ma = {
                   ]),
                   _: 1
                 }, 8, ["label"]),
-                _.oldName ? (b(), z(Y, {
+                _.oldName ? (b(), L(W, {
                   key: 0,
                   label: e(o)("tags.renameLabel")
                 }, {
                   default: l(() => [
-                    a(ee, {
+                    a(G, {
                       modelValue: _.newName,
-                      "onUpdate:modelValue": g[1] || (g[1] = (U) => _.newName = U),
+                      "onUpdate:modelValue": p[1] || (p[1] = (S) => _.newName = S),
                       maxlength: "100",
                       "show-word-limit": "",
                       placeholder: e(o)("tags.renamePlaceholder")
                     }, null, 8, ["modelValue", "placeholder"])
                   ]),
                   _: 1
-                }, 8, ["label"])) : W("", !0),
-                a(Y, {
+                }, 8, ["label"])) : J("", !0),
+                a(W, {
                   label: e(o)("tags.descLabel")
                 }, {
                   default: l(() => [
-                    a(ee, {
+                    a(G, {
                       modelValue: _.description,
-                      "onUpdate:modelValue": g[2] || (g[2] = (U) => _.description = U),
+                      "onUpdate:modelValue": p[2] || (p[2] = (S) => _.description = S),
                       type: "textarea",
                       rows: 3,
                       maxlength: "500",
@@ -1531,15 +1505,15 @@ const ma = {
           ]),
           _: 1
         }, 8, ["modelValue", "title", "width"]),
-        a(c, {
+        a(x, {
           modelValue: $.value,
-          "onUpdate:modelValue": g[7] || (g[7] = (U) => $.value = U),
+          "onUpdate:modelValue": p[7] || (p[7] = (S) => $.value = S),
           title: e(o)("tags.deleteTitle"),
-          width: e(D) ? "96%" : "480px"
+          width: e(z) ? "96%" : "480px"
         }, {
           footer: l(() => [
             a(k, {
-              onClick: g[6] || (g[6] = (U) => $.value = !1)
+              onClick: p[6] || (p[6] = (S) => $.value = !1)
             }, {
               default: l(() => [
                 v(d(e(o)("common.cancel")), 1)
@@ -1548,8 +1522,8 @@ const ma = {
             }),
             a(k, {
               type: "danger",
-              loading: S.value,
-              onClick: E
+              loading: P.value,
+              onClick: U
             }, {
               default: l(() => [
                 v(d(e(o)("common.delete")), 1)
@@ -1558,35 +1532,35 @@ const ma = {
             }, 8, ["loading"])
           ]),
           default: l(() => {
-            var U;
+            var S;
             return [
-              M("p", ga, [
+              E("p", va, [
                 v(d(e(o)("tags.deleteBefore")) + " ", 1),
                 a(I, null, {
                   default: l(() => {
-                    var H;
+                    var Q;
                     return [
-                      v(d((H = T.value) == null ? void 0 : H.name), 1)
+                      v(d((Q = T.value) == null ? void 0 : Q.name), 1)
                     ];
                   }),
                   _: 1
                 }),
                 v(" " + d(e(o)("tags.deleteMiddle")) + " ", 1),
-                M("b", null, d((U = T.value) == null ? void 0 : U.memory_count), 1),
+                E("b", null, d((S = T.value) == null ? void 0 : S.memory_count), 1),
                 v(" " + d(e(o)("tags.deleteAfter")), 1)
               ]),
-              a(fe, {
-                modelValue: V.value,
-                "onUpdate:modelValue": g[5] || (g[5] = (H) => V.value = H)
+              a(pe, {
+                modelValue: D.value,
+                "onUpdate:modelValue": p[5] || (p[5] = (Q) => D.value = Q)
               }, {
                 default: l(() => [
-                  a(G, { value: "detach" }, {
+                  a(c, { value: "detach" }, {
                     default: l(() => [
                       v(d(e(o)("tags.detach")), 1)
                     ]),
                     _: 1
                   }),
-                  a(G, { value: "purge" }, {
+                  a(c, { value: "purge" }, {
                     default: l(() => [
                       v(d(e(o)("tags.purge")), 1)
                     ]),
@@ -1602,40 +1576,40 @@ const ma = {
       ], 512);
     };
   }
-}), _a = /* @__PURE__ */ le(va, [["__scopeId", "data-v-db74fa31"]]);
-function ya(t) {
+}), ya = /* @__PURE__ */ oe(_a, [["__scopeId", "data-v-db74fa31"]]);
+function ba(t) {
   return t.get("/api/stats");
 }
-function ba(t) {
+function ha(t) {
   return t.get("/health");
 }
-function ha(t) {
+function wa(t) {
   return t.get("/api/doctor");
 }
-function wa(t) {
+function ka(t) {
   return t.getBlob("/api/export");
 }
-function ka(t, s) {
+function Ca(t, s) {
   return t.post("/api/import", s);
 }
-function Ca() {
-  const t = ie(), s = w({}), n = w(""), r = w({ ok: !0, issues: [] }), m = w(!1), p = w(!1), h = w(!1), i = w(!1), C = de(() => zt(s.value.file_size));
-  async function D() {
-    s.value = await ya(t), s.value.version = n.value;
+function Ta() {
+  const t = se(), s = w({}), n = w(""), r = w({ ok: !0, issues: [] }), u = w(!1), g = w(!1), h = w(!1), i = w(!1), C = re(() => Lt(s.value.file_size));
+  async function z() {
+    s.value = await ba(t), s.value.version = n.value;
   }
-  async function S() {
-    p.value = !0;
+  async function P() {
+    g.value = !0;
     try {
-      r.value = await ha(t), m.value = !0;
+      r.value = await wa(t), u.value = !0;
     } finally {
-      p.value = !1;
+      g.value = !1;
     }
   }
-  async function f() {
+  async function m() {
     h.value = !0;
     try {
-      const $ = await wa(t), V = URL.createObjectURL($), T = document.createElement("a");
-      T.href = V, T.download = "agent-memory-export.json", T.click(), URL.revokeObjectURL(V);
+      const $ = await ka(t), D = URL.createObjectURL($), T = document.createElement("a");
+      T.href = D, T.download = "agent-memory-export.json", T.click(), URL.revokeObjectURL(D);
     } finally {
       h.value = !1;
     }
@@ -1643,48 +1617,48 @@ function Ca() {
   async function _($) {
     i.value = !0;
     try {
-      const V = await $.text();
+      const D = await $.text();
       let T;
       try {
-        T = JSON.parse(V);
+        T = JSON.parse(D);
       } catch {
         throw new Error(o("errors.invalidBackup"));
       }
-      const L = await ka(t, T);
-      return await D(), L;
+      const N = await Ca(t, T);
+      return await z(), N;
     } finally {
       i.value = !1;
     }
   }
-  return ce(async () => {
+  return de(async () => {
     try {
-      n.value = (await ba(t)).version ?? "";
+      n.value = (await ha(t)).version ?? "";
     } catch {
     }
-    await D().catch(() => {
+    await z().catch(() => {
     });
   }), {
     stats: s,
     version: n,
     doctor: r,
-    doctorRan: m,
-    doctorLoading: p,
+    doctorRan: u,
+    doctorLoading: g,
     exporting: h,
     importing: i,
     sizeText: C,
-    reload: D,
-    runDoctor: S,
-    exportData: f,
+    reload: z,
+    runDoctor: P,
+    exportData: m,
     importFile: _
   };
 }
-const Ta = {
+const Sa = {
   key: 0,
   class: "am-panel-header"
-}, Sa = { class: "am-heading" }, Pa = { class: "am-panel-title" }, Ma = { class: "label-help" }, Ea = { class: "actions" }, Ua = { class: "card-header" }, Va = {
+}, Pa = { class: "am-heading" }, Ma = { class: "am-panel-title" }, Ea = { class: "label-help" }, Ua = { class: "actions" }, Da = { class: "card-header" }, $a = {
   key: 2,
   class: "issues"
-}, $a = /* @__PURE__ */ te({
+}, xa = /* @__PURE__ */ X({
   __name: "OpsPanel",
   props: {
     showHeader: { type: Boolean, default: !0 },
@@ -1695,47 +1669,47 @@ const Ta = {
     const s = t, {
       stats: n,
       version: r,
-      doctor: m,
-      doctorRan: p,
+      doctor: u,
+      doctorRan: g,
       doctorLoading: h,
       exporting: i,
       importing: C,
-      sizeText: D,
-      reload: S,
-      runDoctor: f,
+      sizeText: z,
+      reload: P,
+      runDoctor: m,
       exportData: _,
       importFile: $
-    } = Ca(), V = w(null), { compact: T } = Te(V), L = w(null);
-    function B(N) {
-      return N().catch((E) => A.error(E instanceof Error ? E.message : String(E)));
+    } = Ta(), D = w(null), { compact: T } = Ce(D), N = w(null);
+    function B(A) {
+      return A().catch((U) => R.error(U instanceof Error ? U.message : String(U)));
     }
-    function O(N) {
-      var g;
-      const E = N.target, y = (g = E.files) == null ? void 0 : g[0];
-      E.value = "", y && $(y).then((P) => {
-        A.success(o("ops.imported", { memories: P.imported_memories, tags: P.imported_tags }));
-      }).catch((P) => {
-        A.error(P instanceof Error ? P.message : String(P));
+    function F(A) {
+      var p;
+      const U = A.target, y = (p = U.files) == null ? void 0 : p[0];
+      U.value = "", y && $(y).then((M) => {
+        R.success(o("ops.imported", { memories: M.imported_memories, tags: M.imported_tags }));
+      }).catch((M) => {
+        R.error(M instanceof Error ? M.message : String(M));
       });
     }
-    return (N, E) => {
-      const y = me, g = ke, P = ue, R = ut, k = ct, I = dt, J = rt, Q = pt, ee = mt, Y = Ie, F = ft;
-      return b(), x("div", {
+    return (A, U) => {
+      const y = ue, p = we, M = ce, O = mt, k = ut, I = ct, j = dt, K = ft, G = pt, W = Ve, Z = gt;
+      return b(), V("div", {
         ref_key: "rootRef",
-        ref: V,
+        ref: D,
         class: "am-panel"
       }, [
-        t.showHeader ? (b(), x("div", Ta, [
-          M("div", Sa, [
-            M("h2", Pa, d(s.title ?? e(o)("ops.title")), 1),
-            a(g, {
+        t.showHeader ? (b(), V("div", Sa, [
+          E("div", Pa, [
+            E("h2", Ma, d(s.title ?? e(o)("ops.title")), 1),
+            a(p, {
               content: s.subtitle ?? e(o)("ops.subtitle"),
               placement: "top"
             }, {
               default: l(() => [
                 a(y, { class: "am-info" }, {
                   default: l(() => [
-                    a(e(ne))
+                    a(e(le))
                   ]),
                   _: 1
                 })
@@ -1743,17 +1717,17 @@ const Ta = {
               _: 1
             }, 8, ["content"])
           ]),
-          a(P, {
-            icon: e(kt),
-            onClick: E[0] || (E[0] = (c) => B(e(S)))
+          a(M, {
+            icon: e(Ct),
+            onClick: U[0] || (U[0] = (x) => B(e(P)))
           }, {
             default: l(() => [
               v(d(e(o)("ops.refresh")), 1)
             ]),
             _: 1
           }, 8, ["icon"])
-        ])) : W("", !0),
-        a(J, { gutter: 14 }, {
+        ])) : J("", !0),
+        a(j, { gutter: 14 }, {
           default: l(() => [
             a(I, {
               span: e(T) ? 12 : 6
@@ -1761,7 +1735,7 @@ const Ta = {
               default: l(() => [
                 a(k, { shadow: "never" }, {
                   default: l(() => [
-                    a(R, {
+                    a(O, {
                       title: e(o)("ops.statMemories"),
                       value: e(n).memories ?? 0
                     }, null, 8, ["title", "value"])
@@ -1777,7 +1751,7 @@ const Ta = {
               default: l(() => [
                 a(k, { shadow: "never" }, {
                   default: l(() => [
-                    a(R, {
+                    a(O, {
                       title: e(o)("ops.statTags"),
                       value: e(n).tags ?? 0
                     }, null, 8, ["title", "value"])
@@ -1793,9 +1767,9 @@ const Ta = {
               default: l(() => [
                 a(k, { shadow: "never" }, {
                   default: l(() => [
-                    a(R, {
+                    a(O, {
                       title: e(o)("ops.statSize"),
-                      value: e(D)
+                      value: e(z)
                     }, null, 8, ["title", "value"])
                   ]),
                   _: 1
@@ -1809,7 +1783,7 @@ const Ta = {
               default: l(() => [
                 a(k, { shadow: "never" }, {
                   default: l(() => [
-                    a(R, {
+                    a(O, {
                       title: e(o)("ops.statNextId"),
                       value: e(n).next_id ?? "—"
                     }, null, 8, ["title", "value"])
@@ -1827,12 +1801,12 @@ const Ta = {
             v(d(e(o)("ops.dbCard")), 1)
           ]),
           default: l(() => [
-            a(ee, {
+            a(G, {
               column: e(T) ? 1 : 2,
               border: ""
             }, {
               default: l(() => [
-                a(Q, {
+                a(K, {
                   label: e(o)("ops.path")
                 }, {
                   default: l(() => [
@@ -1840,29 +1814,29 @@ const Ta = {
                   ]),
                   _: 1
                 }, 8, ["label"]),
-                a(Q, {
+                a(K, {
                   label: e(o)("ops.lastUpdate")
                 }, {
                   default: l(() => [
                     v(d(e(n).newest_update ? e(o)("ops.lastUpdateValue", {
                       id: e(n).newest_update.id,
-                      time: e(se)(e(n).newest_update.updated_at)
+                      time: e(ne)(e(n).newest_update.updated_at)
                     }) : "—"), 1)
                   ]),
                   _: 1
                 }, 8, ["label"]),
-                a(Q, null, {
+                a(K, null, {
                   label: l(() => [
-                    M("span", Ma, [
+                    E("span", Ea, [
                       v(d(e(o)("ops.crossPlatform")) + " ", 1),
-                      a(g, {
+                      a(p, {
                         content: e(o)("ops.crossPlatformNote"),
                         placement: "top"
                       }, {
                         default: l(() => [
                           a(y, { class: "am-info" }, {
                             default: l(() => [
-                              a(e(ne))
+                              a(e(le))
                             ]),
                             _: 1
                           })
@@ -1876,7 +1850,7 @@ const Ta = {
                   ]),
                   _: 1
                 }),
-                a(Q, {
+                a(K, {
                   label: e(o)("ops.version")
                 }, {
                   default: l(() => [
@@ -1887,23 +1861,23 @@ const Ta = {
               ]),
               _: 1
             }, 8, ["column"]),
-            M("div", Ea, [
-              a(P, {
-                icon: e(Ct),
+            E("div", Ua, [
+              a(M, {
+                icon: e(Tt),
                 loading: e(i),
-                onClick: E[1] || (E[1] = (c) => B(e(_)))
+                onClick: U[1] || (U[1] = (x) => B(e(_)))
               }, {
                 default: l(() => [
                   v(d(e(o)("ops.export")), 1)
                 ]),
                 _: 1
               }, 8, ["icon", "loading"]),
-              a(P, {
-                icon: e(Tt),
+              a(M, {
+                icon: e(St),
                 loading: e(C),
-                onClick: E[2] || (E[2] = (c) => {
-                  var G;
-                  return (G = L.value) == null ? void 0 : G.click();
+                onClick: U[2] || (U[2] = (x) => {
+                  var c;
+                  return (c = N.value) == null ? void 0 : c.click();
                 })
               }, {
                 default: l(() => [
@@ -1911,27 +1885,27 @@ const Ta = {
                 ]),
                 _: 1
               }, 8, ["icon", "loading"]),
-              a(g, {
+              a(p, {
                 content: e(o)("ops.importHint"),
                 placement: "top"
               }, {
                 default: l(() => [
                   a(y, { class: "am-info" }, {
                     default: l(() => [
-                      a(e(ne))
+                      a(e(le))
                     ]),
                     _: 1
                   })
                 ]),
                 _: 1
               }, 8, ["content"]),
-              M("input", {
+              E("input", {
                 ref_key: "importInput",
-                ref: L,
+                ref: N,
                 type: "file",
                 accept: "application/json,.json",
                 style: { display: "none" },
-                onChange: O
+                onChange: F
               }, null, 544)
             ])
           ]),
@@ -1939,13 +1913,13 @@ const Ta = {
         }),
         a(k, { shadow: "never" }, {
           header: l(() => [
-            M("div", Ua, [
-              M("span", null, d(e(o)("ops.doctorCard")), 1),
-              a(P, {
+            E("div", Da, [
+              E("span", null, d(e(o)("ops.doctorCard")), 1),
+              a(M, {
                 size: "small",
-                icon: e(Be),
+                icon: e(Re),
                 loading: e(h),
-                onClick: E[3] || (E[3] = (c) => B(e(f)))
+                onClick: U[3] || (U[3] = (x) => B(e(m)))
               }, {
                 default: l(() => [
                   v(d(e(o)("ops.runDoctor")), 1)
@@ -1955,24 +1929,24 @@ const Ta = {
             ])
           ]),
           default: l(() => [
-            e(p) ? (b(), x(Z, { key: 0 }, [
-              e(m).ok ? (b(), z(Y, {
+            e(g) ? (b(), V(Y, { key: 0 }, [
+              e(u).ok ? (b(), L(W, {
                 key: 0,
                 title: e(o)("ops.doctorOk"),
                 type: "success",
                 "show-icon": "",
                 closable: !1
-              }, null, 8, ["title"])) : (b(), z(Y, {
+              }, null, 8, ["title"])) : (b(), L(W, {
                 key: 1,
-                title: e(o)("ops.doctorFail", { count: e(m).issues.length }),
+                title: e(o)("ops.doctorFail", { count: e(u).issues.length }),
                 type: "error",
                 "show-icon": "",
                 closable: !1
               }, null, 8, ["title"])),
-              e(m).ok ? W("", !0) : (b(), x("ul", Va, [
-                (b(!0), x(Z, null, ae(e(m).issues, (c, G) => (b(), x("li", { key: G }, d(c), 1))), 128))
+              e(u).ok ? J("", !0) : (b(), V("ul", $a, [
+                (b(!0), V(Y, null, te(e(u).issues, (x, c) => (b(), V("li", { key: c }, d(x), 1))), 128))
               ]))
-            ], 64)) : (b(), z(F, {
+            ], 64)) : (b(), L(Z, {
               key: 1,
               description: e(o)("ops.doctorEmpty"),
               "image-size": 60
@@ -1983,7 +1957,7 @@ const Ta = {
       ], 512);
     };
   }
-}), Da = /* @__PURE__ */ le($a, [["__scopeId", "data-v-a8956eae"]]), xa = { class: "memory-ui" }, za = { class: "brand" }, Ia = { class: "brand-mark" }, La = { class: "aside-footer" }, Na = /* @__PURE__ */ te({
+}), za = /* @__PURE__ */ oe(xa, [["__scopeId", "data-v-a8956eae"]]), Va = { class: "memory-ui" }, La = { class: "brand" }, Ia = { class: "brand-mark" }, Na = { class: "aside-footer" }, Aa = /* @__PURE__ */ X({
   __name: "MemoryAdmin",
   props: {
     layout: { default: "sidebar" },
@@ -1992,26 +1966,26 @@ const Ta = {
   setup(t) {
     const s = w("memories");
     return (n, r) => {
-      const m = me, p = yt, h = _t, i = vt, C = wt, D = ht, S = bt, f = gt;
-      return b(), x("div", xa, [
-        a(f, { class: "layout" }, {
+      const u = ue, g = bt, h = yt, i = _t, C = kt, z = wt, P = ht, m = vt;
+      return b(), V("div", Va, [
+        a(m, { class: "layout" }, {
           default: l(() => [
-            t.layout === "sidebar" ? (b(), z(i, {
+            t.layout === "sidebar" ? (b(), L(i, {
               key: 0,
               width: "200px",
               class: "aside"
             }, {
               default: l(() => [
-                M("div", za, [
-                  M("span", Ia, [
-                    a(m, { size: 16 }, {
+                E("div", La, [
+                  E("span", Ia, [
+                    a(u, { size: 16 }, {
                       default: l(() => [
-                        a(e(St))
+                        a(e(Pt))
                       ]),
                       _: 1
                     })
                   ]),
-                  M("span", null, d(t.title), 1)
+                  E("span", null, d(t.title), 1)
                 ]),
                 a(h, {
                   "default-active": s.value,
@@ -2019,54 +1993,54 @@ const Ta = {
                   onSelect: r[0] || (r[0] = (_) => s.value = _)
                 }, {
                   default: l(() => [
-                    a(p, { index: "memories" }, {
+                    a(g, { index: "memories" }, {
                       default: l(() => [
-                        a(m, null, {
-                          default: l(() => [
-                            a(e(Pt))
-                          ]),
-                          _: 1
-                        }),
-                        M("span", null, d(e(o)("nav.memories")), 1)
-                      ]),
-                      _: 1
-                    }),
-                    a(p, { index: "tags" }, {
-                      default: l(() => [
-                        a(m, null, {
+                        a(u, null, {
                           default: l(() => [
                             a(e(Mt))
                           ]),
                           _: 1
                         }),
-                        M("span", null, d(e(o)("nav.tags")), 1)
+                        E("span", null, d(e(o)("nav.memories")), 1)
                       ]),
                       _: 1
                     }),
-                    a(p, { index: "ops" }, {
+                    a(g, { index: "tags" }, {
                       default: l(() => [
-                        a(m, null, {
+                        a(u, null, {
                           default: l(() => [
                             a(e(Et))
                           ]),
                           _: 1
                         }),
-                        M("span", null, d(e(o)("nav.ops")), 1)
+                        E("span", null, d(e(o)("nav.tags")), 1)
+                      ]),
+                      _: 1
+                    }),
+                    a(g, { index: "ops" }, {
+                      default: l(() => [
+                        a(u, null, {
+                          default: l(() => [
+                            a(e(Ut))
+                          ]),
+                          _: 1
+                        }),
+                        E("span", null, d(e(o)("nav.ops")), 1)
                       ]),
                       _: 1
                     })
                   ]),
                   _: 1
                 }, 8, ["default-active"]),
-                M("div", La, [
-                  at(n.$slots, "footer", {}, void 0, !0)
+                E("div", Na, [
+                  ot(n.$slots, "footer", {}, void 0, !0)
                 ])
               ]),
               _: 3
-            })) : W("", !0),
-            a(S, { class: "main" }, {
+            })) : J("", !0),
+            a(P, { class: "main" }, {
               default: l(() => [
-                t.layout === "tabs" ? (b(), z(D, {
+                t.layout === "tabs" ? (b(), L(z, {
                   key: 0,
                   modelValue: s.value,
                   "onUpdate:modelValue": r[1] || (r[1] = (_) => s.value = _),
@@ -2087,15 +2061,15 @@ const Ta = {
                     }, null, 8, ["label"])
                   ]),
                   _: 1
-                }, 8, ["modelValue"])) : W("", !0),
-                oe(a(ca, null, null, 512), [
-                  [ve, s.value === "memories"]
+                }, 8, ["modelValue"])) : J("", !0),
+                ae(a(ua, null, null, 512), [
+                  [ge, s.value === "memories"]
                 ]),
-                oe(a(_a, null, null, 512), [
-                  [ve, s.value === "tags"]
+                ae(a(ya, null, null, 512), [
+                  [ge, s.value === "tags"]
                 ]),
-                oe(a(Da, null, null, 512), [
-                  [ve, s.value === "ops"]
+                ae(a(za, null, null, 512), [
+                  [ge, s.value === "ops"]
                 ])
               ]),
               _: 1
@@ -2106,32 +2080,32 @@ const Ta = {
       ]);
     };
   }
-}), Ka = /* @__PURE__ */ le(Na, [["__scopeId", "data-v-6f56cb0b"]]);
+}), Wa = /* @__PURE__ */ oe(Aa, [["__scopeId", "data-v-6f56cb0b"]]);
 export {
-  Qe as MarkdownView,
-  ca as MemoriesPanel,
-  Ka as MemoryAdmin,
-  ea as MemoryDetailDrawer,
-  Wt as MemoryEditorDialog,
-  qe as MemoryUIConfigKey,
-  Da as OpsPanel,
-  _a as TagsPanel,
-  xt as applyMemoryUILocalePreference,
-  Lt as buildMemoriesQuery,
+  We as MarkdownView,
+  ua as MemoriesPanel,
+  Wa as MemoryAdmin,
+  ta as MemoryDetailDrawer,
+  Qt as MemoryEditorDialog,
+  He as MemoryUIConfigKey,
+  za as OpsPanel,
+  ya as TagsPanel,
+  Vt as applyMemoryUILocalePreference,
+  Nt as buildMemoriesQuery,
   It as createApiClient,
-  ja as currentMemoryUILocale,
-  zt as formatSize,
-  se as formatTime,
-  _e as isSearchMode,
-  pe as memoryUIi18n,
-  Ja as provideMemoryUI,
-  At as renderMarkdown,
-  Rt as sanitizeHtml,
-  Dt as setMemoryUILocale,
+  Ja as currentMemoryUILocale,
+  Lt as formatSize,
+  ne as formatTime,
+  ve as isSearchMode,
+  me as memoryUIi18n,
+  Ka as provideMemoryUI,
+  Rt as renderMarkdown,
+  Ot as sanitizeHtml,
+  zt as setMemoryUILocale,
   o as t,
-  ie as useApiClient,
-  qt as useMemories,
-  je as useMemoryConfig,
-  Ca as useOps,
-  ua as useTags
+  se as useApiClient,
+  jt as useMemories,
+  qe as useMemoryConfig,
+  Ta as useOps,
+  ma as useTags
 };

@@ -33,14 +33,6 @@
       >
         <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
       </el-select>
-      <el-select v-model="sort" class="sort" @change="run(reload)">
-        <el-option :label="t('memories.sortUpdated')" value="updated_at" />
-        <el-option :label="t('memories.sortCreated')" value="created_at" />
-      </el-select>
-      <el-select v-model="order" class="order" @change="run(reload)">
-        <el-option :label="t('memories.orderDesc')" value="desc" />
-        <el-option :label="t('memories.orderAsc')" value="asc" />
-      </el-select>
     </div>
 
     <el-alert v-if="note" :title="note" type="info" show-icon :closable="false" />
@@ -72,8 +64,14 @@
       </el-table-column>
     </el-table>
 
-    <!-- 列表模式 -->
-    <el-table v-else :data="rows" v-loading="loading">
+    <!-- 列表模式：创建/更新时间列点击表头排序（惯例：当前序列头右侧显示方向，点击切换） -->
+    <el-table
+      v-else
+      :data="rows"
+      v-loading="loading"
+      :default-sort="{ prop: sort, order: order === 'asc' ? 'ascending' : 'descending' }"
+      @sort-change="onSortChange"
+    >
       <el-table-column prop="id" :label="t('memories.colId')" width="80" />
       <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="300" show-overflow-tooltip />
       <el-table-column :label="t('memories.colTags')" width="220">
@@ -81,10 +79,16 @@
           <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column v-if="!compact" prop="created_at" :label="t('memories.colCreatedAt')" width="170">
+      <el-table-column
+        v-if="!compact"
+        prop="created_at"
+        :label="t('memories.colCreatedAt')"
+        width="170"
+        sortable="custom"
+      >
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column :label="t('memories.colUpdatedAt')" width="170">
+      <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="170" sortable="custom">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
       <el-table-column :label="t('memories.colActions')" width="190" fixed="right">
@@ -211,6 +215,18 @@ function onSaved() {
   loadTagOptions()
 }
 
+/** 表头排序：点击列头切换升降序，第三次点击取消并回到默认（最近更新在前）。 */
+function onSortChange({ prop, order }: { prop: string; order: 'ascending' | 'descending' | null }) {
+  if (order && (prop === 'updated_at' || prop === 'created_at')) {
+    sort.value = prop
+    order.value = order === 'ascending' ? 'asc' : 'desc'
+  } else {
+    sort.value = 'updated_at'
+    order.value = 'desc'
+  }
+  run(reload)
+}
+
 async function remove(row: MemorySummary) {
   try {
     await ElMessageBox.confirm(t('memories.deleteConfirm', { id: row.id }), t('memories.deleteTitle'), {
@@ -235,9 +251,5 @@ async function remove(row: MemorySummary) {
 }
 .tag-filter {
   width: 160px;
-}
-.sort,
-.order {
-  width: 130px;
 }
 </style>

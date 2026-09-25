@@ -18,10 +18,6 @@ declare const _default: {
         create: string;
         searchPlaceholder: string;
         tagFilter: string;
-        sortUpdated: string;
-        sortCreated: string;
-        orderDesc: string;
-        orderAsc: string;
         colId: string;
         colSummary: string;
         colTags: string;
@@ -160,7 +156,12 @@ declare const _default: {
         saved: string;
         settingsTitle: string;
         settingsHint: string;
-        settingsPlaceholder: string;
+        instructionsLabel: string;
+        instructionsPlaceholder: string;
+        conventionsLabel: string;
+        conventionsPlaceholder: string;
+        restoreDefault: string;
+        viewDefault: string;
         empty: string;
     };
 };

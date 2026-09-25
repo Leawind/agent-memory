@@ -22,10 +22,6 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             create: string;
             searchPlaceholder: string;
             tagFilter: string;
-            sortUpdated: string;
-            sortCreated: string;
-            orderDesc: string;
-            orderAsc: string;
             colId: string;
             colSummary: string;
             colTags: string;
@@ -164,7 +160,12 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             saved: string;
             settingsTitle: string;
             settingsHint: string;
-            settingsPlaceholder: string;
+            instructionsLabel: string;
+            instructionsPlaceholder: string;
+            conventionsLabel: string;
+            conventionsPlaceholder: string;
+            restoreDefault: string;
+            viewDefault: string;
             empty: string;
         };
     };
@@ -188,10 +189,6 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             create: string;
             searchPlaceholder: string;
             tagFilter: string;
-            sortUpdated: string;
-            sortCreated: string;
-            orderDesc: string;
-            orderAsc: string;
             colId: string;
             colSummary: string;
             colTags: string;
@@ -330,7 +327,12 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             saved: string;
             settingsTitle: string;
             settingsHint: string;
-            settingsPlaceholder: string;
+            instructionsLabel: string;
+            instructionsPlaceholder: string;
+            conventionsLabel: string;
+            conventionsPlaceholder: string;
+            restoreDefault: string;
+            viewDefault: string;
             empty: string;
         };
     };
@@ -357,10 +359,6 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             create: string;
             searchPlaceholder: string;
             tagFilter: string;
-            sortUpdated: string;
-            sortCreated: string;
-            orderDesc: string;
-            orderAsc: string;
             colId: string;
             colSummary: string;
             colTags: string;
@@ -499,7 +497,12 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             saved: string;
             settingsTitle: string;
             settingsHint: string;
-            settingsPlaceholder: string;
+            instructionsLabel: string;
+            instructionsPlaceholder: string;
+            conventionsLabel: string;
+            conventionsPlaceholder: string;
+            restoreDefault: string;
+            viewDefault: string;
             empty: string;
         };
     };
@@ -523,10 +526,6 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             create: string;
             searchPlaceholder: string;
             tagFilter: string;
-            sortUpdated: string;
-            sortCreated: string;
-            orderDesc: string;
-            orderAsc: string;
             colId: string;
             colSummary: string;
             colTags: string;
@@ -665,13 +664,18 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             saved: string;
             settingsTitle: string;
             settingsHint: string;
-            settingsPlaceholder: string;
+            instructionsLabel: string;
+            instructionsPlaceholder: string;
+            conventionsLabel: string;
+            conventionsPlaceholder: string;
+            restoreDefault: string;
+            viewDefault: string;
             empty: string;
         };
     };
 }, "zh" | "en", import('@intlify/core-base').RemoveIndexSignature<{
     [x: string]: import('vue-i18n').LocaleMessageValue<import('vue-i18n').VueMessageType>;
-}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.sortUpdated" | "memories.sortCreated" | "memories.orderDesc" | "memories.orderAsc" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformYes" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.settingsTitle" | "access.settingsHint" | "access.settingsPlaceholder" | "access.empty", "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.sortUpdated" | "memories.sortCreated" | "memories.orderDesc" | "memories.orderAsc" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformYes" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.settingsTitle" | "access.settingsHint" | "access.settingsPlaceholder" | "access.empty">;
+}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformYes" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.settingsTitle" | "access.settingsHint" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.restoreDefault" | "access.viewDefault" | "access.empty", "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformYes" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.settingsTitle" | "access.settingsHint" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.restoreDefault" | "access.viewDefault" | "access.empty">;
 export declare function setMemoryUILocale(locale: MemoryUILocale): void;
 /** 应用 locale 偏好；'auto' 表示跟随浏览器语言 */
 export declare function applyMemoryUILocalePreference(preference: MemoryUILocaleOption): void;

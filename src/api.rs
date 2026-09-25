@@ -151,9 +151,24 @@ pub fn handle(
             ("GET", ["settings"]) => {
                 ctx.require(Cap::Admin)?;
                 db_tx(db_path, tx_mode, |st| {
-                    st.settings_get("instructions")
-                        .map_err(ToolError::from)
-                        .map(|v| (200, json!({ "instructions": v })))
+                    // 空字符串归一为 null：语义是"未设置（走默认）"，UI 显示占位符
+                    let instructions = st
+                        .settings_get("instructions")
+                        .map_err(ToolError::from)?
+                        .filter(|s| !s.is_empty());
+                    let conventions = st
+                        .settings_get("conventions")
+                        .map_err(ToolError::from)?
+                        .filter(|s| !s.is_empty());
+                    Ok((
+                        200,
+                        json!({
+                            "instructions": instructions,
+                            "conventions": conventions,
+                            // 内置默认提示词：UI 展示"恢复默认"的目标
+                            "default_instructions": tools::INSTRUCTIONS,
+                        }),
+                    ))
                 })
             }
             ("PUT", ["settings"]) => {
@@ -162,20 +177,42 @@ pub fn handle(
                     Ok(m) => m,
                     Err(e) => return Ok(bad_request(e)),
                 };
-                let Some(instructions) = args.get("instructions").and_then(Value::as_str) else {
+                for key in args.keys() {
+                    if key != "instructions" && key != "conventions" {
+                        return Ok(bad_request(ToolError::invalid(format!(
+                            "unknown settings key '{key}' (valid: instructions, conventions)"
+                        ))));
+                    }
+                }
+                let mut updates: Vec<(&str, String)> = Vec::new();
+                for key in ["instructions", "conventions"] {
+                    match args.get(key) {
+                        None => continue, // 省略 = 不改动该项
+                        Some(Value::String(s)) => {
+                            if s.chars().count() > MAX_INSTRUCTIONS_CHARS {
+                                return Ok(bad_request(ToolError::invalid(format!(
+                                    "{key} is too long (max {MAX_INSTRUCTIONS_CHARS} characters)"
+                                ))));
+                            }
+                            updates.push((key, s.clone()));
+                        }
+                        Some(_) => {
+                            return Ok(bad_request(ToolError::invalid(format!(
+                                "{key} must be a string"
+                            ))))
+                        }
+                    }
+                }
+                if updates.is_empty() {
                     return Ok(bad_request(ToolError::invalid(
-                        "missing required argument: instructions (string)",
+                        "nothing to update: provide instructions and/or conventions",
                     )));
-                };
-                if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-                    return Ok(bad_request(ToolError::invalid(format!(
-                        "instructions is too long (max {MAX_INSTRUCTIONS_CHARS} characters)"
-                    ))));
                 }
                 db_tx(db_path, TxMode::Write, |st| {
-                    st.settings_put("instructions", instructions)
-                        .map_err(ToolError::from)
-                        .map(|_| (200, json!({ "saved": true })))
+                    for (key, value) in &updates {
+                        st.settings_put(key, value).map_err(ToolError::from)?;
+                    }
+                    Ok((200, json!({ "saved": true })))
                 })
             }
             ("GET", ["tags"]) => db_tx(db_path, tx_mode, |st| {
@@ -602,14 +639,45 @@ mod tests {
         );
         assert_eq!(status, 404);
 
-        // 设置：写入 → 读回；空值也合法（回退默认）
-        let settings_body =
-            serde_json::to_vec(&json!({ "instructions": "团队共享库规范" })).unwrap();
+        // 设置：写入（基础 + 附加规范）→ 读回；未知键拒绝；空值也合法（回退默认）
+        let settings_body = serde_json::to_vec(
+            &json!({ "instructions": "团队共享库规范", "conventions": "标签小写" }),
+        )
+        .unwrap();
         let (status, v) = handle(&db, &open_ctx(), "PUT", "/api/settings", "", &settings_body);
         assert_eq!(status, 200, "{v}");
         let (status, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
         assert_eq!(status, 200);
         assert_eq!(v["instructions"], "团队共享库规范");
+        assert_eq!(v["conventions"], "标签小写");
+        assert!(
+            v["default_instructions"].as_str().unwrap().len() > 50,
+            "GET must carry the built-in default for the UI's restore action"
+        );
+        // 未知键拒绝
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"nope": "x"}"#,
+        );
+        assert_eq!(status, 400);
+        // 恢复默认 = 写空字符串
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"instructions": ""}"#,
+        );
+        assert_eq!(status, 200);
+        let (status, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(status, 200);
+        assert_eq!(v["instructions"], json!(null));
+        assert_eq!(v["conventions"], "标签小写");
 
         // 删除 → 再删 404
         let (status, _) = handle(&db, &open_ctx(), "DELETE", "/api/identities/alice", "", &[]);

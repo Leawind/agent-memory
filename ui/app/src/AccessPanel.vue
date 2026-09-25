@@ -68,7 +68,44 @@
       <el-card shadow="never" class="block">
         <template #header>{{ t('access.settingsTitle') }}</template>
         <p class="hint">{{ t('access.settingsHint') }}</p>
-        <el-input v-model="instructions" type="textarea" :rows="6" :placeholder="t('access.settingsPlaceholder')" />
+        <el-form label-position="top" @submit.prevent>
+          <el-form-item>
+            <template #label>
+              <div class="field-label">
+                <span>{{ t('access.instructionsLabel') }}</span>
+                <el-button link type="primary" @click="restoreInstructions">
+                  {{ t('access.restoreDefault') }}
+                </el-button>
+              </div>
+            </template>
+            <el-input
+              v-model="instructions"
+              type="textarea"
+              :rows="5"
+              :placeholder="t('access.instructionsPlaceholder')"
+            />
+            <details v-if="instructions" class="default-view">
+              <summary>{{ t('access.viewDefault') }}</summary>
+              <pre class="default-text">{{ defaultInstructions }}</pre>
+            </details>
+          </el-form-item>
+          <el-form-item>
+            <template #label>
+              <div class="field-label">
+                <span>{{ t('access.conventionsLabel') }}</span>
+                <el-button link type="primary" @click="restoreConventions">
+                  {{ t('access.restoreDefault') }}
+                </el-button>
+              </div>
+            </template>
+            <el-input
+              v-model="conventions"
+              type="textarea"
+              :rows="4"
+              :placeholder="t('access.conventionsPlaceholder')"
+            />
+          </el-form-item>
+        </el-form>
         <div class="save-row">
           <el-button type="primary" :loading="savingSettings" @click="saveSettings">
             {{ t('common.save') }}
@@ -143,7 +180,7 @@ const props = defineProps<{ who: WhoAmI | null }>()
 
 const api = useApiClient()
 
-// 六项能力：key 与服务端 auth::Cap 的 JSON 键一致（唯一登记表）
+// 能力清单：key 与服务端 auth::Cap 的 JSON 键一致（唯一登记表）
 const CAPS = [
   { key: 'read', labelKey: 'capRead' },
   { key: 'create', labelKey: 'capCreate' },
@@ -162,6 +199,8 @@ interface IdentityRow {
 
 const identities = ref<IdentityRow[]>([])
 const instructions = ref('')
+const conventions = ref('')
+const defaultInstructions = ref('')
 const savingSettings = ref(false)
 
 const isAdmin = computed(() => can(props.who, 'admin'))
@@ -181,10 +220,16 @@ async function load(): Promise<void> {
   await run(async () => {
     const [list, settings] = await Promise.all([
       api.get<{ identities?: IdentityRow[] }>('/api/identities'),
-      api.get<{ instructions?: string | null }>('/api/settings'),
+      api.get<{
+        instructions?: string | null
+        conventions?: string | null
+        default_instructions?: string | null
+      }>('/api/settings'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
     instructions.value = settings?.instructions ?? ''
+    conventions.value = settings?.conventions ?? ''
+    defaultInstructions.value = settings?.default_instructions ?? ''
   })
 }
 
@@ -285,11 +330,24 @@ async function askDelete(row: IdentityRow): Promise<void> {
   await load()
 }
 
-// ---- 设置 ----
+// ---- 设置：恢复默认 = 清空字段（服务端对空值回退内置文案），保存时一并提交 ----
+function restoreInstructions(): void {
+  instructions.value = ''
+}
+
+function restoreConventions(): void {
+  conventions.value = ''
+}
+
 async function saveSettings(): Promise<void> {
   savingSettings.value = true
   try {
-    await run(() => api.put('/api/settings', { instructions: instructions.value }))
+    await run(() =>
+      api.put('/api/settings', {
+        instructions: instructions.value,
+        conventions: conventions.value,
+      }),
+    )
     ElMessage.success(t('access.saved'))
   } finally {
     savingSettings.value = false
@@ -368,6 +426,34 @@ async function copyToken(token: string): Promise<void> {
   margin: 0 0 10px;
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+.field-label {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.default-view {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.default-view summary {
+  cursor: pointer;
+  user-select: none;
+}
+.default-text {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 220px;
+  overflow: auto;
 }
 .save-row {
   margin-top: 12px;

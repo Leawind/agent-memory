@@ -45,7 +45,9 @@ describe('AccessPanel', () => {
           )
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(jsonResponse({ instructions: 'team rules' }))
+          return Promise.resolve(
+            jsonResponse({ instructions: 'team rules', conventions: null, default_instructions: 'built-in default' }),
+          )
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -59,8 +61,12 @@ describe('AccessPanel', () => {
     expect(html).toContain('bob')
     expect(html).toContain('aaaaaa')
     // textarea 的值是 DOM property，不在 innerHTML 里
-    const textarea = wrapper.find('textarea').element as HTMLTextAreaElement
-    expect(textarea.value).toBe('team rules')
+    const textareas = wrapper.findAll('textarea')
+    expect(textareas.length).toBe(2)
+    expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
+    expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
+    // 两个提示词字段各带一个"恢复默认"
+    expect(html.split('恢复默认').length - 1).toBe(2)
     expect(html).toContain('新建身份')
     wrapper.unmount()
   })

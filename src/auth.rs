@@ -12,7 +12,7 @@ use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
-/// 六项能力；`as_str` 同时是 permissions JSON 的键名。
+/// 能力集合；`as_str` 同时是 permissions JSON 的键名。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Cap {
     Read,

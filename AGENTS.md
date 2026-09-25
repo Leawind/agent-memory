@@ -30,13 +30,13 @@ src/
                  全部命令行参数，无配置文件
   http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限；
                  Bearer 鉴权拦截（resolve_identity，fail-closed）与 --auth 引导（空表建管理员、token 打印 stderr）
-  auth.rs        身份与能力模型：Cap 六项能力登记表（唯一权威）、Permissions JSON 严格校验、
+  auth.rs        身份与能力模型：Cap 能力登记表（唯一权威）、Permissions JSON 严格校验、
                  IdentityCtx（require/can/summary）；开放模式 = 全能力
   api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400/403 映射（业务逻辑不在此层）；
                  例外：identities/settings 端点走专用 handler（agent 工具面不暴露权限管理）
   protocol.rs    MCP 协议层：initialize / ping / tools/list / tools/call，通知不回包，批量消息；
                  工具结果文本通道必须是紧凑 JSON，structuredContent 按协商版本（2025-06-18 起）附带；
-                 initialize 回传自定义提示词（settings.instructions，缺省内置）+ 调用者身份行
+                 initialize 回传自定义提示词（instructions 非空覆盖内置默认 + conventions 非空追加）+ 调用者身份行
   tools/mod.rs   工具入口：execute_with_db（单事务），分发，未知参数校验（从 schema 派生），
                  入口集中执行 ctx.require(defs::required_cap(name)) 权限守卫
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap

@@ -102,16 +102,30 @@ fn handle_single(
     }
 }
 
-/// 生效的 initialize 提示词：settings 里的自定义值优先，空值/读取失败
-/// 回退内置默认（自定义是运营者精心准备的文案，损坏时宁可回退不可报错）。
+/// 生效的 initialize 提示词：`instructions` 非空时覆盖内置默认，`conventions`
+/// 非空时追加为第二段（提交规范等运营者约定）。读取失败或值损坏一律回退，
+/// 绝不阻塞 initialize。
 fn effective_instructions(store_path: &Path) -> String {
-    store::with_db_in(store_path, store::TxMode::ReadOnly, |st| {
-        st.settings_get("instructions")
-    })
+    let (base, extra) = store::with_db_in(
+        store_path,
+        store::TxMode::ReadOnly,
+        |st| -> Result<(Option<String>, Option<String>), String> {
+            Ok((
+                st.settings_get("instructions")?,
+                st.settings_get("conventions")?,
+            ))
+        },
+    )
     .ok()
-    .flatten()
-    .filter(|s| !s.trim().is_empty())
-    .unwrap_or_else(|| tools::INSTRUCTIONS.to_string())
+    .unwrap_or((None, None));
+    let base = match base {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => tools::INSTRUCTIONS.to_string(),
+    };
+    match extra {
+        Some(e) if !e.trim().is_empty() => format!("{base}\n\n{e}"),
+        _ => base,
+    }
 }
 
 fn initialize_result(params: &Value, instructions: String) -> Value {
@@ -228,9 +242,11 @@ mod tests {
     fn initialize_carries_custom_instructions_and_identity_line() {
         let store = temp_db("instructions");
 
-        // 写入自定义提示词 + 一个身份，然后用该身份的 token 上下文 initialize
+        // 写入自定义提示词（基础覆盖 + 附加规范）+ 一个身份，然后用该身份的
+        // token 上下文 initialize
         store::with_db_in(&store, store::TxMode::Write, |st| -> Result<(), String> {
             st.settings_put("instructions", "这是团队共享记忆库，提交前先检索。")?;
+            st.settings_put("conventions", "提交规范：摘要一行，标签用小写。")?;
             st.identity_create("alice", &crate::auth::Permissions::all())?;
             Ok(())
         })
@@ -262,13 +278,44 @@ mod tests {
             instructions.contains("团队共享记忆库"),
             "got: {instructions}"
         );
+        // 附加规范紧跟基础提示词之后（中间恰好一个空行），身份行在最后
         assert!(
-            instructions.contains("Caller identity: alice"),
-            "identity line must be appended: {instructions}"
+            instructions.contains(
+                "这是团队共享记忆库，提交前先检索。\n\n提交规范：摘要一行，标签用小写。\n\nCaller identity: alice"
+            ),
+            "sections must compose in order: {instructions}"
         );
         assert!(
             instructions.contains("admin"),
             "permissions listed: {instructions}"
+        );
+
+        // 仅写附加规范：基础回退内置默认，附加段仍追加
+        let extra_only = temp_db("instructions-extra");
+        store::with_db_in(
+            &extra_only,
+            store::TxMode::Write,
+            |st| -> Result<(), String> {
+                st.settings_put("conventions", "extra rules")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        let resp = handle_message(
+            &extra_only,
+            &IdentityCtx::open_mode(),
+            None,
+            &serde_json::from_str::<Value>(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let instructions = resp["result"]["instructions"].as_str().unwrap();
+        assert!(
+            instructions.starts_with(tools::INSTRUCTIONS)
+                && instructions.contains("\n\nextra rules\n\n"),
+            "default base + extra: {instructions}"
         );
 
         // 未自定义时回退内置默认；开放模式带 open-mode 身份行
@@ -289,6 +336,7 @@ mod tests {
             tools::INSTRUCTIONS.to_string() + "\n\n" + &IdentityCtx::open_mode().describe_line()
         );
         cleanup(&store);
+        cleanup(&extra_only);
         cleanup(&fresh);
     }
 

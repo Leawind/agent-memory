@@ -144,3 +144,23 @@ html.dark {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/*
+ * 控件惯例修正（主题层职责：上面的 8/10px 大圆角是给卡片/胶囊的）：
+ * 多选框必须是方形——14px 的勾选框套 8px 小圆角会近乎圆形；
+ * 按钮文本在水平/垂直方向都显式居中，不依赖组件库默认值。
+ */
+.el-checkbox__inner {
+  border-radius: 2px;
+}
+.el-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.el-button > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
