@@ -1,28 +1,15 @@
 # Changelog
 
-## 0.3.0 (2026-09-25)
+## 0.1.0 (2026-09-25)
 
-- 新增：`doctor` CLI 子命令——只读数据体检（孤儿标签引用、大小写冲突标签组、空摘要/正文），发现问题时退出码为 1，便于脚本化巡检
-- 新增：`tag_create` 在存在仅大小写不同的既有标签时返回 `similar_existing` 与 `note`（非阻塞），引导 agent 保持分类体系整洁
-- 新增：`Store::hygiene_issues()` 体检逻辑与单元测试
-- CI：新增 MSRV job，在 Rust 1.82 上执行 `cargo check`，校验 `rust-version` 声明真实可用；test/clippy 改用 `--locked` 确保 Cargo.lock 一致
-- 新增：真并发多进程写入竞态端到端测试（两个进程同时争抢文件锁，断言零丢失）；性能包络实测并写入 README（千条记忆时单次创建 ~17ms）
-- 加固：工具清单与分发的同步性测试、仅大小写改名的回归测试（similar_existing 提示的指定修复路径）、`memory_update` 同调用增删顺序写入 schema 说明
+首个发布版本。
 
-## 0.2.0 (2026-09-25)
-
-- 新增：`memory_create` 响应携带 `duplicate_of` —— 摘要归一化后与既有记忆相同时列出其 id，引导改用 `memory_update` 而非重复存储
-- 新增：CLI 只读运维子命令 `stats`（数据概况）与 `export <file>`（可读 JSON 备份，拒绝覆盖已有文件）
-- 新增：`AGENT_MEMORY_LOCK_WAIT_MS` 环境变量，可配置存储锁等待上限（默认 5000ms，最大 60000ms）
-- 新增：`memory_search` 支持 `offset` 翻页；`memory_list` 对"标签存在但无记忆"给出提示
-- 改进：未知参数名立刻报错并列出合法参数（合法名从 JSON Schema 的 properties 派生，契约与校验不会失同步）
-- 修复：带 id 但缺 `method` 的请求现在返回 JSON-RPC -32600（原先被静默丢弃，客户端会挂起等待）；`params: null` 归一化为空对象；批量消息中的非对象成员逐个回 -32600
-- 改进：`memory_get` 存在缺失 id 时附带引导提示（指向 memory_list / memory_search）
-- 重构：模块拆分——`model.rs`（纯数据模型）+ `store.rs`（持久化）+ `tools/{defs,params,tag_ops,memory_ops}`（工具层），降低单文件复杂度
-- 质量：36 个测试（31 单元 + 5 端到端，协议层新增进程内单元测试含对抗性输入）、clippy 零告警、rustfmt 统一格式
-
-## 0.1.0 (2026-09-24)
-
-- 首发：10 个 MCP 工具（标签增删查改、记忆增删改查、渐进式披露访问、关键词搜索）
-- 单文件 JSON 存储：原子写入 + `.bak` 备份 + 损坏自动回退 + 跨进程文件锁
-- stdio MCP 传输，协议版本支持 2024-11-05 / 2025-03-26 / 2025-06-18
+- **定位**：自托管 MCP 记忆服务器，多个 agent（不同项目/会话/机器）通过同一 URL 共享一个记忆库，内置 Vue3 Web 管理界面
+- **传输**：纯 HTTP——agent 走 MCP Streamable HTTP（`POST /mcp`，无状态 JSON 模式，协议版本 2024-11-05 / 2025-03-26 / 2025-06-18；非 JSON Content-Type 按规范回 415），人走浏览器（`/`）；`GET /health` 探活；Origin 校验防 DNS rebinding；已与官方 TypeScript SDK（`@modelcontextprotocol/sdk`）联调通过，兼容性脚本见 `scripts/`
+- **存储**：单文件 SQLite（rusqlite bundled，WAL + busy_timeout + synchronous=NORMAL），`tags` / `memories` / `memory_tags` 三表外键级联（改名同步引用、删标签摘引用/连带删记忆）；事务读写分离——只读请求走 DEFERRED 快照（由工具契约的 readOnlyHint 派生），写请求走 IMMEDIATE 写锁，多 agent 边写边读互不阻塞；每个请求单事务，错误或 panic 自动回滚
+- **SQL 外置与迁移机制**：业务 SQL 全部在 `sql/` 目录（每条语句一个文件，构建期嵌入，Rust 代码零 SQL）；schema 迁移脚本在 `migrations/` 目录（build.rs 编译期生成清单），运行器按 `PRAGMA user_version` 逐个事务应用恰好一次；发布前允许破坏性更改（改写基线、删库重建），发布后只新增迁移文件即可平滑升级旧库
+- **跨平台**：数据库文件格式平台无关，同一份 .db 可在 Windows / Linux / macOS 间复制（停服后）；`export` 子命令提供 JSON 备份
+- **CLI**：clap 实现，`serve`（默认，`--host`/`--port`/`--db` 全部命令行参数，无配置文件）+ 只读子命令 `stats` / `doctor`（问题退出码 1）/ `export`（拒绝覆盖已有文件）/ `import`（从备份恢复，要求目标库为空）
+- **工具**：10 个 MCP 工具——标签 CRUD（唯一名称 + 可选描述 ≤500 字符、仅大小写冲突提示、detach/purge 两种删除）、记忆 CRUD、渐进式披露（list/search 不泄露正文）、关键词 AND 搜索（中文子串命中、加权排序）、重复摘要与拼写错误防呆提示；REST API 与 MCP 工具共用同一套 handler
+- **管理界面**：Vue3 + Element Plus + Vite + TypeScript（中文），记忆搜索/过滤/分页/编辑、标签管理与删除模式选择、统计/体检/导出/导入；构建产物入库并由 rust-embed 嵌入，单二进制交付
+- **质量**：56 个 Rust 单元测试（含 util/迁移/体检） + 6 个端到端测试（MCP 全流程、REST CRUD、静态 UI、双进程并发零丢失、export→import 往返、CLI 子命令）+ 13 个前端测试（组件挂载冒烟、查询串组装、API 封装），clippy 零告警，rustfmt 统一格式；MSRV 1.85（依赖树实际要求，CI 有专用 job 校验）；搜索片段的大小写折叠偏移问题已修复（逐字符折叠并映射回原文字节偏移）

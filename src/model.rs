@@ -1,9 +1,8 @@
-//! 纯数据模型：标签、记忆条目、id / 标签名归一化。
+//! 纯数据模型：记忆条目、id / 标签名归一化。
 //!
-//! 该层不含任何 I/O；持久化见 `store`，API 限制常量也定义在这里，
+//! 该层不含任何 I/O；持久化见 `store`（SQLite），API 限制常量也定义在这里，
 //! 由工具层（`tools`）引用，保证各处限制一致。
 
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,30 +15,11 @@ pub const MAX_TAG_DESC_CHARS: usize = 500;
 /// API 层限制：标签名最大字符数。
 pub const MAX_TAG_NAME_CHARS: usize = 100;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Tag {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub created_at: u64,
-}
-
-impl Tag {
-    pub fn new(name: String) -> Self {
-        Tag {
-            name,
-            description: String::new(),
-            created_at: now(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Memory {
     pub id: String,
     pub summary: String,
     pub content: String,
-    #[serde(default)]
     pub tags: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,

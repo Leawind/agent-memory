@@ -1,13 +1,11 @@
-//! MCP 协议层：换行分隔的 JSON-RPC 2.0 消息解析与响应。
+//! MCP 协议层：JSON-RPC 2.0 消息解析与响应（HTTP 传输专用）。
 //!
-//! 实现为 MCP stdio 传输：initialize / ping / tools/list / tools/call，
-//! 通知（无 id）不回包。工具执行错误以 isError 结果返回，
+//! 实现为 MCP Streamable HTTP 的无状态模式：initialize / ping / tools/list / tools/call，
+//! 通知（无 id）不产生响应。工具执行错误以 isError 结果返回，
 //! 协议级错误（未知方法、未知工具、解析失败）以 JSON-RPC error 返回。
 
 use crate::tools;
 use serde_json::{json, Value};
-use std::io::{self, Write};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 
 const LATEST_PROTOCOL: &str = "2025-06-18";
@@ -21,8 +19,8 @@ fn ok_value(id: &Value, result: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-/// 处理一条入站消息；需要回应时写入 out。支持批量消息（数组）。
-pub fn handle_message(store_path: &Path, msg: &Value, out: &mut impl Write) -> io::Result<()> {
+/// 处理一条入站消息；需要回应时返回响应。支持批量消息（数组）。
+pub fn handle_message(store_path: &Path, msg: &Value) -> Option<Value> {
     if let Some(arr) = msg.as_array() {
         let mut responses = Vec::new();
         for m in arr {
@@ -39,15 +37,14 @@ pub fn handle_message(store_path: &Path, msg: &Value, out: &mut impl Write) -> i
                 ));
             }
         }
-        if !responses.is_empty() {
-            write_line(out, &Value::Array(responses))?;
+        if responses.is_empty() {
+            None
+        } else {
+            Some(Value::Array(responses))
         }
-        return Ok(());
+    } else {
+        handle_single(store_path, msg)
     }
-    if let Some(r) = handle_single(store_path, msg) {
-        write_line(out, &r)?;
-    }
-    Ok(())
 }
 
 fn handle_single(store_path: &Path, msg: &Value) -> Option<Value> {
@@ -119,13 +116,8 @@ fn tools_call(store_path: &Path, id: &Value, params: &Value) -> Value {
         return error_value(id, -32602, "tools/call arguments must be an object");
     }
 
-    // catch_unwind：单个工具处理逻辑 panic 不拖垮整个服务器；
-    // 由于"成功才写盘"，panic 时数据文件保持原样。
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
-        tools::execute_with_store(store_path, name, &args)
-    }));
-    match outcome {
-        Ok(Ok(v)) => {
+    match tools::execute_with_db(store_path, name, &args) {
+        Ok(v) => {
             let text = serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".to_string());
             ok_value(
                 id,
@@ -135,28 +127,14 @@ fn tools_call(store_path: &Path, id: &Value, params: &Value) -> Value {
                 }),
             )
         }
-        Ok(Err(msg)) => ok_value(
+        Err(e) => ok_value(
             id,
             json!({
-                "content": [{"type": "text", "text": msg}],
-                "isError": true,
-            }),
-        ),
-        Err(_) => ok_value(
-            id,
-            json!({
-                "content": [{"type": "text", "text": "internal error: tool handler panicked; the store was left unchanged"}],
+                "content": [{"type": "text", "text": e.message()}],
                 "isError": true,
             }),
         ),
     }
-}
-
-fn write_line(out: &mut impl Write, v: &Value) -> io::Result<()> {
-    let mut s = serde_json::to_string(v)?;
-    s.push('\n');
-    out.write_all(s.as_bytes())?;
-    out.flush()
 }
 
 #[cfg(test)]
@@ -164,28 +142,29 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn temp_store(tag: &str) -> PathBuf {
+    fn temp_db(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-memory-proto-{}-{}.json",
+            "agent-memory-proto-{}-{}.db",
             std::process::id(),
             tag
         ))
     }
 
-    /// 进程内执行一条 JSON-RPC 消息，返回写出的响应（无响应时为 None）。
+    fn cleanup(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(PathBuf::from(format!("{}{}", path.display(), suffix)));
+        }
+    }
+
+    /// 进程内执行一条 JSON-RPC 消息。
     fn roundtrip(store_path: &Path, line: &str) -> Option<Value> {
         let msg: Value = serde_json::from_str(line).unwrap();
-        let mut buf: Vec<u8> = Vec::new();
-        handle_message(store_path, &msg, &mut buf).unwrap();
-        if buf.is_empty() {
-            return None;
-        }
-        Some(serde_json::from_slice(&buf).unwrap())
+        handle_message(store_path, &msg)
     }
 
     #[test]
     fn initialize_echoes_known_and_falls_back_to_latest() {
-        let store = temp_store("init");
+        let store = temp_db("init");
         let known = roundtrip(
             &store,
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
@@ -201,11 +180,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(unknown["result"]["protocolVersion"], LATEST_PROTOCOL);
+        cleanup(&store);
     }
 
     #[test]
     fn notifications_are_silently_ignored() {
-        let store = temp_store("notify");
+        let store = temp_db("notify");
         assert!(roundtrip(
             &store,
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
@@ -217,11 +197,12 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#
         )
         .is_none());
+        cleanup(&store);
     }
 
     #[test]
     fn ping_unknown_method_and_invalid_request() {
-        let store = temp_store("methods");
+        let store = temp_db("methods");
         let pong = roundtrip(&store, r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#).unwrap();
         assert_eq!(pong["result"], json!({}));
 
@@ -242,11 +223,12 @@ mod tests {
 
         // 无 id 也无 method：无从应答，静默
         assert!(roundtrip(&store, r#"{"jsonrpc":"2.0"}"#).is_none());
+        cleanup(&store);
     }
 
     #[test]
     fn batch_responses_and_non_object_members() {
-        let store = temp_store("batch");
+        let store = temp_db("batch");
         let batch = roundtrip(
             &store,
             r#"[{"jsonrpc":"2.0","id":1,"method":"ping"}, 42, {"jsonrpc":"2.0","method":"notifications/initialized"}]"#,
@@ -260,16 +242,17 @@ mod tests {
         assert_eq!(arr[1]["error"]["code"], -32600);
 
         // 只有通知的批量：不返回任何内容（规范禁止空响应数组）
-        let only_notify = roundtrip(
+        assert!(roundtrip(
             &store,
-            r#"[{"jsonrpc":"2.0","method":"notifications/initialized"}]"#,
-        );
-        assert!(only_notify.is_none());
+            r#"[{"jsonrpc":"2.0","method":"notifications/initialized"}]"#
+        )
+        .is_none());
+        cleanup(&store);
     }
 
     #[test]
     fn tools_call_paths_through_protocol() {
-        let store = temp_store("tools");
+        let store = temp_db("tools");
         let created = roundtrip(
             &store,
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#,
@@ -301,5 +284,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(no_args["result"]["isError"], true);
+        cleanup(&store);
     }
 }

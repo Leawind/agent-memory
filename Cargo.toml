@@ -1,13 +1,17 @@
 [package]
 name = "agent-memory"
-version = "0.3.0"
+version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
-description = "Self-hosted, low-footprint MCP memory server for AI agents: tags + summaries + full content, progressive disclosure, keyword search."
+rust-version = "1.85"
+description = "Self-hosted MCP memory server for AI agents: SQLite-backed, HTTP-only, shared by multiple agents, with an embedded Vue3 management UI."
 
 [dependencies]
+clap = { version = "4.5.61", features = ["derive"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rust-embed = { version = "8.12.0", features = ["debug-embed"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tiny_http = "0.12"
 
 [profile.release]
 opt-level = "z"

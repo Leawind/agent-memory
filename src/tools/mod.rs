@@ -6,15 +6,15 @@
 //! - `tag_ops` 标签增删查改
 //! - `memory_ops` 记忆增删改查、浏览与搜索
 //!
-//! 数据访问约定：`execute_with_store` 在文件锁内"重读磁盘 → 执行 → 原子写回"，
-//! 每个请求都从磁盘重载，多进程共享同一数据文件时不会互相覆盖。
+//! 数据访问约定：`execute_with_db` 在单个 SQLite 事务内"打开 → 执行 → 提交"，
+//! panic 或错误时整个事务回滚，多进程并发由 SQLite WAL + busy_timeout 保证。
 
 mod defs;
 mod memory_ops;
 mod params;
 mod tag_ops;
 
-use crate::store::{LockGuard, Store};
+use crate::store::{self, Store};
 use serde_json::{Map, Value};
 use std::path::Path;
 
@@ -22,28 +22,63 @@ pub use defs::{tool_definitions, TOOL_NAMES};
 
 pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools.";
 
-/// 在文件锁内完成"重新加载 → 执行 → 原子写回"。
-pub fn execute_with_store(path: &Path, name: &str, args: &Value) -> Result<Value, String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("cannot create data directory: {}", e))?;
-        }
-    }
-    let _lock = LockGuard::acquire(&crate::store::lock_path(path))
-        .map_err(|e| format!("store busy: {}", e))?;
-    let mut st =
-        Store::load(path.to_path_buf()).map_err(|e| format!("failed to load store: {}", e))?;
-    let out = execute(&mut st, name, args)?;
-    st.save()
-        .map_err(|e| format!("failed to save store: {}", e))?;
-    Ok(out)
+/// 工具层错误：按类别而非文本分类，REST 层据此映射 HTTP 状态码
+/// （NotFound → 404，Invalid → 400），MCP 层一律以 isError 结果回显消息。
+#[derive(Debug, Clone)]
+pub enum ToolError {
+    /// 资源不存在（REST → 404）
+    NotFound(String),
+    /// 参数校验失败或业务冲突（REST → 400）
+    Invalid(String),
 }
 
-pub fn execute(st: &mut Store, name: &str, args: &Value) -> Result<Value, String> {
+impl ToolError {
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        ToolError::NotFound(msg.into())
+    }
+
+    pub fn invalid(msg: impl Into<String>) -> Self {
+        ToolError::Invalid(msg.into())
+    }
+
+    /// 面向 agent / 管理界面的可读消息。
+    pub fn message(&self) -> &str {
+        match self {
+            ToolError::NotFound(m) | ToolError::Invalid(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for ToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl From<String> for ToolError {
+    /// 数据层/参数层的 String 错误默认归入 Invalid；
+    /// "不存在"类别由 handler 显式构造 NotFound。
+    fn from(message: String) -> Self {
+        ToolError::Invalid(message)
+    }
+}
+
+/// 在单个事务内完成"打开数据库 → 执行 → 提交"。
+/// 事务模式由工具契约决定：readOnlyHint 为真的工具走 DEFERRED 快照，
+/// 其余走 IMMEDIATE 写锁（见 store::TxMode）。
+pub fn execute_with_db(db_path: &Path, name: &str, args: &Value) -> Result<Value, ToolError> {
+    let mode = if defs::is_read_only(name) {
+        store::TxMode::ReadOnly
+    } else {
+        store::TxMode::Write
+    };
+    store::with_db_in(db_path, mode, |st| execute(st, name, args))
+}
+
+pub fn execute(st: &Store, name: &str, args: &Value) -> Result<Value, ToolError> {
     let map = args
         .as_object()
-        .ok_or_else(|| "arguments must be a JSON object".to_string())?;
+        .ok_or_else(|| ToolError::invalid("arguments must be a JSON object"))?;
     check_known_args(name, map)?;
 
     match name {
@@ -57,7 +92,7 @@ pub fn execute(st: &mut Store, name: &str, args: &Value) -> Result<Value, String
         "memory_get" => memory_ops::memory_get(st, map),
         "memory_update" => memory_ops::memory_update(st, map),
         "memory_delete" => memory_ops::memory_delete(st, map),
-        _ => Err(format!("unknown tool '{}'", name)),
+        _ => Err(ToolError::invalid(format!("unknown tool '{}'", name))),
     }
 }
 
@@ -93,34 +128,29 @@ mod tests {
 
     static SEQ: AtomicU32 = AtomicU32::new(0);
 
-    fn temp_file(tag: &str) -> PathBuf {
+    fn temp_db(tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         std::env::temp_dir().join(format!(
-            "agent-memory-tools-{}-{}-{}.json",
+            "agent-memory-tools-{}-{}-{}.db",
             std::process::id(),
             tag,
             n
         ))
     }
 
-    fn call(path: &Path, name: &str, args: Value) -> Result<Value, String> {
-        execute_with_store(path, name, &args)
+    fn call(path: &Path, name: &str, args: Value) -> Result<Value, ToolError> {
+        execute_with_db(path, name, &args)
     }
 
     fn cleanup(path: &Path) {
-        for p in [
-            path.to_path_buf(),
-            crate::store::backup_path(path),
-            crate::store::lock_path(path),
-            crate::store::tmp_path(path),
-        ] {
-            let _ = std::fs::remove_file(p);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(PathBuf::from(format!("{}{}", path.display(), suffix)));
         }
     }
 
     #[test]
     fn full_memory_lifecycle() {
-        let path = temp_file("lifecycle");
+        let path = temp_db("lifecycle");
         let created = call(
             &path,
             "memory_create",
@@ -175,7 +205,7 @@ mod tests {
 
     #[test]
     fn tag_management_flows() {
-        let path = temp_file("tags");
+        let path = temp_db("tags");
         call(
             &path,
             "tag_create",
@@ -223,7 +253,7 @@ mod tests {
 
     #[test]
     fn purge_deletes_memories() {
-        let path = temp_file("purge");
+        let path = temp_db("purge");
         call(
             &path,
             "memory_create",
@@ -253,7 +283,7 @@ mod tests {
 
     #[test]
     fn validation_and_missing_errors() {
-        let path = temp_file("errors");
+        let path = temp_db("errors");
         // 必填参数缺失
         assert!(call(&path, "memory_create", json!({"summary": "s"})).is_err());
         // 空摘要
@@ -277,7 +307,7 @@ mod tests {
 
     #[test]
     fn unknown_arguments_are_rejected() {
-        let path = temp_file("unknown-args");
+        let path = temp_db("unknown-args");
         // 拼错的参数名立刻报错并列出合法参数，而不是被静默忽略
         let err = call(
             &path,
@@ -286,13 +316,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("'summray'") && err.contains("summary"),
+            err.to_string().contains("'summray'") && err.to_string().contains("summary"),
             "got: {}",
             err
         );
         // 无参数工具传了参数也要报错
         let err = call(&path, "tag_list", json!({"filter": "x"})).unwrap_err();
-        assert!(err.contains("'filter'"), "got: {}", err);
+        assert!(err.to_string().contains("'filter'"), "got: {}", err);
         // 正常参数不受影响
         call(
             &path,
@@ -306,7 +336,7 @@ mod tests {
 
     #[test]
     fn search_offset_paginates() {
-        let path = temp_file("search-offset");
+        let path = temp_db("search-offset");
         for i in 0..4 {
             call(
                 &path,
@@ -352,7 +382,7 @@ mod tests {
 
     #[test]
     fn memory_list_reports_tag_state() {
-        let path = temp_file("list-note");
+        let path = temp_db("list-note");
         call(&path, "tag_create", json!({"name": "empty-tag"})).unwrap();
         // 标签不存在
         let missing = call(&path, "memory_list", json!({"tag": "nope"})).unwrap();
@@ -366,7 +396,7 @@ mod tests {
 
     #[test]
     fn tag_create_warns_on_case_collision() {
-        let path = temp_file("case-collision");
+        let path = temp_db("case-collision");
         call(&path, "tag_create", json!({"name": "rust"})).unwrap();
         let second = call(&path, "tag_create", json!({"name": "Rust"})).unwrap();
         assert_eq!(second["similar_existing"], "rust");
@@ -380,7 +410,7 @@ mod tests {
 
     #[test]
     fn tag_rename_supports_case_only_rename() {
-        let path = temp_file("case-rename");
+        let path = temp_db("case-rename");
         call(
             &path,
             "memory_create",
@@ -414,26 +444,28 @@ mod tests {
     fn every_listed_tool_has_a_dispatch_arm() {
         // 同步防线：TOOL_NAMES 与 execute 的 match 分支必须一一对应。
         // 漏掉任何一端时（加工具忘改清单/清单加了没实现），此测试都会失败。
-        let mut st = Store::empty(PathBuf::from("unused.json"));
+        let path = temp_db("dispatch");
         for name in TOOL_NAMES {
-            match execute(&mut st, name, &json!({})) {
-                Ok(_) => {} // tag_list / memory_list 等无参数可用的工具
-                Err(e) => assert!(
-                    !e.contains("unknown tool"),
+            let r = execute_with_db(&path, name, &json!({}));
+            if let Err(e) = r {
+                assert!(
+                    !e.to_string().contains("unknown tool"),
                     "tool '{}' is listed but has no dispatch arm: {}",
                     name,
                     e
-                ),
+                );
             }
         }
-        assert!(execute(&mut st, "nonexistent", &json!({}))
+        assert!(execute_with_db(&path, "nonexistent", &json!({}))
             .unwrap_err()
+            .to_string()
             .contains("unknown tool"));
+        cleanup(&path);
     }
 
     #[test]
     fn duplicate_summary_is_flagged() {
-        let path = temp_file("dup");
+        let path = temp_db("dup");
         call(
             &path,
             "memory_create",
@@ -463,7 +495,7 @@ mod tests {
 
     #[test]
     fn persistence_across_calls() {
-        let path = temp_file("persist");
+        let path = temp_db("persist");
         let c = call(
             &path,
             "memory_create",
@@ -471,7 +503,7 @@ mod tests {
         )
         .unwrap();
         let id = c["memory"]["id"].as_str().unwrap().to_string();
-        // execute_with_store 每次从磁盘重载，id 计数必须延续
+        // 每次调用都重新打开数据库，id 计数必须延续
         let c2 = call(
             &path,
             "memory_create",

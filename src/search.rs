@@ -1,6 +1,6 @@
 //! 关键词搜索：空格分词、全部词命中（AND）、加权评分、生成片段。
 //!
-//! 匹配基于 to_lowercase 后的子串查找，因此中文按子串直接命中，无需分词。
+//! 匹配基于大小写折叠后的子串查找，因此中文按子串直接命中，无需分词。
 //! 权重见下方常量：标签精确 > 标签子串 > 摘要 > 正文。
 
 use crate::model::Memory;
@@ -34,7 +34,6 @@ pub fn run(memories: &[Memory], query: &str, tag_filter: &[String]) -> Vec<Hit> 
             continue;
         }
         let lc_summary = m.summary.to_lowercase();
-        let lc_content = m.content.to_lowercase();
         let lc_tags: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
 
         let mut score = 0i64;
@@ -53,7 +52,7 @@ pub fn run(memories: &[Memory], query: &str, tag_filter: &[String]) -> Vec<Hit> 
             if lc_summary.contains(term.as_str()) {
                 term_score += W_SUMMARY;
             }
-            if let Some(pos) = lc_content.find(term.as_str()) {
+            if let Some(pos) = find_case_insensitive(&m.content, term) {
                 term_score += W_CONTENT;
                 first_pos = Some(match first_pos {
                     None => pos,
@@ -87,6 +86,34 @@ pub fn run(memories: &[Memory], query: &str, tag_filter: &[String]) -> Vec<Hit> 
     hits
 }
 
+/// 大小写不敏感的子串查找，返回**原始**字符串中的字节偏移。
+///
+/// 不能直接在 `to_lowercase()` 结果上 find 再把偏移用于原文：个别字符
+/// 小写化会改变字节长度（如 U+0130 "İ" → "i̇"），导致偏移错位。这里
+/// 逐字符折叠并记录每个输出字节对应的原文偏移，偏移永远精确。
+fn find_case_insensitive(haystack: &str, term: &str) -> Option<usize> {
+    if term.is_empty() {
+        return None;
+    }
+    let term_lc = term.to_lowercase();
+    let mut folded = String::with_capacity(haystack.len());
+    // folded 的每个字节位置 → 原文字节偏移（一个输出字符可能占多个字节，
+    // 每个字节都要各记一条，索引才能与 folded 对齐）
+    let mut map: Vec<usize> = Vec::with_capacity(haystack.len() + 1);
+    for (orig_off, ch) in haystack.char_indices() {
+        for l in ch.to_lowercase() {
+            for _ in 0..l.len_utf8() {
+                map.push(orig_off);
+            }
+            folded.push(l);
+        }
+    }
+    map.push(haystack.len());
+    folded
+        .find(term_lc.as_str())
+        .map(|pos| map[pos.min(map.len() - 1)])
+}
+
 fn floor_boundary(s: &str, mut i: usize) -> usize {
     while i > 0 && !s.is_char_boundary(i) {
         i -= 1;
@@ -102,10 +129,8 @@ fn ceil_boundary(s: &str, mut i: usize) -> usize {
 }
 
 /// 生成匹配位置附近的单行片段；没有正文命中时回退为正文开头。
-///
-/// 已知小缺陷：匹配位置取自 to_lowercase 后的字符串，个别 Unicode 字符
-/// （如 U+0130）小写化会改变字节长度，此时片段窗口可能轻微偏移。
-/// floor/ceil 边界保证不会切在字符中间，影响仅限显示、不会 panic。
+/// 匹配位置来自 `find_case_insensitive`，恒为原文字节偏移；窗口边界
+/// 兜底对齐字符边界，保证不切在字符中间。
 fn make_snippet(content: &str, pos: Option<usize>) -> String {
     let (start, end) = match pos {
         None => (0, SNIPPET_AFTER.min(content.len())),
@@ -176,6 +201,34 @@ mod tests {
         let hits = run(&[a, b], "keyword", &["rust".to_string()]);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
+    }
+
+    /// 小写化会变长度的字符（U+0130 "İ" → "i̇"）不得使片段窗口错位：
+    /// 片段必须以省略号开头且完整包含目标词，且精确落在原文匹配点附近。
+    #[test]
+    fn snippet_stays_aligned_when_case_folding_changes_length() {
+        // "İ" 小写化从 2 字节变 3 字节：旧实现对偏移的换算会偏差 1 字节
+        let content = format!("İ{}TARGET{}", "前".repeat(60), "后".repeat(60));
+        let a = mem("m1", &[], "s", &content, 1);
+        let hits = run(&[a], "target", &[]);
+        assert_eq!(hits.len(), 1);
+        let sn = &hits[0].snippet;
+        assert!(sn.starts_with('…') && sn.ends_with('…'));
+        assert!(sn.contains("TARGET"), "snippet: {}", sn);
+        assert!(
+            sn.contains("前前前"),
+            "snippet should include context before the match: {}",
+            sn
+        );
+    }
+
+    #[test]
+    fn find_case_insensitive_returns_original_offsets() {
+        assert_eq!(find_case_insensitive("Hello WÖrld", "wörld"), Some(6));
+        assert_eq!(find_case_insensitive("xİy TARGET", "target"), Some(5));
+        assert_eq!(find_case_insensitive("", "a"), None);
+        assert_eq!(find_case_insensitive("abc", ""), None);
+        assert_eq!(find_case_insensitive("中文内容", "内容"), Some(6));
     }
 
     #[test]

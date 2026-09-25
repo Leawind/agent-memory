@@ -197,3 +197,48 @@ pub fn known_args(tool: &str) -> Option<&'static Vec<String>> {
         })
         .get(tool)
 }
+
+/// 工具名 → 是否只读（从注解 readOnlyHint 派生，与对 agent 的声明同源）。
+/// 决定该工具的事务模式：只读走 DEFERRED 快照，写走 IMMEDIATE 写锁。
+pub fn is_read_only(tool: &str) -> bool {
+    static READ_ONLY: OnceLock<HashMap<String, bool>> = OnceLock::new();
+    READ_ONLY
+        .get_or_init(|| {
+            tool_definitions()
+                .as_array()
+                .expect("tool definitions is an array")
+                .iter()
+                .map(|t| {
+                    let name = t["name"].as_str().expect("tool has a name").to_string();
+                    let ro = t["annotations"]["readOnlyHint"].as_bool().unwrap_or(false);
+                    (name, ro)
+                })
+                .collect()
+        })
+        .get(tool)
+        .copied()
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 只读标记与契约同源：每个工具都能查到（未知工具按"非只读"处理），
+    /// 且清单里的只读/写工具数量与注解一致。这个标记驱动事务模式，
+    /// 弄反了会让读请求抢写锁或让写请求跑在无锁快照上。
+    #[test]
+    fn read_only_flags_derive_from_annotations() {
+        assert!(is_read_only("tag_list"));
+        assert!(is_read_only("memory_list"));
+        assert!(is_read_only("memory_search"));
+        assert!(is_read_only("memory_get"));
+        assert!(!is_read_only("memory_create"));
+        assert!(!is_read_only("memory_delete"));
+        assert!(!is_read_only("tag_create"));
+        assert!(!is_read_only("no_such_tool"));
+
+        let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
+        assert_eq!(read_only, 4, "契约里的只读工具应恰为 4 个");
+    }
+}

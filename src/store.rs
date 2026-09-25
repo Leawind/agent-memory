@@ -1,163 +1,571 @@
-//! 持久化：单个 JSON 文件 + 临时文件原子替换 + .bak 备份 + 跨进程文件锁。
+//! SQLite 持久化：单个数据库文件（WAL 模式）。
 //!
-//! 标签表（tags）保存标签的元信息（描述、创建时间），记忆条目（memories）通过
-//! 标签名字符串引用标签。标签可以零引用存在（由 agent 显式管理生命周期）。
+//! 数据库文件格式是平台无关的（SQLite 自身处理字节序与对齐），同一份 .db
+//! 可以在 Windows / Linux / macOS 之间直接复制使用。
 //!
-//! 本层只做存取，不做业务校验；数据模型见 `model`。
+//! **SQL 全部外置**：业务语句在仓库根 `sql/` 目录（见 `crate::sql`），
+//! schema 迁移在 `migrations/` 目录（build.rs 编译期生成 `MIGRATIONS`，
+//! 目录即唯一事实源——加迁移只需丢入 `NUM-NAME.sql` 并重新编译）。
+//! 迁移运行器按 `PRAGMA user_version` 记录进度，每个迁移独立事务，
+//! 保证恰好应用一次；发布前允许破坏性更改（改写基线、删库重建），
+//! 发布后只能新增迁移文件。
+//!
+//! 本层只做数据存取与少量聚合查询，不做参数校验；校验见 `tools::params`，
+//! 纯数据模型见 `model`。所有请求在一个事务内执行（见 `with_db`），
+//! panic 或错误时事务回滚，数据保持原样。
 
-use crate::model::{Memory, Tag};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write as _};
+use crate::model::Memory;
+use crate::sql;
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-pub const FORMAT_VERSION: u32 = 1;
-const LOCK_STALE: Duration = Duration::from_secs(15);
-const LOCK_RETRY: Duration = Duration::from_millis(50);
-const LOCK_TOTAL_WAIT: Duration = Duration::from_secs(5);
+const BUSY_TIMEOUT_MS: u64 = 5000;
 
-/// 锁等待上限：AGENT_MEMORY_LOCK_WAIT_MS 环境变量可覆盖（毫秒，上限 60s）。
-/// 供测试快速失败，也给想要"锁被占就立刻报错"的使用者一个旋钮。
-fn lock_total_wait() -> Duration {
-    match std::env::var("AGENT_MEMORY_LOCK_WAIT_MS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-    {
-        Some(ms) => Duration::from_millis(ms.min(60_000)),
-        None => LOCK_TOTAL_WAIT,
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct FileFormat {
-    format_version: u32,
-    #[serde(default)]
-    next_id: u64,
-    #[serde(default)]
-    tags: Vec<Tag>,
-    #[serde(default)]
-    memories: Vec<Memory>,
-}
+// Schema migrations embedded from the `migrations/` directory at build time
+// (see `build.rs`), which is the single source of truth.
+include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
 pub struct Store {
     pub path: PathBuf,
-    pub next_id: u64,
-    pub tags: BTreeMap<String, Tag>,
-    pub memories: Vec<Memory>,
+    pub conn: Connection,
 }
 
-/// 数据文件路径：AGENT_MEMORY_PATH 环境变量优先，否则 ~/.agent-memory/memory.json。
+/// 数据库文件路径的默认位置（当前用户主目录；--db 参数可覆盖）。
 pub fn default_path() -> PathBuf {
-    if let Ok(p) = std::env::var("AGENT_MEMORY_PATH") {
-        let p = p.trim();
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
-    }
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    Path::new(&home).join(".agent-memory").join("memory.json")
-}
-
-pub fn tmp_path(p: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.tmp", p.display()))
-}
-
-pub fn backup_path(p: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.bak", p.display()))
-}
-
-pub fn lock_path(p: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.lock", p.display()))
+    Path::new(&home).join(".agent-memory").join("memory.db")
 }
 
 impl Store {
-    pub fn empty(path: PathBuf) -> Store {
-        Store {
-            path,
-            next_id: 1,
-            tags: BTreeMap::new(),
-            memories: Vec::new(),
-        }
-    }
-
-    /// 读取数据文件。文件不存在或为空 → 返回空库；
-    /// 主文件损坏但存在可读的 .bak → 用备份恢复；
-    /// 都不可用 → 返回错误（调用方应拒绝启动/操作，绝不覆盖数据）。
-    pub fn load(path: PathBuf) -> io::Result<Store> {
-        match read_store_file(&path) {
-            Ok(Some(st)) => Ok(st),
-            Ok(None) => Ok(Store::empty(path)),
-            Err(primary_err) => {
-                let bak = backup_path(&path);
-                if bak.exists() {
-                    if let Ok(Some(mut st)) = read_store_file(&bak) {
-                        eprintln!(
-                            "agent-memory: primary store at {} is unreadable ({}); loaded backup {}",
-                            path.display(),
-                            primary_err,
-                            bak.display()
-                        );
-                        st.path = path;
-                        return Ok(st);
-                    }
-                }
-                Err(primary_err)
+    /// 打开数据库：建目录、设 WAL/busy_timeout/外键、跑迁移。
+    pub fn open(path: &Path) -> Result<Store, String> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("cannot create data directory: {}", e))?;
             }
         }
+        let conn = Connection::open(path)
+            .map_err(|e| format!("cannot open database at {}: {}", path.display(), e))?;
+        conn.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))
+            .map_err(|e| format!("cannot set busy timeout: {}", e))?;
+        // WAL：读写不互斥，写者之间靠 SQLite 自己的锁 + busy_timeout 排队。
+        // 最后一个连接正常关闭时 SQLite 会自动 checkpoint，此时 .db 单文件即可带走。
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|e| format!("cannot enable WAL mode: {}", e))?;
+        // WAL 下的推荐档位：应用崩溃不丢数据，仅断电可能丢最近事务（不会损坏库），
+        // 换取每次提交不再强制 fsync——对本服务"每请求一写"的模式收益明显。
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .map_err(|e| format!("cannot set synchronous mode: {}", e))?;
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .map_err(|e| format!("cannot enable foreign keys: {}", e))?;
+        run_migrations(&conn)?;
+        Ok(Store {
+            path: path.to_path_buf(),
+            conn,
+        })
     }
 
-    pub fn new_id(&mut self) -> String {
-        let id = format!("m{}", self.next_id);
-        self.next_id += 1;
-        id
+    /// id 整数 ↔ API 字符串（"m3"）的边界换算。
+    pub fn format_id(id: i64) -> String {
+        format!("m{}", id)
     }
 
-    /// 查找与给定名字仅大小写不同的既有标签（用于分类体系防碎片化提示）。
-    pub fn find_tag_case_insensitive(&self, name: &str) -> Option<String> {
+    /// 容忍 "1" / "m1" 两种写法（入参归一化见 model::normalize_id）。
+    pub fn parse_id(raw: &str) -> Option<i64> {
+        raw.strip_prefix('m')
+            .unwrap_or(raw)
+            .parse::<i64>()
+            .ok()
+            .filter(|n| *n > 0)
+    }
+
+    // ---------------------------------------------------------------- 标签
+
+    pub fn tag_exists(&self, name: &str) -> Result<bool, String> {
+        match self.conn.query_row(sql::TAG_EXISTS, [name], |_| Ok(())) {
+            Ok(()) => Ok(true),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// 查找与给定名字仅大小写不同的既有标签（Rust 侧比较，Unicode 语义一致）。
+    pub fn find_tag_case_insensitive(&self, name: &str) -> Result<Option<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::TAG_ALL_NAMES)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
         let fold = name.to_lowercase();
-        self.tags
-            .keys()
-            .find(|k| k.to_lowercase() == fold && k.as_str() != name)
-            .cloned()
-    }
-
-    /// 体检：报告数据中的隐患（不修改任何内容）。
-    /// 覆盖 API 不可能产生、但手工编辑或未来 bug 可能引入的问题。
-    pub fn hygiene_issues(&self) -> Vec<String> {
-        use std::collections::BTreeSet;
-
-        let mut issues = Vec::new();
-
-        // 记忆引用了标签表里不存在的标签
-        let mut orphans: BTreeSet<&str> = BTreeSet::new();
-        for m in &self.memories {
-            for t in &m.tags {
-                if !self.tags.contains_key(t) {
-                    orphans.insert(t.as_str());
-                }
+        for r in rows {
+            let n = r.map_err(|e| e.to_string())?;
+            if n != name && n.to_lowercase() == fold {
+                return Ok(Some(n));
             }
         }
-        if !orphans.is_empty() {
-            let list: Vec<&str> = orphans.into_iter().collect();
-            issues.push(format!(
-                "memories reference tags missing from the tag table: {} (fix with tag_create, or remove the references)",
-                list.join(", ")
+        Ok(None)
+    }
+
+    /// 新建标签；已存在时报错（唯一约束的显式化）。
+    pub fn tag_create(&self, name: &str, description: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                sql::TAG_CREATE,
+                params![name, description, crate::model::now() as i64],
+            )
+            .map(|_| ())
+            .map_err(|e| {
+                if is_unique_violation(&e) {
+                    format!(
+                        "tag '{}' already exists (rename it with tag_rename, or see tag_list)",
+                        name
+                    )
+                } else {
+                    e.to_string()
+                }
+            })
+    }
+
+    /// 单个标签视图：描述、记忆计数、最近使用时间。
+    pub fn tag_view(&self, name: &str) -> Result<Value, String> {
+        match self.conn.query_row(sql::TAG_VIEW, [name], row_to_tag_view) {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                Err(format!("tag '{}' not found (see tag_list)", name))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// 全部标签视图，按记忆数降序、名字升序（分类体系浏览的默认序）。
+    pub fn tag_views(&self) -> Result<Vec<Value>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::TAG_VIEW_ALL)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], row_to_tag_view)
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// 改名/改描述。改名利用外键 ON UPDATE CASCADE 同步全部引用；
+    /// 目标名已存在时报错（与"精确重名建标签报错"同一语义）。
+    /// 返回受改名影响的记忆条数。
+    pub fn tag_rename(
+        &self,
+        old: &str,
+        new_name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<u64, String> {
+        if !self.tag_exists(old)? {
+            return Err(format!("tag '{}' not found (see tag_list)", old));
+        }
+        let mut memories_updated = 0u64;
+        let final_name = new_name.unwrap_or(old);
+        if final_name != old {
+            if self.tag_exists(final_name)? {
+                return Err(format!("tag '{}' already exists", final_name));
+            }
+            memories_updated = self.tag_memory_count(old)?;
+            self.conn
+                .execute(sql::TAG_RENAME, params![final_name, description, old])
+                .map_err(|e| e.to_string())?;
+        } else if let Some(d) = description {
+            self.conn
+                .execute(sql::TAG_SET_DESCRIPTION, params![d, old])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(memories_updated)
+    }
+
+    fn tag_memory_count(&self, name: &str) -> Result<u64, String> {
+        self.conn
+            .query_row(sql::TAG_MEMORY_COUNT, [name], |r| r.get::<_, i64>(0))
+            .map(|n| n as u64)
+            .map_err(|e| e.to_string())
+    }
+
+    /// detach：删标签（级联摘除全部引用），返回受影响记忆条数。
+    pub fn tag_delete_detach(&self, name: &str) -> Result<u64, String> {
+        if !self.tag_exists(name)? {
+            return Err(format!("tag '{}' not found (see tag_list)", name));
+        }
+        let affected = self.tag_memory_count(name)?;
+        self.conn
+            .execute(sql::TAG_DELETE, [name])
+            .map_err(|e| e.to_string())?;
+        Ok(affected)
+    }
+
+    /// purge：连带删除所有带该标签的记忆，返回被删记忆 id 列表。
+    pub fn tag_delete_purge(&self, name: &str) -> Result<Vec<String>, String> {
+        if !self.tag_exists(name)? {
+            return Err(format!("tag '{}' not found (see tag_list)", name));
+        }
+        let ids = self.ids_with_tag(name)?;
+        let id_strs: Vec<String> = ids.iter().map(|i| Self::format_id(*i)).collect();
+        self.conn
+            .execute(sql::PURGE_MEMORIES_WITH_TAG, [name])
+            .map_err(|e| e.to_string())?;
+        self.conn
+            .execute(sql::TAG_DELETE, [name])
+            .map_err(|e| e.to_string())?;
+        Ok(id_strs)
+    }
+
+    // ---------------------------------------------------------------- 记忆
+
+    fn ids_with_tag(&self, name: &str) -> Result<Vec<i64>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::MEMORY_IDS_WITH_TAG)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([name], |r| r.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// 确保标签存在（自动创建，空描述），返回新建的标签名列表。
+    pub fn ensure_tags_exist(&self, names: &[String]) -> Result<Vec<String>, String> {
+        let mut autocreated = Vec::new();
+        for n in names {
+            let inserted = self
+                .conn
+                .execute(sql::TAG_AUTOCREATE, params![n, crate::model::now() as i64])
+                .map_err(|e| e.to_string())?;
+            if inserted > 0 {
+                autocreated.push(n.clone());
+            }
+        }
+        Ok(autocreated)
+    }
+
+    /// 摘要与既有记忆归一化相同的条目 id（Rust 侧比较，Unicode 语义一致）。
+    pub fn find_duplicates_by_summary(&self, summary: &str) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::MEMORY_SUMMARIES)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        let norm = summary.to_lowercase();
+        let mut out = Vec::new();
+        for r in rows {
+            let (id, s) = r.map_err(|e| e.to_string())?;
+            if s.to_lowercase() == norm {
+                out.push(Self::format_id(id));
+            }
+        }
+        Ok(out)
+    }
+
+    /// 插入记忆并关联标签（标签须已存在——handler 先 ensure_tags_exist）。
+    pub fn insert_memory(
+        &self,
+        summary: &str,
+        content: &str,
+        tags: &[String],
+        created_at: u64,
+        updated_at: u64,
+    ) -> Result<i64, String> {
+        self.conn
+            .execute(
+                sql::MEMORY_INSERT,
+                params![summary, content, created_at as i64, updated_at as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        let id = self.conn.last_insert_rowid();
+        for tag in tags {
+            self.conn
+                .execute(sql::MEMORY_LINK_TAG, params![id, tag])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(id)
+    }
+
+    fn memory_by_id(&self, id: i64) -> Result<Option<Memory>, String> {
+        let row = self.conn.query_row(sql::MEMORY_BY_ID, [id], |r| {
+            let created: i64 = r.get(3)?;
+            let updated: i64 = r.get(4)?;
+            Ok(Memory {
+                id: Self::format_id(r.get(0)?),
+                summary: r.get(1)?,
+                content: r.get(2)?,
+                tags: Vec::new(),
+                created_at: created as u64,
+                updated_at: updated as u64,
+            })
+        });
+        let mut m = match row {
+            Ok(m) => m,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        m.tags = self.tags_of(id)?;
+        Ok(Some(m))
+    }
+
+    fn tags_of(&self, id: i64) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::MEMORY_TAGS_OF)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// 全量记忆（含标签，id 升序），供内存搜索器使用。
+    pub fn all_memories(&self) -> Result<Vec<Memory>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::MEMORY_ALL)
+            .map_err(|e| e.to_string())?;
+        let mut out: Vec<Memory> = st
+            .query_map([], |r| {
+                let created: i64 = r.get(3)?;
+                let updated: i64 = r.get(4)?;
+                Ok(Memory {
+                    id: Self::format_id(r.get(0)?),
+                    summary: r.get(1)?,
+                    content: r.get(2)?,
+                    tags: Vec::new(),
+                    created_at: created as u64,
+                    updated_at: updated as u64,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut tag_stmt = self
+            .conn
+            .prepare(sql::MEMORY_TAG_PAIRS)
+            .map_err(|e| e.to_string())?;
+        let pairs = tag_stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut by_memory: HashMap<i64, Vec<String>> = HashMap::new();
+        for (mid, name) in pairs {
+            by_memory.entry(mid).or_default().push(name);
+        }
+        for m in &mut out {
+            let id = Self::parse_id(&m.id).unwrap_or(0);
+            if let Some(tags) = by_memory.get(&id) {
+                m.tags = tags.clone();
+            }
+        }
+        Ok(out)
+    }
+
+    /// 分页浏览（可选标签过滤），返回 (总数, 当前页)。
+    ///
+    /// 全静态 SQL（见 sql/memory_list_page.sql）：`?1` 为 NULL 时不过滤标签；
+    /// 排序列用 CASE 在 `?2` 间选择；`?3` 传 ±1 实现正/倒序（列均为整数）。
+    /// `sort` 只接受 handler 白名单化后的取值。
+    pub fn list_memories(
+        &self,
+        tag: Option<&str>,
+        sort: &str,
+        asc: bool,
+        offset: u64,
+        limit: u64,
+    ) -> Result<(u64, Vec<Memory>), String> {
+        let dir: i64 = if asc { 1 } else { -1 };
+        let total: u64 = self
+            .conn
+            .query_row(sql::MEMORY_LIST_COUNT, [tag], |r| r.get::<_, i64>(0))
+            .map(|n| n as u64)
+            .map_err(|e| e.to_string())?;
+        let mut st = self
+            .conn
+            .prepare(sql::MEMORY_LIST_PAGE)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![tag, sort, dir, limit as i64, offset as i64], |r| {
+                let created: i64 = r.get(3)?;
+                let updated: i64 = r.get(4)?;
+                Ok(Memory {
+                    id: Self::format_id(r.get(0)?),
+                    summary: r.get(1)?,
+                    content: r.get(2)?,
+                    tags: Vec::new(),
+                    created_at: created as u64,
+                    updated_at: updated as u64,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut page: Vec<Memory> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for m in &mut page {
+            let id = Self::parse_id(&m.id).unwrap_or(0);
+            m.tags = self.tags_of(id)?;
+        }
+        Ok((total, page))
+    }
+
+    /// 按 id 批量取完整记忆，返回 (找到的, 缺失的)。
+    pub fn get_memories(&self, ids: &[i64]) -> Result<(Vec<Memory>, Vec<String>), String> {
+        let mut found = Vec::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            match self.memory_by_id(*id)? {
+                Some(m) => found.push(m),
+                None => missing.push(Self::format_id(*id)),
+            }
+        }
+        Ok((found, missing))
+    }
+
+    /// 更新记忆字段与标签；返回是否发生变更（决定是否刷新 updated_at）。
+    pub fn update_memory(
+        &self,
+        id: i64,
+        summary: Option<&str>,
+        content: Option<&str>,
+        add_tags: &[String],
+        remove_tags: &[String],
+    ) -> Result<bool, String> {
+        if !self.memory_exists(id)? {
+            return Err(format!(
+                "memory '{}' not found (use memory_list or memory_search first)",
+                Self::format_id(id)
             ));
         }
-
-        // 仅大小写不同的标签组（分类体系碎片化）
-        let mut by_fold: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for name in self.tags.keys() {
-            by_fold
-                .entry(name.to_lowercase())
-                .or_default()
-                .push(name.clone());
+        let mut changed = false;
+        if summary.is_some() || content.is_some() {
+            self.conn
+                .execute(
+                    sql::MEMORY_UPDATE_FIELDS,
+                    params![summary, content, crate::model::now() as i64, id],
+                )
+                .map_err(|e| e.to_string())?;
+            changed = true;
         }
-        for group in by_fold.values() {
+        for tag in remove_tags {
+            let n = self
+                .conn
+                .execute(sql::MEMORY_UNLINK_TAG, params![id, tag])
+                .map_err(|e| e.to_string())?;
+            changed = changed || n > 0;
+        }
+        if !add_tags.is_empty() {
+            self.ensure_tags_exist(add_tags)?;
+            for t in add_tags {
+                let n = self
+                    .conn
+                    .execute(sql::MEMORY_LINK_TAG, params![id, t])
+                    .map_err(|e| e.to_string())?;
+                changed = changed || n > 0;
+            }
+        }
+        if changed {
+            self.conn
+                .execute(sql::MEMORY_TOUCH, params![crate::model::now() as i64, id])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(changed)
+    }
+
+    pub fn memory_exists(&self, id: i64) -> Result<bool, String> {
+        match self.conn.query_row(sql::MEMORY_EXISTS, [id], |_| Ok(())) {
+            Ok(()) => Ok(true),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// 删除记忆，返回 (已删 id, 缺失 id)。
+    pub fn delete_memories(&self, ids: &[i64]) -> Result<(Vec<String>, Vec<String>), String> {
+        let mut deleted = Vec::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            let n = self
+                .conn
+                .execute(sql::MEMORY_DELETE, [id])
+                .map_err(|e| e.to_string())?;
+            if n > 0 {
+                deleted.push(Self::format_id(*id));
+            } else {
+                missing.push(Self::format_id(*id));
+            }
+        }
+        Ok((deleted, missing))
+    }
+
+    // ---------------------------------------------------------------- 运维
+
+    /// 体检：报告数据中的隐患（只读）。覆盖外键被关闭时可能混入的脏数据。
+    pub fn hygiene_issues(&self) -> Result<Vec<String>, String> {
+        let mut issues = Vec::new();
+        // 孤儿引用：关联表指向不存在的标签
+        let orphans: Vec<String> = self
+            .conn
+            .prepare(sql::HYGIENE_ORPHANS)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if !orphans.is_empty() {
+            issues.push(format!(
+                "memories reference tags missing from the tag table: {} (fix with tag_create, or remove the references)",
+                orphans.join(", ")
+            ));
+        }
+        // 反向孤儿：关联行指向不存在的记忆（外键被关闭时可能混入）
+        let reverse_ids: Vec<i64> = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT memory_id FROM memory_tags \
+                 WHERE memory_id NOT IN (SELECT id FROM memories) ORDER BY memory_id",
+            )
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if !reverse_ids.is_empty() {
+            issues.push(format!(
+                "database contains join rows pointing to missing memories (schema corruption): {}",
+                reverse_ids
+                    .iter()
+                    .map(|id| Self::format_id(*id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        // 仅大小写不同的标签组
+        let names: Vec<String> = self
+            .conn
+            .prepare(sql::TAG_ALL_NAMES)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut groups: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for n in &names {
+            groups.entry(n.to_lowercase()).or_default().push(n.clone());
+        }
+        for group in groups.values() {
             if group.len() > 1 {
                 issues.push(format!(
                     "case-conflicting tag group: {} (keep one and merge the rest with tag_rename)",
@@ -165,301 +573,674 @@ impl Store {
                 ));
             }
         }
-
-        // 空摘要 / 空正文（API 层已拦截，这里兜底手工编辑的情况）
-        for m in &self.memories {
-            if m.summary.trim().is_empty() {
-                issues.push(format!("memory {} has an empty summary", m.id));
+        // 空摘要 / 空正文
+        let rows = self
+            .conn
+            .prepare(sql::HYGIENE_MEMORIES)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for (id, summary, content) in rows {
+            if summary.trim().is_empty() {
+                issues.push(format!(
+                    "memory {} has an empty summary",
+                    Self::format_id(id)
+                ));
             }
-            if m.content.trim().is_empty() {
-                issues.push(format!("memory {} has empty content", m.id));
+            if content.trim().is_empty() {
+                issues.push(format!("memory {} has empty content", Self::format_id(id)));
             }
         }
-
-        issues
+        Ok(issues)
     }
 
-    /// 原子保存：先写 .tmp，旧文件拷为 .bak，再用 rename 原子替换主文件。
-    /// 任何时刻主文件要么是完整的旧内容，要么是完整的新内容。
-    pub fn save(&self) -> io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-        let ff = FileFormat {
-            format_version: FORMAT_VERSION,
-            next_id: self.next_id,
-            tags: self.tags.values().cloned().collect(),
-            memories: self.memories.clone(),
-        };
-        let body = serde_json::to_string(&ff)?;
-        let tmp = tmp_path(&self.path);
+    /// 数据概况（JSON 形态，CLI 与 API 共用）。
+    pub fn stats(&self) -> Result<Value, String> {
+        let memories: i64 = self
+            .conn
+            .query_row(sql::STATS_MEMORY_COUNT, [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        let tags: i64 = self
+            .conn
+            .query_row(sql::STATS_TAG_COUNT, [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        let next_id: i64 = self
+            .conn
+            .query_row(sql::STATS_NEXT_ID, [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        let newest = self
+            .conn
+            .query_row(sql::STATS_NEWEST, [], |r| {
+                Ok(json!({
+                    "id": Self::format_id(r.get::<_, i64>(0)?),
+                    "updated_at": r.get::<_, i64>(1)?,
+                }))
+            })
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other.to_string()),
+            })?;
+        let file_size = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        let schema_version: i64 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "path": self.path.display().to_string(),
+            "memories": memories,
+            "tags": tags,
+            "next_id": Self::format_id(next_id),
+            "file_size": file_size,
+            "newest_update": newest.unwrap_or(Value::Null),
+            "schema_version": schema_version,
+        }))
+    }
+
+    /// 导出内容：完整记忆 + 标签表，独立于存储内部模式（跨平台迁移也可走这里）。
+    pub fn export_dump(&self) -> Result<Value, String> {
+        let tags = self.tag_views()?;
+        let memories: Vec<Value> = self.all_memories()?.iter().map(|m| m.full_view()).collect();
+        Ok(json!({
+            "exported_at": crate::model::now(),
+            "total_memories": memories.len(),
+            "total_tags": tags.len(),
+            "tags": tags,
+            "memories": memories,
+        }))
+    }
+
+    /// 从 `export_dump` 产生的 JSON 恢复数据。要求目标库为空——导入是"恢复/
+    /// 迁移"而非合并，避免与既有数据的 id、标签描述产生歧义。
+    /// 记忆的 created_at / updated_at 按导出值保留；id 不保留（重新编号）。
+    /// 返回 (导入的记忆数, 导入的标签数)。
+    pub fn import_dump(&self, dump: &Value) -> Result<(usize, usize), String> {
+        let empty = self.stats()?;
+        if empty["memories"].as_u64().unwrap_or(0) != 0 || empty["tags"].as_u64().unwrap_or(0) != 0
         {
-            let mut f = fs::File::create(&tmp)?;
-            f.write_all(body.as_bytes())?;
-            let _ = f.sync_all();
+            return Err(
+                "target database is not empty; import refuses to merge -- point --db at a fresh database".into(),
+            );
         }
-        if self.path.exists() {
-            let _ = fs::copy(&self.path, backup_path(&self.path));
+        let tags = dump
+            .get("tags")
+            .and_then(Value::as_array)
+            .ok_or("invalid export: missing 'tags' array")?;
+        let memories = dump
+            .get("memories")
+            .and_then(Value::as_array)
+            .ok_or("invalid export: missing 'memories' array")?;
+
+        for t in tags {
+            let name = t
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or("invalid export: tag without name")?;
+            let description = t.get("description").and_then(Value::as_str).unwrap_or("");
+            let name = crate::model::normalize_tag_name(name)?;
+            let description = validate_max_len(
+                description,
+                "tag description",
+                crate::model::MAX_TAG_DESC_CHARS,
+            )?;
+            self.tag_create(&name, &description)?;
         }
-        fs::rename(&tmp, &self.path)?;
-        Ok(())
+        for m in memories {
+            let summary = m
+                .get("summary")
+                .and_then(Value::as_str)
+                .ok_or("invalid export: memory without summary")?;
+            let content = m
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or("invalid export: memory without content")?;
+            let summary =
+                validate_nonempty_len(summary, "summary", crate::model::MAX_SUMMARY_CHARS)?;
+            let content =
+                validate_nonempty_len(content, "content", crate::model::MAX_CONTENT_CHARS)?;
+            let created_at = m.get("created_at").and_then(Value::as_u64).unwrap_or(0);
+            let updated_at = m
+                .get("updated_at")
+                .and_then(Value::as_u64)
+                .unwrap_or(created_at);
+            let tags: Vec<String> = m
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|t| {
+                            let s = t
+                                .as_str()
+                                .ok_or("invalid export: memory tags must be strings")?;
+                            crate::model::normalize_tag_name(s)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            self.ensure_tags_exist(&tags)?;
+            self.insert_memory(&summary, &content, &tags, created_at, updated_at)?;
+        }
+        Ok((memories.len(), tags.len()))
     }
 }
 
-fn read_store_file(path: &Path) -> io::Result<Option<Store>> {
-    let text = match fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    if text.trim().is_empty() {
-        return Ok(None);
+/// 非空 + 长度校验（导入侧的兜底；正常 API 路径由 tools::params 校验）。
+fn validate_nonempty_len(s: &str, what: &str, max: usize) -> Result<String, String> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Err(format!("invalid export: {} must not be empty", what));
     }
-    let ff: FileFormat = serde_json::from_str(&text).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid store file: {}", e),
-        )
-    })?;
-    if ff.format_version > FORMAT_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "store format v{} is newer than supported v{}",
-                ff.format_version, FORMAT_VERSION
-            ),
+    validate_max_len(t, what, max)
+}
+
+fn validate_max_len(s: &str, what: &str, max: usize) -> Result<String, String> {
+    if s.chars().count() > max {
+        return Err(format!(
+            "invalid export: {} is too long (max {} characters)",
+            what, max
         ));
     }
-    let mut st = Store {
-        path: path.to_path_buf(),
-        next_id: ff.next_id.max(1),
-        tags: BTreeMap::new(),
-        memories: ff.memories,
+    Ok(s.to_string())
+}
+
+fn row_to_tag_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let count: i64 = r.get(2)?;
+    let last: Option<i64> = r.get(3)?;
+    Ok(json!({
+        "name": r.get::<_, String>(0)?,
+        "description": r.get::<_, String>(1)?,
+        "memory_count": count,
+        "last_used_at": last.map(|t| json!(t)).unwrap_or(Value::Null),
+    }))
+}
+
+fn is_unique_violation(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(ee, _) if ee.code == rusqlite::ErrorCode::ConstraintViolation)
+}
+
+/// 迁移运行器：`PRAGMA user_version` 记录已应用的迁移数量，每个待应用迁移
+/// 在独立事务中执行并推进 user_version，保证恰好应用一次。数据库比已知
+/// 迁移更新（来自更新版本的程序）时拒绝打开，绝不带着未知的 schema 写数据。
+fn run_migrations(conn: &Connection) -> Result<(), String> {
+    let applied: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let from = applied.max(0) as usize;
+    let target = MIGRATIONS.len();
+    if from > target {
+        return Err(format!(
+            "database schema v{} is newer than supported v{}; upgrade agent-memory or restore a matching database file",
+            from, target
+        ));
+    }
+    for (index, source) in MIGRATIONS.iter().enumerate().skip(from) {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| format!("migration {}: cannot begin: {}", index + 1, e))?;
+        tx.execute_batch(source)
+            .map_err(|e| format!("migration {} failed: {}", index + 1, e))?;
+        tx.pragma_update(None, "user_version", (index + 1) as i64)
+            .map_err(|e| format!("migration {}: cannot record version: {}", index + 1, e))?;
+        tx.commit()
+            .map_err(|e| format!("migration {}: cannot commit: {}", index + 1, e))?;
+    }
+    Ok(())
+}
+
+/// 事务模式：只读请求用 DEFERRED（WAL 下获得一致性快照且不抢写锁，
+/// 读与读、读与写互不阻塞），写请求用 IMMEDIATE（一开始就取写锁，
+/// 配合 busy_timeout 让并发写者排队，避免 DEFERRED 读后升级写锁的死锁）。
+pub enum TxMode {
+    ReadOnly,
+    Write,
+}
+
+/// 在单个事务内使用数据库：panic 或错误时回滚，成功才提交。
+///
+/// 事务模式见 `TxMode`。错误类型泛型化（`E: From<String>`），调用方
+/// 可选择自己的错误类型（如工具层的 `ToolError`）；基础设施错误
+/// （打开/建事务/提交）从 String 转换而来。错误或 panic 时函数提前
+/// 返回/展开，连接关闭自动回滚——依赖"成功才 COMMIT"的顺序。
+pub fn with_db_in<T, E>(
+    path: &Path,
+    mode: TxMode,
+    f: impl FnOnce(&Store) -> Result<T, E>,
+) -> Result<T, E>
+where
+    E: From<String>,
+{
+    let store = Store::open(path).map_err(E::from)?;
+    let begin = match mode {
+        TxMode::ReadOnly => "BEGIN DEFERRED",
+        TxMode::Write => "BEGIN IMMEDIATE",
     };
-    for t in ff.tags {
-        st.tags.insert(t.name.clone(), t);
-    }
-    // 防御：即使文件被手工编辑导致 next_id 偏小，也不会分配出重复 id。
-    for m in &st.memories {
-        if let Some(n) = m.id.strip_prefix('m') {
-            if let Ok(k) = n.parse::<u64>() {
-                st.next_id = st.next_id.max(k + 1);
-            }
-        }
-    }
-    Ok(Some(st))
-}
-
-/// 跨进程互斥锁：用 create_new 语义创建 <data>.lock 文件，进程退出（含 panic 展开）时删除。
-/// 锁文件超过 LOCK_STALE 未更新视为残留（如宿主被 kill -9），自动接管。
-pub struct LockGuard {
-    path: PathBuf,
-}
-
-impl LockGuard {
-    pub fn acquire(path: &Path) -> io::Result<LockGuard> {
-        let deadline = SystemTime::now() + lock_total_wait();
-        loop {
-            match OpenOptions::new().write(true).create_new(true).open(path) {
-                Ok(mut f) => {
-                    let _ = writeln!(f, "{}", std::process::id());
-                    return Ok(LockGuard {
-                        path: path.to_path_buf(),
-                    });
-                }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                    let stale = fs::metadata(path)
-                        .and_then(|m| m.modified())
-                        .map(|t| t.elapsed().map(|age| age >= LOCK_STALE).unwrap_or(true))
-                        .unwrap_or(true);
-                    if stale {
-                        let _ = fs::remove_file(path);
-                        continue;
-                    }
-                    if SystemTime::now() >= deadline {
-                        return Err(io::Error::new(
-                            io::ErrorKind::WouldBlock,
-                            "another agent-memory process is holding the store lock",
-                        ));
-                    }
-                    std::thread::sleep(LOCK_RETRY);
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-}
-
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
+    store
+        .conn
+        .execute_batch(begin)
+        .map_err(|e| E::from(format!("cannot begin transaction: {}", e)))?;
+    let out = f(&store)?;
+    store
+        .conn
+        .execute_batch("COMMIT")
+        .map_err(|e| E::from(format!("cannot commit: {}", e)))?;
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn temp_file(tag: &str) -> PathBuf {
+    fn temp_db(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-memory-store-{}-{}.json",
+            "agent-memory-store-{}-{}.db",
             std::process::id(),
             tag
         ))
     }
 
-    fn sample(id: &str) -> Memory {
-        Memory {
-            id: id.to_string(),
-            summary: "s".into(),
-            content: "c".into(),
-            tags: vec!["t".into()],
-            created_at: 1,
-            updated_at: 1,
+    fn cleanup(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(PathBuf::from(format!("{}{}", path.display(), suffix)));
         }
     }
 
     #[test]
-    fn save_load_roundtrip_continues_ids() {
-        let path = temp_file("roundtrip");
-        let _ = fs::remove_file(&path);
+    fn open_creates_schema_and_is_idempotent() {
+        let path = temp_db("schema");
+        cleanup(&path);
         {
-            let mut st = Store::empty(path.clone());
-            let id1 = st.new_id();
-            st.memories.push(sample(&id1));
-            st.tags.insert("t".to_string(), Tag::new("t".into()));
-            st.save().unwrap();
-            assert_eq!(st.next_id, 2);
+            let st = Store::open(&path).unwrap();
+            assert_eq!(st.stats().unwrap()["memories"], 0);
         }
         {
-            let mut st = Store::load(path.clone()).unwrap();
-            assert_eq!(st.memories.len(), 1);
-            assert_eq!(st.memories[0].id, "m1");
-            assert_eq!(st.tags.len(), 1);
-            assert_eq!(st.new_id(), "m2");
+            let st = Store::open(&path).unwrap();
+            assert_eq!(st.stats().unwrap()["memories"], 0);
         }
-        let _ = fs::remove_file(&path);
+        cleanup(&path);
     }
 
     #[test]
-    fn missing_and_empty_files_are_fresh_stores() {
-        let path = temp_file("fresh");
-        let _ = fs::remove_file(&path);
-        assert!(Store::load(path.clone()).unwrap().memories.is_empty());
-        fs::write(&path, "").unwrap();
-        assert!(Store::load(path.clone()).unwrap().memories.is_empty());
-        let _ = fs::remove_file(&path);
+    fn migrations_record_user_version() {
+        let path = temp_db("version");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let version: i64 = st
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        cleanup(&path);
     }
 
     #[test]
-    fn corrupt_primary_falls_back_to_backup() {
-        let path = temp_file("bak");
-        let _ = fs::remove_file(&path);
-        let mut good = Store::empty(path.clone());
-        let id = good.new_id();
-        good.memories.push(sample(&id));
-        good.save().unwrap();
-        good.save().unwrap(); // 第二次保存才会生成 .bak
-        fs::write(&path, "{corrupt json").unwrap();
-        let st = Store::load(path.clone()).unwrap();
-        assert_eq!(st.path, path);
-        assert_eq!(st.memories.len(), 1);
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_file(backup_path(&path));
-    }
-
-    #[test]
-    fn future_format_version_is_rejected() {
-        let path = temp_file("future");
-        let _ = fs::remove_file(&path);
-        fs::write(
-            &path,
-            r#"{"format_version":999,"next_id":1,"tags":[],"memories":[]}"#,
-        )
-        .unwrap();
-        assert!(Store::load(path.clone()).is_err());
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn lock_guard_is_reentrant_after_release() {
-        let path = temp_file("lock");
-        let lock = lock_path(&path);
-        let _ = fs::remove_file(&lock);
+    fn future_schema_version_is_rejected() {
+        let path = temp_db("future");
+        cleanup(&path);
         {
-            let _g = LockGuard::acquire(&lock).unwrap();
-            assert!(lock.exists());
+            let st = Store::open(&path).unwrap();
+            st.conn.execute_batch("PRAGMA user_version = 999").unwrap();
         }
-        assert!(!lock.exists());
-        let _g2 = LockGuard::acquire(&lock).unwrap();
-        let _ = fs::remove_file(&lock);
-    }
-
-    #[test]
-    fn lock_contention_fails_fast_when_wait_exhausted() {
-        let path = temp_file("contention");
-        let lock = lock_path(&path);
-        let _ = fs::remove_file(&lock);
-        std::env::set_var("AGENT_MEMORY_LOCK_WAIT_MS", "0");
-        let _holder = LockGuard::acquire(&lock).unwrap();
-        let err = match LockGuard::acquire(&lock) {
+        let err = match Store::open(&path) {
+            Ok(_) => panic!("expected open to fail on newer schema"),
             Err(e) => e,
-            Ok(_) => panic!("expected lock acquisition to fail while held"),
         };
-        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
-        assert!(err.to_string().contains("holding the store lock"));
-        std::env::remove_var("AGENT_MEMORY_LOCK_WAIT_MS");
-        drop(_holder);
-        assert!(!lock.exists());
-        let _ = fs::remove_file(&lock);
+        assert!(err.contains("newer than supported"), "got: {}", err);
+        cleanup(&path);
     }
 
     #[test]
-    fn case_insensitive_tag_lookup() {
-        let mut st = Store::empty(PathBuf::from("unused.json"));
-        st.tags.insert("Rust".to_string(), Tag::new("Rust".into()));
+    fn memory_lifecycle_with_tags() {
+        let path = temp_db("lifecycle");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let tags = vec!["rust".to_string(), "notes".to_string()];
+        st.ensure_tags_exist(&tags).unwrap();
+
+        let dup = st.find_duplicates_by_summary("Rust notes").unwrap();
+        assert!(dup.is_empty());
+        let id = st
+            .insert_memory("Rust notes", "borrow checker", &tags, 10, 10)
+            .unwrap();
+        assert_eq!(Store::format_id(id), "m1");
+
+        // 重复检测（大小写不敏感）
+        let dup = st.find_duplicates_by_summary("rust NOTES").unwrap();
+        assert_eq!(dup, vec!["m1".to_string()]);
+
+        // 全量读取带标签
+        let all = st.all_memories().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].tags, vec!["notes".to_string(), "rust".to_string()]);
+
+        // 更新：改字段 + 增删标签
+        let changed = st
+            .update_memory(
+                id,
+                Some("new summary"),
+                None,
+                &["study".into()],
+                &["notes".into()],
+            )
+            .unwrap();
+        assert!(changed);
+        let (found, missing) = st.get_memories(&[id]).unwrap();
+        assert!(missing.is_empty());
+        assert_eq!(found[0].summary, "new summary");
+        assert_eq!(found[0].tags, vec!["rust".to_string(), "study".to_string()]);
+
+        // 不存在的记忆报错
+        assert!(st.update_memory(999, Some("x"), None, &[], &[]).is_err());
+
+        // 删除
+        let (deleted, missing) = st.delete_memories(&[id, 999]).unwrap();
+        assert_eq!(deleted, vec!["m1".to_string()]);
+        assert_eq!(missing, vec!["m999".to_string()]);
+        assert_eq!(st.stats().unwrap()["memories"], 0);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_rename_cascades_and_rejects_existing_target() {
+        let path = temp_db("rename");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.tag_create("rust", "language").unwrap();
+        st.tag_create("lang", "").unwrap();
+        st.ensure_tags_exist(&["rust".into()]).unwrap();
+        let a = st.insert_memory("a", "ca", &["rust".into()], 1, 1).unwrap();
+        let _b = st.insert_memory("b", "cb", &["rust".into()], 1, 1).unwrap();
+
+        // 改名到已存在的标签：报错
+        let err = st.tag_rename("rust", Some("lang"), None).unwrap_err();
+        assert!(err.contains("already exists"), "got: {}", err);
+
+        // 正常改名：级联同步所有引用，返回受影响记忆数
+        let updated = st.tag_rename("rust", Some("systems"), None).unwrap();
+        assert_eq!(updated, 2);
+        assert!(!st.tag_exists("rust").unwrap());
+        assert!(st.tag_exists("systems").unwrap());
+        let (found, _) = st.get_memories(&[a]).unwrap();
+        assert_eq!(found[0].tags, vec!["systems".to_string()]);
+
+        // 改描述
+        st.tag_rename("systems", None, Some("programming")).unwrap();
         assert_eq!(
-            st.find_tag_case_insensitive("rust"),
-            Some("Rust".to_string())
+            st.tag_view("systems").unwrap()["description"],
+            "programming"
         );
-        assert_eq!(st.find_tag_case_insensitive("Rust"), None);
-        assert_eq!(st.find_tag_case_insensitive("go"), None);
+
+        // 不存在的标签报错
+        assert!(st.tag_rename("nope", Some("x"), None).is_err());
+        cleanup(&path);
     }
 
     #[test]
-    fn hygiene_issues_reports_real_problems_only() {
-        let mut st = Store::empty(PathBuf::from("unused.json"));
-        // 干净的库：零问题
-        let mut m = sample("m1");
-        m.tags = vec!["rust".into()];
-        st.memories.push(m);
-        st.tags.insert("rust".to_string(), Tag::new("rust".into()));
-        assert!(st.hygiene_issues().is_empty());
+    fn tag_delete_detach_vs_purge() {
+        let path = temp_db("delete");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.tag_create("x", "").unwrap();
+        st.tag_create("keep", "").unwrap();
+        st.ensure_tags_exist(&["x".into(), "keep".into()]).unwrap();
+        st.insert_memory("a", "ca", &["x".into()], 1, 1).unwrap();
+        st.insert_memory("b", "cb", &["x".into(), "keep".into()], 1, 1)
+            .unwrap();
+        st.insert_memory("c", "cc", &["keep".into()], 1, 1).unwrap();
 
-        // 注入三类问题：孤儿引用、大小写冲突组、空摘要
-        st.memories[0].tags.push("ghost".into());
-        st.tags.insert("Rust".to_string(), Tag::new("Rust".into()));
-        let mut bad = sample("m2");
-        bad.summary = "   ".into();
-        st.memories.push(bad);
+        let updated = st.tag_delete_detach("x").unwrap();
+        assert_eq!(updated, 2);
+        assert!(!st.tag_exists("x").unwrap());
+        assert_eq!(st.all_memories().unwrap().len(), 3);
 
-        let issues = st.hygiene_issues().join("\n");
+        // 重建 x 并 purge：连带删除记忆
+        st.tag_create("x", "").unwrap();
+        st.ensure_tags_exist(&["x".into()]).unwrap();
+        let all = st.all_memories().unwrap();
+        let b_id = Store::parse_id(&all[1].id).unwrap();
+        st.update_memory(b_id, None, None, &["x".into()], &[])
+            .unwrap();
+        let deleted = st.tag_delete_purge("x").unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(st.all_memories().unwrap().len(), 2);
+        assert!(!st.tag_exists("x").unwrap());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_create_unique_and_case_hint() {
+        let path = temp_db("case");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.tag_create("rust", "").unwrap();
+        let err = st.tag_create("rust", "");
+        assert!(err.unwrap_err().contains("already exists"));
+        assert_eq!(
+            st.find_tag_case_insensitive("Rust").unwrap(),
+            Some("rust".to_string())
+        );
+        assert_eq!(st.find_tag_case_insensitive("rust").unwrap(), None);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn list_paginates_and_filters() {
+        let path = temp_db("list");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.ensure_tags_exist(&["t1".into()]).unwrap();
+        for i in 0..5 {
+            st.insert_memory(&format!("s{}", i), "c", &["t1".into()], i, i)
+                .unwrap();
+        }
+        let (total, page) = st.list_memories(None, "updated_at", false, 0, 3).unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(page.len(), 3);
+        assert_eq!(page[0].summary, "s4");
+        let (total2, page2) = st.list_memories(None, "updated_at", false, 3, 3).unwrap();
+        assert_eq!(total2, 5);
+        assert_eq!(page2.len(), 2);
+        let (total3, page3) = st
+            .list_memories(Some("t1"), "updated_at", true, 0, 200)
+            .unwrap();
+        assert_eq!(total3, 5);
+        assert_eq!(page3[0].summary, "s0");
+        let (total4, _) = st
+            .list_memories(Some("t1"), "created_at", false, 0, 200)
+            .unwrap();
+        assert_eq!(total4, 5);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn hygiene_reports_real_problems_only() {
+        let path = temp_db("hygiene");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        assert!(st.hygiene_issues().unwrap().is_empty());
+
+        // 关闭外键注入孤儿引用、反向孤儿、大小写冲突、空摘要
+        st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+        st.conn
+            .execute(
+                "INSERT INTO memory_tags(memory_id, tag_name) VALUES (1, 'ghost')",
+                [],
+            )
+            .unwrap();
+        // 反向孤儿：关联行指向不存在的记忆 m42
+        st.conn
+            .execute(
+                "INSERT INTO memory_tags(memory_id, tag_name) VALUES (42, 'rust')",
+                [],
+            )
+            .unwrap();
+        st.conn
+            .execute("INSERT INTO tags(name, created_at) VALUES ('Rust', 1)", [])
+            .unwrap();
+        st.conn
+            .execute("INSERT INTO tags(name, created_at) VALUES ('rust', 1)", [])
+            .unwrap();
+        st.conn
+            .execute(
+                "INSERT INTO memories(id, summary, content, created_at, updated_at) \
+                 VALUES (1, '   ', 'c', 1, 1)",
+                [],
+            )
+            .unwrap();
+        let issues = st.hygiene_issues().unwrap().join("\n");
+        assert!(issues.contains("ghost"), "missing orphan: {}", issues);
         assert!(
-            issues.contains("ghost"),
-            "missing orphan report: {}",
+            issues.contains("pointing to missing memories"),
+            "missing reverse orphan: {}",
             issues
         );
         assert!(
             issues.contains("case-conflicting"),
-            "missing case group report: {}",
+            "missing case: {}",
             issues
         );
         assert!(
-            issues.contains("m2 has an empty summary"),
-            "missing empty summary report: {}",
+            issues.contains("empty summary"),
+            "missing empty: {}",
             issues
         );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn id_roundtrip_and_tolerant_parse() {
+        assert_eq!(Store::parse_id("m12"), Some(12));
+        assert_eq!(Store::parse_id("12"), Some(12));
+        assert_eq!(Store::parse_id("m0"), None);
+        assert_eq!(Store::parse_id("abc"), None);
+        assert_eq!(Store::format_id(12), "m12");
+    }
+
+    #[test]
+    fn export_dump_contains_full_data() {
+        let path = temp_db("export");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.tag_create("t", "desc").unwrap();
+        st.ensure_tags_exist(&["t".into()]).unwrap();
+        st.insert_memory("s", "body", &["t".into()], 1, 1).unwrap();
+        let dump = st.export_dump().unwrap();
+        assert_eq!(dump["total_memories"], 1);
+        assert_eq!(dump["tags"][0]["name"], "t");
+        assert_eq!(dump["memories"][0]["content"], "body");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn import_dump_restores_and_refuses_non_empty_target() {
+        let src = temp_db("import-src");
+        let dst = temp_db("import-dst");
+        cleanup(&src);
+        cleanup(&dst);
+        let dump = {
+            let st = Store::open(&src).unwrap();
+            st.tag_create("t", "带描述的标签").unwrap();
+            st.ensure_tags_exist(&["t".into()]).unwrap();
+            st.insert_memory("s1", "body1", &["t".into()], 100, 200)
+                .unwrap();
+            st.insert_memory("s2", "body2", &[], 300, 400).unwrap();
+            st.export_dump().unwrap()
+        };
+
+        // 恢复到空库：计数与时间戳都保留
+        let (memories, tags) = Store::open(&dst).unwrap().import_dump(&dump).unwrap();
+        assert_eq!(memories, 2);
+        assert_eq!(tags, 1);
+        let st = Store::open(&dst).unwrap();
+        assert_eq!(st.stats().unwrap()["memories"], 2);
+        let all = st.all_memories().unwrap();
+        assert_eq!(all[0].created_at, 100);
+        assert_eq!(all[0].updated_at, 200);
+        assert_eq!(all[0].tags, vec!["t".to_string()]);
+        assert_eq!(st.tag_view("t").unwrap()["description"], "带描述的标签");
+
+        // 目标库非空 → 拒绝
+        let err = Store::open(&dst).unwrap().import_dump(&dump).unwrap_err();
+        assert!(err.contains("not empty"), "got: {}", err);
+
+        // 结构损坏的导出文件 → 报错
+        let broken = Store::open(&temp_db("import-broken-dst"));
+        drop(broken);
+        let dst2 = temp_db("import-broken");
+        cleanup(&dst2);
+        let st2 = Store::open(&dst2).unwrap();
+        let err = st2.import_dump(&json!({"memories": []})).unwrap_err();
+        assert!(err.contains("missing 'tags'"), "got: {}", err);
+        cleanup(&src);
+        cleanup(&dst);
+        cleanup(&dst2);
+    }
+
+    /// 导入与 API 契约一致：空白摘要、超长标签名、非字符串标签都要被拒。
+    #[test]
+    fn import_dump_rejects_contract_violations() {
+        let dst = temp_db("import-invalid");
+        cleanup(&dst);
+        let st = Store::open(&dst).unwrap();
+
+        // 空白摘要
+        let bad_summary = json!({
+            "tags": [],
+            "memories": [{"summary": "   ", "content": "c"}]
+        });
+        let err = st.import_dump(&bad_summary).unwrap_err();
+        assert!(err.contains("must not be empty"), "got: {}", err);
+
+        // 超长标签名（>100 字符）
+        let bad_tag = json!({
+            "tags": [{"name": "x".repeat(101)}],
+            "memories": []
+        });
+        let err = st.import_dump(&bad_tag).unwrap_err();
+        assert!(err.contains("too long"), "got: {}", err);
+
+        // 记忆的标签不是字符串
+        let bad_tags = json!({
+            "tags": [],
+            "memories": [{"summary": "s", "content": "c", "tags": [42]}]
+        });
+        let err = st.import_dump(&bad_tags).unwrap_err();
+        assert!(err.contains("must be strings"), "got: {}", err);
+
+        // 以上任何失败都不能落库
+        assert_eq!(st.stats().unwrap()["memories"], 0);
+        cleanup(&dst);
+    }
+
+    #[test]
+    fn with_db_rolls_back_on_error() {
+        let path = temp_db("tx");
+        cleanup(&path);
+        let r: Result<(), String> = with_db_in(&path, TxMode::Write, |st| {
+            st.ensure_tags_exist(&["t".into()])?;
+            st.insert_memory("s", "c", &["t".into()], 1, 1)?;
+            Err("boom".into())
+        });
+        assert!(r.is_err());
+        let st = Store::open(&path).unwrap();
+        assert_eq!(
+            st.stats().unwrap()["memories"],
+            0,
+            "rollback must remove the memory"
+        );
+        assert_eq!(
+            st.stats().unwrap()["tags"],
+            0,
+            "rollback must remove the tag"
+        );
+        cleanup(&path);
     }
 }

@@ -1,6 +1,12 @@
 /target
 /bin
+/memory.db
+/memory.db-wal
+/memory.db-shm
 /memory.json
 *.json.tmp
 *.json.bak
 *.json.lock
+ui/node_modules
+scripts/node_modules
+.zcode/

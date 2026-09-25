@@ -25,8 +25,32 @@ jobs:
 
   msrv:
     # 校验 Cargo.toml 声明的 rust-version 真实可用，防止意外引入更新的 std API
+    # （依赖树的实际最大 MSRV 为 1.85：clap 4.6 与 rusqlite 侧的 hashbrown/sha2 栈）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.82.0
+      - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo check
+
+  ui-tests:
+    # 管理界面的类型检查与单元测试（查询串组装、API 封装约定）。node 版本须与
+    # 构建 dist/ 时一致（24），否则产物可能漂移；scripts/ 的 TS 类型检查一并执行。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npm run typecheck
+        working-directory: ui
+      - run: npm test
+        working-directory: ui
+      - name: Typecheck dev scripts
+        working-directory: scripts
+        run: |
+          npm ci
+          npx tsc --noEmit
