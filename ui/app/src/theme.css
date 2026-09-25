@@ -1,0 +1,146 @@
+/*
+ * 独立站主题：参考 Modrinth 设计系统（packages/assets/styles/variables.scss）的
+ * 分层表面色 + 品牌绿，映射到 Element Plus 的 --el-* 变量。
+ * 组件库（@agent-memory/ui）只引用 --el-* 变量，因此改这里即可整体换肤；
+ * 嵌入宿主时由宿主自行提供变量值，本文件不随库分发。
+ */
+
+:root {
+  /* Modrinth light surfaces */
+  --md-surface-1: #ebebeb;
+  --md-surface-2: #f5f5f5;
+  --md-surface-3: #f8f8f8;
+  --md-surface-4: #ffffff;
+  --md-surface-5: #dddddd;
+  --md-text-1: #1a202c;
+  --md-text-2: #2c2e31;
+  --md-text-3: #484d54;
+  --md-brand: #00af5c;
+  --md-border-strong: rgba(161, 161, 161, 0.35);
+  --md-scrollbar: #c4c4c4;
+
+  /* 主色：品牌绿（EP 的 light-N 为混白浅阶，dark-2 为混黑深阶） */
+  --el-color-primary: var(--md-brand);
+  --el-color-primary-dark-2: #04914f;
+  --el-color-primary-light-3: #4cc388;
+  --el-color-primary-light-5: #80d9ad;
+  --el-color-primary-light-7: #b3ebd1;
+  --el-color-primary-light-8: #ccf5e0;
+  --el-color-primary-light-9: #e5faf0;
+
+  /* 语义色对齐 Modrinth 色阶 */
+  --el-color-success: #00af5c;
+  --el-color-warning: #e08325;
+  --el-color-danger: #cb2245;
+  --el-color-error: #cb2245;
+  --el-color-info: #686a72;
+
+  /* 表面与文字 */
+  --el-bg-color: var(--md-surface-4);
+  --el-bg-color-page: var(--md-surface-1);
+  --el-bg-color-overlay: var(--md-surface-4);
+  --el-text-color-primary: var(--md-text-1);
+  --el-text-color-regular: var(--md-text-2);
+  --el-text-color-secondary: var(--md-text-3);
+  --el-text-color-placeholder: #83868d;
+  --el-text-color-disabled: #adb0b3;
+
+  /* 边框与填充 */
+  --el-border-color: var(--md-surface-5);
+  --el-border-color-light: #e5e5e8;
+  --el-border-color-lighter: #ebebeb;
+  --el-border-color-extra-light: #f5f5f6;
+  --el-fill-color-blank: var(--md-surface-4);
+  --el-fill-color-light: #f5f5f5;
+  --el-fill-color-lighter: #f8f8f8;
+  --el-fill-color: #f0f0f1;
+  --el-fill-color-dark: #e5e5e8;
+  --el-fill-color-darker: #dddddd;
+
+  /* 圆角：Modrinth 用 0.5rem~1rem 的大圆角卡片 */
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 999px;
+
+  --el-font-family:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+
+  --el-box-shadow-light: 0 2px 12px rgba(50, 50, 100, 0.1);
+  --el-box-shadow: 0 4px 16px rgba(50, 50, 100, 0.12);
+}
+
+html.dark {
+  /* Modrinth dark surfaces */
+  --md-surface-1: #16181c;
+  --md-surface-2: #1d1f23;
+  --md-surface-3: #27292e;
+  --md-surface-4: #34363c;
+  --md-surface-5: #42444a;
+  --md-text-1: #ffffff;
+  --md-text-2: #b0bac5;
+  --md-text-3: #96a2b0;
+  --md-brand: #1bd96a;
+  --md-border-strong: rgba(193, 190, 209, 0.12);
+  --md-scrollbar: #42444a;
+
+  /* 暗色下 light-N 变为向暗底收拢的深阶（hover 加深），dark-2 提亮 */
+  --el-color-primary: var(--md-brand);
+  --el-color-primary-dark-2: #48e088;
+  --el-color-primary-light-3: #1a9f51;
+  --el-color-primary-light-5: #187740;
+  --el-color-primary-light-7: #18502f;
+  --el-color-primary-light-8: #163d26;
+  --el-color-primary-light-9: #16271d;
+
+  --el-color-success: #42e686;
+  --el-color-warning: #ffa347;
+  --el-color-danger: #ff496e;
+  --el-color-error: #ff496e;
+  --el-color-info: #9fa4b3;
+
+  --el-bg-color: var(--md-surface-3);
+  --el-bg-color-page: var(--md-surface-1);
+  --el-bg-color-overlay: var(--md-surface-2);
+  --el-text-color-primary: var(--md-text-1);
+  --el-text-color-regular: var(--md-text-2);
+  --el-text-color-secondary: var(--md-text-3);
+  --el-text-color-placeholder: #777b8b;
+  --el-text-color-disabled: #52555d;
+
+  --el-border-color: var(--md-surface-4);
+  --el-border-color-light: #2f3136;
+  --el-border-color-lighter: #2b2d32;
+  --el-border-color-extra-light: #27292e;
+  --el-fill-color-blank: var(--md-surface-3);
+  --el-fill-color-light: #2b2d33;
+  --el-fill-color-lighter: #303339;
+  --el-fill-color: var(--md-surface-4);
+  --el-fill-color-dark: #3c3e45;
+  --el-fill-color-darker: var(--md-surface-5);
+
+  --el-box-shadow-light: 0 2px 12px rgba(0, 0, 0, 0.35);
+  --el-box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+
+  /* 品牌绿在暗色下亮度高，实心主色元素（按钮/分页/开关等）上的
+     "白色"文字与图标改为深色，对齐 Modrinth 的 accent-contrast */
+  --el-color-white: #0b0d10;
+}
+
+/* 细滚动条，颜色随主题（Modrinth 的 --color-scrollbar） */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--md-scrollbar);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  border-width: 1px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

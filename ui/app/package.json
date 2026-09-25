@@ -1,0 +1,31 @@
+{
+  "name": "@agent-memory/app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "agent-memory 独立管理站点：组件库 @agent-memory/ui 的参考宿主（构建产物由 Rust 二进制嵌入托管）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@agent-memory/ui": "*",
+    "@element-plus/icons-vue": "^2.3.1",
+    "element-plus": "^2.9.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "@vue/test-utils": "^2.5.1",
+    "happy-dom": "^20.14.5",
+    "prettier": "^3.9.9",
+    "typescript": "^5.8.3",
+    "vite": "^6.0.0",
+    "vitest": "^5.0.1",
+    "vue-tsc": "^3.3.11"
+  }
+}

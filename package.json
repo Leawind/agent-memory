@@ -1,16 +1,17 @@
 {
   "name": "agent-memory",
   "private": true,
-  "description": "Workspace root: unifies the ui/ admin app and scripts/ dev tooling under npm workspaces",
+  "description": "Workspace root: unifies the ui/ component library + standalone app and scripts/ dev tooling under npm workspaces",
   "workspaces": [
-    "ui",
+    "ui/lib",
+    "ui/app",
     "scripts"
   ],
   "scripts": {
-    "build": "npm run build --workspace ui",
-    "test": "npm run test --workspace ui",
+    "build": "npm run build --workspace @agent-memory/ui && npm run build --workspace @agent-memory/app",
+    "test": "npm run test --workspace @agent-memory/ui && npm run test --workspace @agent-memory/app",
     "typecheck": "npm run typecheck --if-present --workspaces",
-    "format": "npm run format --workspace ui",
-    "format:check": "npm run format:check --workspace ui"
+    "format": "npm run format --workspace @agent-memory/ui && npm run format --workspace @agent-memory/app",
+    "format:check": "npm run format:check --workspace @agent-memory/ui && npm run format:check --workspace @agent-memory/app"
   }
 }

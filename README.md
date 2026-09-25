@@ -62,69 +62,17 @@ agent-memory serve
 
 ![运维](docs/ui-ops.png)
 
-界面源码在 `ui/`（Vue3 + Element Plus + Vite + TypeScript），构建产物 `ui/dist` 提交入库并由 rust-embed 编译期嵌入。JS 侧（`ui/` 与 `scripts/`）由根 package.json 的 npm workspaces 统一管理，根目录一次安装：
+## 性能
 
-```bash
-npm install          # 首次（或依赖变更后）
-npm run build        # 修改前端后重新构建（等价 npm run build -w ui）
-cargo install --path . --force   # 重新编译并更新安装，随后重启服务器生效
-```
+本机实测（Windows，2026-09，300 条记忆）：单次创建 ~23 ms，搜索/分页 ~10 ms。写入成本随条目数近似线性，数千条以内完全无感，上万条仍可用。
 
-## 性能包络
+## 数据
 
-本机（Windows，2026-09 实测，keep-alive 连接、纯服务端往返）300 条记忆时：
+- 数据保存在单个 SQLite 文件（默认 `~/.agent-memory/memory.db`）
+- **跨机器迁移**：SQLite 文件格式平台无关，服务器停止后直接复制 `.db` 即可换机使用（Windows / Linux / macOS 通用）；需要可读格式时用 `export` + `import` 完成"导出 → 恢复"
+- **数据安全**：每个请求在单个事务内执行，错误时自动回滚，磁盘数据保持原样
 
-- 单次创建 ~23 ms（含每请求开库 + `BEGIN IMMEDIATE` 事务提交）
-- 关键词搜索 ~10 ms、分页浏览 ~11 ms（search/list 需载入全量记忆到内存评分）
-
-写入成本主要来自每请求的连接建立与事务提交，随条目数近似线性（搜索/列表全量加载）——数千条以内完全无感；上万条仍可用，届时优先做标签清理与归档，而不是改存储引擎。
-
-## 数据与跨平台
-
-- 数据保存在单个 SQLite 文件（默认 `~/.agent-memory/memory.db`），表结构：`tags` / `memories` / `memory_tags`（双外键级联）
-- **Schema 迁移**：迁移脚本在 `migrations/` 目录（`NUM-NAME.sql`），构建时嵌入二进制；运行器按 `PRAGMA user_version` 逐个事务应用、恰好一次。发布前允许破坏性更改（改写基线脚本、删库重建）；发布后只新增迁移文件，旧数据库自动平滑升级
-- **跨平台迁移**：SQLite 文件格式平台无关。服务器停止后（WAL 会自动合并回主文件）直接复制 `.db` 即可换机使用；运行中迁移或需要可读格式时，用 `export` + `import` 完成"导出 → 恢复"闭环
-- **数据安全**：每个请求在单个 `BEGIN IMMEDIATE` 事务内执行，错误或 panic 时连接关闭自动回滚，磁盘数据保持原样；主文件损坏由 SQLite 自身页校验防护
-- **SQL 管理**：全部业务 SQL 外置在 `sql/` 目录（每条语句一个文件），构建期嵌入——Rust 代码中不出现 SQL 文本，参数一律绑定占位符
-
-## 架构
-
-```
-src/
-  main.rs        clap CLI（serve/stats/doctor/export/import）
-  http.rs        HTTP 层：/mcp + /api/* + 静态 UI + /health，多 worker 线程
-  protocol.rs    MCP 协议层（JSON-RPC：initialize / ping / tools/*，批量与通知）
-  tools/
-    mod.rs       工具入口：单事务"执行→提交"，未知参数校验
-    defs.rs      工具清单 + JSON Schema（对 agent 的契约，参数校验的权威来源）
-    params.rs    参数解析与校验
-    tag_ops.rs   标签增删查改
-    memory_ops.rs 记忆增删改查、浏览、搜索
-  store.rs       SQLite 持久化（WAL / 迁移运行器 / 级联 / 体检 / 统计 / 导出）
-  sql.rs         SQL 登记表（include_str! 嵌入 sql/ 目录）
-  search.rs      关键词搜索与评分（内存内，语义与存储无关）
-  model.rs       纯数据模型（Memory / 归一化 / API 限制常量）
-migrations/      Schema 迁移脚本（build.rs 编译期生成 MIGRATIONS 数组）
-sql/             业务 SQL（每条语句一个文件）
-ui/              Vue3 + Element Plus + Vite + TypeScript 管理界面（dist 入库嵌入）
-```
-
-## 测试
-
-```bash
-cargo test    # 56 个单元测试 + 6 个端到端测试（真实进程走 HTTP，覆盖 MCP / REST / 静态 UI / 双进程并发 / CLI）
-npm test      # 管理界面测试（19 个：组件挂载冒烟、查询串组装、API 封装、Markdown 渲染与消毒）
-npm run typecheck   # TypeScript 类型检查（覆盖 ui/ 与 scripts/ 两个 workspace）
-```
-
-另有与官方 MCP TypeScript SDK 的兼容性联调脚本（开发用，需 node）：
-
-```bash
-agent-memory serve &                     # 先起服务器
-node scripts/sdk-compat-check.ts
-```
-
-## 工具一览
+## 许可
 
 | 工具 | 只读 | 说明 |
 |---|---|---|

@@ -1,0 +1,51 @@
+{
+  "name": "@agent-memory/ui",
+  "version": "0.1.0",
+  "description": "agent-memory 管理界面的可嵌入 Vue3 组件库（Element Plus 作 peer dependency）",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "peerDependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "element-plus": ">=2.9.0 <3",
+    "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14"
+  },
+  "devDependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "@vue/test-utils": "^2.5.1",
+    "element-plus": "^2.9.0",
+    "happy-dom": "^20.14.5",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.9",
+    "typescript": "^5.8.3",
+    "unplugin-vue-components": "^28.0.0",
+    "vite": "^6.0.0",
+    "vite-plugin-dts": "^4.5.0",
+    "vitest": "^5.0.1",
+    "vue": "^3.5.13",
+    "vue-tsc": "^3.3.11"
+  }
+}

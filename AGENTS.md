@@ -10,11 +10,13 @@ cargo clippy --all-targets   # 提交前应零告警（Cargo.toml [lints.clippy]
 cargo fmt --check            # 提交前格式必须通过
 cargo install --path . --force   # 更新本机安装（改完 Rust 代码后跑，否则运行中的是旧二进制）
                   # 部署方式：源码 cargo install，MCP 客户端配置走 HTTP 地址，无构建脚本
-npm run build     # 仅当改了 ui/src 时需要；等价 npm run build -w ui，产物 ui/dist 入库并由 rust-embed 嵌入
+npm run build     # 仅当改了 ui/ 时需要；先 lib 后 app 两 workspace，app 产物 ui/dist 入库并由 rust-embed 嵌入
+                  # ⚠️ 新增 dist 产物文件不会触发 Rust 重编译（rust-embed 只跟踪编译期已存在的文件），
+                  # 改完前端 cargo build 前先 cargo clean -p agent-memory，否则二进制里可能还是旧 UI
 ```
 
-注意：本机配置了全局共享的 CARGO_TARGET_DIR（编译产物不在 ./target），e2e 测试等
-需要定位二进制时用 `cargo metadata` 从 cargo 元数据取真实输出目录。
+注意：若通过 CARGO_TARGET_DIR 或 build.target-dir 配置了共享/非默认输出目录（编译产物不在
+./target），e2e 测试等需要定位二进制时用 `cargo metadata` 从 cargo 元数据取真实输出目录。
 
 JS 侧（ui/ 与 scripts/）由根 package.json 的 npm workspaces 统一管理：根目录一次
 `npm install` 生成唯一 lockfile（package-lock.json），`npm run test` / `typecheck` /
@@ -40,8 +42,13 @@ src/
   model.rs       纯数据模型：Memory / id·标签名归一化 / API 限制常量
 migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生成 MIGRATIONS 数组
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
-ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（rust-embed 嵌入，cargo 构建无需 node）
-                 记忆正文按 Markdown 渲染：ui/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
+ui/              前端分两个 workspace 包（详见 ui/README.md）：
+  ui/lib         @agent-memory/ui —— 可嵌入 Vue3 组件库（Element Plus 作 peerDependency，lib mode 构建）
+                 导出 MemoryAdmin（sidebar/tabs 双布局）与 MemoriesPanel/TagsPanel/OpsPanel 独立面板；
+                 配置经 provideMemoryUI 注入（baseUrl/自定义 fetch/默认分页）；数据操作在 composables，
+                 面板层只渲染与 toast；样式全部引用 --el-* 变量跟随宿主主题
+  ui/app         @agent-memory/app —— 独立站点薄壳（侧边栏布局 + 亮/暗主题切换），产物输出 ui/dist
+                 记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 
 ## 架构不变量（改代码前必读）
@@ -72,11 +79,13 @@ ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（r
    `"m{n}"`（normalize_id 容忍 "1"/"m1" 两种写法）。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **嵌入资产**：ui/dist 必须存在且被提交（rust-embed debug-embed 编译期嵌入）；
-   改前端后先 `npm run format && npm run build` 再 `cargo build`。
-9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置见
-   ui/.prettierrc.json）；CI 强制 `format:check`，提交前先 `npm run format`。
+   改前端后先 `npm run format && npm run build` 再 `cargo clean -p agent-memory && cargo build`
+   （新增的 dist 文件不在 rust-embed 的跟踪范围，不清理会嵌到旧产物）。
+9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置在根
+   .prettierrc.json）；CI 强制 `format:check`，提交前先 `npm run format`。
 10. **Markdown 渲染必须消毒**：记忆正文是多 agent 共写的外部输入，
-    管理界面渲染前必须经 DOMPurify（`ui/src/markdown.ts` 统一出口），
+    管理界面渲染前必须经 DOMPurify（`ui/lib/src/markdown.ts` 统一出口：
+    Markdown 走 renderMarkdown，服务端 HTML 片段走 sanitizeHtml），
     新增渲染入口不得绕过它直接 `v-html`。
 
 ## 测试约定
@@ -87,8 +96,11 @@ ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（r
 - 单元测试分布在各模块（store 的级联/迁移/体检、tools 的契约校验、protocol 的对抗输入、
   http 的路由/Origin/解码）。数据文件一律指到临时目录，绝不碰用户真实数据。
 - 新增工具时至少覆盖：正常流、参数错误、渐进式披露边界（正文不泄露）。
-- 前端单元测试默认 happy-dom；涉及 DOMPurify 的测试必须标 `// @vitest-environment jsdom`
+- 前端单元测试（ui/lib 与 ui/app，vitest）默认 happy-dom；涉及 DOMPurify 的测试必须标
+  `// @vitest-environment jsdom`
   （DOMPurify 在 happy-dom 下会错剥常见块级标签，jsdom 是其官方支持的测试 DOM）。
+  面板挂载测试 stub fetch + 真实渲染 Element Plus 组件（组件的 el-* 导入由
+  unplugin-vue-components 在构建期注入，测试无需全局注册 EP）。
 
 ## 开发脚本（scripts/，TypeScript，需 node ≥24 原生类型剥离运行，不参与构建）
 
