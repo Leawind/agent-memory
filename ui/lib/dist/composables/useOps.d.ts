@@ -4,24 +4,14 @@ export declare function useOps(): {
         path?: string | undefined;
         memories?: number | undefined;
         tags?: number | undefined;
-        next_id?: string | undefined;
         file_size?: number | undefined;
-        newest_update?: {
-            id: string;
-            updated_at: number;
-        } | null | undefined;
         schema_version?: number | undefined;
         version?: string | undefined;
     }, Partial<StatsInfo> | {
         path?: string | undefined;
         memories?: number | undefined;
         tags?: number | undefined;
-        next_id?: string | undefined;
         file_size?: number | undefined;
-        newest_update?: {
-            id: string;
-            updated_at: number;
-        } | null | undefined;
         schema_version?: number | undefined;
         version?: string | undefined;
     }>;

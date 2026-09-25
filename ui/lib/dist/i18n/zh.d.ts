@@ -65,14 +65,9 @@ declare const _default: {
         statMemories: string;
         statTags: string;
         statSize: string;
-        statNextId: string;
         dbCard: string;
         path: string;
-        lastUpdate: string;
-        lastUpdateValue: string;
-        crossPlatform: string;
-        crossPlatformYes: string;
-        crossPlatformNote: string;
+        schemaVersion: string;
         version: string;
         export: string;
         import: string;

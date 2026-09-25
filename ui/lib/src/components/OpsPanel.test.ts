@@ -19,9 +19,8 @@ describe('OpsPanel', () => {
               path: '/tmp/memory.db',
               memories: 7,
               tags: 3,
-              next_id: 'm8',
               file_size: 4096,
-              newest_update: { id: 'm7', updated_at: 100 },
+              schema_version: 2,
             }),
           )
         }
@@ -39,8 +38,12 @@ describe('OpsPanel', () => {
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('/tmp/memory.db')
+    expect(html).toContain('数据库版本')
     expect(html).toContain('导出备份')
     expect(html).toContain('数据体检')
+    // next_id / 最近更新不再展示
+    expect(html).not.toContain('下一个记忆 ID')
+    expect(html).not.toContain('最近更新')
     wrapper.unmount()
   })
 })

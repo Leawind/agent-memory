@@ -55,9 +55,7 @@ export interface StatsInfo {
   path: string
   memories: number
   tags: number
-  next_id: string
   file_size: number
-  newest_update: { id: string; updated_at: number } | null
   schema_version: number
   version?: string
 }

@@ -11,24 +11,19 @@
     </div>
 
     <el-row :gutter="14">
-      <el-col :span="compact ? 12 : 6">
+      <el-col :span="compact ? 12 : 8">
         <el-card shadow="never">
           <el-statistic :title="t('ops.statMemories')" :value="stats.memories ?? 0" />
         </el-card>
       </el-col>
-      <el-col :span="compact ? 12 : 6">
+      <el-col :span="compact ? 12 : 8">
         <el-card shadow="never">
           <el-statistic :title="t('ops.statTags')" :value="stats.tags ?? 0" />
         </el-card>
       </el-col>
-      <el-col :span="compact ? 12 : 6">
+      <el-col :span="compact ? 12 : 8">
         <el-card shadow="never">
           <el-statistic :title="t('ops.statSize')" :value="sizeText" />
-        </el-card>
-      </el-col>
-      <el-col :span="compact ? 12 : 6">
-        <el-card shadow="never">
-          <el-statistic :title="t('ops.statNextId')" :value="stats.next_id ?? '—'" />
         </el-card>
       </el-col>
     </el-row>
@@ -37,26 +32,8 @@
       <template #header>{{ t('ops.dbCard') }}</template>
       <el-descriptions :column="compact ? 1 : 2" border>
         <el-descriptions-item :label="t('ops.path')">{{ stats.path ?? '—' }}</el-descriptions-item>
-        <el-descriptions-item :label="t('ops.lastUpdate')">
-          {{
-            stats.newest_update
-              ? t('ops.lastUpdateValue', {
-                  id: stats.newest_update.id,
-                  time: formatTime(stats.newest_update.updated_at),
-                })
-              : '—'
-          }}
-        </el-descriptions-item>
-        <el-descriptions-item>
-          <template #label>
-            <span class="label-help">
-              {{ t('ops.crossPlatform') }}
-              <el-tooltip :content="t('ops.crossPlatformNote')" placement="top">
-                <el-icon class="am-info"><InfoFilled /></el-icon>
-              </el-tooltip>
-            </span>
-          </template>
-          {{ t('ops.crossPlatformYes') }}
+        <el-descriptions-item :label="t('ops.schemaVersion')">
+          {{ stats.schema_version ?? '—' }}
         </el-descriptions-item>
         <el-descriptions-item :label="t('ops.version')">{{ stats.version ?? version }}</el-descriptions-item>
       </el-descriptions>
@@ -109,7 +86,6 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, InfoFilled, Refresh, Search, UploadFilled } from '@element-plus/icons-vue'
-import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useOps } from '../composables/useOps'
 import { useContainerWidth } from '../composables/useContainerWidth'
