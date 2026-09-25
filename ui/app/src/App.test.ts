@@ -65,4 +65,21 @@ describe('App shell', () => {
     expect(html).not.toContain('记忆管理')
     wrapper.unmount()
   })
+
+  it('prompts for the access token when the server answers 401', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) => {
+        if (String(url).includes('/api/whoami')) {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve('') })
+        }
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.html()).toContain('访问令牌')
+    wrapper.unmount()
+  })
 })

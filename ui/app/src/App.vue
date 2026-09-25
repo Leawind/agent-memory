@@ -62,6 +62,15 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+
+            <!-- 身份：开放模式不显示；token 模式显示身份名 + 退出 -->
+            <el-tooltip v-if="who && who.mode === 'token'" :content="identityTooltip" placement="bottom">
+              <button type="button" class="identity-btn" @click="logout">
+                <el-icon :size="13"><User /></el-icon>
+                <span>{{ who.name }}</span>
+                <el-icon :size="13" class="logout-icon"><SwitchButton /></el-icon>
+              </button>
+            </el-tooltip>
           </div>
         </div>
       </header>
@@ -72,39 +81,122 @@
           <MemoriesPanel v-show="active === 'memories'" />
           <TagsPanel v-show="active === 'tags'" />
           <OpsPanel v-show="active === 'ops'" />
+          <AccessPanel v-show="active === 'access'" :who="who" />
         </div>
       </main>
+
+      <!-- 令牌输入：401 时弹出；保存后自动重试 whoami -->
+      <el-dialog v-model="tokenDialog" :title="t('shell.tokenPromptTitle')" width="440px" :close-on-click-modal="false">
+        <p class="token-desc">{{ t('shell.tokenPromptDesc') }}</p>
+        <el-input
+          v-model="tokenInput"
+          :placeholder="t('shell.tokenPlaceholder')"
+          show-password
+          clearable
+          @keyup.enter="saveToken"
+        />
+        <p v-if="tokenError" class="token-error">{{ t('shell.tokenInvalid') }}</p>
+        <template #footer>
+          <el-button type="primary" :loading="checkingToken" @click="saveToken">
+            {{ t('shell.tokenConfirm') }}
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   </el-config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowDown,
   Check,
   Collection,
+  Key,
   Monitor,
   Moon,
   Notebook,
   Odometer,
   PriceTag,
   Sunny,
+  SwitchButton,
+  User,
 } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 import { MemoriesPanel, OpsPanel, TagsPanel, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
+import { UNAUTHORIZED_EVENT, authFetch, clearToken, fetchWhoAmI, storeToken, type WhoAmI } from './auth'
+import AccessPanel from './AccessPanel.vue'
 
-// 同源部署：API 走默认配置（baseUrl = ''）
-provideMemoryUI({})
+// 同源部署：API 经带鉴权头的 fetch（token 缺省时与原生 fetch 等价）
+provideMemoryUI({ fetch: authFetch })
 
-type AdminTab = 'memories' | 'tags' | 'ops'
+type AdminTab = 'memories' | 'tags' | 'ops' | 'access'
 const active = ref<AdminTab>('memories')
 const navItems = computed(() => [
   { key: 'memories' as const, label: t('nav.memories'), icon: Notebook },
   { key: 'tags' as const, label: t('nav.tags'), icon: PriceTag },
   { key: 'ops' as const, label: t('nav.ops'), icon: Odometer },
+  { key: 'access' as const, label: t('nav.access'), icon: Key },
 ])
+
+// ---- 身份与令牌：一次输入存 localStorage，之后自动携带 ----
+const who = ref<WhoAmI | null>(null)
+const tokenDialog = ref(false)
+const tokenInput = ref('')
+const tokenError = ref(false)
+const checkingToken = ref(false)
+
+const identityTooltip = computed(() =>
+  who.value
+    ? Object.keys(who.value.permissions ?? {})
+        .filter((k) => who.value!.permissions[k])
+        .join(', ')
+    : '',
+)
+
+async function resolveIdentity(): Promise<void> {
+  const r = await fetchWhoAmI()
+  if (r.ok) {
+    who.value = r.who
+  } else if (r.needToken) {
+    tokenDialog.value = true
+  }
+}
+
+async function saveToken(): Promise<void> {
+  const token = tokenInput.value.trim()
+  if (!token) return
+  checkingToken.value = true
+  tokenError.value = false
+  storeToken(token)
+  const r = await fetchWhoAmI()
+  checkingToken.value = false
+  if (r.ok) {
+    who.value = r.who
+    tokenDialog.value = false
+    tokenInput.value = ''
+  } else {
+    clearToken()
+    tokenError.value = true
+  }
+}
+
+function logout(): void {
+  clearToken()
+  window.location.reload()
+}
+
+function onUnauthorized(): void {
+  who.value = null
+  tokenDialog.value = true
+}
+
+onMounted(() => {
+  void resolveIdentity()
+  window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+})
+onUnmounted(() => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized))
 
 // ---- 语言（界面文案 + Element Plus 内置文案同步切换）----
 // 新增语言两步走：lib 里加字典文件并在 messages 注册 + 在 languages 列表加一项
@@ -342,6 +434,42 @@ body {
 }
 .lang-check {
   color: var(--el-color-primary);
+}
+
+/* 身份胶囊：名字 + 退出图标（点击退出登录） */
+.identity-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.identity-btn:hover {
+  color: var(--el-color-danger);
+  background: var(--el-fill-color-dark);
+}
+.logout-icon {
+  color: var(--el-text-color-secondary);
+}
+
+/* 令牌弹窗文案 */
+.token-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+.token-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--el-color-danger);
 }
 
 /* 内容区：通栏留白 + 居中容器 */
