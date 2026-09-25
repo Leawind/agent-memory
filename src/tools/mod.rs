@@ -340,7 +340,7 @@ mod tests {
         // 不存在的标签
         assert!(call(&path, "tag_delete", json!({"name": "nope"})).is_err());
         // memory_get 对缺失 id 返回 missing 而不是报错，并附引导提示
-        let got = call(&path, "memory_get", json!({"ids": ["99"]})).unwrap();
+        let got = call(&path, "memory_get", json!({"ids": ["m99"]})).unwrap();
         assert_eq!(got["missing"].as_array().unwrap().len(), 1);
         assert!(got["note"].as_str().unwrap().contains("memory_search"));
 

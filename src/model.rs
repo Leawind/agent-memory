@@ -56,21 +56,10 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
-/// 记忆 id 归一化：容忍 "1" / "m1" 两种写法，统一为 "m1"。
+/// 记忆 id 归一化：仅去首尾空白。权威格式是 "m{n}"，省略 m 前缀的写法
+/// 不被容忍——裸数字按原样保留，后续解析失败归入 missing/NotFound。
 pub fn normalize_id(raw: &str) -> String {
-    let t = raw.trim();
-    if t.is_empty() {
-        return t.to_string();
-    }
-    if let Some(rest) = t.strip_prefix('m') {
-        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return t.to_string();
-        }
-    }
-    if t.bytes().all(|b| b.is_ascii_digit()) {
-        return format!("m{t}");
-    }
-    t.to_string()
+    raw.trim().to_string()
 }
 
 /// 标签名归一化：去除首尾空白，限制长度。
@@ -108,7 +97,7 @@ mod tests {
     #[test]
     fn normalize_id_variants() {
         assert_eq!(normalize_id(" m12 "), "m12");
-        assert_eq!(normalize_id("12"), "m12");
+        assert_eq!(normalize_id("12"), "12");
         assert_eq!(normalize_id("m0"), "m0");
         assert_eq!(normalize_id("abc"), "abc");
         assert_eq!(normalize_id(""), "");

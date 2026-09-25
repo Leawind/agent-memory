@@ -76,10 +76,9 @@ impl Store {
         format!("m{id}")
     }
 
-    /// 容忍 "1" / "m1" 两种写法（入参归一化见 model::normalize_id）。
+    /// 仅接受 "m{n}" 格式（n 为正整数）；省略 m 前缀的写法不受容忍，返回 None。
     pub fn parse_id(raw: &str) -> Option<i64> {
-        raw.strip_prefix('m')
-            .unwrap_or(raw)
+        raw.strip_prefix('m')?
             .parse::<i64>()
             .ok()
             .filter(|n| *n > 0)
@@ -1270,9 +1269,9 @@ mod tests {
     }
 
     #[test]
-    fn id_roundtrip_and_tolerant_parse() {
+    fn id_roundtrip_and_strict_parse() {
         assert_eq!(Store::parse_id("m12"), Some(12));
-        assert_eq!(Store::parse_id("12"), Some(12));
+        assert_eq!(Store::parse_id("12"), None);
         assert_eq!(Store::parse_id("m0"), None);
         assert_eq!(Store::parse_id("abc"), None);
         assert_eq!(Store::format_id(12), "m12");

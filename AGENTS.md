@@ -91,7 +91,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    REST API（/api/*）必须复用同一批 handler，不得另写校验逻辑。
    错误分类用 `ToolError`（NotFound→404 / Invalid→400 / Forbidden→403），**禁止**再按错误文本匹配分类。
 6. **协议兼容**：MCP 协议版本支持 2024-11-05 / 2025-03-26 / 2025-06-18；id 边界格式
-   `"m{n}"`（normalize_id 容忍 "1"/"m1" 两种写法）。
+   严格为 `"m{n}"`——normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **嵌入资产**：ui/dist 必须存在且被提交（rust-embed debug-embed 编译期嵌入）；
    改前端后先 `npm run format && npm run build` 再 `cargo clean -p agent-memory && cargo build`

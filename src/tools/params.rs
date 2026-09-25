@@ -2,7 +2,8 @@
 //!
 //! 原则：schema 是严格契约（additionalProperties: false），服务器在参数名上
 //! 从严（拼错立刻报错，避免 agent 以为参数生效了）；在值的写法上从宽
-//! （单个字符串自动当作单元素数组，id 带不带 m 前缀都接受）。
+//! （单个字符串自动当作单元素数组；id 例外——格式严格为 "m{n}"，不带
+//! m 前缀的裸数字不被接受）。
 
 use crate::model::{normalize_tag_name, MAX_CONTENT_CHARS, MAX_SUMMARY_CHARS, MAX_TAG_DESC_CHARS};
 use serde_json::{Map, Value};
