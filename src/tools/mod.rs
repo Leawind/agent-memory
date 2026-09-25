@@ -14,22 +14,27 @@ mod memory_ops;
 mod params;
 mod tag_ops;
 
+use crate::auth::IdentityCtx;
 use crate::store::{self, Store};
 use serde_json::{Map, Value};
 use std::path::Path;
 
 pub use defs::{tool_definitions, TOOL_NAMES};
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// 工具层错误：按类别而非文本分类，REST 层据此映射 HTTP 状态码
-/// （NotFound → 404，Invalid → 400），MCP 层一律以 isError 结果回显消息。
+/// （NotFound → 404，Invalid → 400，Forbidden → 403），MCP 层一律以
+/// isError 结果回显消息。
 #[derive(Debug, Clone)]
 pub enum ToolError {
     /// 资源不存在（REST → 404）
     NotFound(String),
     /// 参数校验失败或业务冲突（REST → 400）
     Invalid(String),
+    /// 调用方身份缺少所需能力（REST → 403；与 MCP 规范的
+    /// "403 = insufficient permissions" 语义一致）
+    Forbidden(String),
 }
 
 impl ToolError {
@@ -41,10 +46,14 @@ impl ToolError {
         ToolError::Invalid(msg.into())
     }
 
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        ToolError::Forbidden(msg.into())
+    }
+
     /// 面向 agent / 管理界面的可读消息。
     pub fn message(&self) -> &str {
         match self {
-            ToolError::NotFound(m) | ToolError::Invalid(m) => m,
+            ToolError::NotFound(m) | ToolError::Invalid(m) | ToolError::Forbidden(m) => m,
         }
     }
 }
@@ -66,20 +75,34 @@ impl From<String> for ToolError {
 /// 在单个事务内完成"打开数据库 → 执行 → 提交"。
 /// 事务模式由工具契约决定：readOnlyHint 为真的工具走 DEFERRED 快照，
 /// 其余走 IMMEDIATE 写锁（见 store::TxMode）。
-pub fn execute_with_db(db_path: &Path, name: &str, args: &Value) -> Result<Value, ToolError> {
+/// 权限在 `execute` 入口集中校验（能力要求见 `defs::required_cap`）。
+pub fn execute_with_db(
+    db_path: &Path,
+    ctx: &IdentityCtx,
+    name: &str,
+    args: &Value,
+) -> Result<Value, ToolError> {
     let mode = if defs::is_read_only(name) {
         store::TxMode::ReadOnly
     } else {
         store::TxMode::Write
     };
-    store::with_db_in(db_path, mode, |st| execute(st, name, args))
+    store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))
 }
 
-pub fn execute(st: &Store, name: &str, args: &Value) -> Result<Value, ToolError> {
+pub fn execute(
+    st: &Store,
+    ctx: &IdentityCtx,
+    name: &str,
+    args: &Value,
+) -> Result<Value, ToolError> {
     let map = args
         .as_object()
         .ok_or_else(|| ToolError::invalid("arguments must be a JSON object"))?;
     check_known_args(name, map)?;
+    if TOOL_NAMES.contains(&name) {
+        ctx.require(defs::required_cap(name))?;
+    }
 
     match name {
         "tag_create" => tag_ops::tag_create(st, map),
@@ -138,7 +161,27 @@ mod tests {
     }
 
     fn call(path: &Path, name: &str, args: Value) -> Result<Value, ToolError> {
-        execute_with_db(path, name, &args)
+        execute_with_db(path, &crate::auth::IdentityCtx::open_mode(), name, &args)
+    }
+
+    /// 以指定能力集调用（权限边界测试用）。
+    fn call_as(
+        path: &Path,
+        caps: &[crate::auth::Cap],
+        name: &str,
+        args: Value,
+    ) -> Result<Value, ToolError> {
+        let mut obj = serde_json::Map::new();
+        for c in caps {
+            obj.insert(c.as_str().to_string(), json!(true));
+        }
+        let perms = crate::auth::Permissions::from_json(&Value::Object(obj)).unwrap();
+        execute_with_db(
+            path,
+            &crate::auth::IdentityCtx::new("tester", perms),
+            name,
+            &args,
+        )
     }
 
     fn cleanup(path: &Path) {
@@ -444,7 +487,12 @@ mod tests {
         // 漏掉任何一端时（加工具忘改清单/清单加了没实现），此测试都会失败。
         let path = temp_db("dispatch");
         for name in TOOL_NAMES {
-            let r = execute_with_db(&path, name, &json!({}));
+            let r = execute_with_db(
+                &path,
+                &crate::auth::IdentityCtx::open_mode(),
+                name,
+                &json!({}),
+            );
             if let Err(e) = r {
                 assert!(
                     !e.to_string().contains("unknown tool"),
@@ -452,10 +500,69 @@ mod tests {
                 );
             }
         }
-        assert!(execute_with_db(&path, "nonexistent", &json!({}))
-            .unwrap_err()
-            .to_string()
-            .contains("unknown tool"));
+        assert!(execute_with_db(
+            &path,
+            &crate::auth::IdentityCtx::open_mode(),
+            "nonexistent",
+            &json!({})
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("unknown tool"));
+        cleanup(&path);
+    }
+
+    /// 权限在 execute 入口集中把守：能力不足 → Forbidden，且请求不产生任何副作用。
+    #[test]
+    fn missing_capability_is_forbidden_before_execution() {
+        use crate::auth::Cap;
+        let path = temp_db("caps");
+
+        // 只读身份：读工具可用，写工具一律 Forbidden
+        let read_caps = [Cap::Read];
+        assert!(call_as(&path, &read_caps, "memory_list", json!({})).is_ok());
+        let err = call_as(
+            &path,
+            &read_caps,
+            "memory_create",
+            json!({"summary": "s", "content": "c"}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        assert!(err.to_string().contains("'create'"), "got: {err}");
+        assert!(call_as(&path, &read_caps, "tag_create", json!({"name": "t"})).is_err());
+        // Forbidden 必须发生在副作用之前：库里不应有新标签
+        assert!(call(&path, "tag_list", json!({})).unwrap()["total_tags"] == 0);
+
+        // create 而无 delete：能写不能删
+        call_as(
+            &path,
+            &[Cap::Create],
+            "memory_create",
+            json!({"summary": "s", "content": "c"}),
+        )
+        .unwrap();
+        let err = call_as(
+            &path,
+            &[Cap::Create],
+            "memory_delete",
+            json!({"ids": ["m1"]}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)));
+
+        // 逐工具能力映射：读工具对"全无能力"身份也要 Forbidden
+        for name in TOOL_NAMES {
+            let r = call_as(&path, &[], name, json!({}));
+            let Err(e) = r else {
+                continue; // 空参数恰好合法且只读的路径（当前不存在）才允许通过
+            };
+            assert!(
+                matches!(e, ToolError::Forbidden(_)),
+                "tool '{name}' with zero permissions must be Forbidden, got: {e}"
+            );
+        }
+
         cleanup(&path);
     }
 

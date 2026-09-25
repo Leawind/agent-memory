@@ -458,13 +458,8 @@ impl Store {
                 .map_err(|e| e.to_string())?;
             changed = true;
         }
-        for tag in remove_tags {
-            let n = self
-                .conn
-                .execute(sql::MEMORY_UNLINK_TAG, params![id, tag])
-                .map_err(|e| e.to_string())?;
-            changed = changed || n > 0;
-        }
+        // 契约（defs.rs）：add_tags 先于 remove_tags 执行，两个列表都含同一
+        // 标签时最终结果是移除（显式 remove 的意图优先）。
         if !add_tags.is_empty() {
             self.ensure_tags_exist(add_tags)?;
             for t in add_tags {
@@ -474,6 +469,13 @@ impl Store {
                     .map_err(|e| e.to_string())?;
                 changed = changed || n > 0;
             }
+        }
+        for tag in remove_tags {
+            let n = self
+                .conn
+                .execute(sql::MEMORY_UNLINK_TAG, params![id, tag])
+                .map_err(|e| e.to_string())?;
+            changed = changed || n > 0;
         }
         if changed {
             self.conn
@@ -507,6 +509,160 @@ impl Store {
             }
         }
         Ok((deleted, missing))
+    }
+
+    // ---------------------------------------------------------------- 身份与设置
+
+    /// 生成随机 token（64 位十六进制，SQLite PRNG 由系统熵播种）。
+    pub fn generate_token(&self) -> Result<String, String> {
+        self.conn
+            .query_row(sql::TOKEN_GENERATE, [], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn identity_count(&self) -> Result<u64, String> {
+        self.conn
+            .query_row(sql::IDENTITY_COUNT, [], |r| r.get::<_, i64>(0))
+            .map(|n| n as u64)
+            .map_err(|e| e.to_string())
+    }
+
+    /// 新建身份：生成随机 token，返回 (token, 管理视图)。重名由唯一约束显式化。
+    pub fn identity_create(
+        &self,
+        name: &str,
+        permissions: &crate::auth::Permissions,
+    ) -> Result<(String, Value), String> {
+        let token = self.generate_token()?;
+        let stored = permissions.to_stored_string();
+        self.conn
+            .execute(
+                sql::IDENTITY_INSERT,
+                params![name, token, stored, crate::model::now() as i64],
+            )
+            .map(|_| ())
+            .map_err(|e| {
+                if is_unique_violation(&e) {
+                    format!("identity '{name}' already exists")
+                } else {
+                    e.to_string()
+                }
+            })?;
+        let view = self.identity_view(name)?.ok_or_else(|| {
+            format!("identity '{name}' vanished right after creation (concurrent modification)")
+        })?;
+        Ok((token, view))
+    }
+
+    /// Bearer token → 请求身份；未知 token 返回 None（调用方决定 401）。
+    pub fn identity_ctx_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::auth::IdentityCtx>, String> {
+        let row = self.conn.query_row(sql::IDENTITY_BY_TOKEN, [token], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        });
+        match row {
+            Ok((_id, name, perms_json)) => {
+                let perms = parse_stored_permissions(&perms_json)?;
+                Ok(Some(crate::auth::IdentityCtx::new(&name, perms)))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// 管理视图列表（含 token 明文：鉴权端点本身 admin 把守，且明文存储
+    /// 的设计决定就是"管理界面可随时查看复制"）。
+    pub fn identity_list(&self) -> Result<Vec<Value>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::IDENTITY_ALL)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.map(|row| {
+            let (name, token, perms_json, created_at) = row.map_err(|e| e.to_string())?;
+            let perms = parse_stored_permissions(&perms_json)?;
+            Ok(json!({
+                "name": name,
+                "token": token,
+                "permissions": perms.to_json(),
+                "created_at": created_at,
+            }))
+        })
+        .collect()
+    }
+
+    /// 单个身份的管理视图（含 token）。
+    pub fn identity_view(&self, name: &str) -> Result<Option<Value>, String> {
+        self.identity_list()
+            .map(|all| all.into_iter().find(|v| v["name"].as_str() == Some(name)))
+    }
+
+    pub fn identity_set_permissions(
+        &self,
+        name: &str,
+        permissions: &crate::auth::Permissions,
+    ) -> Result<bool, String> {
+        let stored = permissions.to_stored_string();
+        let n = self
+            .conn
+            .execute(sql::IDENTITY_UPDATE_PERMISSIONS, params![stored, name])
+            .map_err(|e| e.to_string())?;
+        Ok(n > 0)
+    }
+
+    /// 重置 token（旧 token 立即失效），返回新 token；身份不存在返回 None。
+    pub fn identity_reset_token(&self, name: &str) -> Result<Option<String>, String> {
+        let token = self.generate_token()?;
+        let n = self
+            .conn
+            .execute(sql::IDENTITY_UPDATE_TOKEN, params![token, name])
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Ok(None);
+        }
+        Ok(Some(token))
+    }
+
+    pub fn identity_delete(&self, name: &str) -> Result<bool, String> {
+        let n = self
+            .conn
+            .execute(sql::IDENTITY_DELETE, [name])
+            .map_err(|e| e.to_string())?;
+        Ok(n > 0)
+    }
+
+    /// 读取服务器设置；键不存在返回 None。
+    pub fn settings_get(&self, key: &str) -> Result<Option<String>, String> {
+        match self
+            .conn
+            .query_row(sql::SETTINGS_GET, [key], |r| r.get::<_, String>(0))
+        {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub fn settings_put(&self, key: &str, value: &str) -> Result<(), String> {
+        self.conn
+            .execute(sql::SETTINGS_PUT, params![key, value])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     // ---------------------------------------------------------------- 运维
@@ -763,6 +919,14 @@ fn row_to_tag_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 
 fn is_unique_violation(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(ee, _) if ee.code == rusqlite::ErrorCode::ConstraintViolation)
+}
+
+/// 解析 identities.permissions 列。写入路径已严格校验，这里再防线一次：
+/// 损坏的行会让读取报错（身份解析 fail-closed），而不是静默放大权限。
+fn parse_stored_permissions(json_text: &str) -> Result<crate::auth::Permissions, String> {
+    let v: Value =
+        serde_json::from_str(json_text).map_err(|e| format!("corrupt permissions JSON: {e}"))?;
+    crate::auth::Permissions::from_json(&v)
 }
 
 /// 迁移运行器：`PRAGMA user_version` 记录已应用的迁移数量，每个待应用迁移
@@ -1231,6 +1395,90 @@ mod tests {
             0,
             "rollback must remove the tag"
         );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn identity_lifecycle_token_lookup_and_reset() {
+        let path = temp_db("identity");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        assert_eq!(st.identity_count().unwrap(), 0);
+
+        let (token, view) = st
+            .identity_create("alice", &crate::auth::Permissions::all())
+            .unwrap();
+        assert_eq!(token.len(), 64, "token = hex(randomblob(32))");
+        assert_eq!(view["name"], "alice");
+        assert_eq!(view["permissions"]["admin"], true);
+        // 重名报错
+        assert!(st
+            .identity_create("alice", &crate::auth::Permissions::default())
+            .is_err());
+
+        // token → 身份上下文
+        let ctx = st.identity_ctx_by_token(&token).unwrap().unwrap();
+        assert_eq!(ctx.name, "alice");
+        assert!(ctx.can(crate::auth::Cap::Admin));
+        assert!(!ctx.open_mode);
+        // 未知 token → None
+        assert!(st.identity_ctx_by_token("nope").unwrap().is_none());
+
+        // 收窄权限后，同一 token 的能力同步收窄
+        st.identity_set_permissions("alice", &crate::auth::Permissions::default())
+            .unwrap();
+        let ctx = st.identity_ctx_by_token(&token).unwrap().unwrap();
+        assert!(!ctx.can(crate::auth::Cap::Read));
+
+        // 重置 token：旧 token 立即失效
+        let new_token = st.identity_reset_token("alice").unwrap().unwrap();
+        assert_ne!(new_token, token);
+        assert!(st.identity_ctx_by_token(&token).unwrap().is_none());
+        assert!(st.identity_ctx_by_token(&new_token).unwrap().is_some());
+        // 不存在的身份重置 → None
+        assert!(st.identity_reset_token("nope").unwrap().is_none());
+
+        // 删除后计数归零；再删返回 false
+        assert!(st.identity_delete("alice").unwrap());
+        assert!(!st.identity_delete("alice").unwrap());
+        assert_eq!(st.identity_count().unwrap(), 0);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn settings_roundtrip_and_upsert() {
+        let path = temp_db("settings");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        assert_eq!(st.settings_get("instructions").unwrap(), None);
+        st.settings_put("instructions", "v1").unwrap();
+        st.settings_put("instructions", "v2").unwrap();
+        assert_eq!(
+            st.settings_get("instructions").unwrap().as_deref(),
+            Some("v2")
+        );
+        // 其他键互不影响
+        st.settings_put("other", "x").unwrap();
+        assert_eq!(
+            st.settings_get("instructions").unwrap().as_deref(),
+            Some("v2")
+        );
+        cleanup(&path);
+    }
+
+    /// 契约（defs.rs）：add_tags 先于 remove_tags 执行，
+    /// 同一标签同时出现在两个列表时最终结果是移除。
+    #[test]
+    fn update_memory_add_before_remove_ends_removed() {
+        let path = temp_db("add-remove");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.ensure_tags_exist(&["a".into(), "b".into()]).unwrap();
+        let id = st.insert_memory("s", "c", &["a".into()], 1, 1).unwrap();
+        st.update_memory(id, None, None, &["a".into(), "b".into()], &["a".into()])
+            .unwrap();
+        let (found, _) = st.get_memories(&[id]).unwrap();
+        assert_eq!(found[0].tags, vec!["b".to_string()]);
         cleanup(&path);
     }
 }
