@@ -1,6 +1,8 @@
 // 组件库 i18n：独立作用域的 vue-i18n 实例。
 // 不通过 app.use 注册全局 scope，避免与宿主自己的 vue-i18n 实例冲突；
 // 组件直接引用 memoryUIi18n.global 的 composer（t 是响应式的，切语言即全库生效）。
+// 新增语言两步走：① 新建字典文件（如 ja.ts，key 与 zh.ts 一一对应）并在下方 messages 注册；
+// ② 扩展 MemoryUILocale 类型。站点壳的语言菜单再补一项即可，组件本身零改动。
 import { createI18n } from 'vue-i18n'
 import zh from './zh'
 import en from './en'

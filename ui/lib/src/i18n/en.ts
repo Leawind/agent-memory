@@ -116,8 +116,10 @@ export default {
     invalidBackup: 'Backup file is not valid JSON',
   },
   shell: {
+    theme: 'Theme',
     themeLight: 'Light',
     themeDark: 'Dark',
     themeSystem: 'System',
+    language: 'Language',
   },
 }

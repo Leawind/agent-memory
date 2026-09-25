@@ -117,9 +117,11 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             invalidBackup: string;
         };
         shell: {
+            theme: string;
             themeLight: string;
             themeDark: string;
             themeSystem: string;
+            language: string;
         };
     };
     en: {
@@ -237,9 +239,11 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             invalidBackup: string;
         };
         shell: {
+            theme: string;
             themeLight: string;
             themeDark: string;
             themeSystem: string;
+            language: string;
         };
     };
 }, {}, {}, MemoryUILocale, false>;
@@ -360,9 +364,11 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             invalidBackup: string;
         };
         shell: {
+            theme: string;
             themeLight: string;
             themeDark: string;
             themeSystem: string;
+            language: string;
         };
     };
     en: {
@@ -480,14 +486,16 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             invalidBackup: string;
         };
         shell: {
+            theme: string;
             themeLight: string;
             themeDark: string;
             themeSystem: string;
+            language: string;
         };
     };
 }, "zh" | "en", import('@intlify/core-base').RemoveIndexSignature<{
     [x: string]: import('vue-i18n').LocaleMessageValue<import('vue-i18n').VueMessageType>;
-}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "admin.hint" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.sortUpdated" | "memories.sortCreated" | "memories.orderDesc" | "memories.orderAsc" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem", "nav.memories" | "nav.tags" | "nav.ops" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "admin.hint" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.sortUpdated" | "memories.sortCreated" | "memories.orderDesc" | "memories.orderAsc" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem">;
+}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "admin.hint" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.sortUpdated" | "memories.sortCreated" | "memories.orderDesc" | "memories.orderAsc" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language", "nav.memories" | "nav.tags" | "nav.ops" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "admin.hint" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.sortUpdated" | "memories.sortCreated" | "memories.orderDesc" | "memories.orderAsc" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.statNextId" | "ops.dbCard" | "ops.path" | "ops.lastUpdate" | "ops.lastUpdateValue" | "ops.crossPlatform" | "ops.crossPlatformNote" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language">;
 export declare function setMemoryUILocale(locale: MemoryUILocale): void;
 /** 应用 locale 偏好；'auto' 表示跟随浏览器语言 */
 export declare function applyMemoryUILocalePreference(preference: MemoryUILocaleOption): void;

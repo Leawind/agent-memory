@@ -114,8 +114,10 @@ export default {
     invalidBackup: '备份文件不是有效的 JSON',
   },
   shell: {
+    theme: '主题',
     themeLight: '浅色',
     themeDark: '深色',
     themeSystem: '跟随系统',
+    language: '语言',
   },
 }

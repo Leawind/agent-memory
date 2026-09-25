@@ -26,8 +26,42 @@
           </nav>
 
           <div class="actions">
-            <el-segmented v-model="theme" :options="themeOptions" size="small" />
-            <el-segmented v-model="lang" :options="langOptions" size="small" />
+            <!-- 主题：三态图标分段（浅色/深色/跟随系统） -->
+            <div class="seg" role="group" :aria-label="t('shell.theme')">
+              <button
+                v-for="opt in themeOptions"
+                :key="opt.value"
+                type="button"
+                class="seg-item"
+                :class="{ active: theme === opt.value }"
+                :title="opt.label"
+                :aria-label="opt.label"
+                @click="theme = opt.value"
+              >
+                <el-icon :size="15"><component :is="opt.icon" /></el-icon>
+              </button>
+            </div>
+
+            <!-- 语言：下拉菜单（nativeName 不随界面语言变；新增语言 = 新字典 + 一项菜单） -->
+            <el-dropdown trigger="click" @command="setLang">
+              <button type="button" class="lang-btn" :aria-label="t('shell.language')">
+                <span>{{ currentLanguage.nativeName }}</span>
+                <el-icon :size="12"><ArrowDown /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="l in languages"
+                    :key="l.value"
+                    :command="l.value"
+                    :data-checked="lang === l.value"
+                  >
+                    <span class="lang-option">{{ l.nativeName }}</span>
+                    <el-icon v-if="lang === l.value" class="lang-check"><Check /></el-icon>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
       </header>
@@ -46,7 +80,17 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Collection, Notebook, Odometer, PriceTag } from '@element-plus/icons-vue'
+import {
+  ArrowDown,
+  Check,
+  Collection,
+  Monitor,
+  Moon,
+  Notebook,
+  Odometer,
+  PriceTag,
+  Sunny,
+} from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 import { MemoriesPanel, OpsPanel, TagsPanel, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
@@ -63,16 +107,23 @@ const navItems = computed(() => [
 ])
 
 // ---- 语言（界面文案 + Element Plus 内置文案同步切换）----
+// 新增语言两步走：lib 里加字典文件并在 messages 注册 + 在 languages 列表加一项
 type LangChoice = 'zh' | 'en'
 const LANG_KEY = 'agent-memory-locale'
-const langOptions = [
-  { label: '中文', value: 'zh' },
-  { label: 'English', value: 'en' },
+// nativeName 用语言本名显示，不随界面语言翻译
+const languages = [
+  { value: 'zh' as LangChoice, nativeName: '中文' },
+  { value: 'en' as LangChoice, nativeName: 'English' },
 ]
 const lang = ref<LangChoice>(readStoredLang())
 const epLocale = computed(() => (lang.value === 'zh' ? zhCn : en))
+const currentLanguage = computed(() => languages.find((l) => l.value === lang.value) ?? languages[0])
 // 初始偏好（持久化值或浏览器语言）同步进库内 i18n 实例
 setMemoryUILocale(lang.value)
+
+function setLang(value: LangChoice) {
+  lang.value = value
+}
 
 // 无持久化偏好时按浏览器语言选择（与 lib 的 auto 探测同规则）
 function detectLang(): LangChoice {
@@ -101,9 +152,9 @@ watch(lang, (value) => {
 // ---- 主题：浅色 / 深色 / 跟随系统 ----
 type ThemeChoice = 'light' | 'dark' | 'system'
 const themeOptions = computed(() => [
-  { label: t('shell.themeLight'), value: 'light' },
-  { label: t('shell.themeDark'), value: 'dark' },
-  { label: t('shell.themeSystem'), value: 'system' },
+  { label: t('shell.themeLight'), value: 'light' as const, icon: Sunny },
+  { label: t('shell.themeDark'), value: 'dark' as const, icon: Moon },
+  { label: t('shell.themeSystem'), value: 'system' as const, icon: Monitor },
 ])
 const STORAGE_KEY = 'agent-memory-theme'
 
@@ -234,6 +285,63 @@ body {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* 主题分段：iOS 风格胶囊，激活项浮起 */
+.seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+}
+.seg-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+}
+.seg-item:hover {
+  color: var(--el-text-color-primary);
+}
+.seg-item.active {
+  background: var(--el-bg-color);
+  color: var(--el-color-primary);
+  box-shadow: var(--el-box-shadow-light);
+}
+
+/* 语言下拉触发器：与主题分段同风格的胶囊 */
+.lang-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.lang-btn:hover {
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-dark);
+}
+.lang-option {
+  flex: 1;
+  margin-right: 12px;
+}
+.lang-check {
+  color: var(--el-color-primary);
 }
 
 /* 内容区：通栏留白 + 居中容器 */

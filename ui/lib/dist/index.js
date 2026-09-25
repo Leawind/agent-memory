@@ -120,9 +120,11 @@ const Ut = {
     invalidBackup: "备份文件不是有效的 JSON"
   },
   shell: {
+    theme: "主题",
     themeLight: "浅色",
     themeDark: "深色",
-    themeSystem: "跟随系统"
+    themeSystem: "跟随系统",
+    language: "语言"
   }
 }, Mt = {
   nav: {
@@ -239,9 +241,11 @@ const Ut = {
     invalidBackup: "Backup file is not valid JSON"
   },
   shell: {
+    theme: "Theme",
     themeLight: "Light",
     themeDark: "Dark",
-    themeSystem: "System"
+    themeSystem: "System",
+    language: "Language"
   }
 };
 function Re() {

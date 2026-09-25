@@ -113,9 +113,11 @@ declare const _default: {
         invalidBackup: string;
     };
     shell: {
+        theme: string;
         themeLight: string;
         themeDark: string;
         themeSystem: string;
+        language: string;
     };
 };
 export default _default;
