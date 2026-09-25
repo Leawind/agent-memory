@@ -10,11 +10,11 @@
 ## 快速开始
 
 ```bash
-# 构建并部署到 bin/（Windows 为 agent-memory.exe，其他平台为 agent-memory）
-./build.sh
+# 从源码安装（产物进入 ~/.cargo/bin，需先 npm install && npm run build 以准备嵌入的界面产物）
+cargo install --path .
 
 # 启动（默认 127.0.0.1:8899，数据库在 ~/.agent-memory/memory.db）
-./bin/agent-memory.exe        # Linux/macOS: ./bin/agent-memory
+agent-memory serve
 ```
 
 打开 `http://127.0.0.1:8899/` 即是管理界面；让 agent 的 MCP 配置指向 `http://127.0.0.1:8899/mcp` 即接入同一记忆库。
@@ -67,7 +67,7 @@
 ```bash
 npm install          # 首次（或依赖变更后）
 npm run build        # 修改前端后重新构建（等价 npm run build -w ui）
-./build.sh           # 再重新编译嵌入
+cargo install --path . --force   # 重新编译并更新安装，随后重启服务器生效
 ```
 
 ## 性能包络
@@ -120,7 +120,7 @@ npm run typecheck   # TypeScript 类型检查（覆盖 ui/ 与 scripts/ 两个 w
 另有与官方 MCP TypeScript SDK 的兼容性联调脚本（开发用，需 node）：
 
 ```bash
-./bin/agent-memory.exe &                # 先起服务器
+agent-memory serve &                     # 先起服务器
 node scripts/sdk-compat-check.ts
 ```
 
@@ -144,3 +144,7 @@ node scripts/sdk-compat-check.ts
 1. **存**：`memory_create`，摘要写得精确自洽（未来扫描全靠它），标签自选自管
 2. **查**：先 `memory_search` / `memory_list`（便宜），再对值得读的 id 调 `memory_get`（贵）
 3. **管**：定期 `tag_list` 检查分类体系，用 `tag_rename` 纠错，过期记忆用 `memory_delete` 清理
+
+## 许可
+
+MIT（见 [LICENSE](LICENSE)）。

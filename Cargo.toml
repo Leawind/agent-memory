@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Self-hosted MCP memory server for AI agents: SQLite-backed, HTTP-only, shared by multiple agents, with an embedded Vue3 management UI."
+license = "MIT"
 
 [dependencies]
 clap = { version = "4.5.61", features = ["derive"] }

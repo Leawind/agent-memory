@@ -20,7 +20,7 @@ npm run build     # 构建到 dist/（改完前端必须跑）
 
 ```bash
 npm run build     # 产物入库
-cd .. && ./build.sh   # 重新编译 Rust，嵌入新产物
+cargo install --path . --force   # 重新编译 Rust，嵌入新产物
 ```
 
 ## 约定

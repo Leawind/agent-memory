@@ -8,12 +8,13 @@
 cargo test        # 全部测试（单元 + 端到端，e2e 真实启动 HTTP 服务器与 CLI 子命令）
 cargo clippy --all-targets   # 提交前应零告警（Cargo.toml [lints.clippy] 已提升默认严格度）
 cargo fmt --check            # 提交前格式必须通过
-./build.sh        # 构建 release 并部署到 bin/agent-memory.exe
-                  # ⚠️ 改完 Rust 代码必须跑，否则 bin/ 里是旧二进制
+cargo install --path . --force   # 更新本机安装（改完 Rust 代码后跑，否则运行中的是旧二进制）
+                  # 部署方式：源码 cargo install，MCP 客户端配置走 HTTP 地址，无构建脚本
 npm run build     # 仅当改了 ui/src 时需要；等价 npm run build -w ui，产物 ui/dist 入库并由 rust-embed 嵌入
 ```
 
-注意：本机配置了全局共享的 CARGO_TARGET_DIR（编译产物不在 ./target），`build.sh` 会从 cargo 元数据定位真实输出目录。
+注意：本机配置了全局共享的 CARGO_TARGET_DIR（编译产物不在 ./target），e2e 测试等
+需要定位二进制时用 `cargo metadata` 从 cargo 元数据取真实输出目录。
 
 JS 侧（ui/ 与 scripts/）由根 package.json 的 npm workspaces 统一管理：根目录一次
 `npm install` 生成唯一 lockfile（package-lock.json），`npm run test` / `typecheck` /
