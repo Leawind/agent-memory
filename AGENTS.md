@@ -26,20 +26,28 @@ JS 侧（ui/ 与 scripts/）由根 package.json 的 npm workspaces 统一管理�
 
 ```
 src/
-  main.rs        clap CLI：serve(默认)/stats/doctor/export；--host/--port/--db 全部命令行参数，无配置文件
-  http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限
-  api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400 映射（业务逻辑不在此层）
+  main.rs        clap CLI：serve(默认)/stats/doctor/export/import/token reset；--host/--port/--db/--auth
+                 全部命令行参数，无配置文件
+  http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限；
+                 Bearer 鉴权拦截（resolve_identity，fail-closed）与 --auth 引导（空表建管理员、token 打印 stderr）
+  auth.rs        身份与能力模型：Cap 六项能力登记表（唯一权威）、Permissions JSON 严格校验、
+                 IdentityCtx（require/can/summary）；开放模式 = 全能力
+  api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400/403 映射（业务逻辑不在此层）；
+                 例外：identities/settings 端点走专用 handler（agent 工具面不暴露权限管理）
   protocol.rs    MCP 协议层：initialize / ping / tools/list / tools/call，通知不回包，批量消息；
-                 工具结果文本通道必须是紧凑 JSON，structuredContent 按协商版本（2025-06-18 起）附带
-  tools/mod.rs   工具入口：execute_with_db（单事务），分发，未知参数校验（从 schema 派生）
-  tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）
+                 工具结果文本通道必须是紧凑 JSON，structuredContent 按协商版本（2025-06-18 起）附带；
+                 initialize 回传自定义提示词（settings.instructions，缺省内置）+ 调用者身份行
+  tools/mod.rs   工具入口：execute_with_db（单事务），分发，未知参数校验（从 schema 派生），
+                 入口集中执行 ctx.require(defs::required_cap(name)) 权限守卫
+  tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
-  store.rs       SQLite 持久化：WAL / 迁移运行器 / 外键级联 / 体检 / 统计 / 导出
+  store.rs       SQLite 持久化：WAL / 迁移运行器 / 外键级联 / 体检 / 统计 / 导出；
+                 identities（token 即身份，明文存储——库泄露即数据泄露，哈希不增值）与 settings 的 CRUD
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
                  中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
-  model.rs       纯数据模型：Memory / id·标签名归一化 / API 限制常量
+  model.rs       纯数据模型：Memory / id·标签名·身份名归一化 / API 限制常量
 migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生成 MIGRATIONS 数组
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
 ui/              前端分两个 workspace 包（详见 ui/README.md）：
@@ -50,7 +58,9 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
                  配置经 provideMemoryUI 注入（baseUrl/自定义 fetch/默认分页/locale）；数据操作在
                  composables，面板层只渲染与 toast；样式全部引用 --el-* 变量跟随宿主主题
   ui/app         @agent-memory/app —— 独立站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言切换），
-                 直接组装三个面板，产物输出 ui/dist
+                 直接组装三个面板 + AccessPanel（身份管理/自定义提示词，app 层自有组件），
+                 产物输出 ui/dist；token 存 localStorage，authFetch（src/auth.ts）为 lib 注入带
+                 Authorization 的 fetch，401 时广播事件弹出令牌输入框
                  记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 
@@ -70,6 +80,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    **迁移策略**：项目未发布，允许破坏性更改——改 schema 直接改写基线
    `1-init.sql`，旧库删掉重建；**发布后**任何 schema 变更只能新增
    `2-xxx.sql`、`3-xxx.sql` 等新迁移文件，绝不改写已发布的迁移。
+   现状：`2-identities.sql` 已存在（身份/设置表），从现在起一律
+   新增迁移文件，不再改写基线（保住现有用户库）。
    运行器按 `PRAGMA user_version` 逐个事务应用，恰好一次；数据库比已知迁移
    更新时拒绝打开（防降级写坏数据）。
 4. **跨平台数据**：schema 内不得存平台相关状态（绝对路径、换行风格等）；SQLite 文件
@@ -77,7 +89,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 5. **defs.rs 是契约**：新增/修改工具先改 defs.rs 的 schema（含描述），参数校验自动从
    properties 派生；渐进式披露约定不变——list/search 永不返回 content，只有 memory_get 返回。
    REST API（/api/*）必须复用同一批 handler，不得另写校验逻辑。
-   错误分类用 `ToolError`（NotFound→404 / Invalid→400），**禁止**再按错误文本匹配分类。
+   错误分类用 `ToolError`（NotFound→404 / Invalid→400 / Forbidden→403），**禁止**再按错误文本匹配分类。
 6. **协议兼容**：MCP 协议版本支持 2024-11-05 / 2025-03-26 / 2025-06-18；id 边界格式
    `"m{n}"`（normalize_id 容忍 "1"/"m1" 两种写法）。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
@@ -90,6 +102,16 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
     管理界面渲染前必须经 DOMPurify（`ui/lib/src/markdown.ts` 统一出口：
     Markdown 走 renderMarkdown，服务端 HTML 片段走 sanitizeHtml），
     新增渲染入口不得绕过它直接 `v-html`。
+11. **鉴权边界**：无账号体系（不注册、不登录、不引 OAuth）——token 即身份，明文存库
+    （库泄露即数据泄露，哈希不增值），token 生成只用 SQLite `randomblob`，不引随机数依赖。
+    enforcement 条件 = identities 表非空（空表 = 开放模式，全能力，个人本地部署零配置；
+    `--auth` 只负责空表时引导创建首个管理员）。能力登记表唯一权威在 `auth.rs::Cap`，
+    permissions JSON 必须全键、未知键拒绝；工具能力要求登记在 `defs.rs::required_cap`，
+    执行点在 `tools::execute` 入口集中把守，处理器内不得重复校验。鉴权解析在 HTTP 层
+    一次完成（fail-closed：查库失败按 401 拒绝），ctx（`IdentityCtx`）自上而下贯穿
+    tools/api/protocol，不得绕过；401 响应不携带 WWW-Authenticate（避免规范客户端
+    走 OAuth 发现流程）。静态 UI 与 /health 永远免鉴权。身份/设置管理不走 MCP 工具面，
+    走 admin 能力守卫的 REST 端点。
 
 ## 测试约定
 
