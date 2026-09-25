@@ -251,6 +251,54 @@ fn mcp_endpoint_end_to_end() {
         results[0].get("content").is_none(),
         "search must not leak content"
     );
+    // 响应瘦身：不回显 query；hint 只在首页；零结果才带 note
+    let sc = &searched["result"]["structuredContent"];
+    assert!(sc.get("query").is_none(), "query echo must be dropped");
+    assert!(sc.get("hint").is_some(), "first page carries the hint");
+    assert!(sc.get("note").is_none(), "non-empty results carry no note");
+    let empty = mcp_rpc(
+        port,
+        json!({"jsonrpc": "2.0", "id": 30, "method": "tools/call", "params": {
+            "name": "memory_search", "arguments": {"query": "绝对不存在的词", "offset": 10}
+        }}),
+    );
+    let empty_sc = &empty["result"]["structuredContent"];
+    assert_eq!(empty_sc["total_matches"], 0);
+    assert!(empty_sc.get("hint").is_none(), "later pages omit the hint");
+    assert!(
+        empty_sc.get("note").is_some(),
+        "zero results guide the caller"
+    );
+
+    // 文本通道为紧凑 JSON（缩进空白会白占模型上下文）
+    let text = searched["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        !text.contains('\n'),
+        "tool result text must be compact JSON"
+    );
+
+    // MCP-Protocol-Version 头声明旧版本时不带 structuredContent（避免双份注入）
+    let (status, body, _) = try_request(
+        port,
+        "POST",
+        "/mcp",
+        Some(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+                "params": {"name": "memory_search", "arguments": {"query": "记忆系统"}}
+            }))
+            .unwrap(),
+        ),
+        &[("MCP-Protocol-Version", "2025-03-26")],
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let old = json_body(&body);
+    assert!(
+        old["result"].get("structuredContent").is_none(),
+        "pre-2025-06-18 clients must not receive structuredContent"
+    );
+    assert!(old["result"]["content"][0]["text"].is_string());
 
     let fetched = mcp_rpc(
         port,

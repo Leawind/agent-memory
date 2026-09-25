@@ -98,14 +98,24 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         })
         .collect();
 
-    Ok(json!({
-        "query": query,
+    let mut out = json!({
         "total_matches": total,
         "offset": offset,
         "returned": results.len(),
-        "hint": "Summaries + snippets only (progressive disclosure). Call memory_get with the ids worth reading to reveal full content.",
         "results": results,
-    }))
+    });
+    // 渐进式披露引导只在第一页携带；翻页时客户端已读过，省掉重复上下文开销
+    if offset == 0 {
+        out["hint"] = json!(
+            "Summaries + snippets only (progressive disclosure). Call memory_get with the ids worth reading to reveal full content."
+        );
+    }
+    if total == 0 {
+        out["note"] = json!(
+            "no memory matched every term; drop some terms or try broader ones (matching is case-insensitive substring)"
+        );
+    }
+    Ok(out)
 }
 
 pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {

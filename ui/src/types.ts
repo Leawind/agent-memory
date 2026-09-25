@@ -43,10 +43,11 @@ export interface SearchResult {
 }
 
 export interface MemorySearchResp {
-  query: string
   total_matches: number
   offset: number
   returned: number
+  hint?: string
+  note?: string
   results: SearchResult[]
 }
 

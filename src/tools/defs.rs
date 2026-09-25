@@ -104,11 +104,11 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_search",
-            "Keyword search across tags, summaries and content. All whitespace-separated terms must match (AND). Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Tag matches rank highest. Returns ranked summaries plus a short content snippet - call memory_get on the promising ids to reveal full content.",
+            "Keyword search across tags, summaries and content. All whitespace-separated terms must match (AND); a quoted term (\"exact phrase\") must match verbatim and scores a bonus. Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Repeated hits and whole-word ASCII matches rank higher. Tag matches rank highest. Returns ranked summaries plus a short HTML-escaped content snippet - call memory_get on the promising ids to reveal full content.",
             json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Whitespace-separated keywords."},
+                    "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional filter: memory must carry at least one of these tags."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}

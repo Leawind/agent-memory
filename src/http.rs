@@ -125,7 +125,10 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
         match route(&method, &path) {
             Route::Mcp => {
                 // 与请求级事务配合的 panic 隔离：单个请求不拖垮服务器
-                match catch_unwind(AssertUnwindSafe(|| process_mcp(db_path, &body))) {
+                let negotiated = header_value(&req, "MCP-Protocol-Version");
+                match catch_unwind(AssertUnwindSafe(|| {
+                    process_mcp(db_path, &body, negotiated.as_deref())
+                })) {
                     Ok((status, payload)) => (status, "application/json", payload),
                     Err(_) => (
                         500,
@@ -211,7 +214,8 @@ fn route(method: &str, path: &str) -> Route {
 
 /// 把一条 JSON-RPC 消息交给协议层处理，返回 HTTP 状态码与响应体。
 /// 通知（无 id）无响应体 → 202 Accepted；其余 → 200。
-fn process_mcp(db_path: &Path, body: &[u8]) -> (u16, Vec<u8>) {
+/// `negotiated` 来自 MCP-Protocol-Version 请求头（客户端声明协商版本）。
+fn process_mcp(db_path: &Path, body: &[u8], negotiated: Option<&str>) -> (u16, Vec<u8>) {
     let msg: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => {
@@ -219,7 +223,7 @@ fn process_mcp(db_path: &Path, body: &[u8]) -> (u16, Vec<u8>) {
             return (400, serde_json::to_vec(&err).unwrap_or_default());
         }
     };
-    match protocol::handle_message(db_path, &msg) {
+    match protocol::handle_message(db_path, negotiated, &msg) {
         Some(resp) => (200, serde_json::to_vec(&resp).unwrap_or_default()),
         None => (202, Vec::new()),
     }
@@ -469,7 +473,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("agent-memory-http-{}.db", std::process::id()));
         // 解析失败 → 400 + -32700
-        let (status, body) = process_mcp(&path, b"not json");
+        let (status, body) = process_mcp(&path, b"not json", None);
         assert_eq!(status, 400);
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
@@ -480,6 +484,7 @@ mod tests {
         let (status, body) = process_mcp(
             &path,
             br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            None,
         );
         assert_eq!(status, 202);
         assert!(body.is_empty());

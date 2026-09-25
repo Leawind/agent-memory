@@ -26,14 +26,16 @@ src/
   main.rs        clap CLI：serve(默认)/stats/doctor/export；--host/--port/--db 全部命令行参数，无配置文件
   http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限
   api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400 映射（业务逻辑不在此层）
-  protocol.rs    MCP 协议层：initialize / ping / tools/list / tools/call，通知不回包，批量消息
+  protocol.rs    MCP 协议层：initialize / ping / tools/list / tools/call，通知不回包，批量消息；
+                 工具结果文本通道必须是紧凑 JSON，structuredContent 按协商版本（2025-06-18 起）附带
   tools/mod.rs   工具入口：execute_with_db（单事务），分发，未知参数校验（从 schema 派生）
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
   store.rs       SQLite 持久化：WAL / 迁移运行器 / 外键级联 / 体检 / 统计 / 导出
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
-  search.rs      关键词搜索：AND 语义、加权（标签>摘要>正文）、中文子串匹配（内存内计算）
+  search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
+                 中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
   model.rs       纯数据模型：Memory / id·标签名归一化 / API 限制常量
 migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生成 MIGRATIONS 数组
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
