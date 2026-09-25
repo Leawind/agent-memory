@@ -4,19 +4,30 @@
 //   cd scripts && npm install
 //   node sdk-compat-check.ts            # 默认 http://127.0.0.1:8899/mcp
 //   MCP_URL=http://127.0.0.1:8899/mcp node sdk-compat-check.ts
+// 服务器启用 token 鉴权时：MCP_TOKEN=xxx node sdk-compat-check.ts
 // 全部通过时退出码为 0，可用于发布前手工回归；无论成败都尝试清理测试数据。
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const URL_BASE = process.env.MCP_URL || "http://127.0.0.1:8899/mcp";
+const TOKEN = process.env.MCP_TOKEN;
 const failures: string[] = [];
 function check(name: string, cond: boolean, extra = ""): void {
   console.log(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? "  " + extra : ""}`);
   if (!cond) failures.push(name);
 }
 
+// 鉴权服务器：所有 transport 统一携带 Bearer 头（MCP 规范的 token 载体）
+const transportOptions = TOKEN
+  ? { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } as Record<string, string> } }
+  : undefined;
+
+function makeTransport(): StreamableHTTPClientTransport {
+  return new StreamableHTTPClientTransport(new URL(URL_BASE), transportOptions);
+}
+
 const client = new Client({ name: "sdk-compat-check", version: "0.0.1" });
-const transport = new StreamableHTTPClientTransport(new URL(URL_BASE));
+const transport = makeTransport();
 let createdId: string | null = null;
 let done = false;
 
@@ -95,7 +106,7 @@ try {
 
   // 无状态服务器：重连（新会话）后数据仍可见
   const client2 = new Client({ name: "sdk-compat-check-2", version: "0.0.1" });
-  await client2.connect(new StreamableHTTPClientTransport(new URL(URL_BASE)));
+  await client2.connect(makeTransport());
   const again = await client2.callTool({
     name: "memory_search",
     arguments: { query: "联调" },
@@ -112,7 +123,7 @@ try {
   try {
     if (createdId) {
       const cleanup = new Client({ name: "sdk-compat-cleanup", version: "0.0.1" });
-      await cleanup.connect(new StreamableHTTPClientTransport(new URL(URL_BASE)));
+      await cleanup.connect(makeTransport());
       await cleanup.callTool({ name: "memory_delete", arguments: { ids: [createdId] } });
       await cleanup.close();
     }

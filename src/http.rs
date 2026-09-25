@@ -4,10 +4,12 @@
 //! - `/api/*`：管理后端（实现在 `crate::api`，复用工具层 handler），供管理界面使用
 //! - `/`：rust-embed 嵌入的 Vue3 管理界面（SPA）
 //!
-//! 另有 `GET /health` 探活。无鉴权（使用者自担）：仅有的防护是 Origin 校验
-//! （防浏览器 DNS rebinding，MCP 客户端与同源 fetch 不受影响）。
-//! 诊断日志只写 stderr。
+//! 另有 `GET /health` 探活。鉴权（`--auth` 引导启用）在传输层完成：请求携带
+//! `Authorization: Bearer <token>`，与 MCP 规范的载体一致；identities 表为空
+//! 时进入无鉴权开放模式（个人本地部署零配置）。仅有的其他防护是 Origin 校验
+//! （防浏览器 DNS rebinding）。诊断日志只写 stderr。
 
+use crate::auth::{Cap, IdentityCtx};
 use crate::{api, protocol, store, util};
 use rust_embed::RustEmbed;
 use serde_json::{json, Value};
@@ -23,12 +25,14 @@ const PREFIX_API: &str = "/api";
 const MAX_BODY: usize = 8 * 1024 * 1024;
 /// 并发 worker 数：写由 SQLite 串行化，多 worker 只为避免读请求排队。
 const WORKERS: usize = 4;
+/// 首个管理员身份的默认名字（--auth 启动且空表时自动创建）。
+const BOOTSTRAP_ADMIN_NAME: &str = "admin";
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist"]
 struct UiAssets;
 
-pub fn serve_http(host: &str, port: u16, db_path: &Path) -> i32 {
+pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool) -> i32 {
     if port == 0 {
         // 端口 0 会绑定到随机端口，但调用方无从得知实际端口，等于不可用
         eprintln!("agent-memory: --port 0 is not supported; choose a fixed port");
@@ -41,6 +45,21 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path) -> i32 {
         eprintln!("agent-memory: refusing to start to protect your data.");
         return 1;
     }
+    // --auth 引导：空表时创建全能力管理员并打印 token（仅此一次）。
+    if auth_enabled {
+        if let Err(e) = bootstrap_admin_if_empty(db_path) {
+            eprintln!("agent-memory: cannot bootstrap admin identity ({e}).");
+            return 1;
+        }
+    }
+    let open_mode = match identity_count(db_path) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => {
+            eprintln!("agent-memory: cannot read identities ({e}).");
+            return 1;
+        }
+    };
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
@@ -55,7 +74,13 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path) -> i32 {
         addr
     );
     eprintln!("  管理界面  http://{addr}/");
-    eprintln!("  MCP 端点  http://{addr}{ENDPOINT_MCP}（无鉴权，请只暴露给可信网络）");
+    eprintln!("  MCP 端点  http://{addr}{ENDPOINT_MCP}");
+    if open_mode {
+        eprintln!("  鉴权      开放模式（未配置任何身份，所有请求放行；请只暴露给可信网络）");
+        eprintln!("            启用 token 鉴权：在管理界面「身份与访问」页创建第一个身份，或以 --auth 重启");
+    } else {
+        eprintln!("  鉴权      token 模式（/mcp 与 /api 须携带 Authorization: Bearer <token>）");
+    }
 
     let db: PathBuf = db_path.to_path_buf();
     let mut handles = Vec::new();
@@ -73,6 +98,36 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path) -> i32 {
         let _ = h.join();
     }
     0
+}
+
+/// --auth 引导：identities 为空时创建全能力管理员，token 打印到 stderr 一次。
+/// 已有身份时不做任何事（重置走 `token reset` 子命令）。
+fn bootstrap_admin_if_empty(db_path: &Path) -> Result<(), String> {
+    let created: Option<String> = store::with_db_in(
+        db_path,
+        store::TxMode::Write,
+        |st| -> Result<Option<String>, String> {
+            if st.identity_count()? > 0 {
+                return Ok(None);
+            }
+            let (token, _) =
+                st.identity_create(BOOTSTRAP_ADMIN_NAME, &crate::auth::Permissions::all())?;
+            Ok(Some(token))
+        },
+    )?;
+    if let Some(token) = created {
+        eprintln!("agent-memory: ============================================================");
+        eprintln!("agent-memory: 鉴权已启用，已创建管理员身份 '{BOOTSTRAP_ADMIN_NAME}'。");
+        eprintln!("agent-memory: 管理员 token（请立即复制保存，此后可在管理界面随时查看）：");
+        eprintln!("agent-memory:   {token}");
+        eprintln!("agent-memory: MCP 客户端与管理界面请求均须携带 Authorization: Bearer <token>");
+        eprintln!("agent-memory: ============================================================");
+    }
+    Ok(())
+}
+
+fn identity_count(db_path: &Path) -> Result<u64, String> {
+    store::with_db_in(db_path, store::TxMode::ReadOnly, |st| st.identity_count())
 }
 
 fn handle_request(db_path: &Path, req: tiny_http::Request) {
@@ -110,6 +165,29 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
         }
     }
 
+    // 鉴权：/mcp 与 /api 必须携带有效 Bearer token（identities 非空时）。
+    // 静态 UI 与 /health 免鉴权（页面本身不含数据，数据全走已鉴权的 /api）。
+    let ctx = if matches!(route(&method, &path), Route::Mcp | Route::Api) {
+        match resolve_identity(db_path, header_value(&req, "Authorization").as_deref()) {
+            Ok(ctx) => ctx,
+            Err(fail) => {
+                if let AuthFail::Storage(reason) = &fail {
+                    eprintln!("agent-memory: auth lookup failed, failing closed: {reason}");
+                }
+                log_request(&method, &path, 401, req.remote_addr());
+                respond_raw(
+                    req,
+                    401,
+                    "application/json",
+                    err_bytes("unauthorized: configure the 'Authorization: Bearer <token>' header with a valid access token"),
+                );
+                return;
+            }
+        }
+    } else {
+        IdentityCtx::open_mode()
+    };
+
     // body：除 GET/HEAD 外都读（上限内），供 /mcp 与 /api 使用
     let capped: Option<Vec<u8>> = if method == "GET" || method == "HEAD" {
         Some(Vec::new())
@@ -127,7 +205,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
                 // 与请求级事务配合的 panic 隔离：单个请求不拖垮服务器
                 let negotiated = header_value(&req, "MCP-Protocol-Version");
                 match catch_unwind(AssertUnwindSafe(|| {
-                    process_mcp(db_path, &body, negotiated.as_deref())
+                    process_mcp(db_path, &ctx, &body, negotiated.as_deref())
                 })) {
                     Ok((status, payload)) => (status, "application/json", payload),
                     Err(_) => (
@@ -148,10 +226,16 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
             }
             Route::Api => {
                 if path == "/api/export" && method == "GET" {
+                    // 导出是全库明文备份：与 doctor/import 同级，要求 admin 能力
+                    if let Err(e) = ctx.require(Cap::Admin) {
+                        log_request(&method, &path, 403, req.remote_addr());
+                        respond_raw(req, 403, "application/json", err_bytes(e.message()));
+                        return;
+                    }
                     return respond_export(req, db_path, &method, &path);
                 }
                 match catch_unwind(AssertUnwindSafe(|| {
-                    api::handle(db_path, &method, &path, &query, &body)
+                    api::handle(db_path, &ctx, &method, &path, &query, &body)
                 })) {
                     Ok((status, v)) => (
                         status,
@@ -215,7 +299,12 @@ fn route(method: &str, path: &str) -> Route {
 /// 把一条 JSON-RPC 消息交给协议层处理，返回 HTTP 状态码与响应体。
 /// 通知（无 id）无响应体 → 202 Accepted；其余 → 200。
 /// `negotiated` 来自 MCP-Protocol-Version 请求头（客户端声明协商版本）。
-fn process_mcp(db_path: &Path, body: &[u8], negotiated: Option<&str>) -> (u16, Vec<u8>) {
+fn process_mcp(
+    db_path: &Path,
+    ctx: &IdentityCtx,
+    body: &[u8],
+    negotiated: Option<&str>,
+) -> (u16, Vec<u8>) {
     let msg: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => {
@@ -223,7 +312,7 @@ fn process_mcp(db_path: &Path, body: &[u8], negotiated: Option<&str>) -> (u16, V
             return (400, serde_json::to_vec(&err).unwrap_or_default());
         }
     };
-    match protocol::handle_message(db_path, negotiated, &msg) {
+    match protocol::handle_message(db_path, ctx, negotiated, &msg) {
         Some(resp) => (200, serde_json::to_vec(&resp).unwrap_or_default()),
         None => (202, Vec::new()),
     }
@@ -354,6 +443,46 @@ fn header_value(req: &tiny_http::Request, name: &str) -> Option<String> {
         .map(|h| h.value.as_str().to_owned())
 }
 
+/// Bearer 解析：`Authorization: Bearer <token>`，方案名大小写不敏感
+/// （RFC 7235 允许），token 本身大小写敏感。
+fn parse_bearer(header: &str) -> Option<String> {
+    let (scheme, rest) = header.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+    let token = rest.trim();
+    (!token.is_empty()).then(|| token.to_string())
+}
+
+/// 鉴权失败原因：Denied 是正常拒绝（无效/缺失 token），Storage 是身份
+/// 存储不可读——两者对外统一 401（不泄露失败细节），后者额外记日志。
+enum AuthFail {
+    Denied,
+    Storage(String),
+}
+
+/// 解析请求身份。identities 为空 → 开放模式（全能力）；
+/// 否则必须携带有效 token。查库失败按"拒绝"处理（fail-closed）。
+fn resolve_identity(db_path: &Path, auth_header: Option<&str>) -> Result<IdentityCtx, AuthFail> {
+    let token = auth_header.and_then(parse_bearer);
+    // 内层 Result 把"正常拒绝（Denied）"与存储错误分开：存储错误在事务层
+    // 以 String 传递，这里再包成 Storage（响应统一 401，日志区分记因）。
+    let outcome: Result<Result<IdentityCtx, AuthFail>, String> =
+        store::with_db_in(db_path, store::TxMode::ReadOnly, |st| {
+            if st.identity_count()? == 0 {
+                return Ok(Ok(IdentityCtx::open_mode()));
+            }
+            let Some(token) = token.clone() else {
+                return Ok(Err(AuthFail::Denied));
+            };
+            Ok(st.identity_ctx_by_token(&token)?.ok_or(AuthFail::Denied))
+        });
+    match outcome {
+        Ok(inner) => inner,
+        Err(e) => Err(AuthFail::Storage(e)),
+    }
+}
+
 fn read_body_capped(req: &mut tiny_http::Request) -> Option<Vec<u8>> {
     let mut body = Vec::new();
     let ok = req
@@ -445,10 +574,48 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let db = std::env::temp_dir().join(format!("agent-memory-port-{}.db", std::process::id()));
-        let code = serve_http("127.0.0.1", port, &db);
+        let code = serve_http("127.0.0.1", port, &db, false);
         drop(listener);
         let _ = std::fs::remove_file(&db);
         assert_eq!(code, 1, "expected failure on occupied port");
+    }
+
+    #[test]
+    fn bearer_parsing_tolerates_case_and_rejects_garbage() {
+        assert_eq!(parse_bearer("Bearer abc"), Some("abc".to_string()));
+        assert_eq!(parse_bearer("bearer abc"), Some("abc".to_string()));
+        assert_eq!(parse_bearer("BEARER abc"), Some("abc".to_string()));
+        // 多空格：token 前的空白被吞掉
+        assert_eq!(parse_bearer("Bearer   abc  "), Some("abc".to_string()));
+        assert_eq!(parse_bearer("Basic abc"), None);
+        assert_eq!(parse_bearer("Bearer"), None);
+        assert_eq!(parse_bearer("Bearer "), None);
+        assert_eq!(parse_bearer(""), None);
+    }
+
+    #[test]
+    fn process_mcp_parses_and_routes_protocol_errors() {
+        let path =
+            std::env::temp_dir().join(format!("agent-memory-http-{}.db", std::process::id()));
+        let ctx = crate::auth::IdentityCtx::open_mode();
+        // 解析失败 → 400 + -32700
+        let (status, body) = process_mcp(&path, &ctx, b"not json", None);
+        assert_eq!(status, 400);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+            -32700
+        );
+
+        // 通知 → 202 空 body
+        let (status, body) = process_mcp(
+            &path,
+            &ctx,
+            br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            None,
+        );
+        assert_eq!(status, 202);
+        assert!(body.is_empty());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -466,28 +633,5 @@ mod tests {
         assert!(!origin_allowed(Some("http://127.0.0.1.evil.com")));
         assert!(!origin_allowed(Some("ftp://localhost")));
         assert!(!origin_allowed(Some("null")));
-    }
-
-    #[test]
-    fn process_mcp_parses_and_routes_protocol_errors() {
-        let path =
-            std::env::temp_dir().join(format!("agent-memory-http-{}.db", std::process::id()));
-        // 解析失败 → 400 + -32700
-        let (status, body) = process_mcp(&path, b"not json", None);
-        assert_eq!(status, 400);
-        assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
-            -32700
-        );
-
-        // 通知 → 202 空 body
-        let (status, body) = process_mcp(
-            &path,
-            br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-            None,
-        );
-        assert_eq!(status, 202);
-        assert!(body.is_empty());
-        let _ = std::fs::remove_file(&path);
     }
 }

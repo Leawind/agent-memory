@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod api;
+mod auth;
 mod http;
 mod model;
 mod protocol;
@@ -48,6 +49,10 @@ enum Command {
         /// 监听端口
         #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
+        /// 启用 token 鉴权：identities 为空时自动创建全能力管理员并打印 token。
+        /// 不带此参数且未配置过身份时为无鉴权开放模式（个人本地部署）。
+        #[arg(long)]
+        auth: bool,
     },
     /// 打印数据概况
     Stats,
@@ -63,6 +68,21 @@ enum Command {
         /// 备份文件路径
         path: PathBuf,
     },
+    /// 管理 token（无账号体系：token 即身份，日常增删走管理界面）
+    Token {
+        #[command(subcommand)]
+        command: TokenCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum TokenCommand {
+    /// 重置身份的 token（旧 token 立即失效），新 token 打印到 stdout。
+    /// 省略 NAME 时重置最早创建的管理员身份——用于丢失 token 的兜底恢复。
+    Reset {
+        /// 身份名（省略 = 最早创建的管理员）
+        name: Option<String>,
+    },
 }
 
 fn main() {
@@ -75,12 +95,48 @@ fn run(cli: Cli) -> i32 {
     match cli.command.unwrap_or(Command::Serve {
         host: DEFAULT_HOST.to_string(),
         port: DEFAULT_PORT,
+        auth: false,
     }) {
-        Command::Serve { host, port } => http::serve_http(&host, port, &db_path),
+        Command::Serve { host, port, auth } => http::serve_http(&host, port, &db_path, auth),
         Command::Stats => cmd_stats(&db_path),
         Command::Doctor => cmd_doctor(&db_path),
         Command::Export { path } => cmd_export(&db_path, &path),
         Command::Import { path } => cmd_import(&db_path, &path),
+        Command::Token { command } => match command {
+            TokenCommand::Reset { name } => cmd_token_reset(&db_path, name.as_deref()),
+        },
+    }
+}
+
+/// `token reset`：重新生成指定身份的 token（省略名字时选最早创建的管理员）。
+/// 结果走 stdout（新 token），诊断走 stderr。
+fn cmd_token_reset(db_path: &std::path::Path, name: Option<&str>) -> i32 {
+    let result: Result<(String, String), String> =
+        store::with_db_in(db_path, store::TxMode::Write, |st| {
+            let target = match name {
+                Some(n) => n.to_string(),
+                None => st
+                    .identity_list()?
+                    .into_iter()
+                    .find(|v| v["permissions"]["admin"] == true)
+                    .and_then(|v| v["name"].as_str().map(str::to_string))
+                    .ok_or("no admin identity found; create one in the web UI first")?,
+            };
+            let token = st
+                .identity_reset_token(&target)?
+                .ok_or_else(|| format!("identity '{target}' not found"))?;
+            Ok((target, token))
+        });
+    match result {
+        Ok((target, token)) => {
+            println!("new token for '{target}':");
+            println!("{token}");
+            0
+        }
+        Err(e) => {
+            eprintln!("agent-memory: token reset failed: {e}");
+            1
+        }
     }
 }
 

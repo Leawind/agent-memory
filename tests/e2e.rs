@@ -51,6 +51,10 @@ static START_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl HttpProc {
     fn start(db: &Path, tag: &str) -> HttpProc {
+        Self::start_with(db, tag, &[])
+    }
+
+    fn start_with(db: &Path, tag: &str, extra_args: &[&str]) -> HttpProc {
         let _guard = START_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let port = free_port();
         let child = Command::new(env!("CARGO_BIN_EXE_agent-memory"))
@@ -63,6 +67,7 @@ impl HttpProc {
                 "--db",
             ])
             .arg(db)
+            .args(extra_args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -542,6 +547,257 @@ fn rest_api_end_to_end() {
     let (_, body, _) = request(port, "GET", "/api/stats", None);
     assert_eq!(json_body(&body)["memories"], 0);
 
+    drop(server);
+    cleanup(&db);
+}
+
+/// token 鉴权全流程：开放模式 → UI/API 创建身份启用鉴权 → 401/403/能力边界
+/// → token reset 兜底 → 删除全部身份回到开放模式。
+#[test]
+fn token_auth_end_to_end() {
+    let db = temp_db("auth");
+    cleanup(&db);
+    // 不带 --auth：开放模式启动（个人部署零配置形态）
+    let server = HttpProc::start(&db, "auth");
+    let port = server.port;
+
+    // 开放模式：免 token 可用，whoami 报告 open
+    let (status, body, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["mode"], "open");
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary": "open-mode write", "content": "c"}"#),
+    );
+    assert_eq!(status, 200);
+
+    // 开放模式下创建第一个身份 = 「在管理界面启用鉴权」的 API 路径。
+    // 第一个身份一旦创建，鉴权即刻生效，因此它必须是管理员；
+    // 其余身份由管理员凭 token 创建。
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/identities",
+        Some(
+            r#"{"name": "admin", "permissions": {"read": true, "create": true, "update": true, "delete": true, "tag_manage": true, "admin": true}}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let admin_token = json_body(&body)["token"].as_str().unwrap().to_string();
+    assert_eq!(admin_token.len(), 64);
+    let admin_auth = format!("Bearer {admin_token}");
+    let admin_headers = [("Authorization", admin_auth.as_str())];
+
+    let (status, body, _) = try_request(
+        port,
+        "POST",
+        "/api/identities",
+        Some(r#"{"name": "viewer", "permissions": {"read": true}}"#),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let viewer_token = json_body(&body)["token"].as_str().unwrap().to_string();
+
+    // 鉴权立即生效：无 token / 错 token / 非 Bearer 方案 → 401
+    let (status, _, _) = request(port, "GET", "/api/memories", None);
+    assert_eq!(status, 401);
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/mcp",
+        Some(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#),
+    );
+    assert_eq!(status, 401);
+    let (status, _, _) = try_request(
+        port,
+        "GET",
+        "/api/memories",
+        None,
+        &[("Authorization", "Bearer wrong-token")],
+    )
+    .unwrap();
+    assert_eq!(status, 401);
+    let (status, _, _) = try_request(
+        port,
+        "GET",
+        "/api/memories",
+        None,
+        &[("Authorization", "Basic dXNlcjpwYXNz")],
+    )
+    .unwrap();
+    assert_eq!(status, 401);
+
+    // 静态 UI 与 /health 始终免鉴权
+    let (status, _, _) = request(port, "GET", "/", None);
+    assert_eq!(status, 200);
+    let (status, _, _) = request(port, "GET", "/health", None);
+    assert_eq!(status, 200);
+
+    // 只读身份：读 OK；写/管理 403；MCP 写以 isError 回显权限错误
+    let viewer_auth = format!("Bearer {viewer_token}");
+    let viewer_headers = [("Authorization", viewer_auth.as_str())];
+    let (status, _, _) = try_request(port, "GET", "/api/memories", None, &viewer_headers).unwrap();
+    assert_eq!(status, 200);
+    let (status, body, _) = try_request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary": "nope", "content": "c"}"#),
+        &viewer_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    let (status, _, _) =
+        try_request(port, "GET", "/api/identities", None, &viewer_headers).unwrap();
+    assert_eq!(status, 403);
+    let (status, _, _) = try_request(port, "GET", "/api/export", None, &viewer_headers).unwrap();
+    assert_eq!(status, 403);
+    let (status, body, _) = try_request(
+        port,
+        "POST",
+        "/mcp",
+        Some(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "memory_create", "arguments": {"summary": "s", "content": "c"}}
+            }))
+            .unwrap(),
+        ),
+        &viewer_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let resp = json_body(&body);
+    assert_eq!(resp["result"]["isError"], true);
+    assert!(
+        resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("permission"),
+        "permission error text: {resp}"
+    );
+
+    // 管理员身份：全通
+    let (status, _, _) = try_request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary": "by admin", "content": "c"}"#),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let (status, body, _) =
+        try_request(port, "GET", "/api/identities", None, &admin_headers).unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["identities"].as_array().unwrap().len(), 2);
+    let (status, _, _) = try_request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"instructions": "team rules"}"#),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let (status, body, _) =
+        try_request(port, "GET", "/api/settings", None, &admin_headers).unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["instructions"], "team rules");
+    let (status, _, _) = try_request(port, "GET", "/api/export", None, &admin_headers).unwrap();
+    assert_eq!(status, 200);
+    // initialize 的 instructions 携带自定义文案与身份行
+    let (status, body, _) = try_request(
+        port,
+        "POST",
+        "/mcp",
+        Some(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0", "id": 3, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"}
+            }))
+            .unwrap(),
+        ),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let init_resp = json_body(&body);
+    let instructions = init_resp["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("team rules"), "{instructions}");
+    assert!(
+        instructions.contains("Caller identity: admin"),
+        "{instructions}"
+    );
+    // whoami 报告 token 模式与身份名
+    let (status, body, _) = try_request(port, "GET", "/api/whoami", None, &admin_headers).unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["mode"], "token");
+    assert_eq!(json_body(&body)["name"], "admin");
+
+    // token reset 兜底：CLI 重置 admin，旧 token 立即失效
+    let out = run_cli(&["token", "reset", "--db", &db.display().to_string(), "admin"]);
+    assert!(out.status.success(), "token reset failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let new_token = stdout.lines().last().unwrap().trim().to_string();
+    assert_eq!(new_token.len(), 64, "reset stdout: {stdout}");
+    let (status, _, _) = try_request(
+        port,
+        "GET",
+        "/api/memories",
+        None,
+        &[("Authorization", admin_auth.as_str())],
+    )
+    .unwrap();
+    assert_eq!(status, 401, "old admin token must be revoked");
+    let fresh_admin = format!("Bearer {new_token}");
+    let (status, _, _) = try_request(
+        port,
+        "GET",
+        "/api/memories",
+        None,
+        &[("Authorization", fresh_admin.as_str())],
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+
+    // 删除全部身份 → 回到开放模式
+    for name in ["viewer", "admin"] {
+        let (status, _, _) = try_request(
+            port,
+            "DELETE",
+            &format!("/api/identities/{name}"),
+            None,
+            &[("Authorization", fresh_admin.as_str())],
+        )
+        .unwrap();
+        assert_eq!(status, 200, "delete {name}");
+    }
+    let (status, body, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["mode"], "open");
+
+    drop(server);
+    cleanup(&db);
+}
+
+/// --auth 引导：空库启动时自动创建管理员，鉴权即刻生效（无 token → 401）。
+#[test]
+fn auth_flag_bootstraps_admin() {
+    let db = temp_db("auth-boot");
+    cleanup(&db);
+    let server = HttpProc::start_with(&db, "auth-boot", &["--auth"]);
+    let port = server.port;
+    let (status, _, _) = request(port, "GET", "/api/memories", None);
+    assert_eq!(
+        status, 401,
+        "bootstrap must have created the admin identity"
+    );
+    let (status, _, _) = request(port, "GET", "/", None);
+    assert_eq!(status, 200);
     drop(server);
     cleanup(&db);
 }

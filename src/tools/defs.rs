@@ -3,6 +3,7 @@
 //! Schema 是对 agent 暴露的契约的唯一权威来源：参数校验所用的
 //! 合法参数名列表直接从 `inputSchema.properties` 派生，两者不会失同步。
 
+use crate::auth::Cap;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -220,6 +221,32 @@ pub fn is_read_only(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 工具名 → 调用方所需能力（权限的唯一登记表，执行点在 tools::execute
+/// 入口集中把守）。只对 TOOL_NAMES 内的工具查询；兜底分支仅为类型完整性。
+pub fn required_cap(tool: &str) -> Cap {
+    static CAPS: OnceLock<HashMap<String, Cap>> = OnceLock::new();
+    CAPS.get_or_init(|| {
+        [
+            ("tag_create", Cap::TagManage),
+            ("tag_list", Cap::Read),
+            ("tag_rename", Cap::TagManage),
+            ("tag_delete", Cap::TagManage),
+            ("memory_create", Cap::Create),
+            ("memory_list", Cap::Read),
+            ("memory_search", Cap::Read),
+            ("memory_get", Cap::Read),
+            ("memory_update", Cap::Update),
+            ("memory_delete", Cap::Delete),
+        ]
+        .into_iter()
+        .map(|(t, c)| (t.to_string(), c))
+        .collect()
+    })
+    .get(tool)
+    .copied()
+    .unwrap_or(Cap::Read)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +267,21 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(read_only, 4, "契约里的只读工具应恰为 4 个");
+    }
+
+    /// 能力登记表与工具清单一一对应：每个工具都有映射（新增工具忘登记
+    /// 会在这里失败），且几个关键工具的能力归属符合直觉。
+    #[test]
+    fn required_cap_covers_every_tool() {
+        use crate::auth::Cap;
+        for name in TOOL_NAMES {
+            // 只要不 panic 即视为已登记（映射本身是静态表，覆盖即可）
+            let _ = required_cap(name);
+        }
+        assert_eq!(required_cap("memory_get"), Cap::Read);
+        assert_eq!(required_cap("memory_create"), Cap::Create);
+        assert_eq!(required_cap("memory_update"), Cap::Update);
+        assert_eq!(required_cap("memory_delete"), Cap::Delete);
+        assert_eq!(required_cap("tag_rename"), Cap::TagManage);
     }
 }

@@ -4,6 +4,8 @@
 //! 通知（无 id）不产生响应。工具执行错误以 isError 结果返回，
 //! 协议级错误（未知方法、未知工具、解析失败）以 JSON-RPC error 返回。
 
+use crate::auth::IdentityCtx;
+use crate::store;
 use crate::tools;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -28,12 +30,18 @@ fn ok_value(id: &Value, result: Value) -> Value {
 
 /// 处理一条入站消息；需要回应时返回响应。支持批量消息（数组）。
 /// `negotiated` 是客户端经 MCP-Protocol-Version 头声明的协议版本。
-pub fn handle_message(store_path: &Path, negotiated: Option<&str>, msg: &Value) -> Option<Value> {
+/// `ctx` 是 HTTP 层已解析的调用方身份（开放模式 = 全能力）。
+pub fn handle_message(
+    store_path: &Path,
+    ctx: &IdentityCtx,
+    negotiated: Option<&str>,
+    msg: &Value,
+) -> Option<Value> {
     if let Some(arr) = msg.as_array() {
         let mut responses = Vec::new();
         for m in arr {
             if m.is_object() {
-                if let Some(r) = handle_single(store_path, negotiated, m) {
+                if let Some(r) = handle_single(store_path, ctx, negotiated, m) {
                     responses.push(r);
                 }
             } else {
@@ -51,11 +59,16 @@ pub fn handle_message(store_path: &Path, negotiated: Option<&str>, msg: &Value) 
             Some(Value::Array(responses))
         }
     } else {
-        handle_single(store_path, negotiated, msg)
+        handle_single(store_path, ctx, negotiated, msg)
     }
 }
 
-fn handle_single(store_path: &Path, negotiated: Option<&str>, msg: &Value) -> Option<Value> {
+fn handle_single(
+    store_path: &Path,
+    ctx: &IdentityCtx,
+    negotiated: Option<&str>,
+    msg: &Value,
+) -> Option<Value> {
     let has_id = msg.get("id").is_some();
     let id = msg.get("id").cloned().unwrap_or(Value::Null);
     // params 缺失或为 null 都按空对象处理（JSON-RPC 允许省略 params）。
@@ -66,12 +79,16 @@ fn handle_single(store_path: &Path, negotiated: Option<&str>, msg: &Value) -> Op
 
     let method = msg.get("method").and_then(Value::as_str);
     match method {
-        Some("initialize") if has_id => Some(ok_value(&id, initialize_result(&params))),
+        Some("initialize") if has_id => {
+            let base = effective_instructions(store_path);
+            let instructions = format!("{}\n\n{}", base, ctx.describe_line());
+            Some(ok_value(&id, initialize_result(&params, instructions)))
+        }
         Some("ping") if has_id => Some(ok_value(&id, json!({}))),
         Some("tools/list") if has_id => {
             Some(ok_value(&id, json!({"tools": tools::tool_definitions()})))
         }
-        Some("tools/call") if has_id => Some(tools_call(store_path, negotiated, &id, &params)),
+        Some("tools/call") if has_id => Some(tools_call(store_path, ctx, negotiated, &id, &params)),
         Some(m) if m.starts_with("notifications/") => None,
         // 未知方法（字符串）：协议级错误
         Some(m) if has_id => Some(error_value(&id, -32601, &format!("method '{m}' not found"))),
@@ -85,7 +102,19 @@ fn handle_single(store_path: &Path, negotiated: Option<&str>, msg: &Value) -> Op
     }
 }
 
-fn initialize_result(params: &Value) -> Value {
+/// 生效的 initialize 提示词：settings 里的自定义值优先，空值/读取失败
+/// 回退内置默认（自定义是运营者精心准备的文案，损坏时宁可回退不可报错）。
+fn effective_instructions(store_path: &Path) -> String {
+    store::with_db_in(store_path, store::TxMode::ReadOnly, |st| {
+        st.settings_get("instructions")
+    })
+    .ok()
+    .flatten()
+    .filter(|s| !s.trim().is_empty())
+    .unwrap_or_else(|| tools::INSTRUCTIONS.to_string())
+}
+
+fn initialize_result(params: &Value, instructions: String) -> Value {
     let requested = params
         .get("protocolVersion")
         .and_then(Value::as_str)
@@ -103,11 +132,17 @@ fn initialize_result(params: &Value) -> Value {
             "title": "Agent Memory",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": tools::INSTRUCTIONS,
+        "instructions": instructions,
     })
 }
 
-fn tools_call(store_path: &Path, negotiated: Option<&str>, id: &Value, params: &Value) -> Value {
+fn tools_call(
+    store_path: &Path,
+    ctx: &IdentityCtx,
+    negotiated: Option<&str>,
+    id: &Value,
+    params: &Value,
+) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     if !tools::TOOL_NAMES.contains(&name) {
         return error_value(id, -32602, &format!("unknown tool '{name}'"));
@@ -120,7 +155,7 @@ fn tools_call(store_path: &Path, negotiated: Option<&str>, id: &Value, params: &
         return error_value(id, -32602, "tools/call arguments must be an object");
     }
 
-    match tools::execute_with_db(store_path, name, &args) {
+    match tools::execute_with_db(store_path, ctx, name, &args) {
         Ok(v) => {
             // 文本承载与 structuredContent 相同的数据；紧凑序列化——pretty 的
             // 缩进空白每次工具调用都要由客户端的模型上下文买单
@@ -160,10 +195,10 @@ mod tests {
         }
     }
 
-    /// 进程内执行一条 JSON-RPC 消息。
+    /// 进程内执行一条 JSON-RPC 消息（开放模式身份 = 全能力）。
     fn roundtrip(store_path: &Path, negotiated: Option<&str>, line: &str) -> Option<Value> {
         let msg: Value = serde_json::from_str(line).unwrap();
-        handle_message(store_path, negotiated, &msg)
+        handle_message(store_path, &IdentityCtx::open_mode(), negotiated, &msg)
     }
 
     #[test]
@@ -187,6 +222,74 @@ mod tests {
         .unwrap();
         assert_eq!(unknown["result"]["protocolVersion"], LATEST_PROTOCOL);
         cleanup(&store);
+    }
+
+    #[test]
+    fn initialize_carries_custom_instructions_and_identity_line() {
+        let store = temp_db("instructions");
+
+        // 写入自定义提示词 + 一个身份，然后用该身份的 token 上下文 initialize
+        store::with_db_in(&store, store::TxMode::Write, |st| -> Result<(), String> {
+            st.settings_put("instructions", "这是团队共享记忆库，提交前先检索。")?;
+            st.identity_create("alice", &crate::auth::Permissions::all())?;
+            Ok(())
+        })
+        .unwrap();
+        let ctx = store::with_db_in(
+            &store,
+            store::TxMode::ReadOnly,
+            |st| -> Result<crate::auth::IdentityCtx, String> {
+                let token = st.identity_list().unwrap()[0]["token"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                Ok(st.identity_ctx_by_token(&token).unwrap().unwrap())
+            },
+        )
+        .unwrap();
+        let resp = handle_message(
+            &store,
+            &ctx,
+            None,
+            &serde_json::from_str::<Value>(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let instructions = resp["result"]["instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("团队共享记忆库"),
+            "got: {instructions}"
+        );
+        assert!(
+            instructions.contains("Caller identity: alice"),
+            "identity line must be appended: {instructions}"
+        );
+        assert!(
+            instructions.contains("admin"),
+            "permissions listed: {instructions}"
+        );
+
+        // 未自定义时回退内置默认；开放模式带 open-mode 身份行
+        let fresh = temp_db("instructions-default");
+        let resp = handle_message(
+            &fresh,
+            &IdentityCtx::open_mode(),
+            None,
+            &serde_json::from_str::<Value>(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let instructions = resp["result"]["instructions"].as_str().unwrap();
+        assert_eq!(
+            instructions,
+            tools::INSTRUCTIONS.to_string() + "\n\n" + &IdentityCtx::open_mode().describe_line()
+        );
+        cleanup(&store);
+        cleanup(&fresh);
     }
 
     #[test]

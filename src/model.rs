@@ -14,6 +14,10 @@ pub const MAX_CONTENT_CHARS: usize = 200_000;
 pub const MAX_TAG_DESC_CHARS: usize = 500;
 /// API 层限制：标签名最大字符数。
 pub const MAX_TAG_NAME_CHARS: usize = 100;
+/// API 层限制：身份名最大字符数。
+pub const MAX_IDENTITY_NAME_CHARS: usize = 100;
+/// API 层限制：自定义 initialize 提示词最大字符数。
+pub const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 
 #[derive(Clone, Debug)]
 pub struct Memory {
@@ -78,6 +82,20 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     if t.chars().count() > MAX_TAG_NAME_CHARS {
         return Err(format!(
             "tag name is too long (max {MAX_TAG_NAME_CHARS} characters)"
+        ));
+    }
+    Ok(t.to_string())
+}
+
+/// 身份名归一化：去除首尾空白，限制长度（规则与标签名一致）。
+pub fn normalize_identity_name(raw: &str) -> Result<String, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err("identity name cannot be empty".into());
+    }
+    if t.chars().count() > MAX_IDENTITY_NAME_CHARS {
+        return Err(format!(
+            "identity name is too long (max {MAX_IDENTITY_NAME_CHARS} characters)"
         ));
     }
     Ok(t.to_string())

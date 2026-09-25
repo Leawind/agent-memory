@@ -36,6 +36,18 @@ pub const MEMORY_SUMMARIES: &str = include_str!("../sql/memory_summaries.sql");
 pub const HYGIENE_ORPHANS: &str = include_str!("../sql/hygiene_orphans.sql");
 pub const HYGIENE_MEMORIES: &str = include_str!("../sql/hygiene_memories.sql");
 
+pub const IDENTITY_INSERT: &str = include_str!("../sql/identity_insert.sql");
+pub const IDENTITY_BY_TOKEN: &str = include_str!("../sql/identity_by_token.sql");
+pub const IDENTITY_ALL: &str = include_str!("../sql/identity_all.sql");
+pub const IDENTITY_DELETE: &str = include_str!("../sql/identity_delete.sql");
+pub const IDENTITY_UPDATE_PERMISSIONS: &str =
+    include_str!("../sql/identity_update_permissions.sql");
+pub const IDENTITY_UPDATE_TOKEN: &str = include_str!("../sql/identity_update_token.sql");
+pub const IDENTITY_COUNT: &str = include_str!("../sql/identity_count.sql");
+pub const SETTINGS_GET: &str = include_str!("../sql/settings_get.sql");
+pub const SETTINGS_PUT: &str = include_str!("../sql/settings_put.sql");
+pub const TOKEN_GENERATE: &str = include_str!("../sql/token_generate.sql");
+
 pub const STATS_MEMORY_COUNT: &str = include_str!("../sql/stats_memory_count.sql");
 pub const STATS_TAG_COUNT: &str = include_str!("../sql/stats_tag_count.sql");
 pub const STATS_NEXT_ID: &str = include_str!("../sql/stats_next_id.sql");
@@ -99,6 +111,16 @@ mod tests {
             ("STATS_TAG_COUNT", STATS_TAG_COUNT),
             ("STATS_NEXT_ID", STATS_NEXT_ID),
             ("STATS_NEWEST", STATS_NEWEST),
+            ("IDENTITY_INSERT", IDENTITY_INSERT),
+            ("IDENTITY_BY_TOKEN", IDENTITY_BY_TOKEN),
+            ("IDENTITY_ALL", IDENTITY_ALL),
+            ("IDENTITY_DELETE", IDENTITY_DELETE),
+            ("IDENTITY_UPDATE_PERMISSIONS", IDENTITY_UPDATE_PERMISSIONS),
+            ("IDENTITY_UPDATE_TOKEN", IDENTITY_UPDATE_TOKEN),
+            ("IDENTITY_COUNT", IDENTITY_COUNT),
+            ("SETTINGS_GET", SETTINGS_GET),
+            ("SETTINGS_PUT", SETTINGS_PUT),
+            ("TOKEN_GENERATE", TOKEN_GENERATE),
         ]
         .iter()
         .map(|(name, content)| {

@@ -3,6 +3,8 @@
 //
 // 用法（先起两个共享同一 --db 的服务器；Node ≥24 可直接运行 .ts）：
 //   node soak.ts <port1> <port2>      # 默认时长 60 秒
+// 服务器启用了 token 鉴权时用 SOAK_TOKEN 注入（所有请求自动带 Bearer 头）：
+//   SOAK_TOKEN=xxx node soak.ts <port1> <port2>
 // 失败分类：ECONNREFUSED 风暴 = 客户端并发超出 accept 队列（测试工具过载，
 // 非服务缺陷）；HTTP 5xx / SQLITE_BUSY 字样 = 服务端真实问题。
 import http from "node:http";
@@ -25,6 +27,11 @@ interface HttpResult {
 function req(method: string, port: number, path: string, body?: unknown): Promise<HttpResult> {
   return new Promise((resolve) => {
     const data = body !== undefined ? JSON.stringify(body) : null;
+    const headers: Record<string, number | string> = data
+      ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }
+      : {};
+    // 鉴权服务器：所有请求统一携带 Bearer token
+    if (process.env.SOAK_TOKEN) headers.Authorization = `Bearer ${process.env.SOAK_TOKEN}`;
     const r = http.request(
       {
         host: "127.0.0.1",
@@ -32,9 +39,7 @@ function req(method: string, port: number, path: string, body?: unknown): Promis
         method,
         path,
         agent,
-        headers: data
-          ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }
-          : {},
+        headers,
       },
       (res) => {
         const chunks: Buffer[] = [];
