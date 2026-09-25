@@ -766,10 +766,23 @@ impl Store {
             .conn
             .query_row(sql::STATS_TAG_COUNT, [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        let next_id: i64 = self
+        // 真实的下一 id 由 AUTOINCREMENT 的 sqlite_sequence 权威记录：删除最大 id
+        // 也不会回退、不会复用。该内部表在 memories 首次插入后才由 SQLite 创建，
+        // 全空库下不存在——此时退回 MAX(id)+1（同样得到 1）。
+        let has_sequence: i64 = self
             .conn
-            .query_row(sql::STATS_NEXT_ID, [], |r| r.get(0))
+            .query_row(sql::STATS_HAS_SEQUENCE, [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
+        let next_id: i64 = if has_sequence != 0 {
+            self.conn
+                .query_row(sql::STATS_NEXT_ID, [], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+        } else {
+            self.conn
+                .query_row(sql::STATS_MAX_ID, [], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())?
+                + 1
+        };
         let newest = self
             .conn
             .query_row(sql::STATS_NEWEST, [], |r| {
@@ -1104,6 +1117,38 @@ mod tests {
         assert_eq!(deleted, vec!["m1".to_string()]);
         assert_eq!(missing, vec!["m999".to_string()]);
         assert_eq!(st.stats().unwrap()["memories"], 0);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn next_id_never_reuses_deleted_max() {
+        let path = temp_db("next-id");
+        cleanup(&path);
+        {
+            let st = Store::open(&path).unwrap();
+            // 全空库：sqlite_sequence 尚不存在，走 MAX+1 回退路径，下一 id 为 m1
+            assert_eq!(st.stats().unwrap()["next_id"], "m1");
+
+            let a = st.insert_memory("a", "ca", &[], 1, 1).unwrap();
+            let b = st.insert_memory("b", "cb", &[], 2, 2).unwrap();
+            let c = st.insert_memory("c", "cc", &[], 3, 3).unwrap();
+            assert_eq!(st.stats().unwrap()["next_id"], "m4");
+
+            // 删除当前最大 id：下一 id 不得回退（AUTOINCREMENT 序列只前进）
+            st.delete_memories(&[c]).unwrap();
+            assert_eq!(st.stats().unwrap()["next_id"], "m4");
+            assert_eq!(st.insert_memory("d", "cd", &[], 4, 4).unwrap(), 4);
+
+            // 删光所有记忆后同样不复用
+            st.delete_memories(&[a, b]).unwrap();
+            assert_eq!(st.stats().unwrap()["next_id"], "m5");
+        }
+        // 序列跨连接持久：重开库后仍不回退
+        {
+            let st = Store::open(&path).unwrap();
+            assert_eq!(st.stats().unwrap()["next_id"], "m5");
+            assert_eq!(st.insert_memory("e", "ce", &[], 5, 5).unwrap(), 5);
+        }
         cleanup(&path);
     }
 

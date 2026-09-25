@@ -50,7 +50,9 @@ pub const TOKEN_GENERATE: &str = include_str!("../sql/token_generate.sql");
 
 pub const STATS_MEMORY_COUNT: &str = include_str!("../sql/stats_memory_count.sql");
 pub const STATS_TAG_COUNT: &str = include_str!("../sql/stats_tag_count.sql");
+pub const STATS_HAS_SEQUENCE: &str = include_str!("../sql/stats_has_sequence.sql");
 pub const STATS_NEXT_ID: &str = include_str!("../sql/stats_next_id.sql");
+pub const STATS_MAX_ID: &str = include_str!("../sql/stats_max_id.sql");
 pub const STATS_NEWEST: &str = include_str!("../sql/stats_newest.sql");
 
 #[cfg(test)]
@@ -109,7 +111,9 @@ mod tests {
             ("HYGIENE_MEMORIES", HYGIENE_MEMORIES),
             ("STATS_MEMORY_COUNT", STATS_MEMORY_COUNT),
             ("STATS_TAG_COUNT", STATS_TAG_COUNT),
+            ("STATS_HAS_SEQUENCE", STATS_HAS_SEQUENCE),
             ("STATS_NEXT_ID", STATS_NEXT_ID),
+            ("STATS_MAX_ID", STATS_MAX_ID),
             ("STATS_NEWEST", STATS_NEWEST),
             ("IDENTITY_INSERT", IDENTITY_INSERT),
             ("IDENTITY_BY_TOKEN", IDENTITY_BY_TOKEN),
