@@ -186,6 +186,11 @@ async function doDelete() {
     saving.value = false
   }
 }
+
+// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+defineExpose({
+  refresh: () => reload().catch((e: unknown) => ElMessage.error(e instanceof Error ? e.message : String(e))),
+})
 </script>
 
 <style scoped>

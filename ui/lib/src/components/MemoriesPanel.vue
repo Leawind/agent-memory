@@ -216,10 +216,12 @@ function onSaved() {
 }
 
 /** 表头排序：点击列头切换升降序，第三次点击取消并回到默认（最近更新在前）。 */
-function onSortChange({ prop, order }: { prop: string; order: 'ascending' | 'descending' | null }) {
-  if (order && (prop === 'updated_at' || prop === 'created_at')) {
+function onSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
+  // 参数名不可叫 order——会遮蔽外部的 order ref，赋值落回参数上（严格模式直接抛 TypeError）
+  const { prop, order: nextOrder } = payload
+  if (nextOrder && (prop === 'updated_at' || prop === 'created_at')) {
     sort.value = prop
-    order.value = order === 'ascending' ? 'asc' : 'desc'
+    order.value = nextOrder === 'ascending' ? 'asc' : 'desc'
   } else {
     sort.value = 'updated_at'
     order.value = 'desc'
@@ -242,6 +244,9 @@ async function remove(row: MemorySummary) {
     ElMessage.error(e instanceof Error ? e.message : String(e))
   }
 }
+
+// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+defineExpose({ refresh: () => run(reload) })
 </script>
 
 <style scoped>

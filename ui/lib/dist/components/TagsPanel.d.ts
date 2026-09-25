@@ -6,7 +6,9 @@ type __VLS_Props = {
     /** 覆盖默认副标题 */
     subtitle?: string;
 };
-declare const _default: import('vue').DefineComponent<__VLS_Props, {}, {}, {}, {}, import('vue').ComponentOptionsMixin, import('vue').ComponentOptionsMixin, {}, string, import('vue').PublicProps, Readonly<__VLS_Props> & Readonly<{}>, {
+declare const _default: import('vue').DefineComponent<__VLS_Props, {
+    refresh: () => Promise<void | import('element-plus').MessageHandler>;
+}, {}, {}, {}, import('vue').ComponentOptionsMixin, import('vue').ComponentOptionsMixin, {}, string, import('vue').PublicProps, Readonly<__VLS_Props> & Readonly<{}>, {
     showHeader: boolean;
 }, {}, {}, {}, string, import('vue').ComponentProvideOptions, false, {
     rootRef: HTMLDivElement;

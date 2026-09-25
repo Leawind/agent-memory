@@ -163,6 +163,9 @@ function onImportFile(e: Event) {
       ElMessage.error(err instanceof Error ? err.message : String(err))
     })
 }
+
+// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+defineExpose({ refresh: () => run(reload) })
 </script>
 
 <style scoped>

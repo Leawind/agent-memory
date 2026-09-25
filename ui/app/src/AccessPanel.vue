@@ -171,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatTime, t, useApiClient } from '@agent-memory/ui'
 import { can, type WhoAmI } from './auth'
@@ -236,6 +236,18 @@ async function load(): Promise<void> {
 onMounted(() => {
   // 无 admin 权限时服务端会 403，静默跳过加载（页面提示已足够）
   if (isAdmin.value) void load()
+})
+
+// 挂载通常早于 whoami 返回（who 初始为 null）：admin 能力就绪后补一次加载
+watch(isAdmin, (granted) => {
+  if (granted) void load()
+})
+
+// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+defineExpose({
+  refresh: () => {
+    if (isAdmin.value) void run(load)
+  },
 })
 
 // ---- 新建 / 编辑 ----

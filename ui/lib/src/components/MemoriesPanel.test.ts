@@ -63,4 +63,22 @@ describe('MemoriesPanel', () => {
     expect(html).toContain('命中片段')
     wrapper.unmount()
   })
+
+  it('refetches with the sorted params when the table emits sort-change', async () => {
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+    const table = wrapper.findComponent({ name: 'ElTable' })
+    expect(table.exists()).toBe(true)
+    table.vm.$emit('sort-change', { prop: 'created_at', order: 'ascending' })
+    await flushPromises()
+    await flushPromises()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    const listCall = urls.filter((u) => u.includes('/api/memories?')).at(-1)
+    // 排序必须真正下发到请求参数（回归：onSortChange 曾因参数遮蔽抛错，reload 不执行）
+    expect(listCall).toContain('sort=created_at')
+    expect(listCall).toContain('order=asc')
+    wrapper.unmount()
+  })
 })

@@ -10,7 +10,7 @@
             <span class="brand-name">agent-memory</span>
           </div>
 
-          <!-- 顶部导航：面板常驻挂载，切换不销毁、不重新请求 -->
+          <!-- 顶部导航：面板常驻挂载，切换不销毁；切回时经 refresh 拉最新数据 -->
           <nav class="nav">
             <button
               v-for="item in navItems"
@@ -78,10 +78,10 @@
       <main class="content">
         <!-- .memory-ui 命名空间：组件库令牌样式（tokens.css）的选择器前缀 -->
         <div class="memory-ui">
-          <MemoriesPanel v-show="active === 'memories'" />
-          <TagsPanel v-show="active === 'tags'" />
-          <OpsPanel v-show="active === 'ops'" />
-          <AccessPanel v-show="active === 'access'" :who="who" />
+          <MemoriesPanel ref="memoriesPanel" v-show="active === 'memories'" />
+          <TagsPanel ref="tagsPanel" v-show="active === 'tags'" />
+          <OpsPanel ref="opsPanel" v-show="active === 'ops'" />
+          <AccessPanel ref="accessPanel" v-show="active === 'access'" :who="who" />
         </div>
       </main>
 
@@ -133,6 +133,26 @@ provideMemoryUI({ fetch: authFetch })
 
 type AdminTab = 'memories' | 'tags' | 'ops' | 'access'
 const active = ref<AdminTab>('memories')
+
+// 面板常驻挂载（v-show）不会重新挂载，切回时数据可能陈旧：切换时刷新目标面板
+interface RefreshablePanel {
+  refresh: () => void
+}
+const memoriesPanel = ref<RefreshablePanel | null>(null)
+const tagsPanel = ref<RefreshablePanel | null>(null)
+const opsPanel = ref<RefreshablePanel | null>(null)
+const accessPanel = ref<RefreshablePanel | null>(null)
+
+watch(active, (key) => {
+  const panel = {
+    memories: memoriesPanel.value,
+    tags: tagsPanel.value,
+    ops: opsPanel.value,
+    access: accessPanel.value,
+  }[key]
+  panel?.refresh()
+})
+
 const navItems = computed(() => [
   { key: 'memories' as const, label: t('nav.memories'), icon: Notebook },
   { key: 'tags' as const, label: t('nav.tags'), icon: PriceTag },
