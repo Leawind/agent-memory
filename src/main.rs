@@ -31,7 +31,7 @@ const DEFAULT_PORT: u16 = 8899;
     about = "自托管 MCP 记忆服务器：多个 agent 共享一个记忆库，内嵌 Web 管理界面"
 )]
 struct Cli {
-    /// 数据库文件路径（默认 ~/.agent-memory/memory.db）
+    /// 数据库文件路径（默认当前工作目录下 memory.db）
     #[arg(long, global = true, value_name = "PATH")]
     db: Option<PathBuf>,
 
@@ -92,6 +92,12 @@ fn main() {
 
 fn run(cli: Cli) -> i32 {
     let db_path = cli.db.unwrap_or_else(store::default_path);
+    // 所有子命令共享默认库路径；cwd 相对名下"跑错目录"会静默新建空库，
+    // 一律先在 stderr 报出解析后的实际位置（stdout 保留给命令结果）。
+    eprintln!(
+        "agent-memory: database: {}",
+        store::normalize_path(&db_path).display()
+    );
     match cli.command.unwrap_or(Command::Serve {
         host: DEFAULT_HOST.to_string(),
         port: DEFAULT_PORT,

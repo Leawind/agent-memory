@@ -33,12 +33,21 @@ pub struct Store {
     pub conn: Connection,
 }
 
-/// 数据库文件路径的默认位置（当前用户主目录；--db 参数可覆盖）。
+/// 数据库文件路径的默认位置（当前工作目录下；--db 参数可覆盖）。
+/// 设计用法是用户自己在固定目录运行维护：数据就在启动目录里，可见可控。
+/// 所有子命令共享这一默认——维护命令须与 serve 在同一目录执行，或显式 --db。
 pub fn default_path() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    Path::new(&home).join(".agent-memory").join("memory.db")
+    PathBuf::from("memory.db")
+}
+
+/// 相对路径锚定到当前工作目录，保证 stats / 运维面板展示的始终是明确路径。
+pub fn normalize_path(p: &Path) -> PathBuf {
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(p))
+        .unwrap_or_else(|_| p.to_path_buf())
 }
 
 impl Store {
@@ -66,7 +75,7 @@ impl Store {
             .map_err(|e| format!("cannot enable foreign keys: {e}"))?;
         run_migrations(&conn)?;
         Ok(Store {
-            path: path.to_path_buf(),
+            path: normalize_path(path),
             conn,
         })
     }

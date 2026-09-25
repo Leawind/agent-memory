@@ -14,7 +14,7 @@
 # 从源码安装（产物进入 ~/.cargo/bin，需先 npm install && npm run build 以准备嵌入的界面产物）
 cargo install --path .
 
-# 启动（默认 127.0.0.1:8899，数据库在 ~/.agent-memory/memory.db）
+# 启动（默认 127.0.0.1:8899，数据库在当前工作目录 memory.db）
 agent-memory serve
 ```
 
@@ -26,7 +26,7 @@ agent-memory serve
 |---|---|---|
 | `--host` | `127.0.0.1` | 监听地址；跨机器共享用 `0.0.0.0`（仅限可信网络） |
 | `--port` | `8899` | 监听端口 |
-| `--db` | `~/.agent-memory/memory.db` | SQLite 数据库文件路径 |
+| `--db` | `./memory.db`（当前工作目录） | SQLite 数据库文件路径 |
 | `--auth` | 关 | 启用 token 鉴权；identities 为空时自动创建全能力管理员并把 token 打印到 stderr（仅一次） |
 
 子命令：`serve`（默认）/ `stats` / `doctor`（体检，有问题退出码 1）/ `export <file>`（导出 JSON 备份，拒绝覆盖已有文件）/ `import <file>`（从备份恢复，要求目标库为空）/ `token reset [name]`（重置某身份的 token，省略名字时重置最早创建的管理员——token 丢失的兜底手段）。
@@ -87,7 +87,7 @@ agent-memory serve
 
 ## 数据
 
-- 数据保存在单个 SQLite 文件（默认 `~/.agent-memory/memory.db`）
+- 数据保存在单个 SQLite 文件（默认当前工作目录下 `memory.db`；启动时 stderr 会打印实际路径）
 - **跨机器迁移**：SQLite 文件格式平台无关，服务器停止后直接复制 `.db` 即可换机使用（Windows / Linux / macOS 通用）；需要可读格式时用 `export` + `import` 完成"导出 → 恢复"
 - **数据安全**：每个请求在单个事务内执行，错误时自动回滚，磁盘数据保持原样
 
