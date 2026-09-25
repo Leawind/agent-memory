@@ -1,51 +1,58 @@
 <template>
   <div ref="rootRef" class="am-panel">
-    <div class="am-panel-header">
+    <div v-if="showHeader" class="am-panel-header">
       <div>
-        <h2 class="am-panel-title">运维</h2>
-        <p class="am-panel-subtitle">数据库概况、备份导入导出与数据体检</p>
+        <h2 class="am-panel-title">{{ props.title ?? t('ops.title') }}</h2>
+        <p class="am-panel-subtitle">{{ props.subtitle ?? t('ops.subtitle') }}</p>
       </div>
-      <el-button :icon="Refresh" @click="run(reload)">刷新概况</el-button>
+      <el-button :icon="Refresh" @click="run(reload)">{{ t('ops.refresh') }}</el-button>
     </div>
 
     <el-row :gutter="14">
       <el-col :span="compact ? 12 : 6">
         <el-card shadow="never">
-          <el-statistic title="记忆条数" :value="stats.memories ?? 0" />
+          <el-statistic :title="t('ops.statMemories')" :value="stats.memories ?? 0" />
         </el-card>
       </el-col>
       <el-col :span="compact ? 12 : 6">
         <el-card shadow="never">
-          <el-statistic title="标签数" :value="stats.tags ?? 0" />
+          <el-statistic :title="t('ops.statTags')" :value="stats.tags ?? 0" />
         </el-card>
       </el-col>
       <el-col :span="compact ? 12 : 6">
         <el-card shadow="never">
-          <el-statistic title="数据库大小" :value="sizeText" />
+          <el-statistic :title="t('ops.statSize')" :value="sizeText" />
         </el-card>
       </el-col>
       <el-col :span="compact ? 12 : 6">
         <el-card shadow="never">
-          <el-statistic title="下一个记忆 ID" :value="stats.next_id ?? '—'" />
+          <el-statistic :title="t('ops.statNextId')" :value="stats.next_id ?? '—'" />
         </el-card>
       </el-col>
     </el-row>
 
     <el-card shadow="never">
-      <template #header>数据库</template>
+      <template #header>{{ t('ops.dbCard') }}</template>
       <el-descriptions :column="compact ? 1 : 2" border>
-        <el-descriptions-item label="文件路径">{{ stats.path ?? '—' }}</el-descriptions-item>
-        <el-descriptions-item label="最近更新">
-          {{ stats.newest_update ? `${stats.newest_update.id}（${formatTime(stats.newest_update.updated_at)}）` : '—' }}
+        <el-descriptions-item :label="t('ops.path')">{{ stats.path ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ops.lastUpdate')">
+          {{
+            stats.newest_update
+              ? t('ops.lastUpdateValue', {
+                  id: stats.newest_update.id,
+                  time: formatTime(stats.newest_update.updated_at),
+                })
+              : '—'
+          }}
         </el-descriptions-item>
-        <el-descriptions-item label="跨平台迁移">
-          SQLite 文件格式平台无关，停服后可直接复制 .db 文件到其他机器；运行中请改用「导出备份」。
-        </el-descriptions-item>
-        <el-descriptions-item label="版本">{{ stats.version ?? version }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ops.crossPlatform')">{{ t('ops.crossPlatformNote') }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ops.version')">{{ stats.version ?? version }}</el-descriptions-item>
       </el-descriptions>
       <div class="actions">
-        <el-button :icon="Download" :loading="exporting" @click="run(exportData)">导出备份（JSON）</el-button>
-        <el-button :icon="UploadFilled" :loading="importing" @click="importInput?.click()">导入备份</el-button>
+        <el-button :icon="Download" :loading="exporting" @click="run(exportData)">{{ t('ops.export') }}</el-button>
+        <el-button :icon="UploadFilled" :loading="importing" @click="importInput?.click()">{{
+          t('ops.import')
+        }}</el-button>
         <input
           ref="importInput"
           type="file"
@@ -54,36 +61,32 @@
           @change="onImportFile"
         />
       </div>
-      <el-alert
-        title="导入仅支持空数据库（导入是恢复而非合并）；当前库已有数据时请换一个空的 --db 路径再导入。"
-        type="info"
-        show-icon
-        :closable="false"
-        class="import-hint"
-      />
+      <el-alert :title="t('ops.importHint')" type="info" show-icon :closable="false" class="import-hint" />
     </el-card>
 
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>数据体检（doctor）</span>
-          <el-button size="small" :icon="Search" :loading="doctorLoading" @click="run(runDoctor)">运行体检</el-button>
+          <span>{{ t('ops.doctorCard') }}</span>
+          <el-button size="small" :icon="Search" :loading="doctorLoading" @click="run(runDoctor)">
+            {{ t('ops.runDoctor') }}
+          </el-button>
         </div>
       </template>
       <template v-if="doctorRan">
+        <el-alert v-if="doctor.ok" :title="t('ops.doctorOk')" type="success" show-icon :closable="false" />
         <el-alert
-          v-if="doctor.ok"
-          title="体检通过：未发现孤儿引用、大小写冲突或空字段"
-          type="success"
+          v-else
+          :title="t('ops.doctorFail', { count: doctor.issues.length })"
+          type="error"
           show-icon
           :closable="false"
         />
-        <el-alert v-else :title="`发现 ${doctor.issues.length} 个问题`" type="error" show-icon :closable="false" />
         <ul v-if="!doctor.ok" class="issues">
           <li v-for="(issue, i) in doctor.issues" :key="i">{{ issue }}</li>
         </ul>
       </template>
-      <el-empty v-else description="点击「运行体检」检查孤儿标签引用、大小写冲突标签组、空摘要/正文" :image-size="60" />
+      <el-empty v-else :description="t('ops.doctorEmpty')" :image-size="60" />
     </el-card>
   </div>
 </template>
@@ -93,8 +96,21 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, Refresh, Search, UploadFilled } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
+import { t } from '../i18n'
 import { useOps } from '../composables/useOps'
 import { useContainerWidth } from '../composables/useContainerWidth'
+
+const props = withDefaults(
+  defineProps<{
+    /** 隐藏标题/副标题区（嵌入宿主已有页面标题时只要内容卡） */
+    showHeader?: boolean
+    /** 覆盖默认标题 */
+    title?: string
+    /** 覆盖默认副标题 */
+    subtitle?: string
+  }>(),
+  { showHeader: true },
+)
 
 const {
   stats,
@@ -127,7 +143,7 @@ function onImportFile(e: Event) {
   if (!file) return
   importFile(file)
     .then((imported) => {
-      ElMessage.success(`已导入 ${imported.imported_memories} 条记忆、${imported.imported_tags} 个标签`)
+      ElMessage.success(t('ops.imported', { memories: imported.imported_memories, tags: imported.imported_tags }))
     })
     .catch((err: unknown) => {
       ElMessage.error(err instanceof Error ? err.message : String(err))

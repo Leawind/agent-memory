@@ -28,7 +28,14 @@ export default defineConfig({
       cssFileName: 'style',
     },
     rollupOptions: {
-      external: [/^vue($|\/)/, /^element-plus($|\/)/, /^@element-plus\//, /^marked($|\/)/, /^dompurify($|\/)/],
+      external: [
+        /^vue($|\/)/,
+        /^element-plus($|\/)/,
+        /^@element-plus\//,
+        /^marked($|\/)/,
+        /^dompurify($|\/)/,
+        /^vue-i18n($|\/)/,
+      ],
     },
   },
   test: {

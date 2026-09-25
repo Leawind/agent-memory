@@ -1,21 +1,26 @@
 <template>
   <el-dialog
     :model-value="visible"
-    :title="form.id ? '编辑记忆' : '新建记忆'"
+    :title="form.id ? t('editor.editTitle') : t('editor.createTitle')"
     :width="width"
     @update:model-value="emit('update:visible', $event)"
   >
     <el-form label-position="top">
-      <el-form-item label="摘要（列表与搜索展示的一行简介）">
-        <el-input v-model="form.summary" maxlength="512" show-word-limit placeholder="精确、自洽的一句话" />
+      <el-form-item :label="t('editor.summaryLabel')">
+        <el-input
+          v-model="form.summary"
+          maxlength="512"
+          show-word-limit
+          :placeholder="t('editor.summaryPlaceholder')"
+        />
       </el-form-item>
       <el-form-item>
         <template #label>
           <div class="content-label">
-            <span>正文（Markdown）</span>
+            <span>{{ t('editor.contentLabel') }}</span>
             <el-radio-group v-model="contentTab" size="small">
-              <el-radio-button value="edit">编辑</el-radio-button>
-              <el-radio-button value="preview">预览</el-radio-button>
+              <el-radio-button value="edit">{{ t('editor.tabEdit') }}</el-radio-button>
+              <el-radio-button value="preview">{{ t('editor.tabPreview') }}</el-radio-button>
             </el-radio-group>
           </div>
         </template>
@@ -26,27 +31,27 @@
           :rows="12"
           maxlength="200000"
           show-word-limit
-          placeholder="支持 Markdown：标题、列表、代码块、表格……"
+          :placeholder="t('editor.contentPlaceholder')"
         />
         <MarkdownView v-else class="content-preview" :source="form.content" />
       </el-form-item>
-      <el-form-item label="标签（回车添加，可新建）">
+      <el-form-item :label="t('editor.tagsLabel')">
         <el-select
           v-model="form.tags"
           multiple
           filterable
           allow-create
           default-first-option
-          placeholder="选择或输入标签"
+          :placeholder="t('editor.tagsPlaceholder')"
           class="tags-select"
         >
-          <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
+          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      <el-button @click="emit('update:visible', false)">{{ t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
     </template>
   </el-dialog>
 </template>
@@ -58,6 +63,7 @@ import { useApiClient } from '../api/client'
 import { createMemory, getMemory, updateMemory } from '../api/memories'
 import type { MemoryDraft } from '../composables/useMemories'
 import MarkdownView from './MarkdownView.vue'
+import { t } from '../i18n'
 
 const props = defineProps<{
   visible: boolean
@@ -117,14 +123,14 @@ async function save() {
         add_tags: [...after].filter((t) => !before.has(t)),
         remove_tags: [...before].filter((t) => !after.has(t)),
       })
-      ElMessage.success('已更新')
+      ElMessage.success(t('editor.updated'))
     } else {
       await createMemory(client, {
         summary: form.value.summary,
         content: form.value.content,
         tags: form.value.tags,
       })
-      ElMessage.success('已创建')
+      ElMessage.success(t('editor.created'))
     }
     emit('update:visible', false)
     emit('saved')

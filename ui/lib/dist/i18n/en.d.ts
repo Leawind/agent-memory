@@ -1,0 +1,121 @@
+declare const _default: {
+    nav: {
+        memories: string;
+        tags: string;
+        ops: string;
+    };
+    common: {
+        detail: string;
+        edit: string;
+        delete: string;
+        cancel: string;
+        save: string;
+    };
+    admin: {
+        hint: string;
+    };
+    memories: {
+        title: string;
+        subtitle: string;
+        create: string;
+        searchPlaceholder: string;
+        tagFilter: string;
+        sortUpdated: string;
+        sortCreated: string;
+        orderDesc: string;
+        orderAsc: string;
+        colId: string;
+        colSummary: string;
+        colTags: string;
+        colScore: string;
+        colCreatedAt: string;
+        colUpdatedAt: string;
+        colActions: string;
+        deleteTitle: string;
+        deleteConfirm: string;
+        deleted: string;
+    };
+    tags: {
+        title: string;
+        subtitle: string;
+        create: string;
+        colName: string;
+        colDescription: string;
+        colMemoryCount: string;
+        colLastUsed: string;
+        editTitle: string;
+        createTitle: string;
+        nameLabel: string;
+        namePlaceholder: string;
+        renameLabel: string;
+        renamePlaceholder: string;
+        descLabel: string;
+        descPlaceholder: string;
+        deleteTitle: string;
+        deleteBefore: string;
+        deleteMiddle: string;
+        deleteAfter: string;
+        detach: string;
+        purge: string;
+        purgeConfirmTitle: string;
+        purgeConfirm: string;
+        purgeButton: string;
+        saved: string;
+        created: string;
+        deleted: string;
+    };
+    ops: {
+        title: string;
+        subtitle: string;
+        refresh: string;
+        statMemories: string;
+        statTags: string;
+        statSize: string;
+        statNextId: string;
+        dbCard: string;
+        path: string;
+        lastUpdate: string;
+        lastUpdateValue: string;
+        crossPlatform: string;
+        crossPlatformNote: string;
+        version: string;
+        export: string;
+        import: string;
+        importHint: string;
+        doctorCard: string;
+        runDoctor: string;
+        doctorOk: string;
+        doctorFail: string;
+        doctorEmpty: string;
+        imported: string;
+    };
+    drawer: {
+        title: string;
+        rendered: string;
+        source: string;
+    };
+    editor: {
+        editTitle: string;
+        createTitle: string;
+        summaryLabel: string;
+        summaryPlaceholder: string;
+        contentLabel: string;
+        tabEdit: string;
+        tabPreview: string;
+        contentPlaceholder: string;
+        tagsLabel: string;
+        tagsPlaceholder: string;
+        updated: string;
+        created: string;
+    };
+    errors: {
+        http: string;
+        invalidBackup: string;
+    };
+    shell: {
+        themeLight: string;
+        themeDark: string;
+        themeSystem: string;
+    };
+};
+export default _default;

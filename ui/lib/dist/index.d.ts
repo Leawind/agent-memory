@@ -1,5 +1,7 @@
 export { MemoryUIConfigKey, provideMemoryUI, useMemoryConfig } from './config';
 export type { MemoryUIConfig, ResolvedMemoryUIConfig } from './config';
+export { memoryUIi18n, setMemoryUILocale, applyMemoryUILocalePreference, currentMemoryUILocale, t } from './i18n';
+export type { MemoryUILocale, MemoryUILocaleOption } from './i18n';
 export { default as MemoryAdmin } from './components/MemoryAdmin';
 export { default as MemoriesPanel } from './components/MemoriesPanel';
 export { default as TagsPanel } from './components/TagsPanel';

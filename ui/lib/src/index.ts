@@ -6,6 +6,10 @@
 export { MemoryUIConfigKey, provideMemoryUI, useMemoryConfig } from './config'
 export type { MemoryUIConfig, ResolvedMemoryUIConfig } from './config'
 
+// i18n（独立作用域 vue-i18n 实例；宿主可编程切换语言）
+export { memoryUIi18n, setMemoryUILocale, applyMemoryUILocalePreference, currentMemoryUILocale, t } from './i18n'
+export type { MemoryUILocale, MemoryUILocaleOption } from './i18n'
+
 // 组件
 export { default as MemoryAdmin } from './components/MemoryAdmin.vue'
 export { default as MemoriesPanel } from './components/MemoriesPanel.vue'

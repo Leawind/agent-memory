@@ -44,10 +44,13 @@ migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生�
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
 ui/              前端分两个 workspace 包（详见 ui/README.md）：
   ui/lib         @agent-memory/ui —— 可嵌入 Vue3 组件库（Element Plus 作 peerDependency，lib mode 构建）
-                 导出 MemoryAdmin（sidebar/tabs 双布局）与 MemoriesPanel/TagsPanel/OpsPanel 独立面板；
-                 配置经 provideMemoryUI 注入（baseUrl/自定义 fetch/默认分页）；数据操作在 composables，
-                 面板层只渲染与 toast；样式全部引用 --el-* 变量跟随宿主主题
-  ui/app         @agent-memory/app —— 独立站点薄壳（侧边栏布局 + 亮/暗主题切换），产物输出 ui/dist
+                 核心是三个自包含可复用面板 MemoriesPanel/TagsPanel/OpsPanel（show-header/title/subtitle
+                 props 裁剪），另附便捷壳 MemoryAdmin（sidebar/tabs）与弹层组件；多语言内置 vue-i18n
+                 （zh/en，独立作用域实例，auto 跟随浏览器，setMemoryUILocale 运行时切换）；
+                 配置经 provideMemoryUI 注入（baseUrl/自定义 fetch/默认分页/locale）；数据操作在
+                 composables，面板层只渲染与 toast；样式全部引用 --el-* 变量跟随宿主主题
+  ui/app         @agent-memory/app —— 独立站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言切换），
+                 直接组装三个面板，产物输出 ui/dist
                  记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 

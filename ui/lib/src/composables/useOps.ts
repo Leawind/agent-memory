@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { exportBackup, getHealth, getStats, importBackup, runDoctorRemote } from '../api/ops'
 import { formatSize } from '../format'
+import { t } from '../i18n'
 import type { DoctorResp, ImportResp, StatsInfo } from '../types'
 
 export function useOps() {
@@ -58,7 +59,7 @@ export function useOps() {
       try {
         dump = JSON.parse(text)
       } catch {
-        throw new Error('备份文件不是有效的 JSON')
+        throw new Error(t('errors.invalidBackup'))
       }
       const imported = await importBackup(client, dump)
       await reload()

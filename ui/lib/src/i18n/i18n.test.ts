@@ -1,0 +1,46 @@
+// i18n：zh/en 字典 key 一一对应、插值与语言切换
+import { describe, expect, it } from 'vitest'
+import { memoryUIi18n, setMemoryUILocale, currentMemoryUILocale, t } from './index'
+import zh from './zh'
+import en from './en'
+
+type Node = Record<string, unknown>
+
+function flatten(obj: Node, prefix = ''): string[] {
+  return Object.entries(obj).flatMap(([k, v]) =>
+    v != null && typeof v === 'object' ? flatten(v as Node, `${prefix}${k}.`) : [`${prefix}${k}`],
+  )
+}
+
+describe('i18n messages', () => {
+  it('zh and en dictionaries have identical key sets', () => {
+    expect(flatten(en as Node).sort()).toEqual(flatten(zh as Node).sort())
+  })
+
+  it('no message is an empty string', () => {
+    for (const key of flatten(zh as Node)) {
+      expect(String(t(key)).trim()).not.toBe('')
+    }
+  })
+})
+
+describe('locale switching', () => {
+  it('setMemoryUILocale switches t() output and is reactive in both languages', () => {
+    setMemoryUILocale('zh')
+    expect(currentMemoryUILocale()).toBe('zh')
+    expect(t('nav.memories')).toBe('记忆管理')
+    setMemoryUILocale('en')
+    expect(t('nav.memories')).toBe('Memories')
+    setMemoryUILocale('zh')
+  })
+
+  it('t() interpolates named params', () => {
+    expect(t('memories.deleteConfirm', { id: 'm7' })).toBe('确定永久删除记忆 m7？')
+    expect(t('ops.doctorFail', { count: 3 })).toBe('发现 3 个问题')
+  })
+
+  it('the shared composer exposes t for use outside component setup', () => {
+    // format.ts / client.ts 等纯 TS 模块依赖这一形态
+    expect(typeof memoryUIi18n.global.t).toBe('function')
+  })
+})

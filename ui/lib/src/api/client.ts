@@ -2,6 +2,7 @@
 // 统一错误处理约定：服务端业务错误以 {"error": "..."} 回报，非 2xx 时取出抛出。
 import { useMemoryConfig } from '../config'
 import type { ResolvedMemoryUIConfig } from '../config'
+import { t } from '../i18n'
 
 export interface ApiClient {
   get: <T = void>(path: string) => Promise<T>
@@ -26,7 +27,7 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
       data = null
     }
     if (!res.ok) {
-      const msg = (data as { error?: string } | null)?.error ?? `请求失败 (HTTP ${res.status})`
+      const msg = (data as { error?: string } | null)?.error ?? t('errors.http', { status: res.status })
       throw new Error(msg)
     }
     return data as T
@@ -36,7 +37,7 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
     const res = await config.fetch(config.baseUrl + path)
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      let msg = `请求失败 (HTTP ${res.status})`
+      let msg = t('errors.http', { status: res.status })
       try {
         msg = (JSON.parse(text) as { error?: string })?.error ?? msg
       } catch {

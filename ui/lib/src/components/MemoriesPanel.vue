@@ -1,17 +1,17 @@
 <template>
   <div ref="rootRef" class="am-panel">
-    <div class="am-panel-header">
+    <div v-if="showHeader" class="am-panel-header">
       <div>
-        <h2 class="am-panel-title">记忆管理</h2>
-        <p class="am-panel-subtitle">多 agent 共享的记忆库，正文支持 Markdown</p>
+        <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
+        <p class="am-panel-subtitle">{{ props.subtitle ?? t('memories.subtitle') }}</p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建记忆</el-button>
+      <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
     </div>
 
     <div class="am-toolbar">
       <el-input
         v-model="query"
-        placeholder="关键词搜索（空格分隔、全部命中；中文按子串匹配）"
+        :placeholder="t('memories.searchPlaceholder')"
         clearable
         class="search"
         @keyup.enter="run(onSearch)"
@@ -23,21 +23,21 @@
       </el-input>
       <el-select
         v-model="tagFilter"
-        placeholder="按标签过滤"
+        :placeholder="t('memories.tagFilter')"
         clearable
         filterable
         class="tag-filter"
         @change="run(onSearch)"
       >
-        <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
+        <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
       </el-select>
       <el-select v-model="sort" class="sort" @change="run(reload)">
-        <el-option label="按更新时间" value="updated_at" />
-        <el-option label="按创建时间" value="created_at" />
+        <el-option :label="t('memories.sortUpdated')" value="updated_at" />
+        <el-option :label="t('memories.sortCreated')" value="created_at" />
       </el-select>
       <el-select v-model="order" class="order" @change="run(reload)">
-        <el-option label="倒序" value="desc" />
-        <el-option label="正序" value="asc" />
+        <el-option :label="t('memories.orderDesc')" value="desc" />
+        <el-option :label="t('memories.orderAsc')" value="asc" />
       </el-select>
     </div>
 
@@ -45,51 +45,51 @@
 
     <!-- 搜索模式：显示匹配片段与评分 -->
     <el-table v-if="searching" :data="searchResults" v-loading="loading">
-      <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column label="摘要">
+      <el-table-column prop="id" :label="t('memories.colId')" width="80" />
+      <el-table-column :label="t('memories.colSummary')">
         <template #default="{ row }">
           <div class="am-summary">{{ row.summary }}</div>
           <div class="am-snippet" v-html="row.snippet" />
         </template>
       </el-table-column>
-      <el-table-column label="标签" width="220">
+      <el-table-column :label="t('memories.colTags')" width="220">
         <template #default="{ row }">
-          <el-tag v-for="t in row.tags" :key="t" size="small" class="am-tag">{{ t }}</el-tag>
+          <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="score" label="评分" width="80" sortable />
-      <el-table-column label="更新时间" width="170">
+      <el-table-column prop="score" :label="t('memories.colScore')" width="80" sortable />
+      <el-table-column :label="t('memories.colUpdatedAt')" width="170">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column :label="t('memories.colActions')" width="190" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row.id)">详情</el-button>
-          <el-button link type="primary" @click="openEdit(row.id)">编辑</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link type="primary" @click="openDetail(row.id)">{{ t('common.detail') }}</el-button>
+          <el-button link type="primary" @click="openEdit(row.id)">{{ t('common.edit') }}</el-button>
+          <el-button link type="danger" @click="remove(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <!-- 列表模式 -->
     <el-table v-else :data="rows" v-loading="loading">
-      <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column prop="summary" label="摘要" min-width="300" show-overflow-tooltip />
-      <el-table-column label="标签" width="220">
+      <el-table-column prop="id" :label="t('memories.colId')" width="80" />
+      <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="300" show-overflow-tooltip />
+      <el-table-column :label="t('memories.colTags')" width="220">
         <template #default="{ row }">
-          <el-tag v-for="t in row.tags" :key="t" size="small" class="am-tag">{{ t }}</el-tag>
+          <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column v-if="!compact" prop="created_at" label="创建时间" width="170">
+      <el-table-column v-if="!compact" prop="created_at" :label="t('memories.colCreatedAt')" width="170">
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="更新时间" width="170">
+      <el-table-column :label="t('memories.colUpdatedAt')" width="170">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column :label="t('memories.colActions')" width="190" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row.id)">详情</el-button>
-          <el-button link type="primary" @click="openEdit(row.id)">编辑</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link type="primary" @click="openDetail(row.id)">{{ t('common.detail') }}</el-button>
+          <el-button link type="primary" @click="openEdit(row.id)">{{ t('common.edit') }}</el-button>
+          <el-button link type="danger" @click="remove(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -136,11 +136,24 @@ import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
+import { t } from '../i18n'
 import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import type { MemorySummary } from '../types'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
 import MemoryDetailDrawer from './MemoryDetailDrawer.vue'
+
+const props = withDefaults(
+  defineProps<{
+    /** 隐藏标题/副标题区（嵌入宿主已有页面标题时只要工具栏+表格） */
+    showHeader?: boolean
+    /** 覆盖默认标题 */
+    title?: string
+    /** 覆盖默认副标题 */
+    subtitle?: string
+  }>(),
+  { showHeader: true },
+)
 
 const {
   query,
@@ -198,13 +211,15 @@ function onSaved() {
 
 async function remove(row: MemorySummary) {
   try {
-    await ElMessageBox.confirm(`确定永久删除记忆 ${row.id}？`, '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(t('memories.deleteConfirm', { id: row.id }), t('memories.deleteTitle'), {
+      type: 'warning',
+    })
   } catch {
     return
   }
   try {
     await removeMemory(row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('memories.deleted'))
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : String(e))
   }

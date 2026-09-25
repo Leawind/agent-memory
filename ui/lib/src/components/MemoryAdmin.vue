@@ -11,29 +11,29 @@
         <el-menu :default-active="active" class="menu" @select="active = $event">
           <el-menu-item index="memories">
             <el-icon><Notebook /></el-icon>
-            <span>记忆管理</span>
+            <span>{{ t('nav.memories') }}</span>
           </el-menu-item>
           <el-menu-item index="tags">
             <el-icon><PriceTag /></el-icon>
-            <span>标签管理</span>
+            <span>{{ t('nav.tags') }}</span>
           </el-menu-item>
           <el-menu-item index="ops">
             <el-icon><Odometer /></el-icon>
-            <span>运维</span>
+            <span>{{ t('nav.ops') }}</span>
           </el-menu-item>
         </el-menu>
         <div class="aside-footer">
           <slot name="footer">
-            <el-text size="small" type="info">自托管 · 多 agent 共享</el-text>
+            <el-text size="small" type="info">{{ t('admin.hint') }}</el-text>
           </slot>
         </div>
       </el-aside>
 
       <el-main class="main">
         <el-tabs v-if="layout === 'tabs'" v-model="active" class="tabs-bar">
-          <el-tab-pane label="记忆管理" name="memories" />
-          <el-tab-pane label="标签管理" name="tags" />
-          <el-tab-pane label="运维" name="ops" />
+          <el-tab-pane :label="t('nav.memories')" name="memories" />
+          <el-tab-pane :label="t('nav.tags')" name="tags" />
+          <el-tab-pane :label="t('nav.ops')" name="ops" />
         </el-tabs>
 
         <!-- 面板常驻挂载：切换导航不销毁、不重新请求 -->
@@ -47,6 +47,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { t } from '../i18n'
 import { Collection, Notebook, Odometer, PriceTag } from '@element-plus/icons-vue'
 import MemoriesPanel from './MemoriesPanel.vue'
 import TagsPanel from './TagsPanel.vue'

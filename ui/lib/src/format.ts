@@ -1,8 +1,10 @@
-// 展示格式化工具（纯函数）
+// 展示格式化工具（纯函数）。时间格式跟随库内当前语言。
+import { memoryUIi18n } from './i18n'
 
 export function formatTime(ts: number | null | undefined): string {
   if (!ts) return '—'
-  return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false })
+  const locale = memoryUIi18n.global.locale.value === 'en' ? 'en-US' : 'zh-CN'
+  return new Date(ts * 1000).toLocaleString(locale, { hour12: false })
 }
 
 export function formatSize(bytes: number | null | undefined): string {

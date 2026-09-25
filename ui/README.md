@@ -2,10 +2,13 @@
 
 前端拆成两个 npm workspace 包（lockfile 在仓库根目录）：
 
-- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出 `MemoryAdmin`（整台管理台）与
-  `MemoriesPanel` / `TagsPanel` / `OpsPanel`（三个独立面板），供其他 Vue3 系统作为组件集成。
-- **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（侧边栏布局 + 主题切换），业务组件全部来自组件库。
-  构建产物输出到 `ui/dist/` 并提交入库，由 Rust 侧 rust-embed 编译期嵌入二进制。
+- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出三个自包含可复用面板
+  `MemoriesPanel` / `TagsPanel` / `OpsPanel`（标题头 + 工具栏 + 表格，支持 `show-header` /
+  `title` / `subtitle` props 裁剪），另附便捷壳 `MemoryAdmin`（sidebar/tabs 双布局）与
+  弹层组件（编辑对话框、详情抽屉、Markdown 视图），供其他 Vue3 系统作为组件集成。
+- **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言
+  切换），直接组装三个面板组件。构建产物输出到 `ui/dist/` 并提交入库，由 Rust 侧 rust-embed
+  编译期嵌入二进制。
 
 ## 组件库集成指南
 
@@ -54,7 +57,12 @@ provideMemoryUI({
 
 - 面板在窄容器（<720px，ResizeObserver 实测）自动切 compact：工具栏换行、隐藏低优先级列、弹层收窄，
   可放进宿主任意尺寸的卡片/抽屉。
+- 面板 props：`show-header: false` 隐藏标题/副标题区（宿主页面已有标题时只要工具栏+表格）；
+  `title` / `subtitle` 覆盖默认文案（默认文案随界面语言）。
 - `MemoryAdmin` 高度默认撑满父容器，嵌入时可用 CSS 变量 `--memory-admin-height` 覆盖（如 `480px`）。
+- **多语言**：内置 vue-i18n（`zh` / `en`），默认 `auto` 跟随浏览器语言；`provideMemoryUI({ locale: 'en' })`
+  固定语言，或运行时调用 `setMemoryUILocale('en')` 即全库生效（时间格式同步切换）。
+  Element Plus 自身文案（分页等）由宿主的 `<el-config-provider :locale>` 控制。
 - 主题跟随 Element Plus 的 `--el-*` CSS 变量：宿主引入 `element-plus/theme-chalk/dark/css-vars.css`
   并在 `<html>` 上加 `dark` 类即可暗色化，组件库自身不定义颜色常量。
 

@@ -1,7 +1,8 @@
-// App 壳挂载冒烟测试：MemoryAdmin 渲染 + 主题应用
+// App 壳挂载冒烟测试：顶栏导航渲染 + 主题应用
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { setMemoryUILocale } from '@agent-memory/ui'
 import App from './App.vue'
 
 function jsonResponse(body: unknown) {
@@ -10,7 +11,10 @@ function jsonResponse(body: unknown) {
 
 describe('App shell', () => {
   beforeEach(() => {
+    setMemoryUILocale('zh')
     localStorage.removeItem('agent-memory-theme')
+    // 模拟持久化的中文语言偏好（happy-dom 的 navigator.language 是 en-US）
+    localStorage.setItem('agent-memory-locale', 'zh')
     document.documentElement.classList.remove('dark')
     vi.stubGlobal(
       'fetch',
@@ -30,7 +34,7 @@ describe('App shell', () => {
     )
   })
 
-  it('mounts the admin shell and renders the memories panel', async () => {
+  it('mounts the top-nav shell and renders the memories panel', async () => {
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
@@ -38,6 +42,8 @@ describe('App shell', () => {
     expect(html).toContain('agent-memory')
     expect(html).toContain('记忆管理')
     expect(html).toContain('新建记忆')
+    expect(html).toContain('标签管理')
+    expect(html).toContain('运维')
     wrapper.unmount()
   })
 
@@ -46,6 +52,17 @@ describe('App shell', () => {
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     expect(document.documentElement.classList.contains('dark')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders English UI when the stored language preference is en', async () => {
+    localStorage.setItem('agent-memory-locale', 'en')
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('Memories')
+    expect(html).toContain('Tags')
+    expect(html).not.toContain('记忆管理')
     wrapper.unmount()
   })
 })

@@ -1,223 +1,489 @@
-import { provide as qe, inject as je, ref as y, computed as oe, onMounted as ae, watch as me, onUnmounted as He, defineComponent as X, openBlock as b, createElementBlock as O, createBlock as I, withCtx as l, createVNode as e, createElementVNode as k, createTextVNode as v, Fragment as G, renderList as Y, toDisplayString as R, createCommentVNode as W, unref as n, withKeys as Je, isRef as Q, withDirectives as Z, reactive as Ae, renderSlot as Ke, vShow as re } from "vue";
-import { ElDialog as ke, ElForm as $e, ElFormItem as Ce, ElInput as pe, ElRadioGroup as ce, ElRadioButton as Ve, ElSelect as Ee, ElOption as Se, ElButton as se, ElDrawer as Qe, ElTag as fe, ElDivider as Ge, ElAlert as xe, ElTable as ze, ElTableColumn as Ue, ElLoadingDirective as Me, ElPagination as We, ElRadio as Xe, ElRow as Ye, ElCol as Ze, ElCard as et, ElStatistic as tt, ElDescriptions as lt, ElDescriptionsItem as nt, ElEmpty as ot, ElContainer as at, ElAside as st, ElIcon as it, ElMenu as rt, ElMenuItem as ut, ElText as dt, ElMain as mt, ElTabs as pt, ElTabPane as ct } from "element-plus/es";
-import { Plus as Te, Search as Ie, Refresh as ft, Download as vt, UploadFilled as gt, Collection as _t, Notebook as yt, PriceTag as bt, Odometer as wt } from "@element-plus/icons-vue";
-import { ElMessage as B, ElMessageBox as Re } from "element-plus";
-import { Marked as kt } from "marked";
-import De from "dompurify";
-const Ne = Symbol("memory-ui-config"), ue = {
-  baseUrl: "",
-  fetch: (...t) => globalThis.fetch(...t),
-  defaultPageSize: 20
+import { provide as Je, inject as Ke, ref as h, computed as re, onMounted as ie, watch as fe, onUnmounted as We, defineComponent as Z, openBlock as y, createElementBlock as z, createBlock as D, unref as e, withCtx as o, createVNode as a, createElementVNode as U, toDisplayString as i, createTextVNode as v, Fragment as Y, renderList as ee, createCommentVNode as Q, withKeys as Qe, isRef as X, withDirectives as te, reactive as Ge, renderSlot as Xe, vShow as me } from "vue";
+import { createI18n as Ye } from "vue-i18n";
+import { ElDialog as Se, ElForm as Te, ElFormItem as Ee, ElInput as ge, ElRadioGroup as ve, ElRadioButton as Ue, ElSelect as Me, ElOption as Ve, ElButton as de, ElDrawer as Ze, ElTag as _e, ElDivider as et, ElAlert as $e, ElTable as xe, ElTableColumn as Pe, ElLoadingDirective as ze, ElPagination as tt, ElRadio as at, ElRow as lt, ElCol as ot, ElCard as nt, ElStatistic as st, ElDescriptions as rt, ElDescriptionsItem as it, ElEmpty as dt, ElContainer as ut, ElAside as ct, ElIcon as mt, ElMenu as pt, ElMenuItem as ft, ElText as gt, ElMain as vt, ElTabs as _t, ElTabPane as yt } from "element-plus/es";
+import { Plus as De, Search as Ie, Refresh as bt, Download as ht, UploadFilled as wt, Collection as kt, Notebook as Ct, PriceTag as St, Odometer as Tt } from "@element-plus/icons-vue";
+import { ElMessage as B, ElMessageBox as Le } from "element-plus";
+import { Marked as Et } from "marked";
+import Ne from "dompurify";
+const Ut = {
+  nav: {
+    memories: "记忆管理",
+    tags: "标签管理",
+    ops: "运维"
+  },
+  common: {
+    detail: "详情",
+    edit: "编辑",
+    delete: "删除",
+    cancel: "取消",
+    save: "保存"
+  },
+  admin: {
+    hint: "自托管 · 多 agent 共享"
+  },
+  memories: {
+    title: "记忆管理",
+    subtitle: "多 agent 共享的记忆库，正文支持 Markdown",
+    create: "新建记忆",
+    searchPlaceholder: "关键词搜索（空格分隔、全部命中；中文按子串匹配）",
+    tagFilter: "按标签过滤",
+    sortUpdated: "按更新时间",
+    sortCreated: "按创建时间",
+    orderDesc: "倒序",
+    orderAsc: "正序",
+    colId: "ID",
+    colSummary: "摘要",
+    colTags: "标签",
+    colScore: "评分",
+    colCreatedAt: "创建时间",
+    colUpdatedAt: "更新时间",
+    colActions: "操作",
+    deleteTitle: "删除确认",
+    deleteConfirm: "确定永久删除记忆 {id}？",
+    deleted: "已删除"
+  },
+  tags: {
+    title: "标签管理",
+    subtitle: "标签是 agent 自主维护的分类体系；改名会同步更新所有引用它的记忆",
+    create: "新建标签",
+    colName: "名称",
+    colDescription: "描述",
+    colMemoryCount: "记忆数",
+    colLastUsed: "最近使用",
+    editTitle: "编辑标签",
+    createTitle: "新建标签",
+    nameLabel: "名称（唯一，≤100 字符）",
+    namePlaceholder: "如 rust、项目、工作流",
+    renameLabel: "改为新名称（留空表示不改名）",
+    renamePlaceholder: "仅大小写改名也可用于合并拼写偏差",
+    descLabel: "描述（可选，≤500 字符）",
+    descPlaceholder: "这个标签用来组织什么内容",
+    deleteTitle: "删除标签",
+    deleteBefore: "标签",
+    deleteMiddle: "当前被",
+    deleteAfter: "条记忆使用。请选择删除方式：",
+    detach: "仅摘除引用（保留全部记忆）",
+    purge: "连带删除记忆（不可恢复）",
+    purgeConfirmTitle: "高危操作确认",
+    purgeConfirm: "将永久删除标签「{name}」及其关联的 {count} 条记忆，且不可恢复！",
+    purgeButton: "永久删除",
+    saved: "已保存",
+    created: "已创建",
+    deleted: "已删除"
+  },
+  ops: {
+    title: "运维",
+    subtitle: "数据库概况、备份导入导出与数据体检",
+    refresh: "刷新概况",
+    statMemories: "记忆条数",
+    statTags: "标签数",
+    statSize: "数据库大小",
+    statNextId: "下一个记忆 ID",
+    dbCard: "数据库",
+    path: "文件路径",
+    lastUpdate: "最近更新",
+    lastUpdateValue: "{id}（{time}）",
+    crossPlatform: "跨平台迁移",
+    crossPlatformNote: "SQLite 文件格式平台无关，停服后可直接复制 .db 文件到其他机器；运行中请改用「导出备份」。",
+    version: "版本",
+    export: "导出备份（JSON）",
+    import: "导入备份",
+    importHint: "导入仅支持空数据库（导入是恢复而非合并）；当前库已有数据时请换一个空的 --db 路径再导入。",
+    doctorCard: "数据体检（doctor）",
+    runDoctor: "运行体检",
+    doctorOk: "体检通过：未发现孤儿引用、大小写冲突或空字段",
+    doctorFail: "发现 {count} 个问题",
+    doctorEmpty: "点击「运行体检」检查孤儿标签引用、大小写冲突标签组、空摘要/正文",
+    imported: "已导入 {memories} 条记忆、{tags} 个标签"
+  },
+  drawer: {
+    title: "记忆 {id}",
+    rendered: "渲染",
+    source: "源码"
+  },
+  editor: {
+    editTitle: "编辑记忆",
+    createTitle: "新建记忆",
+    summaryLabel: "摘要（列表与搜索展示的一行简介）",
+    summaryPlaceholder: "精确、自洽的一句话",
+    contentLabel: "正文（Markdown）",
+    tabEdit: "编辑",
+    tabPreview: "预览",
+    contentPlaceholder: "支持 Markdown：标题、列表、代码块、表格……",
+    tagsLabel: "标签（回车添加，可新建）",
+    tagsPlaceholder: "选择或输入标签",
+    updated: "已更新",
+    created: "已创建"
+  },
+  errors: {
+    http: "请求失败 (HTTP {status})",
+    invalidBackup: "备份文件不是有效的 JSON"
+  },
+  shell: {
+    themeLight: "浅色",
+    themeDark: "深色",
+    themeSystem: "跟随系统"
+  }
+}, Mt = {
+  nav: {
+    memories: "Memories",
+    tags: "Tags",
+    ops: "Operations"
+  },
+  common: {
+    detail: "Details",
+    edit: "Edit",
+    delete: "Delete",
+    cancel: "Cancel",
+    save: "Save"
+  },
+  admin: {
+    hint: "Self-hosted · shared by multiple agents"
+  },
+  memories: {
+    title: "Memories",
+    subtitle: "A memory store shared by multiple agents; content supports Markdown",
+    create: "New Memory",
+    searchPlaceholder: "Keyword search (space-separated, all must match; Chinese matches by substring)",
+    tagFilter: "Filter by tag",
+    sortUpdated: "By updated time",
+    sortCreated: "By created time",
+    orderDesc: "Descending",
+    orderAsc: "Ascending",
+    colId: "ID",
+    colSummary: "Summary",
+    colTags: "Tags",
+    colScore: "Score",
+    colCreatedAt: "Created",
+    colUpdatedAt: "Updated",
+    colActions: "Actions",
+    deleteTitle: "Confirm deletion",
+    deleteConfirm: "Permanently delete memory {id}?",
+    deleted: "Deleted"
+  },
+  tags: {
+    title: "Tags",
+    subtitle: "Tags are an agent-maintained taxonomy; renaming updates every memory that references the tag",
+    create: "New Tag",
+    colName: "Name",
+    colDescription: "Description",
+    colMemoryCount: "Memories",
+    colLastUsed: "Last used",
+    editTitle: "Edit Tag",
+    createTitle: "New Tag",
+    nameLabel: "Name (unique, ≤100 characters)",
+    namePlaceholder: "e.g. rust, project, workflow",
+    renameLabel: "Rename to (leave empty to keep unchanged)",
+    renamePlaceholder: "Case-only renames also merge spelling drift",
+    descLabel: "Description (optional, ≤500 characters)",
+    descPlaceholder: "What is this tag used to organize",
+    deleteTitle: "Delete Tag",
+    deleteBefore: "Tag",
+    deleteMiddle: "is used by",
+    deleteAfter: "memories. Choose how to delete:",
+    detach: "Detach references only (keep all memories)",
+    purge: "Also delete the memories (irreversible)",
+    purgeConfirmTitle: "Dangerous operation",
+    purgeConfirm: 'This permanently deletes tag "{name}" and its {count} associated memories, irreversibly!',
+    purgeButton: "Delete permanently",
+    saved: "Saved",
+    created: "Created",
+    deleted: "Deleted"
+  },
+  ops: {
+    title: "Operations",
+    subtitle: "Database overview, backup import/export and health checks",
+    refresh: "Refresh overview",
+    statMemories: "Memories",
+    statTags: "Tags",
+    statSize: "DB size",
+    statNextId: "Next memory ID",
+    dbCard: "Database",
+    path: "File path",
+    lastUpdate: "Last update",
+    lastUpdateValue: "{id} ({time})",
+    crossPlatform: "Cross-platform migration",
+    crossPlatformNote: 'The SQLite file format is platform-independent: copy the .db file to another machine while the server is stopped; use "Export backup" while running.',
+    version: "Version",
+    export: "Export backup (JSON)",
+    import: "Import backup",
+    importHint: "Import only works on an empty database (it restores rather than merges); point --db at an empty path before importing.",
+    doctorCard: "Health check (doctor)",
+    runDoctor: "Run check",
+    doctorOk: "Check passed: no orphan references, case conflicts, or empty fields",
+    doctorFail: "{count} issues found",
+    doctorEmpty: 'Click "Run check" to look for orphan tag references, case-conflicting tags, empty summaries/content',
+    imported: "Imported {memories} memories and {tags} tags"
+  },
+  drawer: {
+    title: "Memory {id}",
+    rendered: "Rendered",
+    source: "Source"
+  },
+  editor: {
+    editTitle: "Edit Memory",
+    createTitle: "New Memory",
+    summaryLabel: "Summary (one-line intro shown in lists and search)",
+    summaryPlaceholder: "A precise, self-contained sentence",
+    contentLabel: "Content (Markdown)",
+    tabEdit: "Edit",
+    tabPreview: "Preview",
+    contentPlaceholder: "Markdown supported: headings, lists, code blocks, tables…",
+    tagsLabel: "Tags (press Enter to add; new ones allowed)",
+    tagsPlaceholder: "Select or type a tag",
+    updated: "Updated",
+    created: "Created"
+  },
+  errors: {
+    http: "Request failed (HTTP {status})",
+    invalidBackup: "Backup file is not valid JSON"
+  },
+  shell: {
+    themeLight: "Light",
+    themeDark: "Dark",
+    themeSystem: "System"
+  }
 };
-function Cl(t) {
-  qe(Ne, t);
+function Re() {
+  var t;
+  return typeof navigator > "u" || (t = navigator.language) != null && t.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
-function Oe() {
-  const t = je(Ne);
-  return {
-    baseUrl: ((t == null ? void 0 : t.baseUrl) ?? ue.baseUrl).replace(/\/+$/, ""),
-    fetch: (t == null ? void 0 : t.fetch) ?? ue.fetch,
-    defaultPageSize: (t == null ? void 0 : t.defaultPageSize) ?? ue.defaultPageSize
-  };
-}
-function te(t) {
-  return t ? new Date(t * 1e3).toLocaleString("zh-CN", { hour12: !1 }) : "—";
+const ue = Ye({
+  legacy: !1,
+  locale: Re(),
+  fallbackLocale: "zh",
+  messages: { zh: Ut, en: Mt },
+  // 面向宿主组件库，缺 key 时静默回退即可，不刷控制台
+  missingWarn: !1,
+  fallbackWarn: !1
+}), { t: l } = ue.global;
+function Vt(t) {
+  ue.global.locale.value = t;
 }
 function $t(t) {
-  return t == null ? "—" : t < 1024 ? `${t} B` : t < 1024 * 1024 ? `${(t / 1024).toFixed(1)} KB` : `${(t / 1024 / 1024).toFixed(2)} MB`;
+  Vt(t === "auto" ? Re() : t);
 }
-function Ct(t) {
-  async function i(a, f = {}) {
-    const p = await t.fetch(t.baseUrl + a, {
-      headers: { "Content-Type": "application/json" },
-      ...f
-    }), _ = await p.text();
-    let d = null;
-    try {
-      d = _ ? JSON.parse(_) : null;
-    } catch {
-      d = null;
-    }
-    if (!p.ok) {
-      const w = (d == null ? void 0 : d.error) ?? `请求失败 (HTTP ${p.status})`;
-      throw new Error(w);
-    }
-    return d;
-  }
-  async function u(a) {
-    var p;
-    const f = await t.fetch(t.baseUrl + a);
-    if (!f.ok) {
-      const _ = await f.text().catch(() => "");
-      let d = `请求失败 (HTTP ${f.status})`;
-      try {
-        d = ((p = JSON.parse(_)) == null ? void 0 : p.error) ?? d;
-      } catch {
-      }
-      throw new Error(d);
-    }
-    return f.blob();
-  }
+function Aa() {
+  return ue.global.locale.value;
+}
+const Oe = Symbol("memory-ui-config"), se = {
+  baseUrl: "",
+  fetch: (...t) => globalThis.fetch(...t),
+  defaultPageSize: 20,
+  locale: "auto"
+};
+function Fa(t) {
+  t.locale && $t(t.locale), Je(Oe, t);
+}
+function Be() {
+  const t = Ke(Oe);
   return {
-    get: (a) => i(a),
-    post: (a, f) => i(a, { method: "POST", body: JSON.stringify(f ?? {}) }),
-    put: (a, f) => i(a, { method: "PUT", body: JSON.stringify(f ?? {}) }),
-    del: (a) => i(a, { method: "DELETE" }),
-    getBlob: u
+    baseUrl: ((t == null ? void 0 : t.baseUrl) ?? se.baseUrl).replace(/\/+$/, ""),
+    fetch: (t == null ? void 0 : t.fetch) ?? se.fetch,
+    defaultPageSize: (t == null ? void 0 : t.defaultPageSize) ?? se.defaultPageSize,
+    locale: (t == null ? void 0 : t.locale) ?? se.locale
   };
 }
-function le() {
-  return Ct(Oe());
-}
-function Vt(t) {
-  const i = de(t.query), u = new URLSearchParams();
-  return i ? (u.set("query", t.query.trim()), t.tagFilter && u.set("tags", t.tagFilter)) : (t.tagFilter && u.set("tag", t.tagFilter), u.set("sort", t.sort), u.set("order", t.order)), u.set("offset", String((t.page - 1) * t.pageSize)), u.set("limit", String(t.pageSize)), u.toString();
-}
-function de(t) {
-  return t.trim().length > 0;
-}
-const Et = new kt();
-function St(t) {
-  const i = Et.parse(t, { async: !1 });
-  return De.sanitize(i);
+function oe(t) {
+  if (!t) return "—";
+  const s = ue.global.locale.value === "en" ? "en-US" : "zh-CN";
+  return new Date(t * 1e3).toLocaleString(s, { hour12: !1 });
 }
 function xt(t) {
-  return De.sanitize(t);
+  return t == null ? "—" : t < 1024 ? `${t} B` : t < 1024 * 1024 ? `${(t / 1024).toFixed(1)} KB` : `${(t / 1024 / 1024).toFixed(2)} MB`;
 }
-function ve(t, i) {
-  return t.get(`/api/memories/${encodeURIComponent(i)}`);
+function Pt(t) {
+  async function s(d, p = {}) {
+    const f = await t.fetch(t.baseUrl + d, {
+      headers: { "Content-Type": "application/json" },
+      ...p
+    }), b = await f.text();
+    let r = null;
+    try {
+      r = b ? JSON.parse(b) : null;
+    } catch {
+      r = null;
+    }
+    if (!f.ok) {
+      const S = (r == null ? void 0 : r.error) ?? l("errors.http", { status: f.status });
+      throw new Error(S);
+    }
+    return r;
+  }
+  async function n(d) {
+    var f;
+    const p = await t.fetch(t.baseUrl + d);
+    if (!p.ok) {
+      const b = await p.text().catch(() => "");
+      let r = l("errors.http", { status: p.status });
+      try {
+        r = ((f = JSON.parse(b)) == null ? void 0 : f.error) ?? r;
+      } catch {
+      }
+      throw new Error(r);
+    }
+    return p.blob();
+  }
+  return {
+    get: (d) => s(d),
+    post: (d, p) => s(d, { method: "POST", body: JSON.stringify(p ?? {}) }),
+    put: (d, p) => s(d, { method: "PUT", body: JSON.stringify(p ?? {}) }),
+    del: (d) => s(d, { method: "DELETE" }),
+    getBlob: n
+  };
 }
-function Pe(t, i) {
-  return t.post("/api/memories", i);
+function ne() {
+  return Pt(Be());
 }
-function he(t, i, u) {
-  return t.put(`/api/memories/${encodeURIComponent(i)}`, u);
+function zt(t) {
+  const s = pe(t.query), n = new URLSearchParams();
+  return s ? (n.set("query", t.query.trim()), t.tagFilter && n.set("tags", t.tagFilter)) : (t.tagFilter && n.set("tag", t.tagFilter), n.set("sort", t.sort), n.set("order", t.order)), n.set("offset", String((t.page - 1) * t.pageSize)), n.set("limit", String(t.pageSize)), n.toString();
 }
-function zt(t, i) {
-  return t.del(`/api/memories/${encodeURIComponent(i)}`);
+function pe(t) {
+  return t.trim().length > 0;
 }
-function Be(t) {
+const Dt = new Et();
+function It(t) {
+  const s = Dt.parse(t, { async: !1 });
+  return Ne.sanitize(s);
+}
+function Lt(t) {
+  return Ne.sanitize(t);
+}
+function ye(t, s) {
+  return t.get(`/api/memories/${encodeURIComponent(s)}`);
+}
+function Ae(t, s) {
+  return t.post("/api/memories", s);
+}
+function Fe(t, s, n) {
+  return t.put(`/api/memories/${encodeURIComponent(s)}`, n);
+}
+function Nt(t, s) {
+  return t.del(`/api/memories/${encodeURIComponent(s)}`);
+}
+function He(t) {
   return t.get("/api/tags");
 }
-function Ut(t, i, u) {
-  return t.post("/api/tags", { name: i, description: u });
+function Rt(t, s, n) {
+  return t.post("/api/tags", { name: s, description: n });
 }
-function Mt(t, i, u, a) {
-  const f = { description: a }, p = u.trim();
-  return p && p !== i && (f.new_name = p), t.put(`/api/tags/${encodeURIComponent(i)}`, f);
+function Ot(t, s, n, d) {
+  const p = { description: d }, f = n.trim();
+  return f && f !== s && (p.new_name = f), t.put(`/api/tags/${encodeURIComponent(s)}`, p);
 }
-function Tt(t, i, u) {
-  return t.del(`/api/tags/${encodeURIComponent(i)}?mode=${u}`);
+function Bt(t, s, n) {
+  return t.del(`/api/tags/${encodeURIComponent(s)}?mode=${n}`);
 }
-function It() {
-  const t = le(), { defaultPageSize: i } = Oe(), u = y(""), a = y(""), f = y("updated_at"), p = y("desc"), _ = y(1), d = y(i), w = y([]), S = y([]), $ = y(0), s = y(""), x = y(!1), z = y([]), C = oe(() => de(u.value));
-  function V() {
-    return _.value = 1, D();
+function At() {
+  const t = ne(), { defaultPageSize: s } = Be(), n = h(""), d = h(""), p = h("updated_at"), f = h("desc"), b = h(1), r = h(s), S = h([]), P = h([]), E = h(0), g = h(""), w = h(!1), M = h([]), x = re(() => pe(n.value));
+  function k() {
+    return b.value = 1, F();
   }
-  function F() {
-    return Vt({
-      query: u.value,
-      tagFilter: a.value,
-      sort: f.value,
-      order: p.value,
-      page: _.value,
-      pageSize: d.value
+  function I() {
+    return zt({
+      query: n.value,
+      tagFilter: d.value,
+      sort: p.value,
+      order: f.value,
+      page: b.value,
+      pageSize: r.value
     });
   }
-  let L = 0;
-  async function D() {
-    var P;
-    const c = ++L;
-    x.value = !0;
+  let A = 0;
+  async function F() {
+    var C;
+    const m = ++A;
+    w.value = !0;
     try {
-      const U = F();
-      if (de(u.value)) {
-        const T = await t.get(`/api/memories?${U}`);
-        if (c !== L) return;
-        S.value = (T.results ?? []).map((N) => ({ ...N, snippet: xt(N.snippet) })), $.value = T.total_matches ?? 0, s.value = "";
+      const O = I();
+      if (pe(n.value)) {
+        const T = await t.get(`/api/memories?${O}`);
+        if (m !== A) return;
+        P.value = (T.results ?? []).map((L) => ({ ...L, snippet: Lt(L.snippet) })), E.value = T.total_matches ?? 0, g.value = "";
       } else {
-        const T = await t.get(`/api/memories?${U}`);
-        if (c !== L) return;
-        const N = Math.max(1, Math.ceil(T.total / d.value));
-        if (((P = T.memories) == null ? void 0 : P.length) === 0 && T.total > 0 && _.value > N)
-          return _.value = N, x.value = !1, D();
-        w.value = T.memories ?? [], $.value = T.total ?? 0, s.value = T.note ?? "";
+        const T = await t.get(`/api/memories?${O}`);
+        if (m !== A) return;
+        const L = Math.max(1, Math.ceil(T.total / r.value));
+        if (((C = T.memories) == null ? void 0 : C.length) === 0 && T.total > 0 && b.value > L)
+          return b.value = L, w.value = !1, F();
+        S.value = T.memories ?? [], E.value = T.total ?? 0, g.value = T.note ?? "";
       }
     } finally {
-      c === L && (x.value = !1);
+      m === A && (w.value = !1);
     }
   }
-  async function g() {
+  async function R() {
     try {
-      const c = await Be(t);
-      z.value = (c.tags ?? []).map((P) => P.name);
+      const m = await He(t);
+      M.value = (m.tags ?? []).map((C) => C.name);
     } catch {
     }
   }
-  async function E(c) {
-    if (c.id) {
-      const P = await ve(t, c.id), U = new Set(P.tags), T = new Set(c.tags);
-      await he(t, c.id, {
-        summary: c.summary,
-        content: c.content,
-        add_tags: [...T].filter((N) => !U.has(N)),
-        remove_tags: [...U].filter((N) => !T.has(N))
+  async function V(m) {
+    if (m.id) {
+      const C = await ye(t, m.id), O = new Set(C.tags), T = new Set(m.tags);
+      await Fe(t, m.id, {
+        summary: m.summary,
+        content: m.content,
+        add_tags: [...T].filter((L) => !O.has(L)),
+        remove_tags: [...O].filter((L) => !T.has(L))
       });
     } else
-      await Pe(t, { summary: c.summary, content: c.content, tags: c.tags });
-    await Promise.all([D(), g()]);
+      await Ae(t, { summary: m.summary, content: m.content, tags: m.tags });
+    await Promise.all([F(), R()]);
   }
-  async function o(c) {
-    await zt(t, c), await D();
+  async function _(m) {
+    await Nt(t, m), await F();
   }
-  return ae(() => {
-    D().catch(() => {
-    }), g();
+  return ie(() => {
+    F().catch(() => {
+    }), R();
   }), {
-    query: u,
-    tagFilter: a,
-    sort: f,
-    order: p,
-    page: _,
-    pageSize: d,
-    rows: w,
-    searchResults: S,
-    total: $,
-    note: s,
-    loading: x,
-    tagOptions: z,
-    searching: C,
-    onSearch: V,
-    reload: D,
-    loadTagOptions: g,
-    saveMemory: E,
-    removeMemory: o
+    query: n,
+    tagFilter: d,
+    sort: p,
+    order: f,
+    page: b,
+    pageSize: r,
+    rows: S,
+    searchResults: P,
+    total: E,
+    note: g,
+    loading: w,
+    tagOptions: M,
+    searching: x,
+    onSearch: k,
+    reload: F,
+    loadTagOptions: R,
+    saveMemory: V,
+    removeMemory: _
   };
 }
-function ge(t, i = 720) {
-  const u = y(0);
-  let a = null;
-  function f(p) {
-    a == null || a.disconnect(), a = null, !(!p || typeof ResizeObserver > "u") && (a = new ResizeObserver((_) => {
-      var d;
-      u.value = ((d = _[0]) == null ? void 0 : d.contentRect.width) ?? 0;
-    }), a.observe(p));
+function be(t, s = 720) {
+  const n = h(0);
+  let d = null;
+  function p(f) {
+    d == null || d.disconnect(), d = null, !(!f || typeof ResizeObserver > "u") && (d = new ResizeObserver((b) => {
+      var r;
+      n.value = ((r = b[0]) == null ? void 0 : r.contentRect.width) ?? 0;
+    }), d.observe(f));
   }
-  return ae(() => f(t.value)), me(t, (p) => f(p)), He(() => a == null ? void 0 : a.disconnect()), { width: u, compact: oe(() => u.value > 0 && u.value < i) };
+  return ie(() => p(t.value)), fe(t, (f) => p(f)), We(() => d == null ? void 0 : d.disconnect()), { width: n, compact: re(() => n.value > 0 && n.value < s) };
 }
-const Rt = ["innerHTML"], Fe = /* @__PURE__ */ X({
+const Ft = ["innerHTML"], qe = /* @__PURE__ */ Z({
   __name: "MarkdownView",
   props: {
     source: {}
   },
   setup(t) {
-    const i = t, u = oe(() => St(i.source));
-    return (a, f) => (b(), O("div", {
+    const s = t, n = re(() => It(s.source));
+    return (d, p) => (y(), z("div", {
       class: "md-body",
-      innerHTML: u.value
-    }, null, 8, Rt));
+      innerHTML: n.value
+    }, null, 8, Ft));
   }
-}), Dt = { class: "content-label" }, Nt = /* @__PURE__ */ X({
+}), Ht = { class: "content-label" }, qt = /* @__PURE__ */ Z({
   __name: "MemoryEditorDialog",
   props: {
     visible: { type: Boolean },
@@ -226,111 +492,113 @@ const Rt = ["innerHTML"], Fe = /* @__PURE__ */ X({
     width: {}
   },
   emits: ["update:visible", "saved"],
-  setup(t, { emit: i }) {
-    const u = t, a = i, f = le(), p = y(!1), _ = y("edit"), d = y({ id: null, summary: "", content: "", tags: [] });
-    let w = [];
-    me(
-      () => u.visible,
-      async ($) => {
-        if ($)
-          if (_.value = "edit", u.memoryId)
+  setup(t, { emit: s }) {
+    const n = t, d = s, p = ne(), f = h(!1), b = h("edit"), r = h({ id: null, summary: "", content: "", tags: [] });
+    let S = [];
+    fe(
+      () => n.visible,
+      async (E) => {
+        if (E)
+          if (b.value = "edit", n.memoryId)
             try {
-              const s = await ve(f, u.memoryId);
-              d.value = { id: s.id, summary: s.summary, content: s.content, tags: [...s.tags] }, w = [...s.tags];
-            } catch (s) {
-              B.error(s instanceof Error ? s.message : String(s)), a("update:visible", !1);
+              const g = await ye(p, n.memoryId);
+              r.value = { id: g.id, summary: g.summary, content: g.content, tags: [...g.tags] }, S = [...g.tags];
+            } catch (g) {
+              B.error(g instanceof Error ? g.message : String(g)), d("update:visible", !1);
             }
           else
-            d.value = { id: null, summary: "", content: "", tags: [] }, w = [];
+            r.value = { id: null, summary: "", content: "", tags: [] }, S = [];
       }
     );
-    async function S() {
-      p.value = !0;
+    async function P() {
+      f.value = !0;
       try {
-        if (d.value.id) {
-          const $ = new Set(w), s = new Set(d.value.tags);
-          await he(f, d.value.id, {
-            summary: d.value.summary,
-            content: d.value.content,
-            add_tags: [...s].filter((x) => !$.has(x)),
-            remove_tags: [...$].filter((x) => !s.has(x))
-          }), B.success("已更新");
+        if (r.value.id) {
+          const E = new Set(S), g = new Set(r.value.tags);
+          await Fe(p, r.value.id, {
+            summary: r.value.summary,
+            content: r.value.content,
+            add_tags: [...g].filter((w) => !E.has(w)),
+            remove_tags: [...E].filter((w) => !g.has(w))
+          }), B.success(l("editor.updated"));
         } else
-          await Pe(f, {
-            summary: d.value.summary,
-            content: d.value.content,
-            tags: d.value.tags
-          }), B.success("已创建");
-        a("update:visible", !1), a("saved");
-      } catch ($) {
-        B.error($ instanceof Error ? $.message : String($));
+          await Ae(p, {
+            summary: r.value.summary,
+            content: r.value.content,
+            tags: r.value.tags
+          }), B.success(l("editor.created"));
+        d("update:visible", !1), d("saved");
+      } catch (E) {
+        B.error(E instanceof Error ? E.message : String(E));
       } finally {
-        p.value = !1;
+        f.value = !1;
       }
     }
-    return ($, s) => {
-      const x = pe, z = Ce, C = Ve, V = ce, F = Se, L = Ee, D = $e, g = se, E = ke;
-      return b(), I(E, {
+    return (E, g) => {
+      const w = ge, M = Ee, x = Ue, k = ve, I = Ve, A = Me, F = Te, R = de, V = Se;
+      return y(), D(V, {
         "model-value": t.visible,
-        title: d.value.id ? "编辑记忆" : "新建记忆",
+        title: r.value.id ? e(l)("editor.editTitle") : e(l)("editor.createTitle"),
         width: t.width,
-        "onUpdate:modelValue": s[5] || (s[5] = (o) => a("update:visible", o))
+        "onUpdate:modelValue": g[5] || (g[5] = (_) => d("update:visible", _))
       }, {
-        footer: l(() => [
-          e(g, {
-            onClick: s[4] || (s[4] = (o) => a("update:visible", !1))
+        footer: o(() => [
+          a(R, {
+            onClick: g[4] || (g[4] = (_) => d("update:visible", !1))
           }, {
-            default: l(() => [...s[9] || (s[9] = [
-              v("取消", -1)
-            ])]),
+            default: o(() => [
+              v(i(e(l)("common.cancel")), 1)
+            ]),
             _: 1
           }),
-          e(g, {
+          a(R, {
             type: "primary",
-            loading: p.value,
-            onClick: S
+            loading: f.value,
+            onClick: P
           }, {
-            default: l(() => [...s[10] || (s[10] = [
-              v("保存", -1)
-            ])]),
+            default: o(() => [
+              v(i(e(l)("common.save")), 1)
+            ]),
             _: 1
           }, 8, ["loading"])
         ]),
-        default: l(() => [
-          e(D, { "label-position": "top" }, {
-            default: l(() => [
-              e(z, { label: "摘要（列表与搜索展示的一行简介）" }, {
-                default: l(() => [
-                  e(x, {
-                    modelValue: d.value.summary,
-                    "onUpdate:modelValue": s[0] || (s[0] = (o) => d.value.summary = o),
+        default: o(() => [
+          a(F, { "label-position": "top" }, {
+            default: o(() => [
+              a(M, {
+                label: e(l)("editor.summaryLabel")
+              }, {
+                default: o(() => [
+                  a(w, {
+                    modelValue: r.value.summary,
+                    "onUpdate:modelValue": g[0] || (g[0] = (_) => r.value.summary = _),
                     maxlength: "512",
                     "show-word-limit": "",
-                    placeholder: "精确、自洽的一句话"
-                  }, null, 8, ["modelValue"])
+                    placeholder: e(l)("editor.summaryPlaceholder")
+                  }, null, 8, ["modelValue", "placeholder"])
                 ]),
                 _: 1
-              }),
-              e(z, null, {
-                label: l(() => [
-                  k("div", Dt, [
-                    s[8] || (s[8] = k("span", null, "正文（Markdown）", -1)),
-                    e(V, {
-                      modelValue: _.value,
-                      "onUpdate:modelValue": s[1] || (s[1] = (o) => _.value = o),
+              }, 8, ["label"]),
+              a(M, null, {
+                label: o(() => [
+                  U("div", Ht, [
+                    U("span", null, i(e(l)("editor.contentLabel")), 1),
+                    a(k, {
+                      modelValue: b.value,
+                      "onUpdate:modelValue": g[1] || (g[1] = (_) => b.value = _),
                       size: "small"
                     }, {
-                      default: l(() => [
-                        e(C, { value: "edit" }, {
-                          default: l(() => [...s[6] || (s[6] = [
-                            v("编辑", -1)
-                          ])]),
+                      default: o(() => [
+                        a(x, { value: "edit" }, {
+                          default: o(() => [
+                            v(i(e(l)("editor.tabEdit")), 1)
+                          ]),
                           _: 1
                         }),
-                        e(C, { value: "preview" }, {
-                          default: l(() => [...s[7] || (s[7] = [
-                            v("预览", -1)
-                          ])]),
+                        a(x, { value: "preview" }, {
+                          default: o(() => [
+                            v(i(e(l)("editor.tabPreview")), 1)
+                          ]),
                           _: 1
                         })
                       ]),
@@ -338,48 +606,50 @@ const Rt = ["innerHTML"], Fe = /* @__PURE__ */ X({
                     }, 8, ["modelValue"])
                   ])
                 ]),
-                default: l(() => [
-                  _.value === "edit" ? (b(), I(x, {
+                default: o(() => [
+                  b.value === "edit" ? (y(), D(w, {
                     key: 0,
-                    modelValue: d.value.content,
-                    "onUpdate:modelValue": s[2] || (s[2] = (o) => d.value.content = o),
+                    modelValue: r.value.content,
+                    "onUpdate:modelValue": g[2] || (g[2] = (_) => r.value.content = _),
                     type: "textarea",
                     rows: 12,
                     maxlength: "200000",
                     "show-word-limit": "",
-                    placeholder: "支持 Markdown：标题、列表、代码块、表格……"
-                  }, null, 8, ["modelValue"])) : (b(), I(Fe, {
+                    placeholder: e(l)("editor.contentPlaceholder")
+                  }, null, 8, ["modelValue", "placeholder"])) : (y(), D(qe, {
                     key: 1,
                     class: "content-preview",
-                    source: d.value.content
+                    source: r.value.content
                   }, null, 8, ["source"]))
                 ]),
                 _: 1
               }),
-              e(z, { label: "标签（回车添加，可新建）" }, {
-                default: l(() => [
-                  e(L, {
-                    modelValue: d.value.tags,
-                    "onUpdate:modelValue": s[3] || (s[3] = (o) => d.value.tags = o),
+              a(M, {
+                label: e(l)("editor.tagsLabel")
+              }, {
+                default: o(() => [
+                  a(A, {
+                    modelValue: r.value.tags,
+                    "onUpdate:modelValue": g[3] || (g[3] = (_) => r.value.tags = _),
                     multiple: "",
                     filterable: "",
                     "allow-create": "",
                     "default-first-option": "",
-                    placeholder: "选择或输入标签",
+                    placeholder: e(l)("editor.tagsPlaceholder"),
                     class: "tags-select"
                   }, {
-                    default: l(() => [
-                      (b(!0), O(G, null, Y(t.tagOptions, (o) => (b(), I(F, {
-                        key: o,
-                        label: o,
-                        value: o
+                    default: o(() => [
+                      (y(!0), z(Y, null, ee(t.tagOptions, (_) => (y(), D(I, {
+                        key: _,
+                        label: _,
+                        value: _
                       }, null, 8, ["label", "value"]))), 128))
                     ]),
                     _: 1
-                  }, 8, ["modelValue"])
+                  }, 8, ["modelValue", "placeholder"])
                 ]),
                 _: 1
-              })
+              }, 8, ["label"])
             ]),
             _: 1
           })
@@ -388,15 +658,15 @@ const Rt = ["innerHTML"], Fe = /* @__PURE__ */ X({
       }, 8, ["model-value", "title", "width"]);
     };
   }
-}), ne = (t, i) => {
-  const u = t.__vccOpts || t;
-  for (const [a, f] of i)
-    u[a] = f;
-  return u;
-}, Ot = /* @__PURE__ */ ne(Nt, [["__scopeId", "data-v-f3ff571d"]]), Pt = { class: "detail-summary" }, ht = { class: "detail-tags" }, Bt = { class: "detail-toolbar" }, Ft = {
+}), ae = (t, s) => {
+  const n = t.__vccOpts || t;
+  for (const [d, p] of s)
+    n[d] = p;
+  return n;
+}, jt = /* @__PURE__ */ ae(qt, [["__scopeId", "data-v-602bada0"]]), Jt = { class: "detail-summary" }, Kt = { class: "detail-tags" }, Wt = { class: "detail-toolbar" }, Qt = {
   key: 1,
   class: "detail-content"
-}, Lt = /* @__PURE__ */ X({
+}, Gt = /* @__PURE__ */ Z({
   __name: "MemoryDetailDrawer",
   props: {
     visible: { type: Boolean },
@@ -404,780 +674,804 @@ const Rt = ["innerHTML"], Fe = /* @__PURE__ */ X({
     size: {}
   },
   emits: ["update:visible"],
-  setup(t, { emit: i }) {
-    const u = t, a = i, f = le(), p = y(null), _ = y("rendered");
-    return me(
-      () => [u.visible, u.memoryId],
-      async ([d]) => {
-        if (!(!d || !u.memoryId)) {
-          _.value = "rendered";
+  setup(t, { emit: s }) {
+    const n = t, d = s, p = ne(), f = h(null), b = h("rendered");
+    return fe(
+      () => [n.visible, n.memoryId],
+      async ([r]) => {
+        if (!(!r || !n.memoryId)) {
+          b.value = "rendered";
           try {
-            p.value = await ve(f, u.memoryId);
-          } catch (w) {
-            B.error(w instanceof Error ? w.message : String(w)), a("update:visible", !1);
+            f.value = await ye(p, n.memoryId);
+          } catch (S) {
+            B.error(S instanceof Error ? S.message : String(S)), d("update:visible", !1);
           }
         }
       }
-    ), (d, w) => {
-      var C;
-      const S = fe, $ = Ge, s = Ve, x = ce, z = Qe;
-      return b(), I(z, {
+    ), (r, S) => {
+      var x;
+      const P = _e, E = et, g = Ue, w = ve, M = Ze;
+      return y(), D(M, {
         "model-value": t.visible,
-        title: `记忆 ${((C = p.value) == null ? void 0 : C.id) ?? t.memoryId ?? ""}`,
+        title: e(l)("drawer.title", { id: ((x = f.value) == null ? void 0 : x.id) ?? t.memoryId ?? "" }),
         size: t.size,
-        "onUpdate:modelValue": w[1] || (w[1] = (V) => a("update:visible", V))
+        "onUpdate:modelValue": S[1] || (S[1] = (k) => d("update:visible", k))
       }, {
-        default: l(() => [
-          p.value ? (b(), O(G, { key: 0 }, [
-            k("h3", Pt, R(p.value.summary), 1),
-            k("div", ht, [
-              (b(!0), O(G, null, Y(p.value.tags, (V) => (b(), I(S, {
-                key: V,
+        default: o(() => [
+          f.value ? (y(), z(Y, { key: 0 }, [
+            U("h3", Jt, i(f.value.summary), 1),
+            U("div", Kt, [
+              (y(!0), z(Y, null, ee(f.value.tags, (k) => (y(), D(P, {
+                key: k,
                 size: "small",
                 class: "am-tag"
               }, {
-                default: l(() => [
-                  v(R(V), 1)
+                default: o(() => [
+                  v(i(k), 1)
                 ]),
                 _: 2
               }, 1024))), 128))
             ]),
-            e($),
-            k("div", Bt, [
-              e(x, {
-                modelValue: _.value,
-                "onUpdate:modelValue": w[0] || (w[0] = (V) => _.value = V),
+            a(E),
+            U("div", Wt, [
+              a(w, {
+                modelValue: b.value,
+                "onUpdate:modelValue": S[0] || (S[0] = (k) => b.value = k),
                 size: "small"
               }, {
-                default: l(() => [
-                  e(s, { value: "rendered" }, {
-                    default: l(() => [...w[2] || (w[2] = [
-                      v("渲染", -1)
-                    ])]),
+                default: o(() => [
+                  a(g, { value: "rendered" }, {
+                    default: o(() => [
+                      v(i(e(l)("drawer.rendered")), 1)
+                    ]),
                     _: 1
                   }),
-                  e(s, { value: "source" }, {
-                    default: l(() => [...w[3] || (w[3] = [
-                      v("源码", -1)
-                    ])]),
+                  a(g, { value: "source" }, {
+                    default: o(() => [
+                      v(i(e(l)("drawer.source")), 1)
+                    ]),
                     _: 1
                   })
                 ]),
                 _: 1
               }, 8, ["modelValue"])
             ]),
-            _.value === "rendered" ? (b(), I(Fe, {
+            b.value === "rendered" ? (y(), D(qe, {
               key: 0,
-              source: p.value.content
-            }, null, 8, ["source"])) : (b(), O("pre", Ft, R(p.value.content), 1))
-          ], 64)) : W("", !0)
+              source: f.value.content
+            }, null, 8, ["source"])) : (y(), z("pre", Qt, i(f.value.content), 1))
+          ], 64)) : Q("", !0)
         ]),
         _: 1
       }, 8, ["model-value", "title", "size"]);
     };
   }
-}), qt = /* @__PURE__ */ ne(Lt, [["__scopeId", "data-v-c800b468"]]), jt = { class: "am-panel-header" }, Ht = { class: "am-toolbar" }, Jt = { class: "am-summary" }, At = ["innerHTML"], Kt = {
-  key: 3,
-  class: "am-pager"
-}, Qt = {
+}), Xt = /* @__PURE__ */ ae(Gt, [["__scopeId", "data-v-b634d116"]]), Yt = {
+  key: 0,
+  class: "am-panel-header"
+}, Zt = { class: "am-panel-title" }, ea = { class: "am-panel-subtitle" }, ta = { class: "am-toolbar" }, aa = { class: "am-summary" }, la = ["innerHTML"], oa = {
   key: 4,
   class: "am-pager"
-}, Gt = /* @__PURE__ */ X({
+}, na = {
+  key: 5,
+  class: "am-pager"
+}, sa = /* @__PURE__ */ Z({
   __name: "MemoriesPanel",
+  props: {
+    showHeader: { type: Boolean, default: !0 },
+    title: {},
+    subtitle: {}
+  },
   setup(t) {
-    const {
-      query: i,
-      tagFilter: u,
-      sort: a,
+    const s = t, {
+      query: n,
+      tagFilter: d,
+      sort: p,
       order: f,
-      page: p,
-      pageSize: _,
-      rows: d,
-      searchResults: w,
-      total: S,
-      note: $,
-      loading: s,
-      tagOptions: x,
-      searching: z,
-      onSearch: C,
-      reload: V,
-      loadTagOptions: F,
-      removeMemory: L
-    } = It(), D = y(null), { compact: g } = ge(D), E = y(!1), o = y(null), c = y(!1), P = y(null);
-    function U(h) {
-      return h().catch((r) => B.error(r instanceof Error ? r.message : String(r)));
+      page: b,
+      pageSize: r,
+      rows: S,
+      searchResults: P,
+      total: E,
+      note: g,
+      loading: w,
+      tagOptions: M,
+      searching: x,
+      onSearch: k,
+      reload: I,
+      loadTagOptions: A,
+      removeMemory: F
+    } = At(), R = h(null), { compact: V } = be(R), _ = h(!1), m = h(null), C = h(!1), O = h(null);
+    function T(N) {
+      return N().catch((c) => B.error(c instanceof Error ? c.message : String(c)));
     }
-    function T() {
-      o.value = null, E.value = !0;
+    function L() {
+      m.value = null, _.value = !0;
     }
-    function N(h) {
-      o.value = h, E.value = !0;
+    function G(N) {
+      m.value = N, _.value = !0;
     }
-    function A(h) {
-      P.value = h, c.value = !0;
+    function K(N) {
+      O.value = N, C.value = !0;
     }
-    function ee() {
-      U(V), F();
+    function le() {
+      T(I), A();
     }
-    async function H(h) {
+    async function j(N) {
       try {
-        await Re.confirm(`确定永久删除记忆 ${h.id}？`, "删除确认", { type: "warning" });
+        await Le.confirm(l("memories.deleteConfirm", { id: N.id }), l("memories.deleteTitle"), {
+          type: "warning"
+        });
       } catch {
         return;
       }
       try {
-        await L(h.id), B.success("已删除");
-      } catch (r) {
-        B.error(r instanceof Error ? r.message : String(r));
+        await F(N.id), B.success(l("memories.deleted"));
+      } catch (c) {
+        B.error(c instanceof Error ? c.message : String(c));
       }
     }
-    return (h, r) => {
-      const K = se, M = pe, q = Se, ie = Ee, Le = xe, j = Ue, _e = fe, ye = ze, be = We, we = Me;
-      return b(), O("div", {
+    return (N, c) => {
+      const W = de, $ = ge, H = Ve, ce = Me, je = $e, q = Pe, he = _e, we = xe, ke = tt, Ce = ze;
+      return y(), z("div", {
         ref_key: "rootRef",
-        ref: D,
+        ref: R,
         class: "am-panel"
       }, [
-        k("div", jt, [
-          r[21] || (r[21] = k("div", null, [
-            k("h2", { class: "am-panel-title" }, "记忆管理"),
-            k("p", { class: "am-panel-subtitle" }, "多 agent 共享的记忆库，正文支持 Markdown")
-          ], -1)),
-          e(K, {
+        t.showHeader ? (y(), z("div", Yt, [
+          U("div", null, [
+            U("h2", Zt, i(s.title ?? e(l)("memories.title")), 1),
+            U("p", ea, i(s.subtitle ?? e(l)("memories.subtitle")), 1)
+          ]),
+          a(W, {
             type: "primary",
-            icon: n(Te),
-            onClick: T
+            icon: e(De),
+            onClick: L
           }, {
-            default: l(() => [...r[20] || (r[20] = [
-              v("新建记忆", -1)
-            ])]),
+            default: o(() => [
+              v(i(e(l)("memories.create")), 1)
+            ]),
             _: 1
           }, 8, ["icon"])
-        ]),
-        k("div", Ht, [
-          e(M, {
-            modelValue: n(i),
-            "onUpdate:modelValue": r[1] || (r[1] = (m) => Q(i) ? i.value = m : null),
-            placeholder: "关键词搜索（空格分隔、全部命中；中文按子串匹配）",
+        ])) : Q("", !0),
+        U("div", ta, [
+          a($, {
+            modelValue: e(n),
+            "onUpdate:modelValue": c[1] || (c[1] = (u) => X(n) ? n.value = u : null),
+            placeholder: e(l)("memories.searchPlaceholder"),
             clearable: "",
             class: "search",
-            onKeyup: r[2] || (r[2] = Je((m) => U(n(C)), ["enter"])),
-            onClear: r[3] || (r[3] = (m) => U(n(C)))
+            onKeyup: c[2] || (c[2] = Qe((u) => T(e(k)), ["enter"])),
+            onClear: c[3] || (c[3] = (u) => T(e(k)))
           }, {
-            append: l(() => [
-              e(K, {
-                icon: n(Ie),
-                onClick: r[0] || (r[0] = (m) => U(n(C)))
+            append: o(() => [
+              a(W, {
+                icon: e(Ie),
+                onClick: c[0] || (c[0] = (u) => T(e(k)))
               }, null, 8, ["icon"])
             ]),
             _: 1
-          }, 8, ["modelValue"]),
-          e(ie, {
-            modelValue: n(u),
-            "onUpdate:modelValue": r[4] || (r[4] = (m) => Q(u) ? u.value = m : null),
-            placeholder: "按标签过滤",
+          }, 8, ["modelValue", "placeholder"]),
+          a(ce, {
+            modelValue: e(d),
+            "onUpdate:modelValue": c[4] || (c[4] = (u) => X(d) ? d.value = u : null),
+            placeholder: e(l)("memories.tagFilter"),
             clearable: "",
             filterable: "",
             class: "tag-filter",
-            onChange: r[5] || (r[5] = (m) => U(n(C)))
+            onChange: c[5] || (c[5] = (u) => T(e(k)))
           }, {
-            default: l(() => [
-              (b(!0), O(G, null, Y(n(x), (m) => (b(), I(q, {
-                key: m,
-                label: m,
-                value: m
+            default: o(() => [
+              (y(!0), z(Y, null, ee(e(M), (u) => (y(), D(H, {
+                key: u,
+                label: u,
+                value: u
               }, null, 8, ["label", "value"]))), 128))
             ]),
             _: 1
-          }, 8, ["modelValue"]),
-          e(ie, {
-            modelValue: n(a),
-            "onUpdate:modelValue": r[6] || (r[6] = (m) => Q(a) ? a.value = m : null),
+          }, 8, ["modelValue", "placeholder"]),
+          a(ce, {
+            modelValue: e(p),
+            "onUpdate:modelValue": c[6] || (c[6] = (u) => X(p) ? p.value = u : null),
             class: "sort",
-            onChange: r[7] || (r[7] = (m) => U(n(V)))
+            onChange: c[7] || (c[7] = (u) => T(e(I)))
           }, {
-            default: l(() => [
-              e(q, {
-                label: "按更新时间",
+            default: o(() => [
+              a(H, {
+                label: e(l)("memories.sortUpdated"),
                 value: "updated_at"
-              }),
-              e(q, {
-                label: "按创建时间",
+              }, null, 8, ["label"]),
+              a(H, {
+                label: e(l)("memories.sortCreated"),
                 value: "created_at"
-              })
+              }, null, 8, ["label"])
             ]),
             _: 1
           }, 8, ["modelValue"]),
-          e(ie, {
-            modelValue: n(f),
-            "onUpdate:modelValue": r[8] || (r[8] = (m) => Q(f) ? f.value = m : null),
+          a(ce, {
+            modelValue: e(f),
+            "onUpdate:modelValue": c[8] || (c[8] = (u) => X(f) ? f.value = u : null),
             class: "order",
-            onChange: r[9] || (r[9] = (m) => U(n(V)))
+            onChange: c[9] || (c[9] = (u) => T(e(I)))
           }, {
-            default: l(() => [
-              e(q, {
-                label: "倒序",
+            default: o(() => [
+              a(H, {
+                label: e(l)("memories.orderDesc"),
                 value: "desc"
-              }),
-              e(q, {
-                label: "正序",
+              }, null, 8, ["label"]),
+              a(H, {
+                label: e(l)("memories.orderAsc"),
                 value: "asc"
-              })
+              }, null, 8, ["label"])
             ]),
             _: 1
           }, 8, ["modelValue"])
         ]),
-        n($) ? (b(), I(Le, {
-          key: 0,
-          title: n($),
+        e(g) ? (y(), D(je, {
+          key: 1,
+          title: e(g),
           type: "info",
           "show-icon": "",
           closable: !1
-        }, null, 8, ["title"])) : W("", !0),
-        n(z) ? Z((b(), I(ye, {
-          key: 1,
-          data: n(w)
+        }, null, 8, ["title"])) : Q("", !0),
+        e(x) ? te((y(), D(we, {
+          key: 2,
+          data: e(P)
         }, {
-          default: l(() => [
-            e(j, {
+          default: o(() => [
+            a(q, {
               prop: "id",
-              label: "ID",
+              label: e(l)("memories.colId"),
               width: "80"
-            }),
-            e(j, { label: "摘要" }, {
-              default: l(({ row: m }) => [
-                k("div", Jt, R(m.summary), 1),
-                k("div", {
+            }, null, 8, ["label"]),
+            a(q, {
+              label: e(l)("memories.colSummary")
+            }, {
+              default: o(({ row: u }) => [
+                U("div", aa, i(u.summary), 1),
+                U("div", {
                   class: "am-snippet",
-                  innerHTML: m.snippet
-                }, null, 8, At)
+                  innerHTML: u.snippet
+                }, null, 8, la)
               ]),
               _: 1
-            }),
-            e(j, {
-              label: "标签",
+            }, 8, ["label"]),
+            a(q, {
+              label: e(l)("memories.colTags"),
               width: "220"
             }, {
-              default: l(({ row: m }) => [
-                (b(!0), O(G, null, Y(m.tags, (J) => (b(), I(_e, {
+              default: o(({ row: u }) => [
+                (y(!0), z(Y, null, ee(u.tags, (J) => (y(), D(he, {
                   key: J,
                   size: "small",
                   class: "am-tag"
                 }, {
-                  default: l(() => [
-                    v(R(J), 1)
+                  default: o(() => [
+                    v(i(J), 1)
                   ]),
                   _: 2
                 }, 1024))), 128))
               ]),
               _: 1
-            }),
-            e(j, {
+            }, 8, ["label"]),
+            a(q, {
               prop: "score",
-              label: "评分",
+              label: e(l)("memories.colScore"),
               width: "80",
               sortable: ""
-            }),
-            e(j, {
-              label: "更新时间",
+            }, null, 8, ["label"]),
+            a(q, {
+              label: e(l)("memories.colUpdatedAt"),
               width: "170"
             }, {
-              default: l(({ row: m }) => [
-                v(R(n(te)(m.updated_at)), 1)
+              default: o(({ row: u }) => [
+                v(i(e(oe)(u.updated_at)), 1)
               ]),
               _: 1
-            }),
-            e(j, {
-              label: "操作",
-              width: "160",
+            }, 8, ["label"]),
+            a(q, {
+              label: e(l)("memories.colActions"),
+              width: "190",
               fixed: "right"
             }, {
-              default: l(({ row: m }) => [
-                e(K, {
+              default: o(({ row: u }) => [
+                a(W, {
                   link: "",
                   type: "primary",
-                  onClick: (J) => A(m.id)
+                  onClick: (J) => K(u.id)
                 }, {
-                  default: l(() => [...r[22] || (r[22] = [
-                    v("详情", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.detail")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"]),
-                e(K, {
+                a(W, {
                   link: "",
                   type: "primary",
-                  onClick: (J) => N(m.id)
+                  onClick: (J) => G(u.id)
                 }, {
-                  default: l(() => [...r[23] || (r[23] = [
-                    v("编辑", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.edit")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"]),
-                e(K, {
+                a(W, {
                   link: "",
                   type: "danger",
-                  onClick: (J) => H(m)
+                  onClick: (J) => j(u)
                 }, {
-                  default: l(() => [...r[24] || (r[24] = [
-                    v("删除", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.delete")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"])
               ]),
               _: 1
-            })
+            }, 8, ["label"])
           ]),
           _: 1
         }, 8, ["data"])), [
-          [we, n(s)]
-        ]) : Z((b(), I(ye, {
-          key: 2,
-          data: n(d)
+          [Ce, e(w)]
+        ]) : te((y(), D(we, {
+          key: 3,
+          data: e(S)
         }, {
-          default: l(() => [
-            e(j, {
+          default: o(() => [
+            a(q, {
               prop: "id",
-              label: "ID",
+              label: e(l)("memories.colId"),
               width: "80"
-            }),
-            e(j, {
+            }, null, 8, ["label"]),
+            a(q, {
               prop: "summary",
-              label: "摘要",
+              label: e(l)("memories.colSummary"),
               "min-width": "300",
               "show-overflow-tooltip": ""
-            }),
-            e(j, {
-              label: "标签",
+            }, null, 8, ["label"]),
+            a(q, {
+              label: e(l)("memories.colTags"),
               width: "220"
             }, {
-              default: l(({ row: m }) => [
-                (b(!0), O(G, null, Y(m.tags, (J) => (b(), I(_e, {
+              default: o(({ row: u }) => [
+                (y(!0), z(Y, null, ee(u.tags, (J) => (y(), D(he, {
                   key: J,
                   size: "small",
                   class: "am-tag"
                 }, {
-                  default: l(() => [
-                    v(R(J), 1)
+                  default: o(() => [
+                    v(i(J), 1)
                   ]),
                   _: 2
                 }, 1024))), 128))
               ]),
               _: 1
-            }),
-            n(g) ? W("", !0) : (b(), I(j, {
+            }, 8, ["label"]),
+            e(V) ? Q("", !0) : (y(), D(q, {
               key: 0,
               prop: "created_at",
-              label: "创建时间",
+              label: e(l)("memories.colCreatedAt"),
               width: "170"
             }, {
-              default: l(({ row: m }) => [
-                v(R(n(te)(m.created_at)), 1)
+              default: o(({ row: u }) => [
+                v(i(e(oe)(u.created_at)), 1)
               ]),
               _: 1
-            })),
-            e(j, {
-              label: "更新时间",
+            }, 8, ["label"])),
+            a(q, {
+              label: e(l)("memories.colUpdatedAt"),
               width: "170"
             }, {
-              default: l(({ row: m }) => [
-                v(R(n(te)(m.updated_at)), 1)
+              default: o(({ row: u }) => [
+                v(i(e(oe)(u.updated_at)), 1)
               ]),
               _: 1
-            }),
-            e(j, {
-              label: "操作",
-              width: "160",
+            }, 8, ["label"]),
+            a(q, {
+              label: e(l)("memories.colActions"),
+              width: "190",
               fixed: "right"
             }, {
-              default: l(({ row: m }) => [
-                e(K, {
+              default: o(({ row: u }) => [
+                a(W, {
                   link: "",
                   type: "primary",
-                  onClick: (J) => A(m.id)
+                  onClick: (J) => K(u.id)
                 }, {
-                  default: l(() => [...r[25] || (r[25] = [
-                    v("详情", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.detail")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"]),
-                e(K, {
+                a(W, {
                   link: "",
                   type: "primary",
-                  onClick: (J) => N(m.id)
+                  onClick: (J) => G(u.id)
                 }, {
-                  default: l(() => [...r[26] || (r[26] = [
-                    v("编辑", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.edit")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"]),
-                e(K, {
+                a(W, {
                   link: "",
                   type: "danger",
-                  onClick: (J) => H(m)
+                  onClick: (J) => j(u)
                 }, {
-                  default: l(() => [...r[27] || (r[27] = [
-                    v("删除", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.delete")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"])
               ]),
               _: 1
-            })
+            }, 8, ["label"])
           ]),
           _: 1
         }, 8, ["data"])), [
-          [we, n(s)]
+          [Ce, e(w)]
         ]),
-        n(z) ? (b(), O("div", Qt, [
-          e(be, {
-            "current-page": n(p),
-            "onUpdate:currentPage": r[14] || (r[14] = (m) => Q(p) ? p.value = m : null),
-            "page-size": n(_),
-            "onUpdate:pageSize": r[15] || (r[15] = (m) => Q(_) ? _.value = m : null),
-            total: n(S),
+        e(x) ? (y(), z("div", na, [
+          a(ke, {
+            "current-page": e(b),
+            "onUpdate:currentPage": c[14] || (c[14] = (u) => X(b) ? b.value = u : null),
+            "page-size": e(r),
+            "onUpdate:pageSize": c[15] || (c[15] = (u) => X(r) ? r.value = u : null),
+            total: e(E),
             "page-sizes": [10, 20, 50],
             layout: "total, sizes, prev, pager, next",
-            onCurrentChange: r[16] || (r[16] = (m) => U(n(V))),
-            onSizeChange: r[17] || (r[17] = (m) => U(n(V)))
+            onCurrentChange: c[16] || (c[16] = (u) => T(e(I))),
+            onSizeChange: c[17] || (c[17] = (u) => T(e(I)))
           }, null, 8, ["current-page", "page-size", "total"])
-        ])) : (b(), O("div", Kt, [
-          e(be, {
-            "current-page": n(p),
-            "onUpdate:currentPage": r[10] || (r[10] = (m) => Q(p) ? p.value = m : null),
-            "page-size": n(_),
-            "onUpdate:pageSize": r[11] || (r[11] = (m) => Q(_) ? _.value = m : null),
-            total: n(S),
+        ])) : (y(), z("div", oa, [
+          a(ke, {
+            "current-page": e(b),
+            "onUpdate:currentPage": c[10] || (c[10] = (u) => X(b) ? b.value = u : null),
+            "page-size": e(r),
+            "onUpdate:pageSize": c[11] || (c[11] = (u) => X(r) ? r.value = u : null),
+            total: e(E),
             "page-sizes": [20, 50, 100, 200],
             layout: "total, sizes, prev, pager, next",
-            onCurrentChange: r[12] || (r[12] = (m) => U(n(V))),
-            onSizeChange: r[13] || (r[13] = (m) => U(n(V)))
+            onCurrentChange: c[12] || (c[12] = (u) => T(e(I))),
+            onSizeChange: c[13] || (c[13] = (u) => T(e(I)))
           }, null, 8, ["current-page", "page-size", "total"])
         ])),
-        e(Ot, {
-          visible: E.value,
-          "onUpdate:visible": r[18] || (r[18] = (m) => E.value = m),
-          "memory-id": o.value,
-          "tag-options": n(x),
-          width: n(g) ? "96%" : "640px",
-          onSaved: ee
+        a(jt, {
+          visible: _.value,
+          "onUpdate:visible": c[18] || (c[18] = (u) => _.value = u),
+          "memory-id": m.value,
+          "tag-options": e(M),
+          width: e(V) ? "96%" : "640px",
+          onSaved: le
         }, null, 8, ["visible", "memory-id", "tag-options", "width"]),
-        e(qt, {
-          visible: c.value,
-          "onUpdate:visible": r[19] || (r[19] = (m) => c.value = m),
-          "memory-id": P.value,
-          size: n(g) ? "100%" : "45%"
+        a(Xt, {
+          visible: C.value,
+          "onUpdate:visible": c[19] || (c[19] = (u) => C.value = u),
+          "memory-id": O.value,
+          size: e(V) ? "100%" : "45%"
         }, null, 8, ["visible", "memory-id", "size"])
       ], 512);
     };
   }
-}), Wt = /* @__PURE__ */ ne(Gt, [["__scopeId", "data-v-7abc1d84"]]);
-function Xt() {
-  const t = le(), i = y([]), u = y(!1);
-  async function a() {
-    u.value = !0;
+}), ra = /* @__PURE__ */ ae(sa, [["__scopeId", "data-v-69f47562"]]);
+function ia() {
+  const t = ne(), s = h([]), n = h(!1);
+  async function d() {
+    n.value = !0;
     try {
-      const d = await Be(t);
-      i.value = d.tags ?? [];
+      const r = await He(t);
+      s.value = r.tags ?? [];
     } finally {
-      u.value = !1;
+      n.value = !1;
     }
   }
-  async function f(d, w) {
-    await Ut(t, d, w), await a();
+  async function p(r, S) {
+    await Rt(t, r, S), await d();
   }
-  async function p(d, w, S) {
-    await Mt(t, d, w, S), await a();
+  async function f(r, S, P) {
+    await Ot(t, r, S, P), await d();
   }
-  async function _(d, w) {
-    await Tt(t, d, w), await a();
+  async function b(r, S) {
+    await Bt(t, r, S), await d();
   }
-  return ae(() => {
-    a().catch(() => {
+  return ie(() => {
+    d().catch(() => {
     });
-  }), { rows: i, loading: u, reload: a, create: f, rename: p, remove: _ };
+  }), { rows: s, loading: n, reload: d, create: p, rename: f, remove: b };
 }
-const Yt = { class: "am-panel-header" }, Zt = /* @__PURE__ */ X({
+const da = {
+  key: 0,
+  class: "am-panel-header"
+}, ua = { class: "am-panel-title" }, ca = { class: "am-panel-subtitle" }, ma = { class: "delete-body" }, pa = /* @__PURE__ */ Z({
   __name: "TagsPanel",
+  props: {
+    showHeader: { type: Boolean, default: !0 },
+    title: {},
+    subtitle: {}
+  },
   setup(t) {
-    const { rows: i, loading: u, reload: a, create: f, rename: p, remove: _ } = Xt(), d = y(null), { compact: w } = ge(d), S = y(!1), $ = y(!1), s = Ae({ oldName: null, name: "", newName: "", description: "" }), x = y(!1), z = y("detach"), C = y(null);
-    function V() {
-      Object.assign(s, { oldName: null, name: "", newName: "", description: "" }), $.value = !0;
+    const s = t, { rows: n, loading: d, reload: p, create: f, rename: b, remove: r } = ia(), S = h(null), { compact: P } = be(S), E = h(!1), g = h(!1), w = Ge({ oldName: null, name: "", newName: "", description: "" }), M = h(!1), x = h("detach"), k = h(null);
+    function I() {
+      Object.assign(w, { oldName: null, name: "", newName: "", description: "" }), g.value = !0;
     }
-    function F(E) {
-      Object.assign(s, { oldName: E.name, name: E.name, newName: "", description: E.description ?? "" }), $.value = !0;
+    function A(_) {
+      Object.assign(w, { oldName: _.name, name: _.name, newName: "", description: _.description ?? "" }), g.value = !0;
     }
-    async function L() {
-      S.value = !0;
+    async function F() {
+      E.value = !0;
       try {
-        s.oldName ? (await p(s.oldName, s.newName, s.description), B.success("已保存")) : (await f(s.name, s.description), B.success("已创建")), $.value = !1;
-      } catch (E) {
-        B.error(E instanceof Error ? E.message : String(E));
+        w.oldName ? (await b(w.oldName, w.newName, w.description), B.success(l("tags.saved"))) : (await f(w.name, w.description), B.success(l("tags.created"))), g.value = !1;
+      } catch (_) {
+        B.error(_ instanceof Error ? _.message : String(_));
       } finally {
-        S.value = !1;
+        E.value = !1;
       }
     }
-    function D(E) {
-      C.value = E, z.value = "detach", x.value = !0;
+    function R(_) {
+      k.value = _, x.value = "detach", M.value = !0;
     }
-    async function g() {
-      var E, o;
-      if (z.value === "purge")
+    async function V() {
+      var _, m;
+      if (x.value === "purge")
         try {
-          await Re.confirm(
-            `将永久删除标签「${(E = C.value) == null ? void 0 : E.name}」及其关联的 ${((o = C.value) == null ? void 0 : o.memory_count) ?? 0} 条记忆，且不可恢复！`,
-            "高危操作确认",
-            { type: "error", confirmButtonText: "永久删除" }
+          await Le.confirm(
+            l("tags.purgeConfirm", { name: (_ = k.value) == null ? void 0 : _.name, count: ((m = k.value) == null ? void 0 : m.memory_count) ?? 0 }),
+            l("tags.purgeConfirmTitle"),
+            { type: "error", confirmButtonText: l("tags.purgeButton") }
           );
         } catch {
           return;
         }
-      if (C.value) {
-        S.value = !0;
+      if (k.value) {
+        E.value = !0;
         try {
-          await _(C.value.name, z.value), B.success("已删除"), x.value = !1;
-        } catch (c) {
-          B.error(c instanceof Error ? c.message : String(c));
+          await r(k.value.name, x.value), B.success(l("tags.deleted")), M.value = !1;
+        } catch (C) {
+          B.error(C instanceof Error ? C.message : String(C));
         } finally {
-          S.value = !1;
+          E.value = !1;
         }
       }
     }
-    return (E, o) => {
-      const c = se, P = fe, U = Ue, T = ze, N = pe, A = Ce, ee = $e, H = ke, h = Xe, r = ce, K = Me;
-      return b(), O("div", {
+    return (_, m) => {
+      const C = de, O = _e, T = Pe, L = xe, G = ge, K = Ee, le = Te, j = Se, N = at, c = ve, W = ze;
+      return y(), z("div", {
         ref_key: "rootRef",
-        ref: d,
+        ref: S,
         class: "am-panel"
       }, [
-        k("div", Yt, [
-          o[9] || (o[9] = k("div", null, [
-            k("h2", { class: "am-panel-title" }, "标签管理"),
-            k("p", { class: "am-panel-subtitle" }, "标签是 agent 自主维护的分类体系；改名会同步更新所有引用它的记忆")
-          ], -1)),
-          e(c, {
+        t.showHeader ? (y(), z("div", da, [
+          U("div", null, [
+            U("h2", ua, i(s.title ?? e(l)("tags.title")), 1),
+            U("p", ca, i(s.subtitle ?? e(l)("tags.subtitle")), 1)
+          ]),
+          a(C, {
             type: "primary",
-            icon: n(Te),
-            onClick: V
+            icon: e(De),
+            onClick: I
           }, {
-            default: l(() => [...o[8] || (o[8] = [
-              v("新建标签", -1)
-            ])]),
+            default: o(() => [
+              v(i(e(l)("tags.create")), 1)
+            ]),
             _: 1
           }, 8, ["icon"])
-        ]),
-        Z((b(), I(T, { data: n(i) }, {
-          default: l(() => [
-            e(U, {
+        ])) : Q("", !0),
+        te((y(), D(L, { data: e(n) }, {
+          default: o(() => [
+            a(T, {
               prop: "name",
-              label: "名称",
+              label: e(l)("tags.colName"),
               "min-width": "160"
             }, {
-              default: l(({ row: M }) => [
-                e(P, null, {
-                  default: l(() => [
-                    v(R(M.name), 1)
+              default: o(({ row: $ }) => [
+                a(O, null, {
+                  default: o(() => [
+                    v(i($.name), 1)
                   ]),
                   _: 2
                 }, 1024)
               ]),
               _: 1
-            }),
-            e(U, {
+            }, 8, ["label"]),
+            a(T, {
               prop: "description",
-              label: "描述",
+              label: e(l)("tags.colDescription"),
               "min-width": "300",
               "show-overflow-tooltip": ""
             }, {
-              default: l(({ row: M }) => [
-                v(R(M.description || "—"), 1)
+              default: o(({ row: $ }) => [
+                v(i($.description || "—"), 1)
               ]),
               _: 1
-            }),
-            e(U, {
+            }, 8, ["label"]),
+            a(T, {
               prop: "memory_count",
-              label: "记忆数",
+              label: e(l)("tags.colMemoryCount"),
               width: "100",
               sortable: ""
-            }),
-            e(U, {
-              label: "最近使用",
+            }, null, 8, ["label"]),
+            a(T, {
+              label: e(l)("tags.colLastUsed"),
               width: "170"
             }, {
-              default: l(({ row: M }) => [
-                v(R(n(te)(M.last_used_at)), 1)
+              default: o(({ row: $ }) => [
+                v(i(e(oe)($.last_used_at)), 1)
               ]),
               _: 1
-            }),
-            e(U, {
-              label: "操作",
+            }, 8, ["label"]),
+            a(T, {
+              label: e(l)("memories.colActions"),
               width: "150",
               fixed: "right"
             }, {
-              default: l(({ row: M }) => [
-                e(c, {
+              default: o(({ row: $ }) => [
+                a(C, {
                   link: "",
                   type: "primary",
-                  onClick: (q) => F(M)
+                  onClick: (H) => A($)
                 }, {
-                  default: l(() => [...o[10] || (o[10] = [
-                    v("编辑", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.edit")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"]),
-                e(c, {
+                a(C, {
                   link: "",
                   type: "danger",
-                  onClick: (q) => D(M)
+                  onClick: (H) => R($)
                 }, {
-                  default: l(() => [...o[11] || (o[11] = [
-                    v("删除", -1)
-                  ])]),
+                  default: o(() => [
+                    v(i(e(l)("common.delete")), 1)
+                  ]),
                   _: 1
                 }, 8, ["onClick"])
               ]),
               _: 1
-            })
+            }, 8, ["label"])
           ]),
           _: 1
         }, 8, ["data"])), [
-          [K, n(u)]
+          [W, e(d)]
         ]),
-        e(H, {
-          modelValue: $.value,
-          "onUpdate:modelValue": o[4] || (o[4] = (M) => $.value = M),
-          title: s.oldName ? "编辑标签" : "新建标签",
-          width: n(w) ? "96%" : "480px"
+        a(j, {
+          modelValue: g.value,
+          "onUpdate:modelValue": m[4] || (m[4] = ($) => g.value = $),
+          title: w.oldName ? e(l)("tags.editTitle") : e(l)("tags.createTitle"),
+          width: e(P) ? "96%" : "480px"
         }, {
-          footer: l(() => [
-            e(c, {
-              onClick: o[3] || (o[3] = (M) => $.value = !1)
+          footer: o(() => [
+            a(C, {
+              onClick: m[3] || (m[3] = ($) => g.value = !1)
             }, {
-              default: l(() => [...o[12] || (o[12] = [
-                v("取消", -1)
-              ])]),
+              default: o(() => [
+                v(i(e(l)("common.cancel")), 1)
+              ]),
               _: 1
             }),
-            e(c, {
+            a(C, {
               type: "primary",
-              loading: S.value,
-              onClick: L
+              loading: E.value,
+              onClick: F
             }, {
-              default: l(() => [...o[13] || (o[13] = [
-                v("保存", -1)
-              ])]),
+              default: o(() => [
+                v(i(e(l)("common.save")), 1)
+              ]),
               _: 1
             }, 8, ["loading"])
           ]),
-          default: l(() => [
-            e(ee, { "label-position": "top" }, {
-              default: l(() => [
-                e(A, { label: "名称（唯一，≤100 字符）" }, {
-                  default: l(() => [
-                    e(N, {
-                      modelValue: s.name,
-                      "onUpdate:modelValue": o[0] || (o[0] = (M) => s.name = M),
-                      disabled: !!s.oldName,
-                      maxlength: "100",
-                      "show-word-limit": "",
-                      placeholder: "如 rust、项目、工作流"
-                    }, null, 8, ["modelValue", "disabled"])
-                  ]),
-                  _: 1
-                }),
-                s.oldName ? (b(), I(A, {
-                  key: 0,
-                  label: "改为新名称（留空表示不改名）"
+          default: o(() => [
+            a(le, { "label-position": "top" }, {
+              default: o(() => [
+                a(K, {
+                  label: e(l)("tags.nameLabel")
                 }, {
-                  default: l(() => [
-                    e(N, {
-                      modelValue: s.newName,
-                      "onUpdate:modelValue": o[1] || (o[1] = (M) => s.newName = M),
+                  default: o(() => [
+                    a(G, {
+                      modelValue: w.name,
+                      "onUpdate:modelValue": m[0] || (m[0] = ($) => w.name = $),
+                      disabled: !!w.oldName,
                       maxlength: "100",
                       "show-word-limit": "",
-                      placeholder: "仅大小写改名也可用于合并拼写偏差"
-                    }, null, 8, ["modelValue"])
+                      placeholder: e(l)("tags.namePlaceholder")
+                    }, null, 8, ["modelValue", "disabled", "placeholder"])
                   ]),
                   _: 1
-                })) : W("", !0),
-                e(A, { label: "描述（可选，≤500 字符）" }, {
-                  default: l(() => [
-                    e(N, {
-                      modelValue: s.description,
-                      "onUpdate:modelValue": o[2] || (o[2] = (M) => s.description = M),
+                }, 8, ["label"]),
+                w.oldName ? (y(), D(K, {
+                  key: 0,
+                  label: e(l)("tags.renameLabel")
+                }, {
+                  default: o(() => [
+                    a(G, {
+                      modelValue: w.newName,
+                      "onUpdate:modelValue": m[1] || (m[1] = ($) => w.newName = $),
+                      maxlength: "100",
+                      "show-word-limit": "",
+                      placeholder: e(l)("tags.renamePlaceholder")
+                    }, null, 8, ["modelValue", "placeholder"])
+                  ]),
+                  _: 1
+                }, 8, ["label"])) : Q("", !0),
+                a(K, {
+                  label: e(l)("tags.descLabel")
+                }, {
+                  default: o(() => [
+                    a(G, {
+                      modelValue: w.description,
+                      "onUpdate:modelValue": m[2] || (m[2] = ($) => w.description = $),
                       type: "textarea",
                       rows: 3,
                       maxlength: "500",
                       "show-word-limit": "",
-                      placeholder: "这个标签用来组织什么内容"
-                    }, null, 8, ["modelValue"])
+                      placeholder: e(l)("tags.descPlaceholder")
+                    }, null, 8, ["modelValue", "placeholder"])
                   ]),
                   _: 1
-                })
+                }, 8, ["label"])
               ]),
               _: 1
             })
           ]),
           _: 1
         }, 8, ["modelValue", "title", "width"]),
-        e(H, {
-          modelValue: x.value,
-          "onUpdate:modelValue": o[7] || (o[7] = (M) => x.value = M),
-          title: "删除标签",
-          width: n(w) ? "96%" : "480px"
+        a(j, {
+          modelValue: M.value,
+          "onUpdate:modelValue": m[7] || (m[7] = ($) => M.value = $),
+          title: e(l)("tags.deleteTitle"),
+          width: e(P) ? "96%" : "480px"
         }, {
-          footer: l(() => [
-            e(c, {
-              onClick: o[6] || (o[6] = (M) => x.value = !1)
+          footer: o(() => [
+            a(C, {
+              onClick: m[6] || (m[6] = ($) => M.value = !1)
             }, {
-              default: l(() => [...o[19] || (o[19] = [
-                v("取消", -1)
-              ])]),
+              default: o(() => [
+                v(i(e(l)("common.cancel")), 1)
+              ]),
               _: 1
             }),
-            e(c, {
+            a(C, {
               type: "danger",
-              loading: S.value,
-              onClick: g
+              loading: E.value,
+              onClick: V
             }, {
-              default: l(() => [...o[20] || (o[20] = [
-                v("删除", -1)
-              ])]),
+              default: o(() => [
+                v(i(e(l)("common.delete")), 1)
+              ]),
               _: 1
             }, 8, ["loading"])
           ]),
-          default: l(() => {
-            var M;
+          default: o(() => {
+            var $;
             return [
-              k("p", null, [
-                o[14] || (o[14] = v(" 标签 ", -1)),
-                e(P, null, {
-                  default: l(() => {
-                    var q;
+              U("p", ma, [
+                v(i(e(l)("tags.deleteBefore")) + " ", 1),
+                a(O, null, {
+                  default: o(() => {
+                    var H;
                     return [
-                      v(R((q = C.value) == null ? void 0 : q.name), 1)
+                      v(i((H = k.value) == null ? void 0 : H.name), 1)
                     ];
                   }),
                   _: 1
                 }),
-                o[15] || (o[15] = v(" 当前被 ", -1)),
-                k("b", null, R((M = C.value) == null ? void 0 : M.memory_count), 1),
-                o[16] || (o[16] = v(" 条记忆使用。请选择删除方式： ", -1))
+                v(" " + i(e(l)("tags.deleteMiddle")) + " ", 1),
+                U("b", null, i(($ = k.value) == null ? void 0 : $.memory_count), 1),
+                v(" " + i(e(l)("tags.deleteAfter")), 1)
               ]),
-              e(r, {
-                modelValue: z.value,
-                "onUpdate:modelValue": o[5] || (o[5] = (q) => z.value = q)
+              a(c, {
+                modelValue: x.value,
+                "onUpdate:modelValue": m[5] || (m[5] = (H) => x.value = H)
               }, {
-                default: l(() => [
-                  e(h, { value: "detach" }, {
-                    default: l(() => [...o[17] || (o[17] = [
-                      v("仅摘除引用（保留全部记忆）", -1)
-                    ])]),
+                default: o(() => [
+                  a(N, { value: "detach" }, {
+                    default: o(() => [
+                      v(i(e(l)("tags.detach")), 1)
+                    ]),
                     _: 1
                   }),
-                  e(h, { value: "purge" }, {
-                    default: l(() => [...o[18] || (o[18] = [
-                      v("连带删除记忆（不可恢复）", -1)
-                    ])]),
+                  a(N, { value: "purge" }, {
+                    default: o(() => [
+                      v(i(e(l)("tags.purge")), 1)
+                    ]),
                     _: 1
                   })
                 ]),
@@ -1186,200 +1480,208 @@ const Yt = { class: "am-panel-header" }, Zt = /* @__PURE__ */ X({
             ];
           }),
           _: 1
-        }, 8, ["modelValue", "width"])
+        }, 8, ["modelValue", "title", "width"])
       ], 512);
     };
   }
-});
-function el(t) {
+}), fa = /* @__PURE__ */ ae(pa, [["__scopeId", "data-v-6a537258"]]);
+function ga(t) {
   return t.get("/api/stats");
 }
-function tl(t) {
+function va(t) {
   return t.get("/health");
 }
-function ll(t) {
+function _a(t) {
   return t.get("/api/doctor");
 }
-function nl(t) {
+function ya(t) {
   return t.getBlob("/api/export");
 }
-function ol(t, i) {
-  return t.post("/api/import", i);
+function ba(t, s) {
+  return t.post("/api/import", s);
 }
-function al() {
-  const t = le(), i = y({}), u = y(""), a = y({ ok: !0, issues: [] }), f = y(!1), p = y(!1), _ = y(!1), d = y(!1), w = oe(() => $t(i.value.file_size));
-  async function S() {
-    i.value = await el(t), i.value.version = u.value;
+function ha() {
+  const t = ne(), s = h({}), n = h(""), d = h({ ok: !0, issues: [] }), p = h(!1), f = h(!1), b = h(!1), r = h(!1), S = re(() => xt(s.value.file_size));
+  async function P() {
+    s.value = await ga(t), s.value.version = n.value;
   }
-  async function $() {
-    p.value = !0;
+  async function E() {
+    f.value = !0;
     try {
-      a.value = await ll(t), f.value = !0;
+      d.value = await _a(t), p.value = !0;
     } finally {
-      p.value = !1;
+      f.value = !1;
     }
   }
-  async function s() {
-    _.value = !0;
+  async function g() {
+    b.value = !0;
     try {
-      const z = await nl(t), C = URL.createObjectURL(z), V = document.createElement("a");
-      V.href = C, V.download = "agent-memory-export.json", V.click(), URL.revokeObjectURL(C);
+      const M = await ya(t), x = URL.createObjectURL(M), k = document.createElement("a");
+      k.href = x, k.download = "agent-memory-export.json", k.click(), URL.revokeObjectURL(x);
     } finally {
-      _.value = !1;
+      b.value = !1;
     }
   }
-  async function x(z) {
-    d.value = !0;
+  async function w(M) {
+    r.value = !0;
     try {
-      const C = await z.text();
-      let V;
+      const x = await M.text();
+      let k;
       try {
-        V = JSON.parse(C);
+        k = JSON.parse(x);
       } catch {
-        throw new Error("备份文件不是有效的 JSON");
+        throw new Error(l("errors.invalidBackup"));
       }
-      const F = await ol(t, V);
-      return await S(), F;
+      const I = await ba(t, k);
+      return await P(), I;
     } finally {
-      d.value = !1;
+      r.value = !1;
     }
   }
-  return ae(async () => {
+  return ie(async () => {
     try {
-      u.value = (await tl(t)).version ?? "";
+      n.value = (await va(t)).version ?? "";
     } catch {
     }
-    await S().catch(() => {
+    await P().catch(() => {
     });
   }), {
-    stats: i,
-    version: u,
-    doctor: a,
-    doctorRan: f,
-    doctorLoading: p,
-    exporting: _,
-    importing: d,
-    sizeText: w,
-    reload: S,
-    runDoctor: $,
-    exportData: s,
-    importFile: x
+    stats: s,
+    version: n,
+    doctor: d,
+    doctorRan: p,
+    doctorLoading: f,
+    exporting: b,
+    importing: r,
+    sizeText: S,
+    reload: P,
+    runDoctor: E,
+    exportData: g,
+    importFile: w
   };
 }
-const sl = { class: "am-panel-header" }, il = { class: "actions" }, rl = { class: "card-header" }, ul = {
+const wa = {
+  key: 0,
+  class: "am-panel-header"
+}, ka = { class: "am-panel-title" }, Ca = { class: "am-panel-subtitle" }, Sa = { class: "actions" }, Ta = { class: "card-header" }, Ea = {
   key: 2,
   class: "issues"
-}, dl = /* @__PURE__ */ X({
+}, Ua = /* @__PURE__ */ Z({
   __name: "OpsPanel",
+  props: {
+    showHeader: { type: Boolean, default: !0 },
+    title: {},
+    subtitle: {}
+  },
   setup(t) {
-    const {
-      stats: i,
-      version: u,
-      doctor: a,
+    const s = t, {
+      stats: n,
+      version: d,
+      doctor: p,
       doctorRan: f,
-      doctorLoading: p,
-      exporting: _,
-      importing: d,
-      sizeText: w,
-      reload: S,
-      runDoctor: $,
-      exportData: s,
-      importFile: x
-    } = al(), z = y(null), { compact: C } = ge(z), V = y(null);
-    function F(D) {
-      return D().catch((g) => B.error(g instanceof Error ? g.message : String(g)));
+      doctorLoading: b,
+      exporting: r,
+      importing: S,
+      sizeText: P,
+      reload: E,
+      runDoctor: g,
+      exportData: w,
+      importFile: M
+    } = ha(), x = h(null), { compact: k } = be(x), I = h(null);
+    function A(R) {
+      return R().catch((V) => B.error(V instanceof Error ? V.message : String(V)));
     }
-    function L(D) {
-      var o;
-      const g = D.target, E = (o = g.files) == null ? void 0 : o[0];
-      g.value = "", E && x(E).then((c) => {
-        B.success(`已导入 ${c.imported_memories} 条记忆、${c.imported_tags} 个标签`);
-      }).catch((c) => {
-        B.error(c instanceof Error ? c.message : String(c));
+    function F(R) {
+      var m;
+      const V = R.target, _ = (m = V.files) == null ? void 0 : m[0];
+      V.value = "", _ && M(_).then((C) => {
+        B.success(l("ops.imported", { memories: C.imported_memories, tags: C.imported_tags }));
+      }).catch((C) => {
+        B.error(C instanceof Error ? C.message : String(C));
       });
     }
-    return (D, g) => {
-      const E = se, o = tt, c = et, P = Ze, U = Ye, T = nt, N = lt, A = xe, ee = ot;
-      return b(), O("div", {
+    return (R, V) => {
+      const _ = de, m = st, C = nt, O = ot, T = lt, L = it, G = rt, K = $e, le = dt;
+      return y(), z("div", {
         ref_key: "rootRef",
-        ref: z,
+        ref: x,
         class: "am-panel"
       }, [
-        k("div", sl, [
-          g[5] || (g[5] = k("div", null, [
-            k("h2", { class: "am-panel-title" }, "运维"),
-            k("p", { class: "am-panel-subtitle" }, "数据库概况、备份导入导出与数据体检")
-          ], -1)),
-          e(E, {
-            icon: n(ft),
-            onClick: g[0] || (g[0] = (H) => F(n(S)))
+        t.showHeader ? (y(), z("div", wa, [
+          U("div", null, [
+            U("h2", ka, i(s.title ?? e(l)("ops.title")), 1),
+            U("p", Ca, i(s.subtitle ?? e(l)("ops.subtitle")), 1)
+          ]),
+          a(_, {
+            icon: e(bt),
+            onClick: V[0] || (V[0] = (j) => A(e(E)))
           }, {
-            default: l(() => [...g[4] || (g[4] = [
-              v("刷新概况", -1)
-            ])]),
+            default: o(() => [
+              v(i(e(l)("ops.refresh")), 1)
+            ]),
             _: 1
           }, 8, ["icon"])
-        ]),
-        e(U, { gutter: 14 }, {
-          default: l(() => [
-            e(P, {
-              span: n(C) ? 12 : 6
+        ])) : Q("", !0),
+        a(T, { gutter: 14 }, {
+          default: o(() => [
+            a(O, {
+              span: e(k) ? 12 : 6
             }, {
-              default: l(() => [
-                e(c, { shadow: "never" }, {
-                  default: l(() => [
-                    e(o, {
-                      title: "记忆条数",
-                      value: n(i).memories ?? 0
-                    }, null, 8, ["value"])
+              default: o(() => [
+                a(C, { shadow: "never" }, {
+                  default: o(() => [
+                    a(m, {
+                      title: e(l)("ops.statMemories"),
+                      value: e(n).memories ?? 0
+                    }, null, 8, ["title", "value"])
                   ]),
                   _: 1
                 })
               ]),
               _: 1
             }, 8, ["span"]),
-            e(P, {
-              span: n(C) ? 12 : 6
+            a(O, {
+              span: e(k) ? 12 : 6
             }, {
-              default: l(() => [
-                e(c, { shadow: "never" }, {
-                  default: l(() => [
-                    e(o, {
-                      title: "标签数",
-                      value: n(i).tags ?? 0
-                    }, null, 8, ["value"])
+              default: o(() => [
+                a(C, { shadow: "never" }, {
+                  default: o(() => [
+                    a(m, {
+                      title: e(l)("ops.statTags"),
+                      value: e(n).tags ?? 0
+                    }, null, 8, ["title", "value"])
                   ]),
                   _: 1
                 })
               ]),
               _: 1
             }, 8, ["span"]),
-            e(P, {
-              span: n(C) ? 12 : 6
+            a(O, {
+              span: e(k) ? 12 : 6
             }, {
-              default: l(() => [
-                e(c, { shadow: "never" }, {
-                  default: l(() => [
-                    e(o, {
-                      title: "数据库大小",
-                      value: n(w)
-                    }, null, 8, ["value"])
+              default: o(() => [
+                a(C, { shadow: "never" }, {
+                  default: o(() => [
+                    a(m, {
+                      title: e(l)("ops.statSize"),
+                      value: e(P)
+                    }, null, 8, ["title", "value"])
                   ]),
                   _: 1
                 })
               ]),
               _: 1
             }, 8, ["span"]),
-            e(P, {
-              span: n(C) ? 12 : 6
+            a(O, {
+              span: e(k) ? 12 : 6
             }, {
-              default: l(() => [
-                e(c, { shadow: "never" }, {
-                  default: l(() => [
-                    e(o, {
-                      title: "下一个记忆 ID",
-                      value: n(i).next_id ?? "—"
-                    }, null, 8, ["value"])
+              default: o(() => [
+                a(C, { shadow: "never" }, {
+                  default: o(() => [
+                    a(m, {
+                      title: e(l)("ops.statNextId"),
+                      value: e(n).next_id ?? "—"
+                    }, null, 8, ["title", "value"])
                   ]),
                   _: 1
                 })
@@ -1389,255 +1691,266 @@ const sl = { class: "am-panel-header" }, il = { class: "actions" }, rl = { class
           ]),
           _: 1
         }),
-        e(c, { shadow: "never" }, {
-          header: l(() => [...g[6] || (g[6] = [
-            v("数据库", -1)
-          ])]),
-          default: l(() => [
-            e(N, {
-              column: n(C) ? 1 : 2,
+        a(C, { shadow: "never" }, {
+          header: o(() => [
+            v(i(e(l)("ops.dbCard")), 1)
+          ]),
+          default: o(() => [
+            a(G, {
+              column: e(k) ? 1 : 2,
               border: ""
             }, {
-              default: l(() => [
-                e(T, { label: "文件路径" }, {
-                  default: l(() => [
-                    v(R(n(i).path ?? "—"), 1)
+              default: o(() => [
+                a(L, {
+                  label: e(l)("ops.path")
+                }, {
+                  default: o(() => [
+                    v(i(e(n).path ?? "—"), 1)
                   ]),
                   _: 1
-                }),
-                e(T, { label: "最近更新" }, {
-                  default: l(() => [
-                    v(R(n(i).newest_update ? `${n(i).newest_update.id}（${n(te)(n(i).newest_update.updated_at)}）` : "—"), 1)
+                }, 8, ["label"]),
+                a(L, {
+                  label: e(l)("ops.lastUpdate")
+                }, {
+                  default: o(() => [
+                    v(i(e(n).newest_update ? e(l)("ops.lastUpdateValue", {
+                      id: e(n).newest_update.id,
+                      time: e(oe)(e(n).newest_update.updated_at)
+                    }) : "—"), 1)
                   ]),
                   _: 1
-                }),
-                e(T, { label: "跨平台迁移" }, {
-                  default: l(() => [...g[7] || (g[7] = [
-                    v(" SQLite 文件格式平台无关，停服后可直接复制 .db 文件到其他机器；运行中请改用「导出备份」。 ", -1)
-                  ])]),
-                  _: 1
-                }),
-                e(T, { label: "版本" }, {
-                  default: l(() => [
-                    v(R(n(i).version ?? n(u)), 1)
+                }, 8, ["label"]),
+                a(L, {
+                  label: e(l)("ops.crossPlatform")
+                }, {
+                  default: o(() => [
+                    v(i(e(l)("ops.crossPlatformNote")), 1)
                   ]),
                   _: 1
-                })
+                }, 8, ["label"]),
+                a(L, {
+                  label: e(l)("ops.version")
+                }, {
+                  default: o(() => [
+                    v(i(e(n).version ?? e(d)), 1)
+                  ]),
+                  _: 1
+                }, 8, ["label"])
               ]),
               _: 1
             }, 8, ["column"]),
-            k("div", il, [
-              e(E, {
-                icon: n(vt),
-                loading: n(_),
-                onClick: g[1] || (g[1] = (H) => F(n(s)))
+            U("div", Sa, [
+              a(_, {
+                icon: e(ht),
+                loading: e(r),
+                onClick: V[1] || (V[1] = (j) => A(e(w)))
               }, {
-                default: l(() => [...g[8] || (g[8] = [
-                  v("导出备份（JSON）", -1)
-                ])]),
+                default: o(() => [
+                  v(i(e(l)("ops.export")), 1)
+                ]),
                 _: 1
               }, 8, ["icon", "loading"]),
-              e(E, {
-                icon: n(gt),
-                loading: n(d),
-                onClick: g[2] || (g[2] = (H) => {
-                  var h;
-                  return (h = V.value) == null ? void 0 : h.click();
+              a(_, {
+                icon: e(wt),
+                loading: e(S),
+                onClick: V[2] || (V[2] = (j) => {
+                  var N;
+                  return (N = I.value) == null ? void 0 : N.click();
                 })
               }, {
-                default: l(() => [...g[9] || (g[9] = [
-                  v("导入备份", -1)
-                ])]),
+                default: o(() => [
+                  v(i(e(l)("ops.import")), 1)
+                ]),
                 _: 1
               }, 8, ["icon", "loading"]),
-              k("input", {
+              U("input", {
                 ref_key: "importInput",
-                ref: V,
+                ref: I,
                 type: "file",
                 accept: "application/json,.json",
                 style: { display: "none" },
-                onChange: L
+                onChange: F
               }, null, 544)
             ]),
-            e(A, {
-              title: "导入仅支持空数据库（导入是恢复而非合并）；当前库已有数据时请换一个空的 --db 路径再导入。",
+            a(K, {
+              title: e(l)("ops.importHint"),
               type: "info",
               "show-icon": "",
               closable: !1,
               class: "import-hint"
-            })
+            }, null, 8, ["title"])
           ]),
           _: 1
         }),
-        e(c, { shadow: "never" }, {
-          header: l(() => [
-            k("div", rl, [
-              g[11] || (g[11] = k("span", null, "数据体检（doctor）", -1)),
-              e(E, {
+        a(C, { shadow: "never" }, {
+          header: o(() => [
+            U("div", Ta, [
+              U("span", null, i(e(l)("ops.doctorCard")), 1),
+              a(_, {
                 size: "small",
-                icon: n(Ie),
-                loading: n(p),
-                onClick: g[3] || (g[3] = (H) => F(n($)))
+                icon: e(Ie),
+                loading: e(b),
+                onClick: V[3] || (V[3] = (j) => A(e(g)))
               }, {
-                default: l(() => [...g[10] || (g[10] = [
-                  v("运行体检", -1)
-                ])]),
+                default: o(() => [
+                  v(i(e(l)("ops.runDoctor")), 1)
+                ]),
                 _: 1
               }, 8, ["icon", "loading"])
             ])
           ]),
-          default: l(() => [
-            n(f) ? (b(), O(G, { key: 0 }, [
-              n(a).ok ? (b(), I(A, {
+          default: o(() => [
+            e(f) ? (y(), z(Y, { key: 0 }, [
+              e(p).ok ? (y(), D(K, {
                 key: 0,
-                title: "体检通过：未发现孤儿引用、大小写冲突或空字段",
+                title: e(l)("ops.doctorOk"),
                 type: "success",
                 "show-icon": "",
                 closable: !1
-              })) : (b(), I(A, {
+              }, null, 8, ["title"])) : (y(), D(K, {
                 key: 1,
-                title: `发现 ${n(a).issues.length} 个问题`,
+                title: e(l)("ops.doctorFail", { count: e(p).issues.length }),
                 type: "error",
                 "show-icon": "",
                 closable: !1
               }, null, 8, ["title"])),
-              n(a).ok ? W("", !0) : (b(), O("ul", ul, [
-                (b(!0), O(G, null, Y(n(a).issues, (H, h) => (b(), O("li", { key: h }, R(H), 1))), 128))
+              e(p).ok ? Q("", !0) : (y(), z("ul", Ea, [
+                (y(!0), z(Y, null, ee(e(p).issues, (j, N) => (y(), z("li", { key: N }, i(j), 1))), 128))
               ]))
-            ], 64)) : (b(), I(ee, {
+            ], 64)) : (y(), D(le, {
               key: 1,
-              description: "点击「运行体检」检查孤儿标签引用、大小写冲突标签组、空摘要/正文",
+              description: e(l)("ops.doctorEmpty"),
               "image-size": 60
-            }))
+            }, null, 8, ["description"]))
           ]),
           _: 1
         })
       ], 512);
     };
   }
-}), ml = /* @__PURE__ */ ne(dl, [["__scopeId", "data-v-8310bd60"]]), pl = { class: "memory-ui" }, cl = { class: "brand" }, fl = { class: "brand-mark" }, vl = { class: "aside-footer" }, gl = /* @__PURE__ */ X({
+}), Ma = /* @__PURE__ */ ae(Ua, [["__scopeId", "data-v-28e9c5e6"]]), Va = { class: "memory-ui" }, $a = { class: "brand" }, xa = { class: "brand-mark" }, Pa = { class: "aside-footer" }, za = /* @__PURE__ */ Z({
   __name: "MemoryAdmin",
   props: {
     layout: { default: "sidebar" },
     title: { default: "agent-memory" }
   },
   setup(t) {
-    const i = y("memories");
-    return (u, a) => {
-      const f = it, p = ut, _ = rt, d = dt, w = st, S = ct, $ = pt, s = mt, x = at;
-      return b(), O("div", pl, [
-        e(x, { class: "layout" }, {
-          default: l(() => [
-            t.layout === "sidebar" ? (b(), I(w, {
+    const s = h("memories");
+    return (n, d) => {
+      const p = mt, f = ft, b = pt, r = gt, S = ct, P = yt, E = _t, g = vt, w = ut;
+      return y(), z("div", Va, [
+        a(w, { class: "layout" }, {
+          default: o(() => [
+            t.layout === "sidebar" ? (y(), D(S, {
               key: 0,
               width: "200px",
               class: "aside"
             }, {
-              default: l(() => [
-                k("div", cl, [
-                  k("span", fl, [
-                    e(f, { size: 16 }, {
-                      default: l(() => [
-                        e(n(_t))
+              default: o(() => [
+                U("div", $a, [
+                  U("span", xa, [
+                    a(p, { size: 16 }, {
+                      default: o(() => [
+                        a(e(kt))
                       ]),
                       _: 1
                     })
                   ]),
-                  k("span", null, R(t.title), 1)
+                  U("span", null, i(t.title), 1)
                 ]),
-                e(_, {
-                  "default-active": i.value,
+                a(b, {
+                  "default-active": s.value,
                   class: "menu",
-                  onSelect: a[0] || (a[0] = (z) => i.value = z)
+                  onSelect: d[0] || (d[0] = (M) => s.value = M)
                 }, {
-                  default: l(() => [
-                    e(p, { index: "memories" }, {
-                      default: l(() => [
-                        e(f, null, {
-                          default: l(() => [
-                            e(n(yt))
+                  default: o(() => [
+                    a(f, { index: "memories" }, {
+                      default: o(() => [
+                        a(p, null, {
+                          default: o(() => [
+                            a(e(Ct))
                           ]),
                           _: 1
                         }),
-                        a[2] || (a[2] = k("span", null, "记忆管理", -1))
+                        U("span", null, i(e(l)("nav.memories")), 1)
                       ]),
                       _: 1
                     }),
-                    e(p, { index: "tags" }, {
-                      default: l(() => [
-                        e(f, null, {
-                          default: l(() => [
-                            e(n(bt))
+                    a(f, { index: "tags" }, {
+                      default: o(() => [
+                        a(p, null, {
+                          default: o(() => [
+                            a(e(St))
                           ]),
                           _: 1
                         }),
-                        a[3] || (a[3] = k("span", null, "标签管理", -1))
+                        U("span", null, i(e(l)("nav.tags")), 1)
                       ]),
                       _: 1
                     }),
-                    e(p, { index: "ops" }, {
-                      default: l(() => [
-                        e(f, null, {
-                          default: l(() => [
-                            e(n(wt))
+                    a(f, { index: "ops" }, {
+                      default: o(() => [
+                        a(p, null, {
+                          default: o(() => [
+                            a(e(Tt))
                           ]),
                           _: 1
                         }),
-                        a[4] || (a[4] = k("span", null, "运维", -1))
+                        U("span", null, i(e(l)("nav.ops")), 1)
                       ]),
                       _: 1
                     })
                   ]),
                   _: 1
                 }, 8, ["default-active"]),
-                k("div", vl, [
-                  Ke(u.$slots, "footer", {}, () => [
-                    e(d, {
+                U("div", Pa, [
+                  Xe(n.$slots, "footer", {}, () => [
+                    a(r, {
                       size: "small",
                       type: "info"
                     }, {
-                      default: l(() => [...a[5] || (a[5] = [
-                        v("自托管 · 多 agent 共享", -1)
-                      ])]),
+                      default: o(() => [
+                        v(i(e(l)("admin.hint")), 1)
+                      ]),
                       _: 1
                     })
                   ], !0)
                 ])
               ]),
               _: 3
-            })) : W("", !0),
-            e(s, { class: "main" }, {
-              default: l(() => [
-                t.layout === "tabs" ? (b(), I($, {
+            })) : Q("", !0),
+            a(g, { class: "main" }, {
+              default: o(() => [
+                t.layout === "tabs" ? (y(), D(E, {
                   key: 0,
-                  modelValue: i.value,
-                  "onUpdate:modelValue": a[1] || (a[1] = (z) => i.value = z),
+                  modelValue: s.value,
+                  "onUpdate:modelValue": d[1] || (d[1] = (M) => s.value = M),
                   class: "tabs-bar"
                 }, {
-                  default: l(() => [
-                    e(S, {
-                      label: "记忆管理",
+                  default: o(() => [
+                    a(P, {
+                      label: e(l)("nav.memories"),
                       name: "memories"
-                    }),
-                    e(S, {
-                      label: "标签管理",
+                    }, null, 8, ["label"]),
+                    a(P, {
+                      label: e(l)("nav.tags"),
                       name: "tags"
-                    }),
-                    e(S, {
-                      label: "运维",
+                    }, null, 8, ["label"]),
+                    a(P, {
+                      label: e(l)("nav.ops"),
                       name: "ops"
-                    })
+                    }, null, 8, ["label"])
                   ]),
                   _: 1
-                }, 8, ["modelValue"])) : W("", !0),
-                Z(e(Wt, null, null, 512), [
-                  [re, i.value === "memories"]
+                }, 8, ["modelValue"])) : Q("", !0),
+                te(a(ra, null, null, 512), [
+                  [me, s.value === "memories"]
                 ]),
-                Z(e(Zt, null, null, 512), [
-                  [re, i.value === "tags"]
+                te(a(fa, null, null, 512), [
+                  [me, s.value === "tags"]
                 ]),
-                Z(e(ml, null, null, 512), [
-                  [re, i.value === "ops"]
+                te(a(Ma, null, null, 512), [
+                  [me, s.value === "ops"]
                 ])
               ]),
               _: 1
@@ -1648,27 +1961,32 @@ const sl = { class: "am-panel-header" }, il = { class: "actions" }, rl = { class
       ]);
     };
   }
-}), Vl = /* @__PURE__ */ ne(gl, [["__scopeId", "data-v-5e17b96e"]]);
+}), Ha = /* @__PURE__ */ ae(za, [["__scopeId", "data-v-71914017"]]);
 export {
-  Fe as MarkdownView,
-  Wt as MemoriesPanel,
-  Vl as MemoryAdmin,
-  qt as MemoryDetailDrawer,
-  Ot as MemoryEditorDialog,
-  Ne as MemoryUIConfigKey,
-  ml as OpsPanel,
-  Zt as TagsPanel,
-  Vt as buildMemoriesQuery,
-  Ct as createApiClient,
-  $t as formatSize,
-  te as formatTime,
-  de as isSearchMode,
-  Cl as provideMemoryUI,
-  St as renderMarkdown,
-  xt as sanitizeHtml,
-  le as useApiClient,
-  It as useMemories,
-  Oe as useMemoryConfig,
-  al as useOps,
-  Xt as useTags
+  qe as MarkdownView,
+  ra as MemoriesPanel,
+  Ha as MemoryAdmin,
+  Xt as MemoryDetailDrawer,
+  jt as MemoryEditorDialog,
+  Oe as MemoryUIConfigKey,
+  Ma as OpsPanel,
+  fa as TagsPanel,
+  $t as applyMemoryUILocalePreference,
+  zt as buildMemoriesQuery,
+  Pt as createApiClient,
+  Aa as currentMemoryUILocale,
+  xt as formatSize,
+  oe as formatTime,
+  pe as isSearchMode,
+  ue as memoryUIi18n,
+  Fa as provideMemoryUI,
+  It as renderMarkdown,
+  Lt as sanitizeHtml,
+  Vt as setMemoryUILocale,
+  l as t,
+  ne as useApiClient,
+  At as useMemories,
+  Be as useMemoryConfig,
+  ha as useOps,
+  ia as useTags
 };

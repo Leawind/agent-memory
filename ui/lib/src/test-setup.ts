@@ -5,3 +5,7 @@ class ResizeObserverStub {
   disconnect(): void {}
 }
 globalThis.ResizeObserver = ResizeObserverStub
+
+// 测试断言以中文文案为准：固定库语言，避免宿主环境 navigator.language 影响探测结果
+import { setMemoryUILocale } from './i18n'
+setMemoryUILocale('zh')

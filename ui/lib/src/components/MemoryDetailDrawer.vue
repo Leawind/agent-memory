@@ -1,7 +1,7 @@
 <template>
   <el-drawer
     :model-value="visible"
-    :title="`记忆 ${detail?.id ?? memoryId ?? ''}`"
+    :title="t('drawer.title', { id: detail?.id ?? memoryId ?? '' })"
     :size="size"
     @update:model-value="emit('update:visible', $event)"
   >
@@ -13,8 +13,8 @@
       <el-divider />
       <div class="detail-toolbar">
         <el-radio-group v-model="detailTab" size="small">
-          <el-radio-button value="rendered">渲染</el-radio-button>
-          <el-radio-button value="source">源码</el-radio-button>
+          <el-radio-button value="rendered">{{ t('drawer.rendered') }}</el-radio-button>
+          <el-radio-button value="source">{{ t('drawer.source') }}</el-radio-button>
         </el-radio-group>
       </div>
       <MarkdownView v-if="detailTab === 'rendered'" :source="detail.content" />
@@ -28,6 +28,7 @@ import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useApiClient } from '../api/client'
 import { getMemory } from '../api/memories'
+import { t } from '../i18n'
 import type { MemoryFull } from '../types'
 import MarkdownView from './MarkdownView.vue'
 
