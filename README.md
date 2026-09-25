@@ -62,11 +62,12 @@
 
 ![运维](docs/ui-ops.png)
 
-界面源码在 `ui/`（Vue3 + Element Plus + Vite + TypeScript），构建产物 `ui/dist` 提交入库并由 rust-embed 编译期嵌入：
+界面源码在 `ui/`（Vue3 + Element Plus + Vite + TypeScript），构建产物 `ui/dist` 提交入库并由 rust-embed 编译期嵌入。JS 侧（`ui/` 与 `scripts/`）由根 package.json 的 npm workspaces 统一管理，根目录一次安装：
 
 ```bash
-cd ui && npm install && npm run build   # 修改前端后重新构建
-cd .. && ./build.sh                     # 再重新编译嵌入
+npm install          # 首次（或依赖变更后）
+npm run build        # 修改前端后重新构建（等价 npm run build -w ui）
+./build.sh           # 再重新编译嵌入
 ```
 
 ## 性能包络
@@ -111,16 +112,16 @@ ui/              Vue3 + Element Plus + Vite + TypeScript 管理界面（dist 入
 ## 测试
 
 ```bash
-cargo test   # 56 个单元测试 + 6 个端到端测试（真实进程走 HTTP，覆盖 MCP / REST / 静态 UI / 双进程并发 / CLI）
-cd ui && npm test        # 管理界面测试（13 个：组件挂载冒烟、查询串组装、API 封装约定）
-cd ui && npm run typecheck   # TypeScript 类型检查
+cargo test    # 56 个单元测试 + 6 个端到端测试（真实进程走 HTTP，覆盖 MCP / REST / 静态 UI / 双进程并发 / CLI）
+npm test      # 管理界面测试（19 个：组件挂载冒烟、查询串组装、API 封装、Markdown 渲染与消毒）
+npm run typecheck   # TypeScript 类型检查（覆盖 ui/ 与 scripts/ 两个 workspace）
 ```
 
 另有与官方 MCP TypeScript SDK 的兼容性联调脚本（开发用，需 node）：
 
 ```bash
 ./bin/agent-memory.exe &                # 先起服务器
-cd scripts && npm install && node sdk-compat-check.ts
+node scripts/sdk-compat-check.ts
 ```
 
 ## 工具一览

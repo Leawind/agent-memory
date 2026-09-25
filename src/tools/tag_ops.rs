@@ -54,13 +54,12 @@ pub fn tag_rename(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     // 存在性预检：错误类别（404/400）在 handler 层显式确定
     if !st.tag_exists(&old)? {
         return Err(ToolError::not_found(format!(
-            "tag '{}' not found (see tag_list)",
-            old
+            "tag '{old}' not found (see tag_list)"
         )));
     }
     if let Some(new) = &new_name {
         if new != &old && st.tag_exists(new)? {
-            return Err(ToolError::invalid(format!("tag '{}' already exists", new)));
+            return Err(ToolError::invalid(format!("tag '{new}' already exists")));
         }
     }
     let memories_updated = st.tag_rename(&old, new_name.as_deref(), description.as_deref())?;
@@ -80,15 +79,13 @@ pub fn tag_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
         Some("purge") => "purge",
         Some(o) => {
             return Err(ToolError::invalid(format!(
-                "mode must be 'detach' or 'purge', got '{}'",
-                o
+                "mode must be 'detach' or 'purge', got '{o}'"
             )))
         }
     };
     if !st.tag_exists(&name)? {
         return Err(ToolError::not_found(format!(
-            "tag '{}' not found (see tag_list)",
-            name
+            "tag '{name}' not found (see tag_list)"
         )));
     }
     match mode {

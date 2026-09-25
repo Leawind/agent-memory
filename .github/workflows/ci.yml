@@ -33,8 +33,10 @@ jobs:
       - run: cargo check
 
   ui-tests:
-    # 管理界面的类型检查与单元测试（查询串组装、API 封装约定）。node 版本须与
-    # 构建 dist/ 时一致（24），否则产物可能漂移；scripts/ 的 TS 类型检查一并执行。
+    # 管理界面的类型检查与单元测试（查询串组装、API 封装、Markdown 渲染消毒）。
+    # node 版本须与构建 dist/ 时一致（24），否则产物可能漂移。
+    # ui/ 与 scripts/ 由根 package.json 的 npm workspaces 统一管理：
+    # 根目录一次 npm ci，typecheck 通过 --workspaces 覆盖两个包。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,17 +44,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
-        working-directory: ui
       - run: npm run format:check
-        working-directory: ui
       - run: npm run typecheck
-        working-directory: ui
       - run: npm test
-        working-directory: ui
-      - name: Typecheck dev scripts
-        working-directory: scripts
-        run: |
-          npm ci
-          npx tsc --noEmit

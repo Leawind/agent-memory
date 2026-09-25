@@ -35,7 +35,7 @@ pub fn handle(db_path: &Path, method: &str, path: &str, query: &str, body: &[u8]
         match serde_json::from_slice::<Value>(body) {
             Ok(Value::Object(m)) => Ok(m),
             Ok(_) => Err(ToolError::invalid("request body must be a JSON object")),
-            Err(e) => Err(ToolError::invalid(format!("invalid JSON body: {}", e))),
+            Err(e) => Err(ToolError::invalid(format!("invalid JSON body: {e}"))),
         }
     };
 
@@ -160,8 +160,7 @@ pub fn handle(db_path: &Path, method: &str, path: &str, query: &str, body: &[u8]
         }),
         _ => {
             return bad_request(ToolError::invalid(format!(
-                "no such API route: {} {}",
-                method, path
+                "no such API route: {method} {path}"
             )))
         }
     };

@@ -92,7 +92,7 @@ pub fn execute(st: &Store, name: &str, args: &Value) -> Result<Value, ToolError>
         "memory_get" => memory_ops::memory_get(st, map),
         "memory_update" => memory_ops::memory_update(st, map),
         "memory_delete" => memory_ops::memory_delete(st, map),
-        _ => Err(ToolError::invalid(format!("unknown tool '{}'", name))),
+        _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
 }
 
@@ -111,8 +111,7 @@ fn check_known_args(name: &str, args: &Map<String, Value>) -> Result<(), String>
                 known.join(", ")
             };
             return Err(format!(
-                "unknown argument '{}' for tool '{}'; valid arguments: {}",
-                key, name, valid
+                "unknown argument '{key}' for tool '{name}'; valid arguments: {valid}"
             ));
         }
     }
@@ -317,12 +316,11 @@ mod tests {
         .unwrap_err();
         assert!(
             err.to_string().contains("'summray'") && err.to_string().contains("summary"),
-            "got: {}",
-            err
+            "got: {err}"
         );
         // 无参数工具传了参数也要报错
         let err = call(&path, "tag_list", json!({"filter": "x"})).unwrap_err();
-        assert!(err.to_string().contains("'filter'"), "got: {}", err);
+        assert!(err.to_string().contains("'filter'"), "got: {err}");
         // 正常参数不受影响
         call(
             &path,
@@ -450,9 +448,7 @@ mod tests {
             if let Err(e) = r {
                 assert!(
                     !e.to_string().contains("unknown tool"),
-                    "tool '{}' is listed but has no dispatch arm: {}",
-                    name,
-                    e
+                    "tool '{name}' is listed but has no dispatch arm: {e}"
                 );
             }
         }

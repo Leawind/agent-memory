@@ -214,11 +214,10 @@ mod tests {
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(sn.starts_with('…') && sn.ends_with('…'));
-        assert!(sn.contains("TARGET"), "snippet: {}", sn);
+        assert!(sn.contains("TARGET"), "snippet: {sn}");
         assert!(
             sn.contains("前前前"),
-            "snippet should include context before the match: {}",
-            sn
+            "snippet should include context before the match: {sn}"
         );
     }
 

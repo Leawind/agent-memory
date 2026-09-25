@@ -34,17 +34,17 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path) -> i32 {
         eprintln!("agent-memory: --port 0 is not supported; choose a fixed port");
         return 2;
     }
-    let addr = format!("{}:{}", host, port);
+    let addr = format!("{host}:{port}");
     // 启动前先打开一遍数据库（含迁移校验）；坏库拒绝启动，绝不带病服务。
     if let Err(e) = store::Store::open(db_path) {
-        eprintln!("agent-memory: cannot open database ({}).", e);
+        eprintln!("agent-memory: cannot open database ({e}).");
         eprintln!("agent-memory: refusing to start to protect your data.");
         return 1;
     }
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("agent-memory: cannot listen on {}: {}", addr, e);
+            eprintln!("agent-memory: cannot listen on {addr}: {e}");
             return 1;
         }
     };
@@ -54,11 +54,8 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path) -> i32 {
         env!("CARGO_PKG_VERSION"),
         addr
     );
-    eprintln!("  管理界面  http://{}/", addr);
-    eprintln!(
-        "  MCP 端点  http://{}{}（无鉴权，请只暴露给可信网络）",
-        addr, ENDPOINT_MCP
-    );
+    eprintln!("  管理界面  http://{addr}/");
+    eprintln!("  MCP 端点  http://{addr}{ENDPOINT_MCP}（无鉴权，请只暴露给可信网络）");
 
     let db: PathBuf = db_path.to_path_buf();
     let mut handles = Vec::new();
@@ -218,7 +215,7 @@ fn process_mcp(db_path: &Path, body: &[u8]) -> (u16, Vec<u8>) {
     let msg: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => {
-            let err = protocol::error_value(&Value::Null, -32700, &format!("parse error: {}", e));
+            let err = protocol::error_value(&Value::Null, -32700, &format!("parse error: {e}"));
             return (400, serde_json::to_vec(&err).unwrap_or_default());
         }
     };

@@ -66,11 +66,7 @@ fn handle_single(store_path: &Path, msg: &Value) -> Option<Value> {
         Some("tools/call") if has_id => Some(tools_call(store_path, &id, &params)),
         Some(m) if m.starts_with("notifications/") => None,
         // 未知方法（字符串）：协议级错误
-        Some(m) if has_id => Some(error_value(
-            &id,
-            -32601,
-            &format!("method '{}' not found", m),
-        )),
+        Some(m) if has_id => Some(error_value(&id, -32601, &format!("method '{m}' not found"))),
         // method 缺失或不是字符串但带了 id：无效请求；无 id 则无从应答，只能丢弃
         None if has_id => Some(error_value(
             &id,
@@ -106,7 +102,7 @@ fn initialize_result(params: &Value) -> Value {
 fn tools_call(store_path: &Path, id: &Value, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     if !tools::TOOL_NAMES.contains(&name) {
-        return error_value(id, -32602, &format!("unknown tool '{}'", name));
+        return error_value(id, -32602, &format!("unknown tool '{name}'"));
     }
     let args = params
         .get("arguments")

@@ -9,6 +9,7 @@
 //! HTTP 客户端用 std::net 手写最小实现，不引入 dev 依赖。
 
 use serde_json::{json, Value};
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -66,7 +67,7 @@ impl HttpProc {
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
-            .unwrap_or_else(|e| panic!("spawn server {}: {}", tag, e));
+            .unwrap_or_else(|e| panic!("spawn server {tag}: {e}"));
         let mut proc = HttpProc { child, port };
         proc.wait_ready(tag);
         proc
@@ -79,11 +80,11 @@ impl HttpProc {
                 return;
             }
             if let Ok(Some(status)) = self.child.try_wait() {
-                panic!("server {} exited early with {:?}", tag, status);
+                panic!("server {tag} exited early with {status:?}");
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("server {} did not become ready in time", tag);
+        panic!("server {tag} did not become ready in time");
     }
 }
 
@@ -104,16 +105,14 @@ fn try_request(
 ) -> Result<(u16, Vec<u8>, String), std::io::Error> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))?;
     let payload = body.unwrap_or("");
-    let mut req = format!(
-        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n",
-        method, path, port
-    );
+    let mut req =
+        format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
     for (k, v) in extra_headers {
-        req.push_str(&format!("{}: {}\r\n", k, v));
+        write!(req, "{k}: {v}\r\n").unwrap();
     }
     if body.is_some() {
         req.push_str("Content-Type: application/json\r\n");
-        req.push_str(&format!("Content-Length: {}\r\n", payload.len()));
+        write!(req, "Content-Length: {}\r\n", payload.len()).unwrap();
     }
     req.push_str("\r\n");
     stream.write_all(req.as_bytes())?;
@@ -159,7 +158,7 @@ fn mcp_rpc(port: u16, body: Value) -> Value {
         "/mcp",
         Some(&serde_json::to_string(&body).unwrap()),
     );
-    assert_eq!(status, 200, "unexpected status for rpc: {}", body);
+    assert_eq!(status, 200, "unexpected status for rpc: {body}");
     json_body(&bytes)
 }
 
@@ -179,7 +178,7 @@ fn encodeURIComponent(s: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(b as char)
             }
-            _ => out.push_str(&format!("%{:02X}", b)),
+            _ => write!(out, "%{b:02X}").unwrap(),
         }
     }
     out
@@ -231,7 +230,7 @@ fn mcp_endpoint_end_to_end() {
             }
         }}),
     );
-    assert!(created.get("error").is_none(), "create failed: {}", created);
+    assert!(created.get("error").is_none(), "create failed: {created}");
     let mem_id = created["result"]["structuredContent"]["memory"]["id"]
         .as_str()
         .unwrap()
@@ -415,7 +414,7 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total"], 1);
 
-    let (status, body, _) = request(port, "GET", &format!("/api/memories/{}", mem_id), None);
+    let (status, body, _) = request(port, "GET", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 200);
     assert!(json_body(&body)["content"]
         .as_str()
@@ -425,7 +424,7 @@ fn rest_api_end_to_end() {
     let (status, _, _) = request(
         port,
         "PUT",
-        &format!("/api/memories/{}", mem_id),
+        &format!("/api/memories/{mem_id}"),
         Some(r#"{"summary": "用户偏好浅色主题", "remove_tags": ["偏好"], "add_tags": ["外观"]}"#),
     );
     assert_eq!(status, 200);
@@ -465,9 +464,9 @@ fn rest_api_end_to_end() {
     assert_eq!(dump["total_memories"], 1);
 
     // 删除记忆 → 再查 404
-    let (status, _, _) = request(port, "DELETE", &format!("/api/memories/{}", mem_id), None);
+    let (status, _, _) = request(port, "DELETE", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 200);
-    let (status, _, _) = request(port, "GET", &format!("/api/memories/{}", mem_id), None);
+    let (status, _, _) = request(port, "GET", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 404);
 
     // purge 标签连带删记忆
@@ -509,7 +508,7 @@ fn static_ui_is_served() {
     // 根路径返回 HTML（内嵌资产；构建前为占位页，构建后为 Vue 应用）
     let (status, body, ctype) = request(port, "GET", "/", None);
     assert_eq!(status, 200);
-    assert!(ctype.contains("text/html"), "content-type: {}", ctype);
+    assert!(ctype.contains("text/html"), "content-type: {ctype}");
     let html = String::from_utf8_lossy(&body);
     assert!(
         html.contains("<html") || html.contains("<!doctype"),
@@ -576,7 +575,7 @@ fn two_server_processes_share_one_db() {
             );
             assert_eq!(status, 200, "concurrent reader failed");
             let total = json_body(&body)["total_matches"].as_u64().unwrap();
-            assert!(total <= 12, "reader saw impossible count {}", total);
+            assert!(total <= 12, "reader saw impossible count {total}");
         }
     });
     let mut handles = vec![reader];
@@ -593,7 +592,7 @@ fn two_server_processes_share_one_db() {
                     "/api/memories",
                     Some(&serde_json::to_string(&body).unwrap()),
                 );
-                assert_eq!(status, 200, "writer {} item {} failed", w, i);
+                assert_eq!(status, 200, "writer {w} item {i} failed");
             }
         }));
     }
@@ -641,8 +640,8 @@ fn cli_subcommands_work() {
     let out = run_cli(&["stats", "--db", &db_s]);
     assert!(out.status.success(), "stats failed: {:?}", out.status);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("memories: 1"), "stats output: {}", stdout);
-    assert!(stdout.contains("tags: 1"), "stats output: {}", stdout);
+    assert!(stdout.contains("memories: 1"), "stats output: {stdout}");
+    assert!(stdout.contains("tags: 1"), "stats output: {stdout}");
 
     // doctor：干净库 → 退出码 0
     let out = run_cli(&["doctor", "--db", &db_s]);

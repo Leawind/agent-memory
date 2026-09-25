@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # 嵌入的管理界面产物必须存在（正常随仓库提交）
-[ -f ui/dist/index.html ] || { echo "ui/dist/index.html missing; run: cd ui && npm install && npm run build" >&2; exit 1; }
+[ -f ui/dist/index.html ] || { echo "ui/dist/index.html missing; run: npm install && npm run build" >&2; exit 1; }
 
 cargo build --release
 

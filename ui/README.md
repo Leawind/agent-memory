@@ -4,10 +4,12 @@ Vue3 + Element Plus + Vite + **TypeScript**（strict）。构建产物 `dist/` �
 
 ## 常用命令
 
+本包纳入仓库根 package.json 的 npm workspaces（lockfile 在根目录）。以下命令在 `ui/` 内或从根目录（`npm run <cmd> -w ui`）均可执行：
+
 ```bash
-npm install       # 首次安装依赖（package-lock.json 已锁定版本）
+npm install       # 根目录首次安装（生成根 package-lock.json）
 npm run dev       # 开发模式：热更新，/api 与 /mcp 代理到 127.0.0.1:8899
-npm test          # vitest 单元测试（查询串组装、API 封装约定）
+npm test          # vitest 单元测试（查询串组装、API 封装、Markdown 渲染与消毒）
 npm run typecheck # vue-tsc 类型检查（strict）
 npm run format    # Prettier 格式化全部源码（ts/vue/json/html）
 npm run format:check # 仅检查格式（CI 强制）

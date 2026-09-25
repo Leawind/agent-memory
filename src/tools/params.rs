@@ -9,9 +9,9 @@ use serde_json::{Map, Value};
 
 pub fn req_str(args: &Map<String, Value>, key: &str) -> Result<String, String> {
     match args.get(key) {
-        None | Some(Value::Null) => Err(format!("missing required parameter '{}'", key)),
+        None | Some(Value::Null) => Err(format!("missing required parameter '{key}'")),
         Some(Value::String(s)) => Ok(s.clone()),
-        Some(_) => Err(format!("parameter '{}' must be a string", key)),
+        Some(_) => Err(format!("parameter '{key}' must be a string")),
     }
 }
 
@@ -19,7 +19,7 @@ pub fn opt_str(args: &Map<String, Value>, key: &str) -> Result<Option<String>, S
     match args.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(format!("parameter '{}' must be a string", key)),
+        Some(_) => Err(format!("parameter '{key}' must be a string")),
     }
 }
 
@@ -33,12 +33,12 @@ pub fn opt_str_list(args: &Map<String, Value>, key: &str) -> Result<Option<Vec<S
             for it in items {
                 match it {
                     Value::String(s) => v.push(s.clone()),
-                    _ => return Err(format!("parameter '{}' must be an array of strings", key)),
+                    _ => return Err(format!("parameter '{key}' must be an array of strings")),
                 }
             }
             Ok(Some(v))
         }
-        Some(_) => Err(format!("parameter '{}' must be an array of strings", key)),
+        Some(_) => Err(format!("parameter '{key}' must be an array of strings")),
     }
 }
 
@@ -49,9 +49,9 @@ pub fn req_id_list(
     max: usize,
 ) -> Result<Vec<String>, String> {
     match opt_str_list(args, key)? {
-        None => Err(format!("missing required parameter '{}'", key)),
-        Some(v) if v.is_empty() => Err(format!("parameter '{}' must not be empty", key)),
-        Some(v) if v.len() > max => Err(format!("parameter '{}' accepts at most {} ids", key, max)),
+        None => Err(format!("missing required parameter '{key}'")),
+        Some(v) if v.is_empty() => Err(format!("parameter '{key}' must not be empty")),
+        Some(v) if v.len() > max => Err(format!("parameter '{key}' accepts at most {max} ids")),
         Some(v) => Ok(v),
     }
 }
@@ -60,10 +60,7 @@ pub fn opt_u64(args: &Map<String, Value>, key: &str) -> Result<Option<u64>, Stri
     match args.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(n)) if n.is_u64() => Ok(Some(n.as_u64().unwrap())),
-        Some(_) => Err(format!(
-            "parameter '{}' must be a non-negative integer",
-            key
-        )),
+        Some(_) => Err(format!("parameter '{key}' must be a non-negative integer")),
     }
 }
 
@@ -74,8 +71,7 @@ pub fn validate_summary(s: &str) -> Result<String, String> {
     }
     if t.chars().count() > MAX_SUMMARY_CHARS {
         return Err(format!(
-            "summary is too long (max {} characters)",
-            MAX_SUMMARY_CHARS
+            "summary is too long (max {MAX_SUMMARY_CHARS} characters)"
         ));
     }
     Ok(t.to_string())
@@ -87,8 +83,7 @@ pub fn validate_content(s: &str) -> Result<String, String> {
     }
     if s.chars().count() > MAX_CONTENT_CHARS {
         return Err(format!(
-            "content is too long (max {} characters)",
-            MAX_CONTENT_CHARS
+            "content is too long (max {MAX_CONTENT_CHARS} characters)"
         ));
     }
     Ok(s.to_string())
@@ -97,8 +92,7 @@ pub fn validate_content(s: &str) -> Result<String, String> {
 pub fn validate_description(s: &str) -> Result<String, String> {
     if s.chars().count() > MAX_TAG_DESC_CHARS {
         return Err(format!(
-            "description is too long (max {} characters)",
-            MAX_TAG_DESC_CHARS
+            "description is too long (max {MAX_TAG_DESC_CHARS} characters)"
         ));
     }
     Ok(s.to_string())

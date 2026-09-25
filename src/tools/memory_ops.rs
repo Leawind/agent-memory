@@ -38,8 +38,7 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         Some(s @ ("updated_at" | "created_at")) => s,
         Some(o) => {
             return Err(ToolError::invalid(format!(
-                "sort must be 'updated_at' or 'created_at', got '{}'",
-                o
+                "sort must be 'updated_at' or 'created_at', got '{o}'"
             )))
         }
     };
@@ -48,8 +47,7 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         Some("asc") => true,
         Some(o) => {
             return Err(ToolError::invalid(format!(
-                "order must be 'asc' or 'desc', got '{}'",
-                o
+                "order must be 'asc' or 'desc', got '{o}'"
             )))
         }
     };
@@ -137,8 +135,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let raw_id = normalize_id(&req_str(args, "id")?);
     let id = Store::parse_id(&raw_id).ok_or_else(|| {
         ToolError::not_found(format!(
-            "memory '{}' not found (use memory_list or memory_search first)",
-            raw_id
+            "memory '{raw_id}' not found (use memory_list or memory_search first)"
         ))
     })?;
     let summary = match opt_str(args, "summary")? {
@@ -171,8 +168,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     if !st.memory_exists(id)? {
         return Err(ToolError::not_found(format!(
-            "memory '{}' not found (use memory_list or memory_search first)",
-            raw_id
+            "memory '{raw_id}' not found (use memory_list or memory_search first)"
         )));
     }
 

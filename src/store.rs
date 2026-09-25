@@ -47,23 +47,23 @@ impl Store {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("cannot create data directory: {}", e))?;
+                    .map_err(|e| format!("cannot create data directory: {e}"))?;
             }
         }
         let conn = Connection::open(path)
             .map_err(|e| format!("cannot open database at {}: {}", path.display(), e))?;
         conn.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))
-            .map_err(|e| format!("cannot set busy timeout: {}", e))?;
+            .map_err(|e| format!("cannot set busy timeout: {e}"))?;
         // WAL：读写不互斥，写者之间靠 SQLite 自己的锁 + busy_timeout 排队。
         // 最后一个连接正常关闭时 SQLite 会自动 checkpoint，此时 .db 单文件即可带走。
         conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(|e| format!("cannot enable WAL mode: {}", e))?;
+            .map_err(|e| format!("cannot enable WAL mode: {e}"))?;
         // WAL 下的推荐档位：应用崩溃不丢数据，仅断电可能丢最近事务（不会损坏库），
         // 换取每次提交不再强制 fsync——对本服务"每请求一写"的模式收益明显。
         conn.pragma_update(None, "synchronous", "NORMAL")
-            .map_err(|e| format!("cannot set synchronous mode: {}", e))?;
+            .map_err(|e| format!("cannot set synchronous mode: {e}"))?;
         conn.pragma_update(None, "foreign_keys", "ON")
-            .map_err(|e| format!("cannot enable foreign keys: {}", e))?;
+            .map_err(|e| format!("cannot enable foreign keys: {e}"))?;
         run_migrations(&conn)?;
         Ok(Store {
             path: path.to_path_buf(),
@@ -73,7 +73,7 @@ impl Store {
 
     /// id 整数 ↔ API 字符串（"m3"）的边界换算。
     pub fn format_id(id: i64) -> String {
-        format!("m{}", id)
+        format!("m{id}")
     }
 
     /// 容忍 "1" / "m1" 两种写法（入参归一化见 model::normalize_id）。
@@ -125,8 +125,7 @@ impl Store {
             .map_err(|e| {
                 if is_unique_violation(&e) {
                     format!(
-                        "tag '{}' already exists (rename it with tag_rename, or see tag_list)",
-                        name
+                        "tag '{name}' already exists (rename it with tag_rename, or see tag_list)"
                     )
                 } else {
                     e.to_string()
@@ -139,7 +138,7 @@ impl Store {
         match self.conn.query_row(sql::TAG_VIEW, [name], row_to_tag_view) {
             Ok(v) => Ok(v),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                Err(format!("tag '{}' not found (see tag_list)", name))
+                Err(format!("tag '{name}' not found (see tag_list)"))
             }
             Err(e) => Err(e.to_string()),
         }
@@ -168,13 +167,13 @@ impl Store {
         description: Option<&str>,
     ) -> Result<u64, String> {
         if !self.tag_exists(old)? {
-            return Err(format!("tag '{}' not found (see tag_list)", old));
+            return Err(format!("tag '{old}' not found (see tag_list)"));
         }
         let mut memories_updated = 0u64;
         let final_name = new_name.unwrap_or(old);
         if final_name != old {
             if self.tag_exists(final_name)? {
-                return Err(format!("tag '{}' already exists", final_name));
+                return Err(format!("tag '{final_name}' already exists"));
             }
             memories_updated = self.tag_memory_count(old)?;
             self.conn
@@ -198,7 +197,7 @@ impl Store {
     /// detach：删标签（级联摘除全部引用），返回受影响记忆条数。
     pub fn tag_delete_detach(&self, name: &str) -> Result<u64, String> {
         if !self.tag_exists(name)? {
-            return Err(format!("tag '{}' not found (see tag_list)", name));
+            return Err(format!("tag '{name}' not found (see tag_list)"));
         }
         let affected = self.tag_memory_count(name)?;
         self.conn
@@ -210,7 +209,7 @@ impl Store {
     /// purge：连带删除所有带该标签的记忆，返回被删记忆 id 列表。
     pub fn tag_delete_purge(&self, name: &str) -> Result<Vec<String>, String> {
         if !self.tag_exists(name)? {
-            return Err(format!("tag '{}' not found (see tag_list)", name));
+            return Err(format!("tag '{name}' not found (see tag_list)"));
         }
         let ids = self.ids_with_tag(name)?;
         let id_strs: Vec<String> = ids.iter().map(|i| Self::format_id(*i)).collect();
@@ -737,7 +736,7 @@ impl Store {
 fn validate_nonempty_len(s: &str, what: &str, max: usize) -> Result<String, String> {
     let t = s.trim();
     if t.is_empty() {
-        return Err(format!("invalid export: {} must not be empty", what));
+        return Err(format!("invalid export: {what} must not be empty"));
     }
     validate_max_len(t, what, max)
 }
@@ -745,8 +744,7 @@ fn validate_nonempty_len(s: &str, what: &str, max: usize) -> Result<String, Stri
 fn validate_max_len(s: &str, what: &str, max: usize) -> Result<String, String> {
     if s.chars().count() > max {
         return Err(format!(
-            "invalid export: {} is too long (max {} characters)",
-            what, max
+            "invalid export: {what} is too long (max {max} characters)"
         ));
     }
     Ok(s.to_string())
@@ -778,8 +776,7 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
     let target = MIGRATIONS.len();
     if from > target {
         return Err(format!(
-            "database schema v{} is newer than supported v{}; upgrade agent-memory or restore a matching database file",
-            from, target
+            "database schema v{from} is newer than supported v{target}; upgrade agent-memory or restore a matching database file"
         ));
     }
     for (index, source) in MIGRATIONS.iter().enumerate().skip(from) {
@@ -826,12 +823,12 @@ where
     store
         .conn
         .execute_batch(begin)
-        .map_err(|e| E::from(format!("cannot begin transaction: {}", e)))?;
+        .map_err(|e| E::from(format!("cannot begin transaction: {e}")))?;
     let out = f(&store)?;
     store
         .conn
         .execute_batch("COMMIT")
-        .map_err(|e| E::from(format!("cannot commit: {}", e)))?;
+        .map_err(|e| E::from(format!("cannot commit: {e}")))?;
     Ok(out)
 }
 
@@ -889,11 +886,10 @@ mod tests {
             let st = Store::open(&path).unwrap();
             st.conn.execute_batch("PRAGMA user_version = 999").unwrap();
         }
-        let err = match Store::open(&path) {
-            Ok(_) => panic!("expected open to fail on newer schema"),
-            Err(e) => e,
+        let Err(err) = Store::open(&path) else {
+            panic!("expected open to fail on newer schema")
         };
-        assert!(err.contains("newer than supported"), "got: {}", err);
+        assert!(err.contains("newer than supported"), "got: {err}");
         cleanup(&path);
     }
 
@@ -961,7 +957,7 @@ mod tests {
 
         // 改名到已存在的标签：报错
         let err = st.tag_rename("rust", Some("lang"), None).unwrap_err();
-        assert!(err.contains("already exists"), "got: {}", err);
+        assert!(err.contains("already exists"), "got: {err}");
 
         // 正常改名：级联同步所有引用，返回受影响记忆数
         let updated = st.tag_rename("rust", Some("systems"), None).unwrap();
@@ -1038,7 +1034,7 @@ mod tests {
         let st = Store::open(&path).unwrap();
         st.ensure_tags_exist(&["t1".into()]).unwrap();
         for i in 0..5 {
-            st.insert_memory(&format!("s{}", i), "c", &["t1".into()], i, i)
+            st.insert_memory(&format!("s{i}"), "c", &["t1".into()], i, i)
                 .unwrap();
         }
         let (total, page) = st.list_memories(None, "updated_at", false, 0, 3).unwrap();
@@ -1096,22 +1092,16 @@ mod tests {
             )
             .unwrap();
         let issues = st.hygiene_issues().unwrap().join("\n");
-        assert!(issues.contains("ghost"), "missing orphan: {}", issues);
+        assert!(issues.contains("ghost"), "missing orphan: {issues}");
         assert!(
             issues.contains("pointing to missing memories"),
-            "missing reverse orphan: {}",
-            issues
+            "missing reverse orphan: {issues}"
         );
         assert!(
             issues.contains("case-conflicting"),
-            "missing case: {}",
-            issues
+            "missing case: {issues}"
         );
-        assert!(
-            issues.contains("empty summary"),
-            "missing empty: {}",
-            issues
-        );
+        assert!(issues.contains("empty summary"), "missing empty: {issues}");
         cleanup(&path);
     }
 
@@ -1169,7 +1159,7 @@ mod tests {
 
         // 目标库非空 → 拒绝
         let err = Store::open(&dst).unwrap().import_dump(&dump).unwrap_err();
-        assert!(err.contains("not empty"), "got: {}", err);
+        assert!(err.contains("not empty"), "got: {err}");
 
         // 结构损坏的导出文件 → 报错
         let broken = Store::open(&temp_db("import-broken-dst"));
@@ -1178,7 +1168,7 @@ mod tests {
         cleanup(&dst2);
         let st2 = Store::open(&dst2).unwrap();
         let err = st2.import_dump(&json!({"memories": []})).unwrap_err();
-        assert!(err.contains("missing 'tags'"), "got: {}", err);
+        assert!(err.contains("missing 'tags'"), "got: {err}");
         cleanup(&src);
         cleanup(&dst);
         cleanup(&dst2);
@@ -1197,7 +1187,7 @@ mod tests {
             "memories": [{"summary": "   ", "content": "c"}]
         });
         let err = st.import_dump(&bad_summary).unwrap_err();
-        assert!(err.contains("must not be empty"), "got: {}", err);
+        assert!(err.contains("must not be empty"), "got: {err}");
 
         // 超长标签名（>100 字符）
         let bad_tag = json!({
@@ -1205,7 +1195,7 @@ mod tests {
             "memories": []
         });
         let err = st.import_dump(&bad_tag).unwrap_err();
-        assert!(err.contains("too long"), "got: {}", err);
+        assert!(err.contains("too long"), "got: {err}");
 
         // 记忆的标签不是字符串
         let bad_tags = json!({
@@ -1213,7 +1203,7 @@ mod tests {
             "memories": [{"summary": "s", "content": "c", "tags": [42]}]
         });
         let err = st.import_dump(&bad_tags).unwrap_err();
-        assert!(err.contains("must be strings"), "got: {}", err);
+        assert!(err.contains("must be strings"), "got: {err}");
 
         // 以上任何失败都不能落库
         assert_eq!(st.stats().unwrap()["memories"], 0);

@@ -111,7 +111,7 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("agent-memory: import failed: {}", e);
+            eprintln!("agent-memory: import failed: {e}");
             1
         }
     }
@@ -173,7 +173,7 @@ fn cmd_doctor(db_path: &std::path::Path) -> i32 {
                 0
             } else {
                 for issue in &issues {
-                    println!("- {}", issue);
+                    println!("- {issue}");
                 }
                 println!("{} issue(s) found in {}", issues.len(), db_path.display());
                 1
@@ -190,7 +190,7 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
     let mut body = match serde_json::to_string_pretty(&dump) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("agent-memory: failed to serialize export: {}", e);
+            eprintln!("agent-memory: failed to serialize export: {e}");
             return 1;
         }
     };

@@ -64,7 +64,7 @@ pub fn normalize_id(raw: &str) -> String {
         }
     }
     if t.bytes().all(|b| b.is_ascii_digit()) {
-        return format!("m{}", t);
+        return format!("m{t}");
     }
     t.to_string()
 }
@@ -77,8 +77,7 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     }
     if t.chars().count() > MAX_TAG_NAME_CHARS {
         return Err(format!(
-            "tag name is too long (max {} characters)",
-            MAX_TAG_NAME_CHARS
+            "tag name is too long (max {MAX_TAG_NAME_CHARS} characters)"
         ));
     }
     Ok(t.to_string())

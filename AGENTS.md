@@ -6,14 +6,18 @@
 
 ```bash
 cargo test        # 全部测试（单元 + 端到端，e2e 真实启动 HTTP 服务器与 CLI 子命令）
-cargo clippy --all-targets   # 提交前应零告警
+cargo clippy --all-targets   # 提交前应零告警（Cargo.toml [lints.clippy] 已提升默认严格度）
 cargo fmt --check            # 提交前格式必须通过
 ./build.sh        # 构建 release 并部署到 bin/agent-memory.exe
                   # ⚠️ 改完 Rust 代码必须跑，否则 bin/ 里是旧二进制
-cd ui && npm run build       # 仅当改了 ui/src 时需要；产物 ui/dist 入库并由 rust-embed 嵌入
+npm run build     # 仅当改了 ui/src 时需要；等价 npm run build -w ui，产物 ui/dist 入库并由 rust-embed 嵌入
 ```
 
 注意：本机配置了全局共享的 CARGO_TARGET_DIR（编译产物不在 ./target），`build.sh` 会从 cargo 元数据定位真实输出目录。
+
+JS 侧（ui/ 与 scripts/）由根 package.json 的 npm workspaces 统一管理：根目录一次
+`npm install` 生成唯一 lockfile（package-lock.json），`npm run test` / `typecheck` /
+`format` 等命令在根目录直接可用（内部转发到对应 workspace）。
 
 ## 模块结构
 
@@ -87,7 +91,7 @@ ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（r
 
 - `sdk-compat-check.ts`：用官方 MCP TypeScript SDK 走完整 agent 流程的兼容性
   回归（initialize/listTools/callTool/错误通道/无状态重连），发布前必跑。
-  用法：`cd scripts && npm install && MCP_URL=http://127.0.0.1:8899/mcp node sdk-compat-check.ts`。
+  用法：根目录 `npm install` 后 `MCP_URL=http://127.0.0.1:8899/mcp node scripts/sdk-compat-check.ts`。
 - `soak.ts`：双进程混合负载浸泡（写/搜/列表/标签轮转并发），失败分类能区分
   客户端过载（ECONNREFUSED 风暴）与服务端真实错误（5xx/BUSY）。
-- 两个脚本的类型检查：`cd scripts && npx tsc --noEmit`（CI ui-tests job 一并执行）。
+- 两个脚本的类型检查：`npm run typecheck`（workspace 命令，CI ui-tests job 一并执行）。

@@ -1,0 +1,16 @@
+{
+  "name": "agent-memory",
+  "private": true,
+  "description": "Workspace root: unifies the ui/ admin app and scripts/ dev tooling under npm workspaces",
+  "workspaces": [
+    "ui",
+    "scripts"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace ui",
+    "test": "npm run test --workspace ui",
+    "typecheck": "npm run typecheck --if-present --workspaces",
+    "format": "npm run format --workspace ui",
+    "format:check": "npm run format:check --workspace ui"
+  }
+}

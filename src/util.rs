@@ -10,10 +10,7 @@ pub fn format_utc_iso(epoch_secs: u64) -> String {
     let rem = secs.rem_euclid(86_400);
     let (year, month, day) = civil_from_days(days);
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, h, m, s
-    )
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 /// 天数（自 1970-01-01）→ (年, 月, 日)。Hinnant, "chrono-Compatible Low-Level Date Algorithms"。
@@ -27,7 +24,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let mp = (5 * doy + 2) / 153; // [0, 11]
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (y + if m <= 2 { 1 } else { 0 }, m, d)
+    (y + i64::from(m <= 2), m, d)
 }
 
 #[cfg(test)]

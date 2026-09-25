@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "description": "官方 MCP TypeScript SDK 兼容性联调脚本（开发用，不参与构建）",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1"
   },
