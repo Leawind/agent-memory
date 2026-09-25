@@ -12,9 +12,6 @@ export default {
     cancel: 'Cancel',
     save: 'Save',
   },
-  admin: {
-    hint: 'Self-hosted · shared by multiple agents',
-  },
   memories: {
     title: 'Memories',
     subtitle: 'A memory store shared by multiple agents; content supports Markdown',
@@ -78,6 +75,7 @@ export default {
     lastUpdate: 'Last update',
     lastUpdateValue: '{id} ({time})',
     crossPlatform: 'Cross-platform migration',
+    crossPlatformYes: 'Supported',
     crossPlatformNote:
       'The SQLite file format is platform-independent: copy the .db file to another machine while the server is stopped; use "Export backup" while running.',
     version: 'Version',

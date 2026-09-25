@@ -1,9 +1,11 @@
 <template>
   <div ref="rootRef" class="am-panel">
     <div v-if="showHeader" class="am-panel-header">
-      <div>
+      <div class="am-heading">
         <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
-        <p class="am-panel-subtitle">{{ props.subtitle ?? t('memories.subtitle') }}</p>
+        <el-tooltip :content="props.subtitle ?? t('memories.subtitle')" placement="top">
+          <el-icon class="am-info"><InfoFilled /></el-icon>
+        </el-tooltip>
       </div>
       <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
     </div>
@@ -134,7 +136,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search } from '@element-plus/icons-vue'
+import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useMemories } from '../composables/useMemories'

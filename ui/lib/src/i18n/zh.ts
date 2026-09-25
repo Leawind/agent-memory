@@ -12,9 +12,6 @@ export default {
     cancel: '取消',
     save: '保存',
   },
-  admin: {
-    hint: '自托管 · 多 agent 共享',
-  },
   memories: {
     title: '记忆管理',
     subtitle: '多 agent 共享的记忆库，正文支持 Markdown',
@@ -78,6 +75,7 @@ export default {
     lastUpdate: '最近更新',
     lastUpdateValue: '{id}（{time}）',
     crossPlatform: '跨平台迁移',
+    crossPlatformYes: '支持',
     crossPlatformNote: 'SQLite 文件格式平台无关，停服后可直接复制 .db 文件到其他机器；运行中请改用「导出备份」。',
     version: '版本',
     export: '导出备份（JSON）',

@@ -45,13 +45,17 @@ describe('MemoriesPanel reusable props', () => {
     wrapper.unmount()
   })
 
-  it('overrides title and subtitle text', async () => {
+  it('overrides title text and subtitle tooltip content', async () => {
     const wrapper = mount(MemoriesPanel, {
       props: { title: '自定义标题', subtitle: '自定义副标题' },
     })
     await flushPromises()
     expect(wrapper.find('.am-panel-title').text()).toBe('自定义标题')
-    expect(wrapper.find('.am-panel-subtitle').text()).toBe('自定义副标题')
+    // 副标题不再平铺展示，作为标题旁 ⓘ 图标的悬停提示
+    const tooltip = wrapper.findComponent({ name: 'ElTooltip' })
+    expect(tooltip.exists()).toBe(true)
+    expect(tooltip.props('content')).toBe('自定义副标题')
+    expect(wrapper.find('.am-info').exists()).toBe(true)
     wrapper.unmount()
   })
 })

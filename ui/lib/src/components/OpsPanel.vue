@@ -1,9 +1,11 @@
 <template>
   <div ref="rootRef" class="am-panel">
     <div v-if="showHeader" class="am-panel-header">
-      <div>
+      <div class="am-heading">
         <h2 class="am-panel-title">{{ props.title ?? t('ops.title') }}</h2>
-        <p class="am-panel-subtitle">{{ props.subtitle ?? t('ops.subtitle') }}</p>
+        <el-tooltip :content="props.subtitle ?? t('ops.subtitle')" placement="top">
+          <el-icon class="am-info"><InfoFilled /></el-icon>
+        </el-tooltip>
       </div>
       <el-button :icon="Refresh" @click="run(reload)">{{ t('ops.refresh') }}</el-button>
     </div>
@@ -45,7 +47,17 @@
               : '—'
           }}
         </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.crossPlatform')">{{ t('ops.crossPlatformNote') }}</el-descriptions-item>
+        <el-descriptions-item>
+          <template #label>
+            <span class="label-help">
+              {{ t('ops.crossPlatform') }}
+              <el-tooltip :content="t('ops.crossPlatformNote')" placement="top">
+                <el-icon class="am-info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          {{ t('ops.crossPlatformYes') }}
+        </el-descriptions-item>
         <el-descriptions-item :label="t('ops.version')">{{ stats.version ?? version }}</el-descriptions-item>
       </el-descriptions>
       <div class="actions">
@@ -53,6 +65,9 @@
         <el-button :icon="UploadFilled" :loading="importing" @click="importInput?.click()">{{
           t('ops.import')
         }}</el-button>
+        <el-tooltip :content="t('ops.importHint')" placement="top">
+          <el-icon class="am-info"><InfoFilled /></el-icon>
+        </el-tooltip>
         <input
           ref="importInput"
           type="file"
@@ -61,7 +76,6 @@
           @change="onImportFile"
         />
       </div>
-      <el-alert :title="t('ops.importHint')" type="info" show-icon :closable="false" class="import-hint" />
     </el-card>
 
     <el-card shadow="never">
@@ -94,7 +108,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Download, Refresh, Search, UploadFilled } from '@element-plus/icons-vue'
+import { Download, InfoFilled, Refresh, Search, UploadFilled } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useOps } from '../composables/useOps'
@@ -168,7 +182,9 @@ function onImportFile(e: Event) {
   padding-left: 20px;
   line-height: 1.9;
 }
-.import-hint {
-  margin-top: 12px;
+.label-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 </style>

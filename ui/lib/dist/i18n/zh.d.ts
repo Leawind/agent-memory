@@ -11,9 +11,6 @@ declare const _default: {
         cancel: string;
         save: string;
     };
-    admin: {
-        hint: string;
-    };
     memories: {
         title: string;
         subtitle: string;
@@ -77,6 +74,7 @@ declare const _default: {
         lastUpdate: string;
         lastUpdateValue: string;
         crossPlatform: string;
+        crossPlatformYes: string;
         crossPlatformNote: string;
         version: string;
         export: string;

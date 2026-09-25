@@ -23,9 +23,7 @@
           </el-menu-item>
         </el-menu>
         <div class="aside-footer">
-          <slot name="footer">
-            <el-text size="small" type="info">{{ t('admin.hint') }}</el-text>
-          </slot>
+          <slot name="footer" />
         </div>
       </el-aside>
 
