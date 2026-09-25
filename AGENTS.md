@@ -64,7 +64,9 @@ ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（r
    `"m{n}"`（normalize_id 容忍 "1"/"m1" 两种写法）。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **嵌入资产**：ui/dist 必须存在且被提交（rust-embed debug-embed 编译期嵌入）；
-   改前端后先 `npm run build` 再 `cargo build`。
+   改前端后先 `npm run format && npm run build` 再 `cargo build`。
+9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置见
+   ui/.prettierrc.json）；CI 强制 `format:check`，提交前先 `npm run format`。
 
 ## 测试约定
 

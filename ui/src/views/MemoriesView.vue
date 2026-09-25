@@ -13,7 +13,14 @@
           <el-button :icon="Search" @click="onSearch" />
         </template>
       </el-input>
-      <el-select v-model="tagFilter" placeholder="按标签过滤" clearable filterable class="tag-filter" @change="onSearch">
+      <el-select
+        v-model="tagFilter"
+        placeholder="按标签过滤"
+        clearable
+        filterable
+        class="tag-filter"
+        @change="onSearch"
+      >
         <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
       </el-select>
       <el-select v-model="sort" class="sort" @change="reload">
@@ -28,14 +35,7 @@
       <el-button type="primary" :icon="Plus" @click="openCreate">新建记忆</el-button>
     </div>
 
-    <el-alert
-      v-if="note"
-      :title="note"
-      type="info"
-      show-icon
-      :closable="false"
-      class="note"
-    />
+    <el-alert v-if="note" :title="note" type="info" show-icon :closable="false" class="note" />
 
     <!-- 搜索模式：显示匹配片段与评分 -->
     <el-table v-if="searching" :data="searchResults" v-loading="loading" stripe>
@@ -290,14 +290,14 @@ async function save() {
         summary: form.value.summary,
         content: form.value.content,
         add_tags: add,
-        remove_tags: remove
+        remove_tags: remove,
       })
       ElMessage.success('已更新')
     } else {
       await post('/api/memories', {
         summary: form.value.summary,
         content: form.value.content,
-        tags: form.value.tags
+        tags: form.value.tags,
       })
       ElMessage.success('已创建')
     }
@@ -332,20 +332,56 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 14px; }
-.toolbar { display: flex; gap: 10px; align-items: center; }
-.search { width: 360px; }
-.tag-filter { width: 160px; }
-.sort, .order { width: 130px; }
-.spacer { flex: 1; }
-.note { margin: 0; }
-.tag { margin-right: 4px; }
-.pager { display: flex; justify-content: flex-end; }
-.summary { font-weight: 500; }
-.snippet { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
-.tags-select { width: 100%; }
-.detail-summary { margin: 0 0 10px; }
-.detail-tags { margin-bottom: 6px; }
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.search {
+  width: 360px;
+}
+.tag-filter {
+  width: 160px;
+}
+.sort,
+.order {
+  width: 130px;
+}
+.spacer {
+  flex: 1;
+}
+.note {
+  margin: 0;
+}
+.tag {
+  margin-right: 4px;
+}
+.pager {
+  display: flex;
+  justify-content: flex-end;
+}
+.summary {
+  font-weight: 500;
+}
+.snippet {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.tags-select {
+  width: 100%;
+}
+.detail-summary {
+  margin: 0 0 10px;
+}
+.detail-tags {
+  margin-bottom: 6px;
+}
 .detail-content {
   white-space: pre-wrap;
   word-break: break-word;

@@ -2,7 +2,7 @@
 export async function api<T = void>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
-    ...options
+    ...options,
   })
   const text = await res.text()
   let data: unknown = null

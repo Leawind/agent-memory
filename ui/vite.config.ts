@@ -7,11 +7,11 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': `http://127.0.0.1:8899`,
-      '/mcp': `http://127.0.0.1:8899`
-    }
+      '/mcp': `http://127.0.0.1:8899`,
+    },
   },
   test: {
     environment: 'happy-dom',
-    setupFiles: ['./src/test-setup.ts']
-  }
+    setupFiles: ['./src/test-setup.ts'],
+  },
 })

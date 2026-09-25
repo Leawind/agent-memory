@@ -131,7 +131,7 @@ async function onImportFile(e: Event) {
       throw new Error((data as { error?: string })?.error ?? `导入失败 (HTTP ${res.status})`)
     }
     ElMessage.success(
-      `已导入 ${(data as ImportResp).imported_memories} 条记忆、${(data as ImportResp).imported_tags} 个标签`
+      `已导入 ${(data as ImportResp).imported_memories} 条记忆、${(data as ImportResp).imported_tags} 个标签`,
     )
     await reload()
   } catch (err: unknown) {
@@ -183,8 +183,24 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 14px; }
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.actions { margin-top: 14px; display: flex; gap: 10px; }
-.issues { margin: 12px 0 0; padding-left: 20px; line-height: 1.9; }
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+.issues {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  line-height: 1.9;
+}
 </style>

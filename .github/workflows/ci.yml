@@ -45,6 +45,8 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
         working-directory: ui
+      - run: npm run format:check
+        working-directory: ui
       - run: npm run typecheck
         working-directory: ui
       - run: npm test

@@ -40,7 +40,12 @@
         </el-form-item>
         <template v-if="form.oldName">
           <el-form-item label="改为新名称（留空表示不改名）">
-            <el-input v-model="form.newName" maxlength="100" show-word-limit placeholder="仅大小写改名也可用于合并拼写偏差" />
+            <el-input
+              v-model="form.newName"
+              maxlength="100"
+              show-word-limit
+              placeholder="仅大小写改名也可用于合并拼写偏差"
+            />
           </el-form-item>
         </template>
         <el-form-item label="描述（可选，≤500 字符）">
@@ -62,8 +67,7 @@
 
     <el-dialog v-model="deleteVisible" title="删除标签" width="480px">
       <p>
-        标签 <el-tag>{{ target?.name }}</el-tag> 当前被
-        <b>{{ target?.memory_count }}</b> 条记忆使用。请选择删除方式：
+        标签 <el-tag>{{ target?.name }}</el-tag> 当前被 <b>{{ target?.memory_count }}</b> 条记忆使用。请选择删除方式：
       </p>
       <el-radio-group v-model="deleteMode">
         <el-radio value="detach">仅摘除引用（保留全部记忆）</el-radio>
@@ -155,7 +159,7 @@ async function doDelete() {
       await ElMessageBox.confirm(
         `将永久删除标签「${target.value?.name}」及其关联的 ${target.value?.memory_count ?? 0} 条记忆，且不可恢复！`,
         '高危操作确认',
-        { type: 'error', confirmButtonText: '永久删除' }
+        { type: 'error', confirmButtonText: '永久删除' },
       )
     } catch {
       return
@@ -180,8 +184,21 @@ onMounted(reload)
 </script>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 14px; }
-.toolbar { display: flex; align-items: center; gap: 10px; }
-.hint { color: var(--el-text-color-secondary); font-size: 13px; }
-.spacer { flex: 1; }
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hint {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+.spacer {
+  flex: 1;
+}
 </style>

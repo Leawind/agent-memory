@@ -41,8 +41,15 @@ const active = ref<'memories' | 'tags' | 'ops'>('memories')
 </script>
 
 <style>
-html, body, #app { height: 100%; margin: 0; }
-.layout { height: 100%; }
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+.layout {
+  height: 100%;
+}
 .aside {
   display: flex;
   flex-direction: column;
@@ -58,7 +65,14 @@ html, body, #app { height: 100%; margin: 0; }
   padding: 18px 20px;
   color: var(--el-color-primary);
 }
-.menu { border-right: none; flex: 1; }
-.aside-footer { padding: 14px 20px; }
-.main { background: var(--el-fill-color-lighter); }
+.menu {
+  border-right: none;
+  flex: 1;
+}
+.aside-footer {
+  padding: 14px 20px;
+}
+.main {
+  background: var(--el-fill-color-lighter);
+}
 </style>
