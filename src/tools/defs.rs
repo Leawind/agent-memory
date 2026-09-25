@@ -78,7 +78,7 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
-                    "content": {"type": "string", "description": "Full text of the memory."},
+                    "content": {"type": "string", "description": "Full text of the memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory."}
                 },
                 "required": ["summary", "content"],
@@ -139,7 +139,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "id": {"type": "string"},
                     "summary": {"type": "string", "description": "Replacement summary."},
-                    "content": {"type": "string", "description": "Replacement content."},
+                    "content": {"type": "string", "description": "Replacement content. Markdown is recommended."},
                     "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append (auto-created if unknown). Applied before remove_tags, so a tag present in both lists ends up removed."},
                     "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."}
                 },

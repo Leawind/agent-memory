@@ -11,5 +11,5 @@
 - **跨平台**：数据库文件格式平台无关，同一份 .db 可在 Windows / Linux / macOS 间复制（停服后）；`export` 子命令提供 JSON 备份
 - **CLI**：clap 实现，`serve`（默认，`--host`/`--port`/`--db` 全部命令行参数，无配置文件）+ 只读子命令 `stats` / `doctor`（问题退出码 1）/ `export`（拒绝覆盖已有文件）/ `import`（从备份恢复，要求目标库为空）
 - **工具**：10 个 MCP 工具——标签 CRUD（唯一名称 + 可选描述 ≤500 字符、仅大小写冲突提示、detach/purge 两种删除）、记忆 CRUD、渐进式披露（list/search 不泄露正文）、关键词 AND 搜索（中文子串命中、加权排序）、重复摘要与拼写错误防呆提示；REST API 与 MCP 工具共用同一套 handler
-- **管理界面**：Vue3 + Element Plus + Vite + TypeScript（中文），记忆搜索/过滤/分页/编辑、标签管理与删除模式选择、统计/体检/导出/导入；构建产物入库并由 rust-embed 嵌入，单二进制交付
-- **质量**：56 个 Rust 单元测试（含 util/迁移/体检） + 6 个端到端测试（MCP 全流程、REST CRUD、静态 UI、双进程并发零丢失、export→import 往返、CLI 子命令）+ 13 个前端测试（组件挂载冒烟、查询串组装、API 封装），clippy 零告警，rustfmt 统一格式；MSRV 1.85（依赖树实际要求，CI 有专用 job 校验）；搜索片段的大小写折叠偏移问题已修复（逐字符折叠并映射回原文字节偏移）
+- **管理界面**：Vue3 + Element Plus + Vite + TypeScript（中文），记忆搜索/过滤/分页/编辑、标签管理与删除模式选择、统计/体检/导出/导入；记忆正文推荐 Markdown，编辑对话框与详情抽屉均支持渲染/源码切换，渲染前经 DOMPurify 消毒；构建产物入库并由 rust-embed 嵌入，单二进制交付
+- **质量**：56 个 Rust 单元测试（含 util/迁移/体检） + 6 个端到端测试（MCP 全流程、REST CRUD、静态 UI、双进程并发零丢失、export→import 往返、CLI 子命令）+ 19 个前端测试（组件挂载冒烟、查询串组装、API 封装、Markdown 渲染与消毒），clippy 零告警，rustfmt 统一格式；MSRV 1.85（依赖树实际要求，CI 有专用 job 校验）；搜索片段的大小写折叠偏移问题已修复（逐字符折叠并映射回原文字节偏移）

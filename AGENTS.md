@@ -34,6 +34,7 @@ src/
 migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生成 MIGRATIONS 数组
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
 ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（rust-embed 嵌入，cargo 构建无需 node）
+                 记忆正文按 Markdown 渲染：ui/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 
 ## 架构不变量（改代码前必读）
@@ -67,6 +68,9 @@ ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（r
    改前端后先 `npm run format && npm run build` 再 `cargo build`。
 9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置见
    ui/.prettierrc.json）；CI 强制 `format:check`，提交前先 `npm run format`。
+10. **Markdown 渲染必须消毒**：记忆正文是多 agent 共写的外部输入，
+    管理界面渲染前必须经 DOMPurify（`ui/src/markdown.ts` 统一出口），
+    新增渲染入口不得绕过它直接 `v-html`。
 
 ## 测试约定
 
@@ -76,6 +80,8 @@ ui/              Vue3 + Element Plus + Vite 管理界面；dist 提交入库（r
 - 单元测试分布在各模块（store 的级联/迁移/体检、tools 的契约校验、protocol 的对抗输入、
   http 的路由/Origin/解码）。数据文件一律指到临时目录，绝不碰用户真实数据。
 - 新增工具时至少覆盖：正常流、参数错误、渐进式披露边界（正文不泄露）。
+- 前端单元测试默认 happy-dom；涉及 DOMPurify 的测试必须标 `// @vitest-environment jsdom`
+  （DOMPurify 在 happy-dom 下会错剥常见块级标签，jsdom 是其官方支持的测试 DOM）。
 
 ## 开发脚本（scripts/，TypeScript，需 node ≥24 原生类型剥离运行，不参与构建）
 

@@ -117,8 +117,26 @@
         <el-form-item label="摘要（列表与搜索展示的一行简介）">
           <el-input v-model="form.summary" maxlength="512" show-word-limit placeholder="精确、自洽的一句话" />
         </el-form-item>
-        <el-form-item label="正文（完整内容）">
-          <el-input v-model="form.content" type="textarea" :rows="10" maxlength="200000" show-word-limit />
+        <el-form-item>
+          <template #label>
+            <div class="content-label">
+              <span>正文（Markdown）</span>
+              <el-radio-group v-model="contentTab" size="small">
+                <el-radio-button value="edit">编辑</el-radio-button>
+                <el-radio-button value="preview">预览</el-radio-button>
+              </el-radio-group>
+            </div>
+          </template>
+          <el-input
+            v-if="contentTab === 'edit'"
+            v-model="form.content"
+            type="textarea"
+            :rows="12"
+            maxlength="200000"
+            show-word-limit
+            placeholder="支持 Markdown：标题、列表、代码块、表格……"
+          />
+          <MarkdownView v-else class="content-preview" :source="form.content" />
         </el-form-item>
         <el-form-item label="标签（回车添加，可新建）">
           <el-select
@@ -148,7 +166,14 @@
           <el-tag v-for="t in detail.tags" :key="t" size="small" class="tag">{{ t }}</el-tag>
         </div>
         <el-divider />
-        <pre class="detail-content">{{ detail.content }}</pre>
+        <div class="detail-toolbar">
+          <el-radio-group v-model="detailTab" size="small">
+            <el-radio-button value="rendered">渲染</el-radio-button>
+            <el-radio-button value="source">源码</el-radio-button>
+          </el-radio-group>
+        </div>
+        <MarkdownView v-if="detailTab === 'rendered'" :source="detail.content" />
+        <pre v-else class="detail-content">{{ detail.content }}</pre>
       </template>
     </el-drawer>
   </div>
@@ -160,6 +185,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus } from '@element-plus/icons-vue'
 import { get, post, put, del, formatTime } from '../api'
 import { buildMemoriesQuery, isSearchMode } from '../query'
+import MarkdownView from '../components/MarkdownView.vue'
 import type { MemoryFull, MemoryListResp, MemorySearchResp, MemorySummary, SearchResult, TagListResp } from '../types'
 
 interface MemoryForm {
@@ -185,8 +211,12 @@ const tagOptions = ref<string[]>([])
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = ref<MemoryForm>({ id: null, summary: '', content: '', tags: [] })
+// 正文编辑器的视图：编辑源码或预览 Markdown 渲染结果
+const contentTab = ref<'edit' | 'preview'>('edit')
 const detailVisible = ref(false)
 const detail = ref<MemoryFull | null>(null)
+// 详情抽屉视图：默认渲染 Markdown，可切回源码
+const detailTab = ref<'rendered' | 'source'>('rendered')
 
 const searching = computed(() => isSearchMode(query.value))
 
@@ -254,6 +284,7 @@ async function loadTagOptions() {
 
 function openCreate() {
   form.value = { id: null, summary: '', content: '', tags: [] }
+  contentTab.value = 'edit'
   dialogVisible.value = true
 }
 
@@ -261,6 +292,7 @@ async function openEdit(id: string) {
   try {
     const full = await get<MemoryFull>(`/api/memories/${id}`)
     form.value = { id, summary: full.summary, content: full.content, tags: [...full.tags] }
+    contentTab.value = 'edit'
     dialogVisible.value = true
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : String(e))
@@ -270,6 +302,7 @@ async function openEdit(id: string) {
 async function openDetail(id: string) {
   try {
     detail.value = await get<MemoryFull>(`/api/memories/${id}`)
+    detailTab.value = 'rendered'
     detailVisible.value = true
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : String(e))
@@ -375,6 +408,24 @@ onMounted(() => {
 }
 .tags-select {
   width: 100%;
+}
+.content-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+.content-preview {
+  width: 100%;
+  box-sizing: border-box;
+  /* Mirror the textarea frame so switching views keeps the field outline. */
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  padding: 5px 11px;
+  min-height: 260px;
+}
+.detail-toolbar {
+  margin-bottom: 12px;
 }
 .detail-summary {
   margin: 0 0 10px;
