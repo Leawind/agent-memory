@@ -34,7 +34,7 @@ JS 侧（ui/ 与 scripts/）由根 package.json 的 npm workspaces 统一管理�
 
 ```
 src/
-  main.rs        clap CLI：serve(默认)/stats/doctor/export/import/token reset；--host/--port/--db
+  main.rs        clap CLI：serve(默认)/stats/doctor/export/import/embed-backfill/token reset；--host/--port/--db
                  全部命令行参数，无配置文件
   http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限；
                  Bearer 鉴权拦截（resolve_identity，fail-closed，开关状态每次请求查库决定）
@@ -55,6 +55,10 @@ src/
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
                  中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
+  embed.rs       语义搜索：OpenAI 兼容 /embeddings 客户端（ureq+rustls，全项目唯一出站 HTTP）、
+                 向量 BLOB 编解码/余弦、RRF 混合排序、process_pending 有界批量补跑；
+                 回退是硬性原则——服务不可用只降级不失败（搜索回退关键词 + semantic_fallback 标记，
+                 写入静默留待补跑）；embedding 调用一律在数据库事务之外
   model.rs       纯数据模型：Memory / id·标签名·身份名归一化 / API 限制常量
 migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生成 MIGRATIONS 数组
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
@@ -125,6 +129,15 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
     tools/api/protocol，不得绕过；401 响应不携带 WWW-Authenticate（避免规范客户端
     走 OAuth 发现流程）。静态 UI 与 /health 永远免鉴权。身份/设置管理不走 MCP 工具面，
     走 admin 能力守卫的 REST 端点。
+12. **语义搜索回退与事务纪律**：`embed.rs` 是全项目唯一的出站 HTTP 依赖
+    （OpenAI 兼容 `/embeddings`，配置在 settings 四键 `embedding_*`，REST/UI 可改）；
+    回退是硬性承诺——embedding 服务不可用只允许降级不允许失败：搜索回退纯关键词
+    并携带 `semantic_fallback` 标记（显式 `mode: hybrid` 同样回退而非报错），写入
+    静默留待补跑（向量缺失由 doctor/stats 呈现）。embedding 网络调用一律在数据库
+    事务之外（写路径 = 工具事务提交后 `embed::after_write` 补跑，短事务存向量）；
+    向量是派生数据（`memory_embeddings` 表随记忆级联删除，export/import 不携带，
+    模型指纹不符视为缺失），混合排序用 RRF 融合（关键词分与余弦不同量纲，禁止
+    直接加权比较）；渐进式披露不变量对语义召回同样生效（不返回正文）。
 
 ## 测试约定
 

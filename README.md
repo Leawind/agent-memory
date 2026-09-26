@@ -27,15 +27,14 @@ agent-memory serve
 | `--host` | `127.0.0.1` | 监听地址；跨机器共享用 `0.0.0.0`（仅限可信网络） |
 | `--port` | `8899` | 监听端口 |
 | `--db` | `./memory.db`（当前工作目录） | SQLite 数据库文件路径 |
-| `--auth` | 关 | 显式开启 token 鉴权（写入设置持久生效，重启后仍有效；关闭走管理界面的开关）；identities 为空时自动创建全能力管理员并把 token 打印到 stderr（仅一次） |
 | `--verbose` | 关 | 详细日志：记录全部请求并附带耗时、请求者身份与 MCP 调用摘要。默认只记 4xx/5xx 请求与启动/异常事件 |
 
-子命令：`serve`（默认）/ `stats` / `doctor`（体检，有问题退出码 1）/ `export <file>`（导出 JSON 备份，拒绝覆盖已有文件）/ `import <file>`（从备份恢复，要求目标库为空）/ `token reset [name]`（重置某身份的 token，省略名字时重置最早创建的管理员——token 丢失的兜底手段）。
+子命令：`serve`（默认）/ `stats` / `doctor`（体检，有问题退出码 1）/ `export <file>`（导出 JSON 备份，拒绝覆盖已有文件）/ `import <file>`（从备份恢复，要求目标库为空）/ `embed-backfill`（补跑语义搜索向量）/ `token reset [name]`（重置某身份的 token，省略名字时重置最早创建的管理员——token 丢失的兜底手段）。
 
 ## 两种部署形态
 
 - **个人本地库（默认，零配置）**：鉴权开关关闭时服务器为无鉴权开放模式（与是否已创建身份无关），行为与单机工具一致。想要私有记忆，就在本地跑一个实例，MCP 配置只给自己用；可在管理界面「身份与访问 → 自定义提示词」里写明“这是我的私有记忆库”。
-- **团队中央库**：以 `--auth` 启动（或在管理界面「身份与访问」页打开鉴权开关），服务器即刻要求所有 `/mcp` 与 `/api` 请求携带 token。操作者把管理员 token 分发给自己，在「身份与访问」页为每个成员创建身份、逐项勾选能力开关（读取 / 新建 / 修改 / 删除 / 标签管理 / 管理员），把各自的 token 分发下去。
+- **团队中央库**：先创建一个管理员身份并妥善保存 token，再在管理界面「身份与访问」页打开鉴权开关（开关开启要求库里已存在管理员身份，防锁死），服务器即刻要求所有 `/mcp` 与 `/api` 请求携带 token。操作者把管理员 token 分发给自己，在同一页为每个成员创建身份、逐项勾选能力开关（读取 / 新建 / 修改 / 删除 / 标签管理 / 管理员），把各自的 token 分发下去。
 
 ## 身份与鉴权
 
@@ -67,20 +66,37 @@ agent-memory serve
 - **渐进式披露**：`memory_list` / `memory_search` 只返回 id + 标签 + 摘要 + 片段；`memory_get` 才取回完整正文，最大限度节省上下文
 - **Markdown 正文**：记忆正文推荐用 Markdown 书写（工具描述中已向 agent 声明），管理界面编辑时可预览渲染结果，详情抽屉默认渲染、可切回源码；渲染前经 DOMPurify 消毒，多 agent 共写的恶意内容不会在管理界面执行
 - **关键词搜索**：空格分词、全部词命中（AND），引号短语要求逐字相邻；大小写不敏感子串匹配，中文无需分词；加权排序——标签 > 摘要 > 正文，命中次数（封顶）与 ASCII 整词命中加权，片段窗口自动选覆盖词最多的位置；片段经 HTML 转义
+- **语义搜索（可选）**：配置 OpenAI 兼容 embedding 服务后，`memory_search` 自动升级为混合检索——关键词路与向量语义路（余弦相似度）经 RRF 融合排序，换说法、跨语言、模糊回忆的查询也能召回关键词零命中的记忆。**回退是承诺**：embedding 服务不可用时搜索自动降级回纯关键词（响应携带 `semantic_fallback` 标记），写入永不因此阻塞，缺向量的记忆随时可补跑
 - **防呆提示**：重复摘要 → `duplicate_of`；仅大小写不同的标签 → `similar_existing`；拼错参数名 → 立即报错并列出合法参数
 
 ## 管理界面
 
-- **记忆管理**：搜索、标签过滤、排序、分页、新建/编辑（标签回车即建、正文 Markdown 编辑/预览切换）、全文抽屉（渲染/源码切换）、删除确认
+- **记忆管理**：搜索、标签过滤、搜索模式选择（自动/仅关键词/关键词+语义）、排序、分页、新建/编辑（标签回车即建、正文 Markdown 编辑/预览切换）、全文抽屉（渲染/源码切换）、删除确认
 - **标签管理**：表格 + 新建/编辑（名称唯一、描述限长）+ 删除时选择 detach/purge
-- **运维**：统计卡片、doctor 体检、一键导出 JSON 备份（doctor / 导出 / 导入需 admin 能力）
-- **身份与访问**（admin）：成员列表、新建/编辑/吊销身份（能力复选框 + 预设模板）、token 查看复制、自定义提示词（基础提示词覆盖内置默认 + 附加规范追加，均可一键恢复默认）
+- **运维**：统计卡片、语义搜索向量覆盖率与一键补跑、doctor 体检、一键导出 JSON 备份（doctor / 补跑 / 导出 / 导入需 admin 能力）
+- **身份与访问**（admin）：成员列表、新建/编辑/吊销身份（能力复选框 + 预设模板）、token 查看复制、语义搜索配置（开关 + 服务地址/模型/API Key + 连接测试）、自定义提示词（基础提示词覆盖内置默认 + 附加规范追加，均可一键恢复默认）
 
 ![记忆管理](docs/ui-memories.png)
 
 ![标签管理](docs/ui-tags.png)
 
 ![运维](docs/ui-ops.png)
+
+## 语义搜索（可选）
+
+在管理界面「身份与访问 → 语义搜索」配置一个 OpenAI 兼容的 `/embeddings` 服务即可开启，云服务与本地部署同一套配置：
+
+| 部署 | base_url | model | API Key |
+|---|---|---|---|
+| SiliconFlow（国内直连，bge-m3 免费档） | `https://api.siliconflow.cn/v1` | `BAAI/bge-m3` | 必填 |
+| 本地 Ollama（数据不出机） | `http://127.0.0.1:11434/v1` | `bge-m3` | 留空 |
+| 阿里云百炼 / 智谱等 | 各家 OpenAI 兼容端点 | `text-embedding-v3` / `embedding-3` | 必填 |
+
+行为约定：
+
+- **开启即混合**：`memory_search` 默认（`mode: auto`）自动融合关键词与语义两路召回，agent 无需感知；显式 `mode: keyword` 可随时退回纯关键词
+- **服务不可用 ≠ 失败**：搜索回退关键词并标记 `semantic_fallback`；新建/更新的记忆照常保存，向量留待补跑（运维页「补跑向量化」按钮或 CLI `embed-backfill`）
+- **向量是派生数据**：存 SQLite `memory_embeddings` 表，随记忆删除级联清理；`export`/`import` 不携带向量，恢复备份后补跑一次即可；更换模型后旧向量自动作废重嵌
 
 ## 性能
 
@@ -102,7 +118,7 @@ agent-memory serve
 | `tag_delete(name, mode?)` | | `tag_manage` | `detach`（默认，只摘引用）/ `purge`（连带删除记忆） |
 | `memory_create(summary, content, tags?)` | | `create` | 新建记忆；未知标签自动创建并在 `tags_autocreated` 汇报；摘要重复时提示 `duplicate_of` |
 | `memory_list(tag?, sort?, order?, offset?, limit?)` | ✓ | `read` | 分页浏览，只返回摘要 |
-| `memory_search(query, tags?, offset?, limit?)` | ✓ | `read` | 关键词搜索，返回摘要 + 正文片段，支持翻页 |
+| `memory_search(query, tags?, mode?, offset?, limit?)` | ✓ | `read` | 搜索，返回摘要 + 正文片段，支持翻页；`mode` 缺省 `auto`（已配置语义搜索即为混合检索），`keyword` 强制纯关键词，`hybrid` 显式要求语义（未配置报错）；回退时响应携带 `semantic_fallback: true` |
 | `memory_get(ids)` | ✓ | `read` | 取 1–50 条完整正文（渐进式披露第二层） |
 | `memory_update(id, summary?, content?, add_tags?, remove_tags?)` | | `update` | 增量更新，无需先取当前标签列表 |
 | `memory_delete(ids)` | | `delete` | 永久删除 1–50 条 |
