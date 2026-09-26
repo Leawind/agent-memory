@@ -50,8 +50,10 @@ src/
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
-  store.rs       SQLite 持久化：WAL / 迁移运行器 / 外键级联 / 体检 / 统计 / 导出；
-                 identities（token 即身份，只存哈希 + 尾缀提示）与 settings 的 CRUD
+  store/         SQLite 持久化目录：mod.rs 是 Store 结构体与 open/id 换算，tx.rs 是
+                 事务入口（TxMode/with_db_in），migrate.rs 是迁移运行器；
+                 tags/memories/identities/settings/embeddings 各以 impl Store 承载数据操作，
+                 ops.rs 是体检/统计/导出导入（identities token 即身份，只存哈希 + 尾缀提示）
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
                  中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
@@ -141,7 +143,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 
 ## 测试约定
 
-- 端到端测试在 `tests/e2e.rs`：真实 spawn 二进制（serve --port 随机 + --db 临时目录），
+- 端到端测试在 `tests/e2e/`（main.rs 只做 mod 声明，按场景分文件，共享基建在
+  common.rs）：真实 spawn 二进制（serve --port 随机 + --db 临时目录），
   HTTP 客户端用 std::net 手写（不引 dev 依赖）；服务器启动用全局锁串行化避免端口竞争。
 - 请求行/URL 里的非 ASCII 必须 percent-encode（tiny_http 不接受原始 UTF-8 请求行）。
 - 单元测试分布在各模块（store 的级联/迁移/体检、tools 的契约校验、protocol 的对抗输入、
