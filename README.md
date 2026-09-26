@@ -28,6 +28,7 @@ agent-memory serve
 | `--port` | `8899` | 监听端口 |
 | `--db` | `./memory.db`（当前工作目录） | SQLite 数据库文件路径 |
 | `--auth` | 关 | 启用 token 鉴权；identities 为空时自动创建全能力管理员并把 token 打印到 stderr（仅一次） |
+| `--verbose` | 关 | 详细日志：记录全部请求并附带耗时、请求者身份与 MCP 调用摘要。默认只记 4xx/5xx 请求与启动/异常事件 |
 
 子命令：`serve`（默认）/ `stats` / `doctor`（体检，有问题退出码 1）/ `export <file>`（导出 JSON 备份，拒绝覆盖已有文件）/ `import <file>`（从备份恢复，要求目标库为空）/ `token reset [name]`（重置某身份的 token，省略名字时重置最早创建的管理员——token 丢失的兜底手段）。
 

@@ -53,6 +53,10 @@ enum Command {
         /// 不带此参数且未配置过身份时为无鉴权开放模式（个人本地部署）。
         #[arg(long)]
         auth: bool,
+        /// 详细日志：记录全部请求（含静态资源/健康检查）并附带耗时、
+        /// 请求者身份与 MCP 调用摘要。默认只记错误请求与启动/异常事件。
+        #[arg(long)]
+        verbose: bool,
     },
     /// 打印数据概况
     Stats,
@@ -102,8 +106,14 @@ fn run(cli: Cli) -> i32 {
         host: DEFAULT_HOST.to_string(),
         port: DEFAULT_PORT,
         auth: false,
+        verbose: false,
     }) {
-        Command::Serve { host, port, auth } => http::serve_http(&host, port, &db_path, auth),
+        Command::Serve {
+            host,
+            port,
+            auth,
+            verbose,
+        } => http::serve_http(&host, port, &db_path, auth, verbose),
         Command::Stats => cmd_stats(&db_path),
         Command::Doctor => cmd_doctor(&db_path),
         Command::Export { path } => cmd_export(&db_path, &path),

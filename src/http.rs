@@ -32,7 +32,7 @@ const BOOTSTRAP_ADMIN_NAME: &str = "admin";
 #[folder = "ui/dist"]
 struct UiAssets;
 
-pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool) -> i32 {
+pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, verbose: bool) -> i32 {
     if port == 0 {
         // 端口 0 会绑定到随机端口，但调用方无从得知实际端口，等于不可用
         eprintln!("agent-memory: --port 0 is not supported; choose a fixed port");
@@ -81,6 +81,14 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool) -> 
     } else {
         eprintln!("  鉴权      token 模式（/mcp 与 /api 须携带 Authorization: Bearer <token>）");
     }
+    eprintln!(
+        "  日志      {}",
+        if verbose {
+            "详细（全部请求，含耗时 / 请求者身份 / MCP 调用摘要）"
+        } else {
+            "仅错误请求与启动信息（--verbose 查看全部请求）"
+        }
+    );
 
     let db: PathBuf = db_path.to_path_buf();
     let mut handles = Vec::new();
@@ -89,7 +97,7 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool) -> 
         let db = db.clone();
         handles.push(std::thread::spawn(move || loop {
             match server.recv() {
-                Ok(req) => handle_request(&db, req),
+                Ok(req) => handle_request(&db, req, verbose),
                 Err(_) => return, // server 已关闭
             }
         }));
@@ -130,14 +138,24 @@ fn identity_count(db_path: &Path) -> Result<u64, String> {
     store::with_db_in(db_path, store::TxMode::ReadOnly, |st| st.identity_count())
 }
 
-fn handle_request(db_path: &Path, req: tiny_http::Request) {
+fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
+    let started = std::time::Instant::now();
     let mut req = req;
     let method = req.method().as_str().to_owned();
     let url = req.url().to_owned();
     let (path, query) = split_url(&url);
 
     if !origin_allowed(header_value(&req, "Origin").as_deref()) {
-        log_request(&method, &path, 403, req.remote_addr());
+        log_request(
+            verbose,
+            &method,
+            &path,
+            403,
+            req.remote_addr(),
+            None,
+            None,
+            started.elapsed(),
+        );
         respond_raw(
             req,
             403,
@@ -153,7 +171,16 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
         if let Some(ct) = header_value(&req, "Content-Type") {
             if !ct.to_ascii_lowercase().contains("json") {
                 let remote = req.remote_addr();
-                log_request(&method, &path, 415, remote);
+                log_request(
+                    verbose,
+                    &method,
+                    &path,
+                    415,
+                    remote,
+                    None,
+                    None,
+                    started.elapsed(),
+                );
                 respond_raw(
                     req,
                     415,
@@ -174,7 +201,16 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
                 if let AuthFail::Storage(reason) = &fail {
                     eprintln!("agent-memory: auth lookup failed, failing closed: {reason}");
                 }
-                log_request(&method, &path, 401, req.remote_addr());
+                log_request(
+                    verbose,
+                    &method,
+                    &path,
+                    401,
+                    req.remote_addr(),
+                    None,
+                    None,
+                    started.elapsed(),
+                );
                 respond_raw(
                     req,
                     401,
@@ -197,8 +233,13 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
     let body_too_large = capped.is_none();
     let body = capped.unwrap_or_default();
 
-    let (status, content_type, payload) = if body_too_large {
-        (413, "application/json", err_bytes("request body too large"))
+    let (status, content_type, payload, mcp_detail) = if body_too_large {
+        (
+            413,
+            "application/json",
+            err_bytes("request body too large"),
+            None,
+        )
     } else {
         match route(&method, &path) {
             Route::Mcp => {
@@ -207,32 +248,47 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
                 match catch_unwind(AssertUnwindSafe(|| {
                     process_mcp(db_path, &ctx, &body, negotiated.as_deref())
                 })) {
-                    Ok((status, payload)) => (status, "application/json", payload),
+                    Ok((status, payload, detail)) => (status, "application/json", payload, detail),
                     Err(_) => (
                         500,
                         "application/json",
                         err_bytes("internal error: handler panicked; the store was left unchanged"),
+                        None,
                     ),
                 }
             }
-            Route::MethodNotAllowed => return respond_method_not_allowed(req, &method, &path),
+            Route::MethodNotAllowed => {
+                return respond_method_not_allowed(req, &method, &path, verbose, started)
+            }
             Route::Health => {
                 let v = json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")});
                 (
                     200,
                     "application/json",
                     serde_json::to_vec(&v).unwrap_or_default(),
+                    None,
                 )
             }
             Route::Api => {
                 if path == "/api/export" && method == "GET" {
                     // 导出是全库明文备份：与 doctor/import 同级，要求 admin 能力
                     if let Err(e) = ctx.require(Cap::Admin) {
-                        log_request(&method, &path, 403, req.remote_addr());
+                        log_request(
+                            verbose,
+                            &method,
+                            &path,
+                            403,
+                            req.remote_addr(),
+                            Some(&ctx.name),
+                            None,
+                            started.elapsed(),
+                        );
                         respond_raw(req, 403, "application/json", err_bytes(e.message()));
                         return;
                     }
-                    return respond_export(req, db_path, &method, &path);
+                    return respond_export(
+                        req, db_path, &method, &path, verbose, &ctx.name, started,
+                    );
                 }
                 match catch_unwind(AssertUnwindSafe(|| {
                     api::handle(db_path, &ctx, &method, &path, &query, &body)
@@ -241,20 +297,31 @@ fn handle_request(db_path: &Path, req: tiny_http::Request) {
                         status,
                         "application/json",
                         serde_json::to_vec(&v).unwrap_or_default(),
+                        None,
                     ),
                     Err(_) => (
                         500,
                         "application/json",
                         err_bytes("internal error: handler panicked; the store was left unchanged"),
+                        None,
                     ),
                 }
             }
-            Route::Static => return respond_static(req, &path, &method),
-            Route::NotFound => (404, "application/json", err_bytes("not found")),
+            Route::Static => return respond_static(req, &path, &method, verbose, started),
+            Route::NotFound => (404, "application/json", err_bytes("not found"), None),
         }
     };
     let remote = req.remote_addr();
-    log_request(&method, &path, status, remote);
+    log_request(
+        verbose,
+        &method,
+        &path,
+        status,
+        remote,
+        Some(&ctx.name),
+        mcp_detail.as_deref(),
+        started.elapsed(),
+    );
     respond_raw(req, status, content_type, payload);
 }
 
@@ -299,28 +366,52 @@ fn route(method: &str, path: &str) -> Route {
 /// 把一条 JSON-RPC 消息交给协议层处理，返回 HTTP 状态码与响应体。
 /// 通知（无 id）无响应体 → 202 Accepted；其余 → 200。
 /// `negotiated` 来自 MCP-Protocol-Version 请求头（客户端声明协商版本）。
+/// 第三个返回值是给 verbose 日志的调用摘要（方法名 + tools/call 的目标工具）。
 fn process_mcp(
     db_path: &Path,
     ctx: &IdentityCtx,
     body: &[u8],
     negotiated: Option<&str>,
-) -> (u16, Vec<u8>) {
+) -> (u16, Vec<u8>, Option<String>) {
     let msg: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => {
             let err = protocol::error_value(&Value::Null, -32700, &format!("parse error: {e}"));
-            return (400, serde_json::to_vec(&err).unwrap_or_default());
+            return (400, serde_json::to_vec(&err).unwrap_or_default(), None);
         }
     };
+    let detail = mcp_summary(&msg);
     match protocol::handle_message(db_path, ctx, negotiated, &msg) {
-        Some(resp) => (200, serde_json::to_vec(&resp).unwrap_or_default()),
-        None => (202, Vec::new()),
+        Some(resp) => (200, serde_json::to_vec(&resp).unwrap_or_default(), detail),
+        None => (202, Vec::new(), detail),
     }
+}
+
+/// MCP 请求摘要：批量消息（数组）或畸形结构返回 None，不进日志。
+fn mcp_summary(msg: &Value) -> Option<String> {
+    let method = msg.get("method")?.as_str()?;
+    Some(match method {
+        "tools/call" => format!(
+            "tools/call {}",
+            msg.pointer("/params/name")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+        ),
+        other => other.to_string(),
+    })
 }
 
 // ---------------------------------------------------------------- 导出与静态资源
 
-fn respond_export(req: tiny_http::Request, db_path: &Path, method: &str, path: &str) {
+fn respond_export(
+    req: tiny_http::Request,
+    db_path: &Path,
+    method: &str,
+    path: &str,
+    verbose: bool,
+    identity: &str,
+    started: std::time::Instant,
+) {
     let remote = req.remote_addr();
     match api::export_bytes(db_path) {
         Ok(bytes) => {
@@ -335,11 +426,29 @@ fn respond_export(req: tiny_http::Request, db_path: &Path, method: &str, path: &
             if let Some(h) = disposition {
                 resp = resp.with_header(h);
             }
-            log_request(method, path, 200, remote);
+            log_request(
+                verbose,
+                method,
+                path,
+                200,
+                remote,
+                Some(identity),
+                None,
+                started.elapsed(),
+            );
             let _ = req.respond(resp);
         }
         Err(e) => {
-            log_request(method, path, 500, remote);
+            log_request(
+                verbose,
+                method,
+                path,
+                500,
+                remote,
+                Some(identity),
+                None,
+                started.elapsed(),
+            );
             let _ = req.respond(
                 Response::from_data(err_bytes(&e))
                     .with_status_code(500)
@@ -349,7 +458,13 @@ fn respond_export(req: tiny_http::Request, db_path: &Path, method: &str, path: &
     }
 }
 
-fn respond_static(req: tiny_http::Request, path: &str, method: &str) {
+fn respond_static(
+    req: tiny_http::Request,
+    path: &str,
+    method: &str,
+    verbose: bool,
+    started: std::time::Instant,
+) {
     let remote = req.remote_addr();
     let lookup = path.trim_start_matches('/');
     let lookup = if lookup.is_empty() {
@@ -363,7 +478,16 @@ fn respond_static(req: tiny_http::Request, path: &str, method: &str) {
         None => match UiAssets::get("index.html") {
             Some(f) => (f, mime_of("index.html")),
             None => {
-                log_request(method, path, 404, remote);
+                log_request(
+                    verbose,
+                    method,
+                    path,
+                    404,
+                    remote,
+                    None,
+                    None,
+                    started.elapsed(),
+                );
                 let _ = req.respond(
                     Response::from_data(err_bytes("not found"))
                         .with_status_code(404)
@@ -373,7 +497,16 @@ fn respond_static(req: tiny_http::Request, path: &str, method: &str) {
             }
         },
     };
-    log_request(method, path, 200, remote);
+    log_request(
+        verbose,
+        method,
+        path,
+        200,
+        remote,
+        None,
+        None,
+        started.elapsed(),
+    );
     let resp = Response::from_data(served.data.to_vec())
         .with_status_code(200)
         .with_header(content_type_header(mime));
@@ -517,9 +650,24 @@ fn respond_raw(req: tiny_http::Request, status: u16, content_type: &str, body: V
     let _ = req.respond(resp);
 }
 
-fn respond_method_not_allowed(req: tiny_http::Request, method: &str, path: &str) {
+fn respond_method_not_allowed(
+    req: tiny_http::Request,
+    method: &str,
+    path: &str,
+    verbose: bool,
+    started: std::time::Instant,
+) {
     let remote = req.remote_addr();
-    log_request(method, path, 405, remote);
+    log_request(
+        verbose,
+        method,
+        path,
+        405,
+        remote,
+        None,
+        None,
+        started.elapsed(),
+    );
     let allow = Header::from_bytes(b"Allow", b"POST").ok();
     let mut resp = Response::empty(405);
     if let Some(h) = allow {
@@ -528,22 +676,80 @@ fn respond_method_not_allowed(req: tiny_http::Request, method: &str, path: &str)
     let _ = req.respond(resp);
 }
 
-fn log_request(method: &str, path: &str, status: u16, remote: Option<&std::net::SocketAddr>) {
-    let now = crate::model::now();
+/// 默认只记 >=400 的请求与启动/异常事件；--verbose 时全部记录。
+/// 查询串从不入日志（搜索关键词属用户内容）。
+fn should_log(verbose: bool, status: u16) -> bool {
+    verbose || status >= 400
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_request(
+    verbose: bool,
+    method: &str,
+    path: &str,
+    status: u16,
+    remote: Option<&std::net::SocketAddr>,
+    identity: Option<&str>,
+    detail: Option<&str>,
+    elapsed: std::time::Duration,
+) {
+    if !should_log(verbose, status) {
+        return;
+    }
     let remote = remote.map(|a| a.to_string()).unwrap_or_else(|| "-".into());
-    eprintln!(
-        "agent-memory: {} {} {} {} -> {}",
-        util::format_utc_iso(now),
+    let mut line = format!(
+        "{} {} [{}] {} {}",
+        util::format_utc_iso(crate::model::now()),
         remote,
+        identity.unwrap_or("-"),
         method,
-        path,
-        status
+        path
+    );
+    if let Some(d) = detail {
+        line.push(' ');
+        line.push_str(d);
+    }
+    eprintln!(
+        "agent-memory: {line} -> {} ({}ms)",
+        status,
+        elapsed.as_millis()
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_log_defaults_to_errors_only() {
+        // 默认模式：成功与重定向静默，4xx/5xx 必现
+        assert!(!should_log(false, 200));
+        assert!(!should_log(false, 202));
+        assert!(should_log(false, 400));
+        assert!(should_log(false, 401));
+        assert!(should_log(false, 500));
+        // verbose 全量
+        for s in [200u16, 202, 404, 500] {
+            assert!(should_log(true, s));
+        }
+    }
+
+    #[test]
+    fn mcp_summary_extracts_tool_name() {
+        let call = serde_json::json!({
+            "jsonrpc": "2.0", "id": "m1", "method": "tools/call",
+            "params": {"name": "add_memory", "arguments": {}}
+        });
+        assert_eq!(mcp_summary(&call).as_deref(), Some("tools/call add_memory"));
+        let init = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
+        assert_eq!(mcp_summary(&init).as_deref(), Some("initialize"));
+        // 批量消息（数组）与畸形结构不产生摘要
+        assert_eq!(mcp_summary(&serde_json::json!([])), None);
+        assert_eq!(mcp_summary(&serde_json::json!({"id": 1})), None);
+        // tools/call 缺工具名时占位而非 None
+        let broken = serde_json::json!({"method": "tools/call"});
+        assert_eq!(mcp_summary(&broken).as_deref(), Some("tools/call ?"));
+    }
 
     #[test]
     fn route_matches_known_endpoints() {
@@ -574,7 +780,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let db = std::env::temp_dir().join(format!("agent-memory-port-{}.db", std::process::id()));
-        let code = serve_http("127.0.0.1", port, &db, false);
+        let code = serve_http("127.0.0.1", port, &db, false, false);
         drop(listener);
         let _ = std::fs::remove_file(&db);
         assert_eq!(code, 1, "expected failure on occupied port");
@@ -598,16 +804,17 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("agent-memory-http-{}.db", std::process::id()));
         let ctx = crate::auth::IdentityCtx::open_mode();
-        // 解析失败 → 400 + -32700
-        let (status, body) = process_mcp(&path, &ctx, b"not json", None);
+        // 解析失败 → 400 + -32700，无调用摘要
+        let (status, body, detail) = process_mcp(&path, &ctx, b"not json", None);
         assert_eq!(status, 400);
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
             -32700
         );
+        assert_eq!(detail, None);
 
-        // 通知 → 202 空 body
-        let (status, body) = process_mcp(
+        // 通知 → 202 空 body，摘要为方法名
+        let (status, body, detail) = process_mcp(
             &path,
             &ctx,
             br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
@@ -615,6 +822,7 @@ mod tests {
         );
         assert_eq!(status, 202);
         assert!(body.is_empty());
+        assert_eq!(detail.as_deref(), Some("notifications/initialized"));
         let _ = std::fs::remove_file(&path);
     }
 
