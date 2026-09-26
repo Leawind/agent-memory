@@ -39,6 +39,16 @@ export function listIdentityNames(): string[] {
   return Object.keys(readMap())
 }
 
+/** token 首尾提示：前 4 位 + ... + 后 4 位，过短则原样返回 */
+export function tokenHint(token: string): string {
+  return token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : token
+}
+
+/** 全部身份及 token 首尾提示（按添加顺序），供身份下拉展示 */
+export function listIdentities(): { name: string; hint: string }[] {
+  return Object.entries(readMap()).map(([name, token]) => ({ name, hint: tokenHint(token) }))
+}
+
 /** 当前生效的身份名；null 表示未选择（开放模式或尚未添加） */
 export function currentIdentityName(): string | null {
   try {

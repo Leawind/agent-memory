@@ -17,7 +17,7 @@ export interface MemoryUIConfig {
   /** 管理面板创建/重置身份后的 token 一次性展示弹窗里，「保存到本浏览器」按钮的落点。
    *  注入后按钮才渲染；独立站点壳用它把 token 存入自己的多身份令牌表。 */
   onIdentityToken?: (name: string, token: string) => void
-  /** 鉴权开关切换成功后回调（独立站点壳借此重新解析 whoami，右上角身份区即时反映 token 模式）。 */
+  /** 鉴权开关切换成功后回调（独立站点壳借此重新解析 whoami，顶栏身份区即时反映 token 模式）。 */
   onAuthChanged?: (enabled: boolean) => void
 }
 

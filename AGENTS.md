@@ -74,7 +74,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
   ui/app         @agent-memory/app —— 独立站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言切换），
                  直接组装四个面板（「管理」标签页按 admin 能力显示，非 admin 身份不产生管理请求），
                  产物输出 ui/dist；一个浏览器可存多个身份 token（auth.ts 的 localStorage 身份表，
-                 右上角下拉切换/删除/添加），authFetch 为 lib 注入带 Authorization 的 fetch，
+                 标题处下拉切换/删除/添加，token 首尾提示本地计算），authFetch 为 lib 注入带 Authorization 的 fetch，
                  401 时移除失效身份并广播事件弹出令牌输入框
                  记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```

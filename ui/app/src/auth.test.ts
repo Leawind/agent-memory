@@ -3,10 +3,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   addIdentity,
   currentIdentityName,
+  listIdentities,
   listIdentityNames,
   readStoredToken,
   removeIdentity,
   switchIdentity,
+  tokenHint,
 } from './auth'
 
 describe('multi-identity token store', () => {
@@ -48,6 +50,23 @@ describe('multi-identity token store', () => {
     expect(listIdentityNames()).toEqual([])
     expect(currentIdentityName()).toBe(null)
     expect(readStoredToken()).toBe('')
+  })
+
+  it('lists identities with token head/tail hints in insertion order', () => {
+    expect(listIdentities()).toEqual([])
+    addIdentity('admin', 'abcdefghijklmnop')
+    addIdentity('viewer', 'qwertyuiop')
+    expect(listIdentities()).toEqual([
+      { name: 'admin', hint: 'abcd...mnop' },
+      { name: 'viewer', hint: 'qwer...uiop' },
+    ])
+  })
+
+  it('returns short tokens verbatim as the hint', () => {
+    expect(tokenHint('')).toBe('')
+    expect(tokenHint('abcd')).toBe('abcd')
+    expect(tokenHint('abcdefgh')).toBe('abcdefgh')
+    expect(tokenHint('abcdefghi')).toBe('abcd...fghi')
   })
 
   it('adopts a legacy single token under its identity name after first whoami success', async () => {

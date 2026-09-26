@@ -8,6 +8,43 @@
               <el-icon :size="16"><Collection /></el-icon>
             </span>
             <span class="brand-name">Agent Memory</span>
+            <!-- 身份切换在标题处：Agent Memory / 身份名；开放模式无身份区 -->
+            <template v-if="who && who.mode === 'token'">
+              <span class="brand-sep">/</span>
+              <el-dropdown trigger="click" @command="onIdentityCommand">
+                <button type="button" class="identity-btn" :aria-label="t('shell.identity')">
+                  <span class="identity-name">{{ who.name }}</span>
+                  <el-icon :size="12" class="identity-caret"><ArrowDown /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="it in identities"
+                      :key="it.name"
+                      :command="{ type: 'switch', name: it.name }"
+                      :data-checked="it.name === who?.name"
+                    >
+                      <span class="id-option">
+                        <span class="id-name">{{ it.name }}</span>
+                        <span class="id-hint">{{ it.hint }}</span>
+                      </span>
+                      <el-icon v-if="it.name === who?.name" class="id-check"><Check /></el-icon>
+                      <el-icon
+                        class="id-remove"
+                        :title="t('shell.removeIdentity')"
+                        @click.stop="removeIdentityClick(it.name)"
+                      >
+                        <Delete />
+                      </el-icon>
+                    </el-dropdown-item>
+                    <!-- 添加身份：整行只有一个加号图标，点击弹令牌输入框 -->
+                    <el-dropdown-item divided command="add" class="id-add" :aria-label="t('shell.addIdentity')">
+                      <el-icon :size="14"><Plus /></el-icon>
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
           </div>
 
           <!-- 顶部导航：面板常驻挂载，切换不销毁；切回时经 refresh 拉最新数据。
@@ -63,40 +100,6 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
-
-            <!-- 身份：开放模式不显示；token 模式下拉管理本浏览器保存的多个身份 -->
-            <el-dropdown v-if="who && who.mode === 'token'" trigger="click" @command="onIdentityCommand">
-              <button type="button" class="identity-btn" :aria-label="t('shell.identity')">
-                <el-icon :size="13"><User /></el-icon>
-                <span>{{ who.name }}</span>
-                <el-icon :size="12"><ArrowDown /></el-icon>
-              </button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item
-                    v-for="name in identityNames"
-                    :key="name"
-                    :command="{ type: 'switch', name }"
-                    :data-checked="name === who?.name"
-                  >
-                    <span class="id-option">{{ name }}</span>
-                    <el-icon v-if="name === who?.name" class="id-check"><Check /></el-icon>
-                    <el-icon
-                      v-else
-                      class="id-remove"
-                      :title="t('shell.removeIdentity')"
-                      @click.stop="removeIdentityClick(name)"
-                    >
-                      <Close />
-                    </el-icon>
-                  </el-dropdown-item>
-                  <el-dropdown-item divided command="add">
-                    <el-icon :size="13"><Plus /></el-icon>
-                    <span>{{ t('shell.addIdentity') }}</span>
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
           </div>
         </div>
       </header>
@@ -145,8 +148,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowDown,
   Check,
-  Close,
   Collection,
+  Delete,
   Key,
   Monitor,
   Moon,
@@ -155,7 +158,6 @@ import {
   Plus,
   PriceTag,
   Sunny,
-  User,
 } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
@@ -167,6 +169,7 @@ import {
   can,
   currentIdentityName,
   fetchWhoAmI,
+  listIdentities,
   listIdentityNames,
   removeIdentity,
   switchIdentity,
@@ -184,16 +187,16 @@ provideMemoryUI({
     await resolveIdentity()
     refreshActivePanel()
   },
-  // 鉴权开关切换后重新解析身份：开放 ↔ token 模式切换时右上角身份区即时反映
+  // 鉴权开关切换后重新解析身份：开放 ↔ token 模式切换时标题处身份区即时反映
   onAuthChanged: () => resolveIdentity(),
 })
 
 type AdminTab = 'memories' | 'tags' | 'ops' | 'admin'
 const active = ref<AdminTab>('memories')
 
-// ---- 身份与令牌：本浏览器可保存多个身份，右上角下拉切换/删除/添加 ----
+// ---- 身份与令牌：本浏览器可保存多个身份，标题处下拉切换/删除/添加 ----
 const who = ref<WhoAmI | null>(null)
-const identityNames = ref<string[]>([])
+const identities = ref<{ name: string; hint: string }[]>([])
 
 const isAdmin = computed(() => can(who.value, 'admin'))
 
@@ -235,7 +238,7 @@ watch(active, () => refreshActivePanel())
 
 // ---- 身份下拉与令牌弹窗状态 ----
 function refreshIdentities(): void {
-  identityNames.value = listIdentityNames()
+  identities.value = listIdentities()
 }
 
 const tokenDialog = ref(false)
@@ -566,40 +569,76 @@ body {
   color: var(--el-color-primary);
 }
 
-/* 身份下拉触发器：与语言胶囊同风格 */
+/* 身份切换：品牌行内的可点击身份名（Agent Memory / 身份名） */
+.brand-sep {
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
+}
 .identity-btn {
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
-  padding: 0 12px;
+  min-width: 0;
+  max-width: 240px;
+  padding: 4px 8px;
   border: none;
-  border-radius: 999px;
-  background: var(--el-fill-color);
-  color: var(--el-text-color-regular);
-  font-size: 12px;
+  border-radius: var(--el-border-radius-base);
+  background: transparent;
+  color: var(--el-text-color-primary);
+  font-size: inherit;
+  font-weight: inherit;
   font-family: inherit;
+  letter-spacing: inherit;
   cursor: pointer;
 }
 .identity-btn:hover {
-  color: var(--el-text-color-primary);
-  background: var(--el-fill-color-dark);
+  background: var(--el-fill-color);
 }
-/* 下拉项：身份名 + 当前勾选 / 移除按钮 */
+.identity-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.identity-caret {
+  flex-shrink: 0;
+  color: var(--el-text-color-secondary);
+}
+/* 下拉行：身份名 + token 首尾提示靠左，勾选与删除靠右 */
 .id-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   flex: 1;
+  min-width: 0;
   margin-right: 12px;
 }
+.id-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.id-hint {
+  flex-shrink: 0;
+  font-family: var(--el-font-family-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
 .id-check {
+  flex-shrink: 0;
   color: var(--el-color-primary);
 }
 .id-remove {
+  flex-shrink: 0;
   margin-left: 10px;
   color: var(--el-text-color-secondary);
   cursor: pointer;
 }
 .id-remove:hover {
   color: var(--el-color-danger);
+}
+/* 添加身份：整行居中一个加号 */
+.id-add {
+  justify-content: center;
 }
 
 /* 令牌弹窗文案 */
