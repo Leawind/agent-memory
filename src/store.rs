@@ -74,7 +74,6 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(|e| format!("cannot enable foreign keys: {e}"))?;
         run_migrations(&conn)?;
-        hash_pending_legacy_tokens(&conn)?;
         Ok(Store {
             path: normalize_path(path),
             conn,
@@ -1008,29 +1007,6 @@ fn token_hash_and_hint(token: &str) -> (String, String) {
     (crate::util::sha256_hex(token.as_bytes()), hint)
 }
 
-/// 迁移 3 的第二阶段：identities_legacy_token 暂存的明文逐一哈希回填
-/// （SQLite 算不了 SHA-256）。逐行独立提交，幂等——中断后重跑会对同一行
-/// 重算同样的哈希再清理。无待迁移行时是两次只读空转。
-fn hash_pending_legacy_tokens(conn: &Connection) -> Result<(), String> {
-    let mut st = conn
-        .prepare(sql::IDENTITY_PENDING_TOKENS)
-        .map_err(|e| e.to_string())?;
-    let rows = st
-        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    drop(st);
-    for (id, token) in rows {
-        let (hash, hint) = token_hash_and_hint(&token);
-        conn.execute(sql::IDENTITY_SET_TOKEN_HASH, params![hash, hint, id])
-            .map_err(|e| e.to_string())?;
-        conn.execute(sql::IDENTITY_PENDING_DONE, [id])
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// 事务模式：只读请求用 DEFERRED（WAL 下获得一致性快照且不抢写锁，
 /// 读与读、读与写互不阻塞），写请求用 IMMEDIATE（一开始就取写锁，
 /// 配合 busy_timeout 让并发写者排队，避免 DEFERRED 读后升级写锁的死锁）。
@@ -1128,44 +1104,6 @@ mod tests {
             panic!("expected open to fail on newer schema")
         };
         assert!(err.contains("newer than supported"), "got: {err}");
-        cleanup(&path);
-    }
-
-    /// 迁移 3 第二阶段：暂存的旧明文 token 在打开时被哈希回填并清理，
-    /// 随后凭原 token 可正常鉴权。
-    #[test]
-    fn legacy_plaintext_token_is_hashed_on_open() {
-        let path = temp_db("legacytoken");
-        cleanup(&path);
-        let legacy_token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        {
-            let st = Store::open(&path).unwrap();
-            // 伪造迁移 3 完成前的中间态：空哈希行 + 暂存明文
-            st.conn
-                .execute_batch(&format!(
-                    r#"INSERT INTO identities(name, token_hash, token_hint, permissions, created_at)
-                     VALUES ('bob', '', 'cdef', '{{"read":true,"create":false,"update":false,"delete":false,"tag_manage":false,"admin":false}}', 1);
-                     INSERT INTO identities_legacy_token(id, token)
-                     SELECT id, '{legacy_token}' FROM identities;"#
-                ))
-                .unwrap();
-            // 迁移尚未完成，明文无法鉴权
-            assert!(st.identity_ctx_by_token(legacy_token).unwrap().is_none());
-        }
-        let st = Store::open(&path).unwrap();
-        let ctx = st.identity_ctx_by_token(legacy_token).unwrap().unwrap();
-        assert_eq!(ctx.name, "bob");
-        // 暂存表已清空；视图只留尾缀
-        let pending: i64 = st
-            .conn
-            .query_row("SELECT count(*) FROM identities_legacy_token", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(pending, 0);
-        let view = st.identity_view("bob").unwrap().unwrap();
-        assert_eq!(view["token_hint"], "cdef");
-        assert!(view["token"].is_null());
         cleanup(&path);
     }
 

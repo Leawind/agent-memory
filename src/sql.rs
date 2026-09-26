@@ -44,9 +44,6 @@ pub const IDENTITY_UPDATE_PERMISSIONS: &str =
     include_str!("../sql/identity_update_permissions.sql");
 pub const IDENTITY_UPDATE_TOKEN: &str = include_str!("../sql/identity_update_token.sql");
 pub const IDENTITY_COUNT: &str = include_str!("../sql/identity_count.sql");
-pub const IDENTITY_PENDING_TOKENS: &str = include_str!("../sql/identity_pending_tokens.sql");
-pub const IDENTITY_SET_TOKEN_HASH: &str = include_str!("../sql/identity_set_token_hash.sql");
-pub const IDENTITY_PENDING_DONE: &str = include_str!("../sql/identity_pending_done.sql");
 pub const SETTINGS_GET: &str = include_str!("../sql/settings_get.sql");
 pub const SETTINGS_PUT: &str = include_str!("../sql/settings_put.sql");
 pub const TOKEN_GENERATE: &str = include_str!("../sql/token_generate.sql");
@@ -125,9 +122,6 @@ mod tests {
             ("IDENTITY_UPDATE_PERMISSIONS", IDENTITY_UPDATE_PERMISSIONS),
             ("IDENTITY_UPDATE_TOKEN", IDENTITY_UPDATE_TOKEN),
             ("IDENTITY_COUNT", IDENTITY_COUNT),
-            ("IDENTITY_PENDING_TOKENS", IDENTITY_PENDING_TOKENS),
-            ("IDENTITY_SET_TOKEN_HASH", IDENTITY_SET_TOKEN_HASH),
-            ("IDENTITY_PENDING_DONE", IDENTITY_PENDING_DONE),
             ("SETTINGS_GET", SETTINGS_GET),
             ("SETTINGS_PUT", SETTINGS_PUT),
             ("TOKEN_GENERATE", TOKEN_GENERATE),

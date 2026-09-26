@@ -86,10 +86,9 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    （每条一个文件，`src/sql.rs` include_str! 登记，同步测试把守），schema 在
    `migrations/NUM-NAME.sql`（build.rs 编译期生成 `MIGRATIONS`，目录即唯一事实源）。
    **迁移策略**：项目未发布，允许破坏性更改——改 schema 直接改写基线
-   `1-init.sql`，旧库删掉重建；**发布后**任何 schema 变更只能新增
+   `1-init.sql`（当前全部表都在基线里），旧库删掉重建，不为旧库写
+   兼容迁移；**发布后**任何 schema 变更只能新增
    `2-xxx.sql`、`3-xxx.sql` 等新迁移文件，绝不改写已发布的迁移。
-   现状：`2-identities.sql` 已存在（身份/设置表），从现在起一律
-   新增迁移文件，不再改写基线（保住现有用户库）。
    运行器按 `PRAGMA user_version` 逐个事务应用，恰好一次；数据库比已知迁移
    更新时拒绝打开（防降级写坏数据）。
 4. **跨平台数据**：schema 内不得存平台相关状态（绝对路径、换行风格等）；SQLite 文件
