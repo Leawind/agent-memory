@@ -496,6 +496,9 @@ impl Store {
                     params![summary, content, crate::model::now() as i64, id],
                 )
                 .map_err(|e| e.to_string())?;
+            // 字段变了向量即过期：删掉让它落回补跑队列（写入挂接会立刻重嵌；
+            // embedding 服务不可用时就地留空，不阻塞更新本身）
+            self.embedding_delete(id)?;
             changed = true;
         }
         // 契约（defs.rs）：add_tags 先于 remove_tags 执行，两个列表都含同一
@@ -729,6 +732,131 @@ impl Store {
         )
     }
 
+    // ------------------------------------------------- 语义搜索配置与向量
+
+    pub const SETTING_EMBEDDING_ENABLED: &'static str = "embedding_enabled";
+    pub const SETTING_EMBEDDING_BASE_URL: &'static str = "embedding_base_url";
+    pub const SETTING_EMBEDDING_MODEL: &'static str = "embedding_model";
+    pub const SETTING_EMBEDDING_API_KEY: &'static str = "embedding_api_key";
+
+    /// 语义搜索开关（与 auth_required 同型的显式布尔键）。
+    pub fn embedding_enabled(&self) -> Result<bool, String> {
+        Ok(self
+            .settings_get(Self::SETTING_EMBEDDING_ENABLED)?
+            .as_deref()
+            == Some("true"))
+    }
+
+    /// 生效的 embedding 配置：开关开启且 base_url / model 均非空才可用——
+    /// 配置不完整视为"未配置"，所有调用方按不可用降级，不报错。
+    pub fn embedding_config(&self) -> Result<Option<crate::embed::EmbedConfig>, String> {
+        if !self.embedding_enabled()? {
+            return Ok(None);
+        }
+        let base_url = self
+            .settings_get(Self::SETTING_EMBEDDING_BASE_URL)?
+            .unwrap_or_default();
+        let model = self
+            .settings_get(Self::SETTING_EMBEDDING_MODEL)?
+            .unwrap_or_default();
+        if base_url.trim().is_empty() || model.trim().is_empty() {
+            return Ok(None);
+        }
+        let api_key = self
+            .settings_get(Self::SETTING_EMBEDDING_API_KEY)?
+            .filter(|s| !s.is_empty());
+        Ok(Some(crate::embed::EmbedConfig {
+            base_url: base_url.trim().to_string(),
+            model: model.trim().to_string(),
+            api_key,
+        }))
+    }
+
+    /// 写入一条向量（upsert：同记忆重嵌时覆盖旧行）。
+    pub fn embedding_put(&self, id: i64, model: &str, vec: &[f32]) -> Result<(), String> {
+        self.conn
+            .execute(
+                sql::EMBEDDING_PUT,
+                params![
+                    id,
+                    model,
+                    vec.len() as i64,
+                    crate::embed::vec_to_blob(vec),
+                    crate::model::now() as i64
+                ],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// 删除一条记忆的向量（更新失效用；缺失时静默）。
+    pub fn embedding_delete(&self, id: i64) -> Result<(), String> {
+        self.conn
+            .execute(sql::EMBEDDING_DELETE, [id])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// 当前模型的全部向量，供混合搜索的内存余弦趟。
+    pub fn embeddings_active(&self, model: &str) -> Result<HashMap<i64, Vec<f32>>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::EMBEDDING_ACTIVE_ALL)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([model], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (id, blob) = row.map_err(|e| e.to_string())?;
+            out.insert(id, crate::embed::blob_to_vec(&blob));
+        }
+        Ok(out)
+    }
+
+    /// 待补跑的一批：缺当前模型向量的记忆，id 升序（含摘要与正文供向量化）。
+    pub fn embedding_pending_batch(
+        &self,
+        model: &str,
+        limit: usize,
+    ) -> Result<Vec<(i64, String, String)>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::EMBEDDING_PENDING_BATCH)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![model, limit as i64], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn embedding_pending_count(&self, model: &str) -> Result<usize, String> {
+        self.conn
+            .query_row(sql::EMBEDDING_PENDING_COUNT, [model], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn embedding_embedded_count(&self, model: &str) -> Result<usize, String> {
+        self.conn
+            .query_row(sql::EMBEDDING_EMBEDDED_COUNT, [model], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
+            .map_err(|e| e.to_string())
+    }
+
     // ---------------------------------------------------------------- 运维
 
     /// 体检：报告数据中的隐患（只读）。覆盖外键被关闭时可能混入的脏数据。
@@ -818,6 +946,18 @@ impl Store {
                 issues.push(format!("memory {} has empty content", Self::format_id(id)));
             }
         }
+        // 语义搜索覆盖：开启且有记忆缺当前模型向量时提示补跑。
+        // 这是派生数据问题而非数据损坏，但放进来让 doctor 成为唯一的体检入口。
+        if let Some(cfg) = self.embedding_config()? {
+            let pending = self.embedding_pending_count(&cfg.model)?;
+            if pending > 0 {
+                issues.push(format!(
+                    "{pending} memories lack up-to-date embeddings (model '{}'); \
+                     run `agent-memory embed-backfill` or use the admin UI",
+                    cfg.model
+                ));
+            }
+        }
         Ok(issues)
     }
 
@@ -866,6 +1006,19 @@ impl Store {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
+        let embedding = match self.embedding_config()? {
+            Some(cfg) => {
+                let embedded = self.embedding_embedded_count(&cfg.model)?;
+                let pending = self.embedding_pending_count(&cfg.model)?;
+                json!({
+                    "enabled": true,
+                    "model": cfg.model,
+                    "embedded": embedded,
+                    "pending": pending,
+                })
+            }
+            None => json!({ "enabled": false }),
+        };
         Ok(json!({
             "path": self.path.display().to_string(),
             "memories": memories,
@@ -874,6 +1027,7 @@ impl Store {
             "file_size": file_size,
             "newest_update": newest.unwrap_or(Value::Null),
             "schema_version": schema_version,
+            "embedding": embedding,
         }))
     }
 

@@ -9,6 +9,7 @@
 
 mod api;
 mod auth;
+mod embed;
 mod http;
 mod model;
 mod protocol;
@@ -68,6 +69,13 @@ enum Command {
         /// 备份文件路径
         path: PathBuf,
     },
+    /// 为缺向量的记忆批量补跑 embedding（语义搜索的派生数据重建；
+    /// 导出/导入不携带向量，恢复库后跑一次即可）
+    EmbedBackfill {
+        /// 每批条数
+        #[arg(long, default_value_t = embed::MAX_BATCH)]
+        batch: usize,
+    },
     /// 管理 token（无账号体系：token 即身份，日常增删走管理界面）
     Token {
         #[command(subcommand)]
@@ -109,6 +117,7 @@ fn run(cli: Cli) -> i32 {
         Command::Doctor => cmd_doctor(&db_path),
         Command::Export { path } => cmd_export(&db_path, &path),
         Command::Import { path } => cmd_import(&db_path, &path),
+        Command::EmbedBackfill { batch } => cmd_embed_backfill(&db_path, batch),
         Command::Token { command } => match command {
             TokenCommand::Reset { name } => cmd_token_reset(&db_path, name.as_deref()),
         },
@@ -180,6 +189,34 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
     }
 }
 
+/// `embed-backfill`：循环补跑直到清零或失败。结果走 stdout，进度/诊断走 stderr。
+fn cmd_embed_backfill(db_path: &std::path::Path, batch: usize) -> i32 {
+    let mut total = 0usize;
+    loop {
+        match embed::process_pending(db_path, batch) {
+            embed::EmbedOutcome::NotConfigured => {
+                eprintln!("semantic search is not enabled/configured (embedding settings)");
+                return 1;
+            }
+            embed::EmbedOutcome::Failed(e) => {
+                eprintln!("embed-backfill failed after {total} memories: {e}");
+                return 1;
+            }
+            embed::EmbedOutcome::Processed {
+                processed,
+                remaining,
+            } => {
+                if processed == 0 {
+                    println!("done: {total} memories embedded, {remaining} remaining");
+                    return 0;
+                }
+                total += processed;
+                eprintln!("embedded {total}, remaining {remaining}");
+            }
+        }
+    }
+}
+
 /// 只读子命令统一走只读快照事务：多条查询之间不会被并发写打断，
 /// 结果保证同一时刻的一致视图（与 /api 只读端点行为一致）。
 fn read_db<T>(
@@ -209,6 +246,16 @@ fn cmd_stats(db_path: &std::path::Path) -> i32 {
             newest["id"].as_str().unwrap_or("?"),
             newest["updated_at"]
         );
+    }
+    if let Some(emb) = s["embedding"].as_object() {
+        if emb["enabled"].as_bool().unwrap_or(false) {
+            println!(
+                "embeddings: {} embedded, {} pending (model {})",
+                emb["embedded"], emb["pending"], emb["model"]
+            );
+        } else {
+            println!("embeddings: disabled");
+        }
     }
     0
 }

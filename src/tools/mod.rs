@@ -87,7 +87,13 @@ pub fn execute_with_db(
     } else {
         store::TxMode::Write
     };
-    store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))
+    let out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
+    // 向量化在事务提交之后进行（网络调用绝不进事务）：embedding 服务
+    // 不可用时静默降级，工具结果不受影响，向量留给补跑。
+    if name == "memory_create" || name == "memory_update" {
+        crate::embed::after_write(db_path);
+    }
+    Ok(out)
 }
 
 pub fn execute(

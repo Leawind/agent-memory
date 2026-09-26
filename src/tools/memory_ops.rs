@@ -94,9 +94,71 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
+    enum SearchMode {
+        Auto,
+        Keyword,
+        Hybrid,
+    }
+    let mode = match opt_str(args, "mode")?.as_deref() {
+        None | Some("auto") => SearchMode::Auto,
+        Some("keyword") => SearchMode::Keyword,
+        Some("hybrid") => SearchMode::Hybrid,
+        Some(other) => {
+            return Err(ToolError::invalid(format!(
+                "mode must be 'auto', 'keyword' or 'hybrid', got '{other}'"
+            )))
+        }
+    };
 
     let memories = st.all_memories()?;
-    let hits = search::run(&memories, &query, &tag_filter, tag_re.as_ref());
+    let keyword_hits = search::run(&memories, &query, &tag_filter, tag_re.as_ref());
+
+    // 语义路：auto 按配置直通，hybrid 显式要求配置，keyword 永不走。
+    // embedding 服务不可用（超时/报错/读库失败）→ 回退关键词趟并打标，
+    // 回退是承诺而不是报错路径。
+    let config = st.embedding_config().map_err(ToolError::invalid)?;
+    let mut used_hybrid = false;
+    let mut semantic_fallback = false;
+    let hits = match mode {
+        SearchMode::Keyword => keyword_hits,
+        SearchMode::Auto => match &config {
+            None => keyword_hits,
+            Some(cfg) => {
+                let (hits, ok) = semantic_pass(
+                    st,
+                    cfg,
+                    &memories,
+                    keyword_hits,
+                    &query,
+                    &tag_filter,
+                    tag_re.as_ref(),
+                );
+                used_hybrid = ok;
+                semantic_fallback = !ok;
+                hits
+            }
+        },
+        SearchMode::Hybrid => {
+            let Some(cfg) = &config else {
+                return Err(ToolError::invalid(
+                    "mode 'hybrid' requires semantic search to be enabled and configured (embedding settings in the admin UI)",
+                ));
+            };
+            let (hits, ok) = semantic_pass(
+                st,
+                cfg,
+                &memories,
+                keyword_hits,
+                &query,
+                &tag_filter,
+                tag_re.as_ref(),
+            );
+            used_hybrid = ok;
+            semantic_fallback = !ok;
+            hits
+        }
+    };
+
     let total = hits.len() as u64;
     let results: Vec<Value> = hits
         .iter()
@@ -119,8 +181,12 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         "total_matches": total,
         "offset": offset,
         "returned": results.len(),
+        "mode": if used_hybrid { "hybrid" } else { "keyword" },
         "results": results,
     });
+    if semantic_fallback {
+        out["semantic_fallback"] = json!(true);
+    }
     // 渐进式披露引导只在第一页携带；翻页时客户端已读过，省掉重复上下文开销
     if offset == 0 {
         out["hint"] = json!(
@@ -229,6 +295,52 @@ pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     deleted.extend(unparsable.iter().cloned());
     missing.extend(unparsable);
     Ok(json!({"deleted": deleted, "missing": missing}))
+}
+
+/// 语义趟：查询向量化 + 与库存向量的余弦排名，与关键词趟 RRF 融合。
+/// 任何一步失败（读向量、embedding 服务超时/报错）都回退纯关键词趟，
+/// 返回 `(hits, 是否真正走了混合)`——回退是正常路径而非错误。
+fn semantic_pass(
+    st: &Store,
+    cfg: &crate::embed::EmbedConfig,
+    memories: &[crate::model::Memory],
+    keyword_hits: Vec<search::Hit>,
+    query: &str,
+    tag_filter: &[String],
+    tag_re: Option<&regex::Regex>,
+) -> (Vec<search::Hit>, bool) {
+    let table = match st.embeddings_active(&cfg.model) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("semantic search skipped (cannot load embeddings): {e}");
+            return (keyword_hits, false);
+        }
+    };
+    let query_vecs = match crate::embed::embed_texts(
+        cfg,
+        &[crate::embed::embed_memory_text(query, "")],
+        crate::embed::QUERY_TIMEOUT,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("semantic search fell back to keyword (embedding service unavailable): {e}");
+            return (keyword_hits, false);
+        }
+    };
+    let Some(query_vec) = query_vecs.into_iter().next() else {
+        return (keyword_hits, false);
+    };
+    (
+        crate::embed::hybrid_hits(
+            memories,
+            keyword_hits,
+            &table,
+            &query_vec,
+            tag_filter,
+            tag_re,
+        ),
+        true,
+    )
 }
 
 /// 取一条记忆的摘要视图（确保存在，不存在时给统一错误）。

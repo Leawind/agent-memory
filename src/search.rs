@@ -58,6 +58,25 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
+/// 标签过滤（`tag_filter` 精确标签 OR + `tag_regex` 正则 OR，二者 AND，
+/// 都省略 = 不过滤）。关键词趟与语义向量趟共用，保证两路召回遵守
+/// 同一过滤语义——语义召回不得绕过调用方的过滤条件。
+pub fn passes_tag_filters(
+    m: &Memory,
+    tag_filter: &[String],
+    tag_regex: Option<&regex::Regex>,
+) -> bool {
+    if !tag_filter.is_empty() && !tag_filter.iter().any(|t| m.tags.iter().any(|x| x == t)) {
+        return false;
+    }
+    if let Some(re) = tag_regex {
+        if !m.tags.iter().any(|t| re.is_match(t)) {
+            return false;
+        }
+    }
+    true
+}
+
 /// `tag_filter`：精确标签 OR 语义；`tag_regex`：任一标签名命中正则即通过
 /// （与 tag_filter 为 AND 关系，二者都省略 = 不过滤）。
 pub fn run(
@@ -72,13 +91,8 @@ pub fn run(
     }
     let mut hits = Vec::new();
     for (idx, m) in memories.iter().enumerate() {
-        if !tag_filter.is_empty() && !tag_filter.iter().any(|t| m.tags.iter().any(|x| x == t)) {
+        if !passes_tag_filters(m, tag_filter, tag_regex) {
             continue;
-        }
-        if let Some(re) = tag_regex {
-            if !m.tags.iter().any(|t| re.is_match(t)) {
-                continue;
-            }
         }
         let lc_summary = m.summary.to_lowercase();
         let lc_tags: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
@@ -268,6 +282,12 @@ fn ceil_boundary(s: &str, mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// 无正文命中位置时的兜底片段（正文开头，同样转义）。语义向量独有命中
+/// 没有词锚点，走这条路径。
+pub fn fallback_snippet(content: &str) -> String {
+    make_snippet(content, None)
 }
 
 /// 生成匹配位置附近的单行片段；没有正文命中时回退为正文开头。

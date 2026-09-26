@@ -14,6 +14,8 @@ rust-embed = { version = "8.12.0", features = ["debug-embed"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny_http = "0.12"
+# 出站 HTTP（语义搜索的 embedding 服务调用）：同步、rustls TLS，刻意保持最小
+ureq = { version = "2", features = ["json"] }
 
 # 提交前 `cargo clippy --all-targets -- -D warnings` 会把这些当错误处理
 [lints.clippy]

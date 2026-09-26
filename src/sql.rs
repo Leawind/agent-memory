@@ -33,6 +33,13 @@ pub const MEMORY_TOUCH: &str = include_str!("../sql/memory_touch.sql");
 pub const MEMORY_DELETE: &str = include_str!("../sql/memory_delete.sql");
 pub const MEMORY_SUMMARIES: &str = include_str!("../sql/memory_summaries.sql");
 
+pub const EMBEDDING_PUT: &str = include_str!("../sql/embedding_put.sql");
+pub const EMBEDDING_DELETE: &str = include_str!("../sql/embedding_delete.sql");
+pub const EMBEDDING_ACTIVE_ALL: &str = include_str!("../sql/embedding_active_all.sql");
+pub const EMBEDDING_PENDING_BATCH: &str = include_str!("../sql/embedding_pending_batch.sql");
+pub const EMBEDDING_PENDING_COUNT: &str = include_str!("../sql/embedding_pending_count.sql");
+pub const EMBEDDING_EMBEDDED_COUNT: &str = include_str!("../sql/embedding_embedded_count.sql");
+
 pub const HYGIENE_ORPHANS: &str = include_str!("../sql/hygiene_orphans.sql");
 pub const HYGIENE_MEMORIES: &str = include_str!("../sql/hygiene_memories.sql");
 
@@ -107,6 +114,12 @@ mod tests {
             ("MEMORY_TOUCH", MEMORY_TOUCH),
             ("MEMORY_DELETE", MEMORY_DELETE),
             ("MEMORY_SUMMARIES", MEMORY_SUMMARIES),
+            ("EMBEDDING_PUT", EMBEDDING_PUT),
+            ("EMBEDDING_DELETE", EMBEDDING_DELETE),
+            ("EMBEDDING_ACTIVE_ALL", EMBEDDING_ACTIVE_ALL),
+            ("EMBEDDING_PENDING_BATCH", EMBEDDING_PENDING_BATCH),
+            ("EMBEDDING_PENDING_COUNT", EMBEDDING_PENDING_COUNT),
+            ("EMBEDDING_EMBEDDED_COUNT", EMBEDDING_EMBEDDED_COUNT),
             ("HYGIENE_ORPHANS", HYGIENE_ORPHANS),
             ("HYGIENE_MEMORIES", HYGIENE_MEMORIES),
             ("STATS_MEMORY_COUNT", STATS_MEMORY_COUNT),

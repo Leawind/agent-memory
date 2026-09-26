@@ -173,6 +173,16 @@ pub fn handle(
                         .settings_get("conventions")
                         .map_err(ToolError::from)?
                         .filter(|s| !s.is_empty());
+                    // 语义搜索配置原样返回：端点本就 Admin-only，api_key 与
+                    // instructions 同属"服务端秘密"，不做二次遮蔽
+                    let embed = &store::Store::SETTING_EMBEDDING_BASE_URL;
+                    let base_url = st.settings_get(embed).map_err(ToolError::from)?;
+                    let model = st
+                        .settings_get(store::Store::SETTING_EMBEDDING_MODEL)
+                        .map_err(ToolError::from)?;
+                    let api_key = st
+                        .settings_get(store::Store::SETTING_EMBEDDING_API_KEY)
+                        .map_err(ToolError::from)?;
                     Ok((
                         200,
                         json!({
@@ -180,6 +190,10 @@ pub fn handle(
                             "conventions": conventions,
                             // 鉴权开关：鉴权边界由显式开关决定，与身份是否存在无关
                             "auth_required": st.auth_required()?,
+                            "embedding_enabled": st.embedding_enabled()?,
+                            "embedding_base_url": base_url,
+                            "embedding_model": model,
+                            "embedding_api_key": api_key,
                             // 内置默认提示词：UI 展示"恢复默认"的目标
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -192,26 +206,38 @@ pub fn handle(
                     Ok(m) => m,
                     Err(e) => return Ok(bad_request(e)),
                 };
+                const VALID_KEYS: &[&str] = &[
+                    "instructions",
+                    "conventions",
+                    "auth_required",
+                    store::Store::SETTING_EMBEDDING_ENABLED,
+                    store::Store::SETTING_EMBEDDING_BASE_URL,
+                    store::Store::SETTING_EMBEDDING_MODEL,
+                    store::Store::SETTING_EMBEDDING_API_KEY,
+                ];
                 for key in args.keys() {
-                    if key != "instructions" && key != "conventions" && key != "auth_required" {
+                    if !VALID_KEYS.contains(&key.as_str()) {
                         return Ok(bad_request(ToolError::invalid(format!(
-                            "unknown settings key '{key}' (valid: instructions, conventions, auth_required)"
+                            "unknown settings key '{key}' (valid: {})",
+                            VALID_KEYS.join(", ")
                         ))));
                     }
                 }
+                // 布尔键：auth_required 与 embedding_enabled，其余为文本项
+                const BOOL_KEYS: &[&str] =
+                    &["auth_required", store::Store::SETTING_EMBEDDING_ENABLED];
                 let mut updates: Vec<(&str, String)> = Vec::new();
-                for key in ["instructions", "conventions", "auth_required"] {
-                    match args.get(key) {
+                for key in VALID_KEYS {
+                    match args.get(*key) {
                         None => continue, // 省略 = 不改动该项
-                        // 鉴权开关是唯一非文本项：只接受布尔
-                        Some(v) if key == "auth_required" => match v.as_bool() {
+                        Some(v) if BOOL_KEYS.contains(key) => match v.as_bool() {
                             Some(on) => {
                                 updates.push((key, if on { "true" } else { "false" }.into()))
                             }
                             None => {
-                                return Ok(bad_request(ToolError::invalid(
-                                    "auth_required must be a boolean",
-                                )))
+                                return Ok(bad_request(ToolError::invalid(format!(
+                                    "{key} must be a boolean"
+                                ))))
                             }
                         },
                         Some(Value::String(s)) => {
@@ -231,7 +257,7 @@ pub fn handle(
                 }
                 if updates.is_empty() {
                     return Ok(bad_request(ToolError::invalid(
-                        "nothing to update: provide instructions, conventions and/or auth_required",
+                        "nothing to update: provide at least one settings key",
                     )));
                 }
                 db_tx(db_path, TxMode::Write, |st| {
@@ -255,6 +281,42 @@ pub fn handle(
                     }
                     Ok((200, json!({ "saved": true })))
                 })
+            }
+            ("POST", ["embeddings", "backfill"]) => {
+                ctx.require(Cap::Admin)?;
+                // 有界批量：每次请求只处理一小批并返回剩余数，UI 循环调用。
+                // 绕开了"长时任务 vs 每请求一事务"的模型冲突。
+                let batch = query_get(query, "batch")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(crate::embed::MAX_BATCH);
+                Ok((200, crate::embed::process_pending(db_path, batch).to_json()))
+            }
+            ("POST", ["embeddings", "test"]) => {
+                ctx.require(Cap::Admin)?;
+                let cfg = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                    st.embedding_config().map_err(ToolError::from)
+                })?;
+                let Some(cfg) = cfg else {
+                    return Ok(bad_request(ToolError::invalid(
+                        "semantic search is not enabled or not fully configured (embedding settings)",
+                    )));
+                };
+                let start = std::time::Instant::now();
+                match crate::embed::embed_texts(
+                    &cfg,
+                    &["connection test 连接测试".to_string()],
+                    crate::embed::BATCH_TIMEOUT,
+                ) {
+                    Ok(vectors) => Ok((
+                        200,
+                        json!({
+                            "ok": true,
+                            "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
+                            "elapsed_ms": start.elapsed().as_millis() as u64,
+                        }),
+                    )),
+                    Err(e) => Ok((200, json!({ "ok": false, "error": e }))),
+                }
             }
             ("GET", ["tags"]) => {
                 let mut args = Map::new();
@@ -320,10 +382,13 @@ pub fn handle(
                     Ok(m) => m,
                     Err(e) => return Ok(bad_request(e)),
                 };
-                db_tx(db_path, tx_mode, |st| {
+                let out = db_tx(db_path, tx_mode, |st| {
                     tools::execute(st, ctx, "memory_create", &Value::Object(args.clone()))
                         .map(|v| (200, v))
-                })
+                })?;
+                // 向量化在事务提交之后（与 MCP 路径同一挂接语义）
+                crate::embed::after_write(db_path);
+                Ok(out)
             }
             ("GET", ["memories", mem_id]) => db_tx(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, "memory_get", &json!({ "ids": [mem_id] })).map(|v| {
@@ -347,10 +412,12 @@ pub fn handle(
                 for (k, v) in args {
                     full.insert(k, v);
                 }
-                db_tx(db_path, tx_mode, |st| {
+                let out = db_tx(db_path, tx_mode, |st| {
                     tools::execute(st, ctx, "memory_update", &Value::Object(full.clone()))
                         .map(|v| (200, v))
-                })
+                })?;
+                crate::embed::after_write(db_path);
+                Ok(out)
             }
             ("DELETE", ["memories", mem_id]) => db_tx(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, "memory_delete", &json!({ "ids": [mem_id] })).map(|v| {
@@ -419,6 +486,7 @@ fn list_or_search_args(query: &str) -> Value {
         "offset",
         "limit",
         "tags",
+        "mode",
     ] {
         if let Some(v) = query_get(query, key) {
             let value = if key == "tags" {

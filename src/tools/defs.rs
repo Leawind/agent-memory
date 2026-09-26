@@ -112,13 +112,14 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_search",
-            "Keyword search across tags, summaries and content. All whitespace-separated terms must match (AND); a quoted term (\"exact phrase\") must match verbatim and scores a bonus. Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Repeated hits and whole-word ASCII matches rank higher. Tag matches rank highest. Returns ranked summaries plus a short HTML-escaped content snippet - call memory_get on the promising ids to reveal full content.",
+            "Search across tags, summaries and content. All whitespace-separated terms must match (AND); a quoted term (\"exact phrase\") must match verbatim and scores a bonus. Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Repeated hits and whole-word ASCII matches rank higher. Tag matches rank highest. When the server has semantic search enabled, results also include meaning-similar memories that share no keywords (mode 'hybrid'); if the embedding service is unavailable the search silently falls back to keyword-only and the response carries semantic_fallback: true. Returns ranked summaries plus a short HTML-escaped content snippet - call memory_get on the promising ids to reveal full content.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional filter: memory must carry at least one of these tags."},
                     "tag_filter": {"type": "string", "description": "Optional filter: memory must carry at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-sensitive; Rust regex syntax). Combinable with 'tags' (both must hold)."},
+                    "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (keyword + semantic) when the server has semantic search configured, otherwise plain keyword. 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}
                 },
