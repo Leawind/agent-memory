@@ -51,7 +51,7 @@ describe('App shell', () => {
     await flushPromises()
     await flushPromises()
     const html = wrapper.html()
-    expect(html).toContain('agent-memory')
+    expect(html).toContain('Agent Memory')
     expect(html).toContain('记忆管理')
     expect(html).toContain('新建记忆')
     expect(html).toContain('标签管理')

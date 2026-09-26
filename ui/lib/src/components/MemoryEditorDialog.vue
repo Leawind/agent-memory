@@ -29,7 +29,7 @@
           v-model="form.content"
           type="textarea"
           :rows="12"
-          maxlength="200000"
+          maxlength="262144"
           show-word-limit
           :placeholder="t('editor.contentPlaceholder')"
         />

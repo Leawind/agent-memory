@@ -78,17 +78,10 @@
 
       <el-card shadow="never" class="block">
         <template #header>{{ t('access.settingsTitle') }}</template>
-        <p class="hint">{{ t('access.settingsHint') }}</p>
+        <!-- 留空即默认：无需“恢复默认”操作，清空内容保存即可回到内置行为 -->
+        <el-alert :title="t('access.settingsHint')" type="info" show-icon :closable="false" class="settings-hint" />
         <el-form label-position="top" @submit.prevent>
-          <el-form-item>
-            <template #label>
-              <div class="field-label">
-                <span>{{ t('access.instructionsLabel') }}</span>
-                <el-button link type="primary" @click="restoreInstructions">
-                  {{ t('access.restoreDefault') }}
-                </el-button>
-              </div>
-            </template>
+          <el-form-item :label="t('access.instructionsLabel')">
             <el-input
               v-model="instructions"
               type="textarea"
@@ -100,15 +93,7 @@
               <pre class="default-text">{{ defaultInstructions }}</pre>
             </details>
           </el-form-item>
-          <el-form-item>
-            <template #label>
-              <div class="field-label">
-                <span>{{ t('access.conventionsLabel') }}</span>
-                <el-button link type="primary" @click="restoreConventions">
-                  {{ t('access.restoreDefault') }}
-                </el-button>
-              </div>
-            </template>
+          <el-form-item :label="t('access.conventionsLabel')">
             <el-input
               v-model="conventions"
               type="textarea"
@@ -381,15 +366,7 @@ async function confirmAuthToggle(): Promise<boolean> {
   }
 }
 
-// ---- 设置：恢复默认 = 清空字段（服务端对空值回退内置文案），保存时一并提交 ----
-function restoreInstructions(): void {
-  instructions.value = ''
-}
-
-function restoreConventions(): void {
-  conventions.value = ''
-}
-
+// ---- 设置：留空即默认（服务端对空值回退内置文案），保存时一并提交 ----
 async function saveSettings(): Promise<void> {
   savingSettings.value = true
   try {
@@ -517,17 +494,8 @@ async function copyToken(token: string): Promise<void> {
 .muted {
   color: var(--el-text-color-secondary);
 }
-.hint {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-.field-label {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.settings-hint {
+  margin-bottom: 12px;
 }
 .default-view {
   margin-top: 6px;

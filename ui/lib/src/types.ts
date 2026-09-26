@@ -17,6 +17,7 @@ export interface TagView {
   description: string
   memory_count: number
   last_used_at: number | null
+  created_at: number
 }
 
 export interface TagListResp {

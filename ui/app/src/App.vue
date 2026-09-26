@@ -7,7 +7,7 @@
             <span class="brand-mark">
               <el-icon :size="16"><Collection /></el-icon>
             </span>
-            <span class="brand-name">agent-memory</span>
+            <span class="brand-name">Agent Memory</span>
           </div>
 
           <!-- 顶部导航：面板常驻挂载，切换不销毁；切回时经 refresh 拉最新数据 -->

@@ -72,7 +72,7 @@
       :default-sort="{ prop: sort, order: order === 'asc' ? 'ascending' : 'descending' }"
       @sort-change="onSortChange"
     >
-      <el-table-column prop="id" :label="t('memories.colId')" width="80" />
+      <el-table-column prop="id" :label="t('memories.colId')" width="80" sortable="custom" />
       <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="300" show-overflow-tooltip />
       <el-table-column :label="t('memories.colTags')" width="220">
         <template #default="{ row }">
@@ -219,7 +219,7 @@ function onSaved() {
 function onSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
   // 参数名不可叫 order——会遮蔽外部的 order ref，赋值落回参数上（严格模式直接抛 TypeError）
   const { prop, order: nextOrder } = payload
-  if (nextOrder && (prop === 'updated_at' || prop === 'created_at')) {
+  if (nextOrder && (prop === 'updated_at' || prop === 'created_at' || prop === 'id')) {
     sort.value = prop
     order.value = nextOrder === 'ascending' ? 'asc' : 'desc'
   } else {
@@ -250,11 +250,11 @@ defineExpose({ refresh: () => run(reload) })
 </script>
 
 <style scoped>
+/* 搜索框独占一行（flex-basis 100%），标签过滤自然换行到下一行 */
 .search {
-  width: 360px;
-  max-width: 100%;
+  flex: 1 1 100%;
 }
 .tag-filter {
-  width: 160px;
+  width: 240px;
 }
 </style>

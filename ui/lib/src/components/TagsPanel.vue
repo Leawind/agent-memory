@@ -22,7 +22,7 @@
     />
 
     <el-table :data="rows" v-loading="loading">
-      <el-table-column prop="name" :label="t('tags.colName')" min-width="160">
+      <el-table-column prop="name" :label="t('tags.colName')" min-width="160" sortable>
         <template #default="{ row }">
           <el-tag>{{ row.name }}</el-tag>
         </template>
@@ -31,8 +31,23 @@
         <template #default="{ row }">{{ row.description || '—' }}</template>
       </el-table-column>
       <el-table-column prop="memory_count" :label="t('tags.colMemoryCount')" width="100" sortable />
-      <el-table-column :label="t('tags.colLastUsed')" width="170">
+      <el-table-column
+        prop="last_used_at"
+        :label="t('tags.colLastUsed')"
+        width="170"
+        sortable
+        :sort-method="byTimeField('last_used_at')"
+      >
         <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
+      </el-table-column>
+      <el-table-column
+        prop="created_at"
+        :label="t('tags.colCreatedAt')"
+        width="170"
+        sortable
+        :sort-method="byTimeField('created_at')"
+      >
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
       <el-table-column :label="t('memories.colActions')" width="150" fixed="right">
         <template #default="{ row }">
@@ -48,31 +63,16 @@
       :width="compact ? '96%' : '480px'"
     >
       <el-form label-position="top">
+        <!-- 编辑时预填当前名：微小修改直接改，不再要求重输全名；与服务端约定同名提交 = 不改名 -->
         <el-form-item :label="t('tags.nameLabel')">
-          <el-input
-            v-model="form.name"
-            :disabled="!!form.oldName"
-            maxlength="100"
-            show-word-limit
-            :placeholder="t('tags.namePlaceholder')"
-          />
+          <el-input v-model="form.name" maxlength="100" show-word-limit :placeholder="t('tags.namePlaceholder')" />
         </el-form-item>
-        <template v-if="form.oldName">
-          <el-form-item :label="t('tags.renameLabel')">
-            <el-input
-              v-model="form.newName"
-              maxlength="100"
-              show-word-limit
-              :placeholder="t('tags.renamePlaceholder')"
-            />
-          </el-form-item>
-        </template>
         <el-form-item :label="t('tags.descLabel')">
           <el-input
             v-model="form.description"
             type="textarea"
             :rows="3"
-            maxlength="500"
+            maxlength="512"
             show-word-limit
             :placeholder="t('tags.descPlaceholder')"
           />
@@ -144,18 +144,23 @@ const { compact } = useContainerWidth(rootRef)
 
 const saving = ref(false)
 const dialogVisible = ref(false)
-const form = reactive({ oldName: null as string | null, name: '', newName: '', description: '' })
+const form = reactive({ oldName: null as string | null, name: '', description: '' })
 const deleteVisible = ref(false)
 const deleteMode = ref<'detach' | 'purge'>('detach')
 const target = ref<TagView | null>(null)
 
+/** 时间列排序（last_used_at 可为 null，按 0 参与；纯数字比较避免默认字典序） */
+function byTimeField(field: 'last_used_at' | 'created_at') {
+  return (a: TagView, b: TagView) => (a[field] ?? 0) - (b[field] ?? 0)
+}
+
 function openCreate() {
-  Object.assign(form, { oldName: null, name: '', newName: '', description: '' })
+  Object.assign(form, { oldName: null, name: '', description: '' })
   dialogVisible.value = true
 }
 
 function openEdit(row: TagView) {
-  Object.assign(form, { oldName: row.name, name: row.name, newName: '', description: row.description ?? '' })
+  Object.assign(form, { oldName: row.name, name: row.name, description: row.description ?? '' })
   dialogVisible.value = true
 }
 
@@ -163,7 +168,8 @@ async function save() {
   saving.value = true
   try {
     if (form.oldName) {
-      await rename(form.oldName, form.newName, form.description)
+      // 名称与原名相同（或空白）时 api 层不下发 new_name，即只更新描述
+      await rename(form.oldName, form.name, form.description)
       ElMessage.success(t('tags.saved'))
     } else {
       await create(form.name, form.description)
@@ -217,7 +223,7 @@ defineExpose({
 <style scoped>
 .am-tag-filter {
   margin-bottom: 12px;
-  max-width: 360px;
+  width: 100%;
 }
 .delete-body {
   display: flex;

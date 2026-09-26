@@ -58,7 +58,7 @@ import OpsPanel from './OpsPanel.vue'
  */
 withDefaults(defineProps<{ layout?: 'sidebar' | 'tabs'; title?: string }>(), {
   layout: 'sidebar',
-  title: 'agent-memory',
+  title: 'Agent Memory',
 })
 
 type AdminTab = 'memories' | 'tags' | 'ops'

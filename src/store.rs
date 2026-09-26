@@ -982,11 +982,13 @@ fn validate_max_len(s: &str, what: &str, max: usize) -> Result<String, String> {
 fn row_to_tag_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let count: i64 = r.get(2)?;
     let last: Option<i64> = r.get(3)?;
+    let created: i64 = r.get(4)?;
     Ok(json!({
         "name": r.get::<_, String>(0)?,
         "description": r.get::<_, String>(1)?,
         "memory_count": count,
         "last_used_at": last.map(|t| json!(t)).unwrap_or(Value::Null),
+        "created_at": created,
     }))
 }
 

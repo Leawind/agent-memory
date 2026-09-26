@@ -38,12 +38,11 @@ declare const _default: {
         colDescription: string;
         colMemoryCount: string;
         colLastUsed: string;
+        colCreatedAt: string;
         editTitle: string;
         createTitle: string;
         nameLabel: string;
         namePlaceholder: string;
-        renameLabel: string;
-        renamePlaceholder: string;
         descLabel: string;
         descPlaceholder: string;
         deleteTitle: string;
@@ -159,7 +158,6 @@ declare const _default: {
         instructionsPlaceholder: string;
         conventionsLabel: string;
         conventionsPlaceholder: string;
-        restoreDefault: string;
         viewDefault: string;
         empty: string;
         authTitle: string;

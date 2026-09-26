@@ -6,11 +6,13 @@ export declare function useTags(): {
         description: string;
         memory_count: number;
         last_used_at: number | null;
+        created_at: number;
     }[], TagView[] | {
         name: string;
         description: string;
         memory_count: number;
         last_used_at: number | null;
+        created_at: number;
     }[]>;
     loading: import('vue').Ref<boolean, boolean>;
     filter: import('vue').Ref<string, string>;

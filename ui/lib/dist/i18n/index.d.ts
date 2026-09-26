@@ -42,12 +42,11 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             colDescription: string;
             colMemoryCount: string;
             colLastUsed: string;
+            colCreatedAt: string;
             editTitle: string;
             createTitle: string;
             nameLabel: string;
             namePlaceholder: string;
-            renameLabel: string;
-            renamePlaceholder: string;
             descLabel: string;
             descPlaceholder: string;
             deleteTitle: string;
@@ -163,7 +162,6 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             instructionsPlaceholder: string;
             conventionsLabel: string;
             conventionsPlaceholder: string;
-            restoreDefault: string;
             viewDefault: string;
             empty: string;
             authTitle: string;
@@ -212,12 +210,11 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             colDescription: string;
             colMemoryCount: string;
             colLastUsed: string;
+            colCreatedAt: string;
             editTitle: string;
             createTitle: string;
             nameLabel: string;
             namePlaceholder: string;
-            renameLabel: string;
-            renamePlaceholder: string;
             descLabel: string;
             descPlaceholder: string;
             deleteTitle: string;
@@ -333,7 +330,6 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             instructionsPlaceholder: string;
             conventionsLabel: string;
             conventionsPlaceholder: string;
-            restoreDefault: string;
             viewDefault: string;
             empty: string;
             authTitle: string;
@@ -385,12 +381,11 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             colDescription: string;
             colMemoryCount: string;
             colLastUsed: string;
+            colCreatedAt: string;
             editTitle: string;
             createTitle: string;
             nameLabel: string;
             namePlaceholder: string;
-            renameLabel: string;
-            renamePlaceholder: string;
             descLabel: string;
             descPlaceholder: string;
             deleteTitle: string;
@@ -506,7 +501,6 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             instructionsPlaceholder: string;
             conventionsLabel: string;
             conventionsPlaceholder: string;
-            restoreDefault: string;
             viewDefault: string;
             empty: string;
             authTitle: string;
@@ -555,12 +549,11 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             colDescription: string;
             colMemoryCount: string;
             colLastUsed: string;
+            colCreatedAt: string;
             editTitle: string;
             createTitle: string;
             nameLabel: string;
             namePlaceholder: string;
-            renameLabel: string;
-            renamePlaceholder: string;
             descLabel: string;
             descPlaceholder: string;
             deleteTitle: string;
@@ -676,7 +669,6 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             instructionsPlaceholder: string;
             conventionsLabel: string;
             conventionsPlaceholder: string;
-            restoreDefault: string;
             viewDefault: string;
             empty: string;
             authTitle: string;
@@ -687,7 +679,7 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
     };
 }, "zh" | "en", import('@intlify/core-base').RemoveIndexSignature<{
     [x: string]: import('vue-i18n').LocaleMessageValue<import('vue-i18n').VueMessageType>;
-}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.settingsHint" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.restoreDefault" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm", "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.renameLabel" | "tags.renamePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.settingsHint" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.restoreDefault" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm">;
+}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.colCreatedAt" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.settingsHint" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm", "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.colCreatedAt" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.settingsHint" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm">;
 export declare function setMemoryUILocale(locale: MemoryUILocale): void;
 /** 应用 locale 偏好；'auto' 表示跟随浏览器语言 */
 export declare function applyMemoryUILocalePreference(preference: MemoryUILocaleOption): void;

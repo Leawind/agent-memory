@@ -30,7 +30,7 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Unique tag name (trimmed, 1-100 chars, case-sensitive, any language)."},
-                    "description": {"type": "string", "description": "Optional: what this tag groups (max 500 chars)."}
+                    "description": {"type": "string", "description": "Optional: what this tag groups (max 512 chars)."}
                 },
                 "required": ["name"],
                 "additionalProperties": false
@@ -39,7 +39,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "tag_list",
-            "List tags with descriptions and memory counts (name filterable by regex). Start here when exploring the memory store.",
+            "List tags with descriptions, memory counts, creation and last-used timestamps (name filterable by regex). Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
@@ -101,7 +101,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "tag": {"type": "string", "description": "Only memories carrying this exact tag."},
                     "tag_filter": {"type": "string", "description": "Only memories carrying at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-sensitive; Rust regex syntax). Combinable with 'tag' (both must hold)."},
-                    "sort": {"type": "string", "enum": ["updated_at", "created_at"], "description": "Default: updated_at."},
+                    "sort": {"type": "string", "enum": ["updated_at", "created_at", "id"], "description": "Default: updated_at."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
                     "offset": {"type": "integer", "minimum": 0},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Default 20."}

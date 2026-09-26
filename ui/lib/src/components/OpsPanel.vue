@@ -30,12 +30,15 @@
 
     <el-card shadow="never">
       <template #header>{{ t('ops.dbCard') }}</template>
+      <!-- 版本与数据库版本同行；文件路径较长独占一行 -->
       <el-descriptions :column="compact ? 1 : 2" border>
-        <el-descriptions-item :label="t('ops.path')">{{ stats.path ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ops.version')">{{ stats.version ?? version }}</el-descriptions-item>
         <el-descriptions-item :label="t('ops.schemaVersion')">
           {{ stats.schema_version ?? '—' }}
         </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.version')">{{ stats.version ?? version }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ops.path')" :span="compact ? 1 : 2">
+          {{ stats.path ?? '—' }}
+        </el-descriptions-item>
       </el-descriptions>
       <div class="actions">
         <el-button :icon="Download" :loading="exporting" @click="run(exportData)">{{ t('ops.export') }}</el-button>

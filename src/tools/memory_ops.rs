@@ -36,10 +36,10 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let sort_opt = opt_str(args, "sort")?;
     let sort = match sort_opt.as_deref() {
         None => "updated_at",
-        Some(s @ ("updated_at" | "created_at")) => s,
+        Some(s @ ("updated_at" | "created_at" | "id")) => s,
         Some(o) => {
             return Err(ToolError::invalid(format!(
-                "sort must be 'updated_at' or 'created_at', got '{o}'"
+                "sort must be 'updated_at', 'created_at' or 'id', got '{o}'"
             )))
         }
     };

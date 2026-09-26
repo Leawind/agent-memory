@@ -5,7 +5,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { setMemoryUILocale } from '@agent-memory/ui'
 import AccessPanel from './AccessPanel.vue'
-import type { WhoAmI } from '../auth'
+import type { WhoAmI } from './auth'
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) }
@@ -74,8 +74,9 @@ describe('AccessPanel', () => {
     expect(textareas.length).toBe(2)
     expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
     expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
-    // 两个提示词字段各带一个"恢复默认"
-    expect(html.split('恢复默认').length - 1).toBe(2)
+    // 留空即默认：不再有"恢复默认"按钮，改为信息提示说明留空行为
+    expect(html).not.toContain('恢复默认')
+    expect(html).toContain('留空即使用默认')
     expect(html).toContain('新建身份')
     wrapper.unmount()
   })

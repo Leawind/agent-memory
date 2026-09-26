@@ -23,7 +23,7 @@ export function useMemories() {
 
   const query = ref('')
   const tagFilter = ref('')
-  const sort = ref<'updated_at' | 'created_at'>('updated_at')
+  const sort = ref<'updated_at' | 'created_at' | 'id'>('updated_at')
   const order = ref<'asc' | 'desc'>('desc')
   const page = ref(1)
   const pageSize = ref(defaultPageSize)

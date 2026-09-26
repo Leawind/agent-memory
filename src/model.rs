@@ -9,9 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// API 层限制：摘要最大字符数。
 pub const MAX_SUMMARY_CHARS: usize = 512;
 /// API 层限制：正文最大字符数。
-pub const MAX_CONTENT_CHARS: usize = 200_000;
+pub const MAX_CONTENT_CHARS: usize = 262_144;
 /// API 层限制：标签描述最大字符数。
-pub const MAX_TAG_DESC_CHARS: usize = 500;
+pub const MAX_TAG_DESC_CHARS: usize = 512;
 /// API 层限制：标签名最大字符数。
 pub const MAX_TAG_NAME_CHARS: usize = 100;
 /// API 层限制：身份名最大字符数。

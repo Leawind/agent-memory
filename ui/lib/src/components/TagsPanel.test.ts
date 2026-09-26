@@ -16,8 +16,8 @@ describe('TagsPanel', () => {
           jsonResponse({
             total_tags: 2,
             tags: [
-              { name: 'rust', description: '语言', memory_count: 3, last_used_at: 100 },
-              { name: 'infra', description: '', memory_count: 0, last_used_at: null },
+              { name: 'rust', description: '语言', memory_count: 3, last_used_at: 100, created_at: 50 },
+              { name: 'infra', description: '', memory_count: 0, last_used_at: null, created_at: 60 },
             ],
           }),
         ),
