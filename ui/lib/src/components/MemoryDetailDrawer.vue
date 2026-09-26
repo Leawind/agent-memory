@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { getMemory } from '../api/memories'
 import { t } from '../i18n'
@@ -56,7 +56,7 @@ watch(
     try {
       detail.value = await getMemory(client, props.memoryId)
     } catch (e: unknown) {
-      ElMessage.error(e instanceof Error ? e.message : String(e))
+      toastError(e instanceof Error ? e.message : String(e))
       emit('update:visible', false)
     }
   },

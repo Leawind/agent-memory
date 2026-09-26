@@ -36,7 +36,7 @@ describe('locale switching', () => {
 
   it('t() interpolates named params', () => {
     expect(t('memories.deleteConfirm', { id: 'm7' })).toBe('确定永久删除记忆 m7？')
-    expect(t('ops.doctorFail', { count: 3 })).toBe('发现 3 个问题')
+    expect(t('access.doctorFail', { count: 3 })).toBe('发现 3 个问题')
   })
 
   it('the shared composer exposes t for use outside component setup', () => {

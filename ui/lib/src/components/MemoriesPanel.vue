@@ -139,7 +139,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { toastError, toastSuccess } from '../toast'
 import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
@@ -201,7 +202,7 @@ const detailId = ref<string | null>(null)
 
 // 动作统一包装：失败 toast（错误语义在数据层，展示在这里）
 function run(action: () => Promise<unknown>) {
-  return action().catch((e: unknown) => ElMessage.error(e instanceof Error ? e.message : String(e)))
+  return action().catch((e: unknown) => toastError(e instanceof Error ? e.message : String(e)))
 }
 
 function openCreate() {
@@ -248,9 +249,9 @@ async function remove(row: MemorySummary) {
   }
   try {
     await removeMemory(row.id)
-    ElMessage.success(t('memories.deleted'))
+    toastSuccess(t('memories.deleted'))
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : String(e))
+    toastError(e instanceof Error ? e.message : String(e))
   }
 }
 

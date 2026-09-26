@@ -1,4 +1,4 @@
-// OpsPanel 挂载冒烟测试：统计卡片与体检区渲染
+// OpsPanel 挂载冒烟测试：统计卡片与数据库概况（只读；体检/备份在 AdminPanel）
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import OpsPanel from './OpsPanel.vue'
@@ -39,8 +39,9 @@ describe('OpsPanel', () => {
     const html = wrapper.html()
     expect(html).toContain('/tmp/memory.db')
     expect(html).toContain('数据库版本')
-    expect(html).toContain('导出备份')
-    expect(html).toContain('数据体检')
+    // 体检与备份属 admin 功能，已移入 AdminPanel
+    expect(html).not.toContain('数据体检')
+    expect(html).not.toContain('导出备份')
     // next_id / 最近更新不再展示
     expect(html).not.toContain('下一个记忆 ID')
     expect(html).not.toContain('最近更新')

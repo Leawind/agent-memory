@@ -58,7 +58,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, getMemory, updateMemory } from '../api/memories'
 import type { MemoryDraft } from '../composables/useMemories'
@@ -100,7 +100,7 @@ watch(
         form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
         originalTags = [...full.tags]
       } catch (e: unknown) {
-        ElMessage.error(e instanceof Error ? e.message : String(e))
+        toastError(e instanceof Error ? e.message : String(e))
         emit('update:visible', false)
       }
     } else {
@@ -123,19 +123,19 @@ async function save() {
         add_tags: [...after].filter((t) => !before.has(t)),
         remove_tags: [...before].filter((t) => !after.has(t)),
       })
-      ElMessage.success(t('editor.updated'))
+      toastSuccess(t('editor.updated'))
     } else {
       await createMemory(client, {
         summary: form.value.summary,
         content: form.value.content,
         tags: form.value.tags,
       })
-      ElMessage.success(t('editor.created'))
+      toastSuccess(t('editor.created'))
     }
     emit('update:visible', false)
     emit('saved')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : String(e))
+    toastError(e instanceof Error ? e.message : String(e))
   } finally {
     saving.value = false
   }

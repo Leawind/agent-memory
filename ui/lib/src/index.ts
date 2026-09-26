@@ -15,6 +15,7 @@ export { default as MemoryAdmin } from './components/MemoryAdmin.vue'
 export { default as MemoriesPanel } from './components/MemoriesPanel.vue'
 export { default as TagsPanel } from './components/TagsPanel.vue'
 export { default as OpsPanel } from './components/OpsPanel.vue'
+export { default as AdminPanel } from './components/AdminPanel.vue'
 export { default as MemoryEditorDialog } from './components/MemoryEditorDialog.vue'
 export { default as MemoryDetailDrawer } from './components/MemoryDetailDrawer.vue'
 export { default as MarkdownView } from './components/MarkdownView.vue'
@@ -28,6 +29,8 @@ export { buildMemoriesQuery, isSearchMode } from './query'
 export { useMemories } from './composables/useMemories'
 export { useTags } from './composables/useTags'
 export { useOps } from './composables/useOps'
+export { useAdmin } from './composables/useAdmin'
+export { toastSuccess, toastError } from './toast'
 
 // 服务端类型
 export type {
@@ -42,6 +45,7 @@ export type {
   StatsInfo,
   TagListResp,
   TagView,
+  WhoAmI,
 } from './types'
 
 // 让 vite lib 构建抽取本库样式

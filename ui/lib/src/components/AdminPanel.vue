@@ -1,28 +1,24 @@
 <template>
-  <div class="access-panel">
-    <div class="panel-head">
-      <div>
-        <h2 class="panel-title">{{ t('access.title') }}</h2>
-        <p class="panel-subtitle">{{ t('access.subtitle') }}</p>
+  <div ref="rootRef" class="am-panel admin-panel">
+    <div v-if="showHeader" class="am-panel-header">
+      <div class="am-heading">
+        <h2 class="am-panel-title">{{ props.title ?? t('access.title') }}</h2>
+        <el-tooltip :content="props.subtitle ?? t('access.subtitle')" placement="top">
+          <el-icon class="am-info"><InfoFilled /></el-icon>
+        </el-tooltip>
       </div>
-      <el-button v-if="isAdmin" type="primary" @click="openCreate">
+      <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">
         {{ t('access.create') }}
       </el-button>
     </div>
 
-    <el-alert v-if="!who" type="info" :title="t('access.needAdmin')" :closable="false" class="block" />
-    <el-alert
-      v-else-if="who.mode === 'open'"
-      type="warning"
-      :title="t('access.openMode')"
-      :closable="false"
-      class="block"
-    />
-    <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" class="block" />
+    <el-alert v-if="!who" type="info" :title="t('access.needAdmin')" :closable="false" />
+    <el-alert v-else-if="who.mode === 'open'" type="warning" :title="t('access.openMode')" :closable="false" />
+    <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
     <template v-if="who && isAdmin">
       <!-- 鉴权开关：鉴权边界由显式开关决定，与是否已创建身份无关 -->
-      <el-card shadow="never" class="block">
+      <el-card shadow="never">
         <div class="auth-row">
           <div class="auth-text">
             <span class="auth-label">{{ t('access.authTitle') }}</span>
@@ -32,11 +28,11 @@
         </div>
       </el-card>
 
-      <el-card shadow="never" class="block">
+      <el-card shadow="never">
         <el-empty v-if="identities.length === 0" :description="t('access.empty')" />
         <el-table v-else :data="identities">
           <el-table-column prop="name" :label="t('access.colName')" min-width="120" />
-          <el-table-column :label="t('access.colToken')" min-width="220">
+          <el-table-column :label="t('access.colToken')" min-width="200">
             <template #default="{ row }">
               <div class="token-cell">
                 <code class="token-text">{{ maskToken(row.token_hint) }}</code>
@@ -46,7 +42,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('access.colPermissions')" min-width="260">
+          <el-table-column :label="t('access.colPermissions')" min-width="240">
             <template #default="{ row }">
               <el-tag
                 v-for="c in enabledCaps(row)"
@@ -60,7 +56,7 @@
               <span v-if="enabledCaps(row).length === 0" class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('access.colCreatedAt')" width="170">
+          <el-table-column v-if="!compact" :label="t('access.colCreatedAt')" width="170">
             <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column :label="t('access.colActions')" width="140" fixed="right">
@@ -76,7 +72,7 @@
         </el-table>
       </el-card>
 
-      <el-card shadow="never" class="block">
+      <el-card shadow="never">
         <template #header>{{ t('access.settingsTitle') }}</template>
         <!-- 留空即默认：行为说明放在各自字段的提示行里，紧邻输入框 -->
         <el-form label-position="top" @submit.prevent>
@@ -109,13 +105,61 @@
           </el-button>
         </div>
       </el-card>
+
+      <!-- 备份导入导出：admin 专属端点（/api/export 由 http 层拦截为附件下载） -->
+      <el-card shadow="never">
+        <template #header>{{ t('access.backupCard') }}</template>
+        <div class="actions">
+          <el-button :icon="Download" :loading="exporting" @click="run(exportData)">
+            {{ t('access.export') }}
+          </el-button>
+          <el-button :icon="UploadFilled" :loading="importing" @click="importInput?.click()">
+            {{ t('access.import') }}
+          </el-button>
+          <el-tooltip :content="t('access.importHint')" placement="top">
+            <el-icon class="am-info"><InfoFilled /></el-icon>
+          </el-tooltip>
+          <input
+            ref="importInput"
+            type="file"
+            accept="application/json,.json"
+            style="display: none"
+            @change="onImportFile"
+          />
+        </div>
+      </el-card>
+
+      <el-card shadow="never">
+        <template #header>
+          <div class="card-header">
+            <span>{{ t('access.doctorCard') }}</span>
+            <el-button size="small" :icon="Search" :loading="doctorLoading" @click="run(runDoctor)">
+              {{ t('access.runDoctor') }}
+            </el-button>
+          </div>
+        </template>
+        <template v-if="doctorRan">
+          <el-alert v-if="doctor.ok" :title="t('access.doctorOk')" type="success" show-icon :closable="false" />
+          <el-alert
+            v-else
+            :title="t('access.doctorFail', { count: doctor.issues.length })"
+            type="error"
+            show-icon
+            :closable="false"
+          />
+          <ul v-if="!doctor.ok" class="issues">
+            <li v-for="(issue, i) in doctor.issues" :key="i">{{ issue }}</li>
+          </ul>
+        </template>
+        <el-empty v-else :description="t('access.doctorEmpty')" :image-size="60" />
+      </el-card>
     </template>
 
     <!-- 新建 / 编辑能力 -->
     <el-dialog
       v-model="dialogVisible"
       :title="editing ? t('access.editTitle', { name: editing.name }) : t('access.createTitle')"
-      width="480px"
+      :width="compact ? '96%' : '480px'"
     >
       <el-form label-position="top" @submit.prevent>
         <el-form-item v-if="!editing" :label="t('access.nameLabel')">
@@ -147,7 +191,7 @@
     </el-dialog>
 
     <!-- 新建 / 重置成功：token 明文仅此一次展示 -->
-    <el-dialog v-model="tokenShown" :title="tokenShownTitle" width="560px">
+    <el-dialog v-model="tokenShown" :title="tokenShownTitle" :width="compact ? '96%' : '560px'">
       <p>{{ t('access.created') }}</p>
       <code class="new-token">{{ createdToken }}</code>
       <template #footer>
@@ -169,11 +213,29 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { formatTime, t, useApiClient } from '@agent-memory/ui'
-import { can, type WhoAmI } from './auth'
+import { ElMessageBox } from 'element-plus'
+import { Download, InfoFilled, Plus, Search, UploadFilled } from '@element-plus/icons-vue'
+import { formatTime } from '../format'
+import { t } from '../i18n'
+import { useApiClient } from '../api/client'
+import { useAdmin } from '../composables/useAdmin'
+import { useContainerWidth } from '../composables/useContainerWidth'
+import { toastError, toastSuccess } from '../toast'
+import type { WhoAmI } from '../types'
 
-const props = defineProps<{ who: WhoAmI | null }>()
+const props = withDefaults(
+  defineProps<{
+    /** 调用者身份摘要：决定面板是否可用（admin 能力）与开放模式提示；嵌入宿主未接入时传 null */
+    who?: WhoAmI | null
+    /** 隐藏标题/副标题区（嵌入宿主已有页面标题时只要内容卡） */
+    showHeader?: boolean
+    /** 覆盖默认标题 */
+    title?: string
+    /** 覆盖默认副标题 */
+    subtitle?: string
+  }>(),
+  { who: null, showHeader: true },
+)
 
 const api = useApiClient()
 
@@ -202,15 +264,23 @@ const savingSettings = ref(false)
 const authRequired = ref(false)
 const togglingAuth = ref(false)
 
-const isAdmin = computed(() => can(props.who, 'admin'))
+const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
+
+const { doctor, doctorRan, doctorLoading, exporting, importing, runDoctor, exportData, importFile } = useAdmin()
+
+const rootRef = ref<HTMLElement | null>(null)
+// compact（<960px）时创建时间列收起、对话框加宽到 96%
+const { compact } = useContainerWidth(rootRef)
+
+const importInput = ref<HTMLInputElement | null>(null)
 
 async function run<T>(action: () => Promise<T>, successMsg?: string): Promise<T | undefined> {
   try {
     const out = await action()
-    if (successMsg) ElMessage.success(successMsg)
+    if (successMsg) toastSuccess(successMsg)
     return out
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : String(e))
+    toastError(e instanceof Error ? e.message : String(e))
     return undefined
   }
 }
@@ -307,7 +377,7 @@ async function submit(): Promise<void> {
           permissions: { ...form.caps },
         }),
       )
-      ElMessage.success(t('access.saved'))
+      toastSuccess(t('access.saved'))
     } else {
       const created = await run(() =>
         api.post<IdentityRow & { token?: string }>('/api/identities', {
@@ -337,8 +407,9 @@ async function askDelete(row: IdentityRow): Promise<void> {
   } catch {
     return
   }
-  await run(() => api.del(`/api/identities/${encodeURIComponent(row.name)}`))
-  ElMessage.success(t('access.deleted'))
+  const ok = await run(() => api.del(`/api/identities/${encodeURIComponent(row.name)}`))
+  if (ok === undefined) return
+  toastSuccess(t('access.deleted'))
   await load()
 }
 
@@ -377,10 +448,25 @@ async function saveSettings(): Promise<void> {
         conventions: conventions.value,
       }),
     )
-    ElMessage.success(t('access.saved'))
+    toastSuccess(t('access.saved'))
   } finally {
     savingSettings.value = false
   }
+}
+
+// ---- 备份 ----
+function onImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  importFile(file)
+    .then((imported) => {
+      toastSuccess(t('access.imported', { memories: imported.imported_memories, tags: imported.imported_tags }))
+    })
+    .catch((err: unknown) => {
+      toastError(err instanceof Error ? err.message : String(err))
+    })
 }
 
 // ---- 展示辅助 ----
@@ -412,6 +498,7 @@ async function askResetToken(row: IdentityRow): Promise<void> {
   const reset = await run(() =>
     api.post<{ token?: string }>(`/api/identities/${encodeURIComponent(row.name)}/token-reset`, {}),
   )
+  if (reset === undefined) return
   if (reset?.token) showTokenOnce(t('access.resetTitle'), reset.token)
   await load()
 }
@@ -428,37 +515,23 @@ function capLabel(key: string): string {
 async function copyToken(token: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(token)
-    ElMessage.success(t('access.copied'))
+    toastSuccess(t('access.copied'))
   } catch {
-    ElMessage.error(token)
+    toastError(token)
   }
 }
 </script>
 
 <style scoped>
-.access-panel {
+.admin-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-.panel-head {
+.card-header {
   display: flex;
-  align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
-}
-.panel-title {
-  margin: 0;
-  font-size: 18px;
-  color: var(--el-text-color-primary);
-}
-.panel-subtitle {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-.block {
-  margin: 0;
+  align-items: center;
 }
 .auth-row {
   display: flex;
@@ -527,6 +600,17 @@ async function copyToken(token: string): Promise<void> {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+}
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.issues {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  line-height: 1.9;
 }
 .presets {
   display: flex;

@@ -1,4 +1,4 @@
-// App 壳挂载冒烟测试：顶栏导航渲染 + 主题应用
+// App 壳挂载冒烟测试：顶栏导航渲染、主题应用、身份下拉与管理标签页权限
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
@@ -20,11 +20,17 @@ function jsonWithJson(body: unknown) {
 }
 
 const adminCaps = { read: true, create: true, update: true, delete: true, tag_manage: true, admin: true }
+const viewerCaps = { read: true, create: false, update: false, delete: false, tag_manage: false, admin: false }
+
+/** 断言 nav 按钮的标签集合 */
+function navLabels(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('nav button').map((b) => b.text())
+}
 
 describe('App shell', () => {
   beforeEach(() => {
     setMemoryUILocale('zh')
-    localStorage.removeItem('agent-memory-theme')
+    localStorage.clear()
     // 模拟持久化的中文语言偏好（happy-dom 的 navigator.language 是 en-US）
     localStorage.setItem('agent-memory-locale', 'zh')
     document.documentElement.classList.remove('dark')
@@ -92,6 +98,93 @@ describe('App shell', () => {
     await flushPromises()
     await flushPromises()
     expect(wrapper.html()).toContain('访问令牌')
+    wrapper.unmount()
+  })
+
+  it('shows the admin tab with its management panel only for admin identities', async () => {
+    const adminWho = { name: 'admin', mode: 'token' as const, permissions: adminCaps }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) => {
+        const u = String(url)
+        if (u.includes('/api/whoami')) return Promise.resolve(jsonWithJson(adminWho))
+        if (u.includes('/api/identities')) {
+          return Promise.resolve(
+            jsonResponse({
+              identities: [{ name: 'admin', token_hint: 'aaaa', permissions: adminCaps, created_at: 1 }],
+            }),
+          )
+        }
+        if (u.includes('/api/settings')) {
+          return Promise.resolve(jsonResponse({ instructions: null, conventions: null, auth_required: false }))
+        }
+        if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ total_tags: 0, tags: [] }))
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+    // admin 身份：四个标签页齐全，管理面板已挂载（身份表可见）
+    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理', '运维', '管理'])
+    expect(wrapper.html()).toContain('Token 鉴权')
+    wrapper.unmount()
+
+    // 只读身份：管理标签页隐藏，管理面板不挂载（连 DOM 都没有）
+    const viewerWho = { name: 'viewer', mode: 'token' as const, permissions: viewerCaps }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) => {
+        if (String(url).includes('/api/whoami')) return Promise.resolve(jsonWithJson(viewerWho))
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    const viewer = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+    expect(navLabels(viewer)).toEqual(['记忆管理', '标签管理', '运维'])
+    expect(viewer.html()).not.toContain('Token 鉴权')
+    viewer.unmount()
+  })
+
+  it('drops the admin tab when switching to a read-only stored identity', async () => {
+    const identities = [
+      { name: 'admin', token: 'tok-admin', permissions: adminCaps },
+      { name: 'viewer', token: 'tok-viewer', permissions: viewerCaps },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        const auth = String(new Headers(init?.headers).get('Authorization') ?? '')
+        if (u.includes('/api/whoami')) {
+          const name = auth.includes('tok-admin') ? 'admin' : auth.includes('tok-viewer') ? 'viewer' : ''
+          if (!name) return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve('') })
+          const identity = identities.find((i) => i.name === name)!
+          return Promise.resolve(jsonWithJson({ name, mode: 'token', permissions: identity.permissions }))
+        }
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    localStorage.setItem('agent-memory-identities', JSON.stringify({ admin: 'tok-admin', viewer: 'tok-viewer' }))
+    localStorage.setItem('agent-memory-identity', 'admin')
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+    expect(navLabels(wrapper)).toContain('管理')
+
+    // 打开身份下拉，切到 viewer：管理标签页随之消失（下拉菜单 teleport 到 body）
+    await wrapper.find('.identity-btn').trigger('click')
+    await flushPromises()
+    const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
+      el.textContent?.includes('viewer'),
+    )
+    expect(viewerItem).toBeTruthy()
+    viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理', '运维'])
+    expect(wrapper.find('.identity-btn').text()).toContain('viewer')
     wrapper.unmount()
   })
 

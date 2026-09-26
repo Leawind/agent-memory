@@ -60,15 +60,18 @@ migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生�
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
 ui/              前端分两个 workspace 包（详见 ui/README.md）：
   ui/lib         @agent-memory/ui —— 可嵌入 Vue3 组件库（Element Plus 作 peerDependency，lib mode 构建）
-                 核心是三个自包含可复用面板 MemoriesPanel/TagsPanel/OpsPanel（show-header/title/subtitle
-                 props 裁剪），另附便捷壳 MemoryAdmin（sidebar/tabs）与弹层组件；多语言内置 vue-i18n
-                 （zh/en，独立作用域实例，auto 跟随浏览器，setMemoryUILocale 运行时切换）；
-                 配置经 provideMemoryUI 注入（baseUrl/自定义 fetch/默认分页/locale）；数据操作在
-                 composables，面板层只渲染与 toast；样式全部引用 --el-* 变量跟随宿主主题
+                 核心是四个自包含可复用面板 MemoriesPanel/TagsPanel/OpsPanel（只读概况）/
+                 AdminPanel（admin 专属：身份、鉴权开关、自定义提示词、备份、体检；who prop 门控）
+                 （show-header/title/subtitle props 裁剪），另附便捷壳 MemoryAdmin（sidebar/tabs）
+                 与弹层组件；多语言内置 vue-i18n（zh/en，独立作用域实例，auto 跟随浏览器，
+                 setMemoryUILocale 运行时切换）；配置经 provideMemoryUI 注入（baseUrl/自定义
+                 fetch/默认分页/locale）；数据操作在 composables，面板层只渲染与 toast
+                 （toast.ts 统一出口：可点击关闭、起始位置让开顶栏）；样式全部引用 --el-* 变量跟随宿主主题
   ui/app         @agent-memory/app —— 独立站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言切换），
-                 直接组装三个面板 + AccessPanel（身份管理/自定义提示词，app 层自有组件），
-                 产物输出 ui/dist；token 存 localStorage，authFetch（src/auth.ts）为 lib 注入带
-                 Authorization 的 fetch，401 时广播事件弹出令牌输入框
+                 直接组装四个面板（「管理」标签页按 admin 能力显示，非 admin 身份不产生管理请求），
+                 产物输出 ui/dist；一个浏览器可存多个身份 token（auth.ts 的 localStorage 身份表，
+                 右上角下拉切换/删除/添加），authFetch 为 lib 注入带 Authorization 的 fetch，
+                 401 时移除失效身份并广播事件弹出令牌输入框
                  记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 
@@ -114,7 +117,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
     丢失即重置），token 生成只用 SQLite `randomblob`，不引随机数依赖。
     enforcement 条件 = settings 的 `auth_required` 开关（显式、持久化——鉴权边界
     由操作者决定，与是否已创建身份无关；`--auth` 把开关写为开启并在空表时
-    引导创建首个管理员；UI 在「身份与访问」页可切换）。能力登记表唯一权威在 `auth.rs::Cap`，
+    引导创建首个管理员；UI 在「管理」页可切换）。能力登记表唯一权威在 `auth.rs::Cap`，
     permissions JSON 必须全键、未知键拒绝；工具能力要求登记在 `defs.rs::required_cap`，
     执行点在 `tools::execute` 入口集中把守，处理器内不得重复校验。鉴权解析在 HTTP 层
     一次完成（fail-closed：查库失败按 401 拒绝），ctx（`IdentityCtx`）自上而下贯穿

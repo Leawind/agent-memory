@@ -63,3 +63,9 @@ export interface ImportResp {
     imported_memories: number;
     imported_tags: number;
 }
+/** /api/whoami 返回的调用者身份摘要（mode=open 时 permissions 为全能力） */
+export interface WhoAmI {
+    name: string;
+    mode: 'open' | 'token';
+    permissions: Record<string, boolean>;
+}

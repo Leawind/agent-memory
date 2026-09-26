@@ -9,7 +9,7 @@ export interface MemoryDraft {
 export declare function useMemories(): {
     query: import('vue').Ref<string, string>;
     tagFilter: import('vue').Ref<string, string>;
-    sort: import('vue').Ref<"updated_at" | "created_at" | "id", "updated_at" | "created_at" | "id">;
+    sort: import('vue').Ref<"id" | "updated_at" | "created_at", "id" | "updated_at" | "created_at">;
     order: import('vue').Ref<"asc" | "desc", "asc" | "desc">;
     page: import('vue').Ref<number, number>;
     pageSize: import('vue').Ref<number, number>;

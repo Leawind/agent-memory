@@ -10,7 +10,8 @@
             <span class="brand-name">Agent Memory</span>
           </div>
 
-          <!-- 顶部导航：面板常驻挂载，切换不销毁；切回时经 refresh 拉最新数据 -->
+          <!-- 顶部导航：面板常驻挂载，切换不销毁；切回时经 refresh 拉最新数据。
+               管理标签页仅对具备 admin 能力的身份显示 -->
           <nav class="nav">
             <button
               v-for="item in navItems"
@@ -63,14 +64,39 @@
               </template>
             </el-dropdown>
 
-            <!-- 身份：开放模式不显示；token 模式显示身份名 + 退出 -->
-            <el-tooltip v-if="who && who.mode === 'token'" :content="identityTooltip" placement="bottom">
-              <button type="button" class="identity-btn" @click="logout">
+            <!-- 身份：开放模式不显示；token 模式下拉管理本浏览器保存的多个身份 -->
+            <el-dropdown v-if="who && who.mode === 'token'" trigger="click" @command="onIdentityCommand">
+              <button type="button" class="identity-btn" :aria-label="t('shell.identity')">
                 <el-icon :size="13"><User /></el-icon>
                 <span>{{ who.name }}</span>
-                <el-icon :size="13" class="logout-icon"><SwitchButton /></el-icon>
+                <el-icon :size="12"><ArrowDown /></el-icon>
               </button>
-            </el-tooltip>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="name in identityNames"
+                    :key="name"
+                    :command="{ type: 'switch', name }"
+                    :data-checked="name === who?.name"
+                  >
+                    <span class="id-option">{{ name }}</span>
+                    <el-icon v-if="name === who?.name" class="id-check"><Check /></el-icon>
+                    <el-icon
+                      v-else
+                      class="id-remove"
+                      :title="t('shell.removeIdentity')"
+                      @click.stop="removeIdentityClick(name)"
+                    >
+                      <Close />
+                    </el-icon>
+                  </el-dropdown-item>
+                  <el-dropdown-item divided command="add">
+                    <el-icon :size="13"><Plus /></el-icon>
+                    <span>{{ t('shell.addIdentity') }}</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
       </header>
@@ -81,13 +107,21 @@
           <MemoriesPanel ref="memoriesPanel" v-show="active === 'memories'" />
           <TagsPanel ref="tagsPanel" v-show="active === 'tags'" />
           <OpsPanel ref="opsPanel" v-show="active === 'ops'" />
-          <AccessPanel ref="accessPanel" v-show="active === 'access'" :who="who" />
+          <!-- 管理面板：只对 admin 身份挂载（v-if），非 admin 身份不产生任何管理请求 -->
+          <AdminPanel v-if="isAdmin" ref="adminPanel" v-show="active === 'admin'" :who="who" />
         </div>
       </main>
 
-      <!-- 令牌输入：401 时弹出；保存后自动重试 whoami -->
-      <el-dialog v-model="tokenDialog" :title="t('shell.tokenPromptTitle')" width="440px" :close-on-click-modal="false">
-        <p class="token-desc">{{ t('shell.tokenPromptDesc') }}</p>
+      <!-- 令牌输入：401 或「添加身份」时弹出；保存前先验证再入库 -->
+      <el-dialog
+        v-model="tokenDialog"
+        :title="tokenDialogMode === 'add' ? t('shell.addIdentity') : t('shell.tokenPromptTitle')"
+        width="440px"
+        :close-on-click-modal="false"
+      >
+        <p class="token-desc">
+          {{ tokenDialogMode === 'add' ? t('shell.addIdentityDesc') : t('shell.tokenPromptDesc') }}
+        </p>
         <el-input
           v-model="tokenInput"
           :placeholder="t('shell.tokenPlaceholder')"
@@ -111,28 +145,60 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowDown,
   Check,
+  Close,
   Collection,
   Key,
   Monitor,
   Moon,
   Notebook,
   Odometer,
+  Plus,
   PriceTag,
   Sunny,
-  SwitchButton,
   User,
 } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
-import { MemoriesPanel, OpsPanel, TagsPanel, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
-import { UNAUTHORIZED_EVENT, authFetch, clearToken, fetchWhoAmI, storeToken, type WhoAmI } from './auth'
-import AccessPanel from './AccessPanel.vue'
+import { AdminPanel, MemoriesPanel, OpsPanel, TagsPanel, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
+import {
+  UNAUTHORIZED_EVENT,
+  addIdentity,
+  authFetch,
+  can,
+  currentIdentityName,
+  fetchWhoAmI,
+  listIdentityNames,
+  removeIdentity,
+  switchIdentity,
+  type WhoAmI,
+} from './auth'
 
 // 同源部署：API 经带鉴权头的 fetch（token 缺省时与原生 fetch 等价）
 provideMemoryUI({ fetch: authFetch })
 
-type AdminTab = 'memories' | 'tags' | 'ops' | 'access'
+type AdminTab = 'memories' | 'tags' | 'ops' | 'admin'
 const active = ref<AdminTab>('memories')
+
+// ---- 身份与令牌：本浏览器可保存多个身份，右上角下拉切换/删除/添加 ----
+const who = ref<WhoAmI | null>(null)
+const identityNames = ref<string[]>([])
+
+const isAdmin = computed(() => can(who.value, 'admin'))
+
+// 管理标签页仅 admin 可见；当前页失去可见性时（如切到低权限身份）退回记忆管理
+const navItems = computed(() => {
+  const items: { key: AdminTab; label: string; icon: typeof Notebook }[] = [
+    { key: 'memories', label: t('nav.memories'), icon: Notebook },
+    { key: 'tags', label: t('nav.tags'), icon: PriceTag },
+    { key: 'ops', label: t('nav.ops'), icon: Odometer },
+  ]
+  if (isAdmin.value) items.push({ key: 'admin', label: t('nav.admin'), icon: Key })
+  return items
+})
+
+watch(navItems, (items) => {
+  if (!items.some((item) => item.key === active.value)) active.value = 'memories'
+})
 
 // 面板常驻挂载（v-show）不会重新挂载，切回时数据可能陈旧：切换时刷新目标面板
 interface RefreshablePanel {
@@ -141,47 +207,52 @@ interface RefreshablePanel {
 const memoriesPanel = ref<RefreshablePanel | null>(null)
 const tagsPanel = ref<RefreshablePanel | null>(null)
 const opsPanel = ref<RefreshablePanel | null>(null)
-const accessPanel = ref<RefreshablePanel | null>(null)
+const adminPanel = ref<RefreshablePanel | null>(null)
 
-watch(active, (key) => {
+function refreshActivePanel(): void {
   const panel = {
     memories: memoriesPanel.value,
     tags: tagsPanel.value,
     ops: opsPanel.value,
-    access: accessPanel.value,
-  }[key]
+    admin: adminPanel.value,
+  }[active.value]
   panel?.refresh()
-})
+}
 
-const navItems = computed(() => [
-  { key: 'memories' as const, label: t('nav.memories'), icon: Notebook },
-  { key: 'tags' as const, label: t('nav.tags'), icon: PriceTag },
-  { key: 'ops' as const, label: t('nav.ops'), icon: Odometer },
-  { key: 'access' as const, label: t('nav.access'), icon: Key },
-])
+watch(active, () => refreshActivePanel())
 
-// ---- 身份与令牌：一次输入存 localStorage，之后自动携带 ----
-const who = ref<WhoAmI | null>(null)
+// ---- 身份下拉与令牌弹窗状态 ----
+function refreshIdentities(): void {
+  identityNames.value = listIdentityNames()
+}
+
 const tokenDialog = ref(false)
+const tokenDialogMode = ref<'required' | 'add'>('required')
 const tokenInput = ref('')
 const tokenError = ref(false)
 const checkingToken = ref(false)
-
-const identityTooltip = computed(() =>
-  who.value
-    ? Object.keys(who.value.permissions ?? {})
-        .filter((k) => who.value!.permissions[k])
-        .join(', ')
-    : '',
-)
 
 async function resolveIdentity(): Promise<void> {
   const r = await fetchWhoAmI()
   if (r.ok) {
     who.value = r.who
   } else if (r.needToken) {
+    // 当前 token 已失效：移除这个失效身份（若有效 token 在请求中，服务端不会 401）
+    const name = currentIdentityName()
+    if (name) removeIdentity(name)
+    refreshIdentities()
+    who.value = null
+    tokenDialogMode.value = 'required'
     tokenDialog.value = true
   }
+}
+
+async function switchTo(name: string): Promise<void> {
+  switchIdentity(name)
+  refreshIdentities()
+  who.value = null
+  await resolveIdentity()
+  refreshActivePanel()
 }
 
 async function saveToken(): Promise<void> {
@@ -189,30 +260,57 @@ async function saveToken(): Promise<void> {
   if (!token) return
   checkingToken.value = true
   tokenError.value = false
-  storeToken(token)
-  const r = await fetchWhoAmI()
+  // 先验证候选 token 再入库，无效时不污染已保存的身份表
+  const r = await fetchWhoAmI(token)
   checkingToken.value = false
   if (r.ok) {
+    addIdentity(r.who.name, token)
+    refreshIdentities()
     who.value = r.who
     tokenDialog.value = false
     tokenInput.value = ''
+    refreshActivePanel()
   } else {
-    clearToken()
     tokenError.value = true
   }
 }
 
-function logout(): void {
-  clearToken()
-  window.location.reload()
+async function onIdentityCommand(command: 'add' | { type: 'switch'; name: string }): Promise<void> {
+  if (command === 'add') {
+    tokenDialogMode.value = 'add'
+    tokenInput.value = ''
+    tokenError.value = false
+    tokenDialog.value = true
+    return
+  }
+  if (command.name !== who.value?.name) {
+    await switchTo(command.name)
+  }
+}
+
+async function removeIdentityClick(name: string): Promise<void> {
+  const wasCurrent = currentIdentityName() === name
+  removeIdentity(name)
+  refreshIdentities()
+  if (!wasCurrent) return
+  // 删除的是当前身份：自动切到剩余的第一个；一个不剩时回到未连接状态
+  who.value = null
+  const next = listIdentityNames()[0]
+  if (next) {
+    await switchTo(next)
+  } else {
+    await resolveIdentity()
+    refreshActivePanel()
+  }
 }
 
 function onUnauthorized(): void {
-  who.value = null
-  tokenDialog.value = true
+  // 401 说明当前 token 已被服务端拒绝（重置/删除）：移除并要求重新输入
+  void resolveIdentity()
 }
 
 onMounted(() => {
+  refreshIdentities()
   void resolveIdentity()
   window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
 })
@@ -456,7 +554,7 @@ body {
   color: var(--el-color-primary);
 }
 
-/* 身份胶囊：名字 + 退出图标（点击退出登录） */
+/* 身份下拉触发器：与语言胶囊同风格 */
 .identity-btn {
   display: flex;
   align-items: center;
@@ -472,11 +570,24 @@ body {
   cursor: pointer;
 }
 .identity-btn:hover {
-  color: var(--el-color-danger);
+  color: var(--el-text-color-primary);
   background: var(--el-fill-color-dark);
 }
-.logout-icon {
+/* 下拉项：身份名 + 当前勾选 / 移除按钮 */
+.id-option {
+  flex: 1;
+  margin-right: 12px;
+}
+.id-check {
+  color: var(--el-color-primary);
+}
+.id-remove {
+  margin-left: 10px;
   color: var(--el-text-color-secondary);
+  cursor: pointer;
+}
+.id-remove:hover {
+  color: var(--el-color-danger);
 }
 
 /* 令牌弹窗文案 */

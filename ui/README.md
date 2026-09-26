@@ -2,12 +2,14 @@
 
 前端拆成两个 npm workspace 包（lockfile 在仓库根目录）：
 
-- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出三个自包含可复用面板
-  `MemoriesPanel` / `TagsPanel` / `OpsPanel`（标题头 + 工具栏 + 表格，支持 `show-header` /
-  `title` / `subtitle` props 裁剪），另附便捷壳 `MemoryAdmin`（sidebar/tabs 双布局）与
+- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出四个自包含可复用面板
+  `MemoriesPanel` / `TagsPanel` / `OpsPanel`（只读概况）/ `AdminPanel`（admin 专属：身份、鉴权
+  开关、自定义提示词、备份、体检，经 `who` prop 门控），均支持 `show-header` /
+  `title` / `subtitle` props 裁剪；另附便捷壳 `MemoryAdmin`（sidebar/tabs 双布局）与
   弹层组件（编辑对话框、详情抽屉、Markdown 视图），供其他 Vue3 系统作为组件集成。
 - **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言
-  切换），直接组装三个面板组件。构建产物输出到 `ui/dist/` 并提交入库，由 Rust 侧 rust-embed
+  切换 + 多身份令牌下拉），直接组装四个面板（「管理」页仅对 admin 能力身份显示）。
+  构建产物输出到 `ui/dist/` 并提交入库，由 Rust 侧 rust-embed
   编译期嵌入二进制。
 
 ## 组件库集成指南
@@ -87,6 +89,7 @@ npm run dev       # 仅 app：热更新，/api 与 /mcp 代理到 127.0.0.1:8899
 - 界面数据全部走 `/api/*`（服务端复用 MCP 工具层的 handler，校验语义一致）
 - **所有 v-html 入口必须消毒**：Markdown 走 `renderMarkdown()`，服务端 HTML 片段（搜索 snippet）走
   `sanitizeHtml()`，统一出口 `ui/lib/src/markdown.ts`，不得绕过
-- 错误提示统一 `ElMessage.error`，删除等破坏性操作必须二次确认；数据操作在 composables，动作失败抛错、面板层统一 toast
+- 错误提示统一经 `toast.ts` 出口（`toastSuccess`/`toastError`：可点击关闭、位置让开顶栏），
+  删除等破坏性操作必须二次确认；数据操作在 composables，动作失败抛错、面板层统一 toast
 - 组件测试放 `*.test.ts`（vitest + happy-dom；挂载测试 stub `ResizeObserver`，见各包 `src/test-setup.ts`；
   DOMPurify 相关测试标 `// @vitest-environment jsdom`）

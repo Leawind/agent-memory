@@ -3,7 +3,7 @@ declare const _default: {
         memories: string;
         tags: string;
         ops: string;
-        access: string;
+        admin: string;
     };
     common: {
         detail: string;
@@ -71,15 +71,6 @@ declare const _default: {
         path: string;
         schemaVersion: string;
         version: string;
-        export: string;
-        import: string;
-        importHint: string;
-        doctorCard: string;
-        runDoctor: string;
-        doctorOk: string;
-        doctorFail: string;
-        doctorEmpty: string;
-        imported: string;
     };
     drawer: {
         title: string;
@@ -115,7 +106,10 @@ declare const _default: {
         tokenPlaceholder: string;
         tokenConfirm: string;
         tokenInvalid: string;
-        logout: string;
+        identity: string;
+        addIdentity: string;
+        addIdentityDesc: string;
+        removeIdentity: string;
     };
     access: {
         title: string;
@@ -167,6 +161,16 @@ declare const _default: {
         authHint: string;
         authEnableConfirm: string;
         authDisableConfirm: string;
+        backupCard: string;
+        export: string;
+        import: string;
+        importHint: string;
+        doctorCard: string;
+        runDoctor: string;
+        doctorOk: string;
+        doctorFail: string;
+        doctorEmpty: string;
+        imported: string;
     };
 };
 export default _default;

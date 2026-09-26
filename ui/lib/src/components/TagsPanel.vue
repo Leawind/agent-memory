@@ -107,7 +107,8 @@
 
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { toastError, toastSuccess } from '../toast'
 import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
@@ -135,7 +136,7 @@ function applyFilterDebounced() {
   if (filterTimer) clearTimeout(filterTimer)
   filterTimer = setTimeout(() => {
     filterTimer = null
-    reload().catch((e) => ElMessage.error(e instanceof Error ? e.message : String(e)))
+    reload().catch((e) => toastError(e instanceof Error ? e.message : String(e)))
   }, 300)
 }
 
@@ -171,14 +172,14 @@ async function save() {
     if (form.oldName) {
       // 名称与原名相同（或空白）时 api 层不下发 new_name，即只更新描述
       await rename(form.oldName, form.name, form.description)
-      ElMessage.success(t('tags.saved'))
+      toastSuccess(t('tags.saved'))
     } else {
       await create(form.name, form.description)
-      ElMessage.success(t('tags.created'))
+      toastSuccess(t('tags.created'))
     }
     dialogVisible.value = false
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : String(e))
+    toastError(e instanceof Error ? e.message : String(e))
   } finally {
     saving.value = false
   }
@@ -206,10 +207,10 @@ async function doDelete() {
   saving.value = true
   try {
     await remove(target.value.name, deleteMode.value)
-    ElMessage.success(t('tags.deleted'))
+    toastSuccess(t('tags.deleted'))
     deleteVisible.value = false
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : String(e))
+    toastError(e instanceof Error ? e.message : String(e))
   } finally {
     saving.value = false
   }
@@ -217,7 +218,7 @@ async function doDelete() {
 
 // 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
 defineExpose({
-  refresh: () => reload().catch((e: unknown) => ElMessage.error(e instanceof Error ? e.message : String(e))),
+  refresh: () => reload().catch((e: unknown) => toastError(e instanceof Error ? e.message : String(e))),
 })
 </script>
 

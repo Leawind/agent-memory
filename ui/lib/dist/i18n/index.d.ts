@@ -7,7 +7,7 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             memories: string;
             tags: string;
             ops: string;
-            access: string;
+            admin: string;
         };
         common: {
             detail: string;
@@ -75,15 +75,6 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             path: string;
             schemaVersion: string;
             version: string;
-            export: string;
-            import: string;
-            importHint: string;
-            doctorCard: string;
-            runDoctor: string;
-            doctorOk: string;
-            doctorFail: string;
-            doctorEmpty: string;
-            imported: string;
         };
         drawer: {
             title: string;
@@ -119,7 +110,10 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             tokenPlaceholder: string;
             tokenConfirm: string;
             tokenInvalid: string;
-            logout: string;
+            identity: string;
+            addIdentity: string;
+            addIdentityDesc: string;
+            removeIdentity: string;
         };
         access: {
             title: string;
@@ -171,6 +165,16 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             authHint: string;
             authEnableConfirm: string;
             authDisableConfirm: string;
+            backupCard: string;
+            export: string;
+            import: string;
+            importHint: string;
+            doctorCard: string;
+            runDoctor: string;
+            doctorOk: string;
+            doctorFail: string;
+            doctorEmpty: string;
+            imported: string;
         };
     };
     en: {
@@ -178,7 +182,7 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             memories: string;
             tags: string;
             ops: string;
-            access: string;
+            admin: string;
         };
         common: {
             detail: string;
@@ -246,15 +250,6 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             path: string;
             schemaVersion: string;
             version: string;
-            export: string;
-            import: string;
-            importHint: string;
-            doctorCard: string;
-            runDoctor: string;
-            doctorOk: string;
-            doctorFail: string;
-            doctorEmpty: string;
-            imported: string;
         };
         drawer: {
             title: string;
@@ -290,7 +285,10 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             tokenPlaceholder: string;
             tokenConfirm: string;
             tokenInvalid: string;
-            logout: string;
+            identity: string;
+            addIdentity: string;
+            addIdentityDesc: string;
+            removeIdentity: string;
         };
         access: {
             title: string;
@@ -342,6 +340,16 @@ export declare const memoryUIi18n: import('vue-i18n').I18n<{
             authHint: string;
             authEnableConfirm: string;
             authDisableConfirm: string;
+            backupCard: string;
+            export: string;
+            import: string;
+            importHint: string;
+            doctorCard: string;
+            runDoctor: string;
+            doctorOk: string;
+            doctorFail: string;
+            doctorEmpty: string;
+            imported: string;
         };
     };
 }, {}, {}, MemoryUILocale, false>;
@@ -352,7 +360,7 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             memories: string;
             tags: string;
             ops: string;
-            access: string;
+            admin: string;
         };
         common: {
             detail: string;
@@ -420,15 +428,6 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             path: string;
             schemaVersion: string;
             version: string;
-            export: string;
-            import: string;
-            importHint: string;
-            doctorCard: string;
-            runDoctor: string;
-            doctorOk: string;
-            doctorFail: string;
-            doctorEmpty: string;
-            imported: string;
         };
         drawer: {
             title: string;
@@ -464,7 +463,10 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             tokenPlaceholder: string;
             tokenConfirm: string;
             tokenInvalid: string;
-            logout: string;
+            identity: string;
+            addIdentity: string;
+            addIdentityDesc: string;
+            removeIdentity: string;
         };
         access: {
             title: string;
@@ -516,6 +518,16 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             authHint: string;
             authEnableConfirm: string;
             authDisableConfirm: string;
+            backupCard: string;
+            export: string;
+            import: string;
+            importHint: string;
+            doctorCard: string;
+            runDoctor: string;
+            doctorOk: string;
+            doctorFail: string;
+            doctorEmpty: string;
+            imported: string;
         };
     };
     en: {
@@ -523,7 +535,7 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             memories: string;
             tags: string;
             ops: string;
-            access: string;
+            admin: string;
         };
         common: {
             detail: string;
@@ -591,15 +603,6 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             path: string;
             schemaVersion: string;
             version: string;
-            export: string;
-            import: string;
-            importHint: string;
-            doctorCard: string;
-            runDoctor: string;
-            doctorOk: string;
-            doctorFail: string;
-            doctorEmpty: string;
-            imported: string;
         };
         drawer: {
             title: string;
@@ -635,7 +638,10 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             tokenPlaceholder: string;
             tokenConfirm: string;
             tokenInvalid: string;
-            logout: string;
+            identity: string;
+            addIdentity: string;
+            addIdentityDesc: string;
+            removeIdentity: string;
         };
         access: {
             title: string;
@@ -687,11 +693,21 @@ export declare const t: import('vue-i18n').ComposerTranslation<{
             authHint: string;
             authEnableConfirm: string;
             authDisableConfirm: string;
+            backupCard: string;
+            export: string;
+            import: string;
+            importHint: string;
+            doctorCard: string;
+            runDoctor: string;
+            doctorOk: string;
+            doctorFail: string;
+            doctorEmpty: string;
+            imported: string;
         };
     };
 }, "zh" | "en", import('@intlify/core-base').RemoveIndexSignature<{
     [x: string]: import('vue-i18n').LocaleMessageValue<import('vue-i18n').VueMessageType>;
-}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "memories.tagEmpty" | "memories.searchEmpty" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.colCreatedAt" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.instructionsHint" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.conventionsHint" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm", "nav.memories" | "nav.tags" | "nav.ops" | "nav.access" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "memories.tagEmpty" | "memories.searchEmpty" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.colCreatedAt" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "ops.export" | "ops.import" | "ops.importHint" | "ops.doctorCard" | "ops.runDoctor" | "ops.doctorOk" | "ops.doctorFail" | "ops.doctorEmpty" | "ops.imported" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.logout" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.instructionsHint" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.conventionsHint" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm">;
+}>, never, "nav.memories" | "nav.tags" | "nav.ops" | "nav.admin" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "memories.tagEmpty" | "memories.searchEmpty" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.colCreatedAt" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.identity" | "shell.addIdentity" | "shell.addIdentityDesc" | "shell.removeIdentity" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.instructionsHint" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.conventionsHint" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm" | "access.backupCard" | "access.export" | "access.import" | "access.importHint" | "access.doctorCard" | "access.runDoctor" | "access.doctorOk" | "access.doctorFail" | "access.doctorEmpty" | "access.imported", "nav.memories" | "nav.tags" | "nav.ops" | "nav.admin" | "common.detail" | "common.edit" | "common.delete" | "common.cancel" | "common.save" | "memories.title" | "memories.subtitle" | "memories.create" | "memories.searchPlaceholder" | "memories.tagFilter" | "memories.colId" | "memories.colSummary" | "memories.colTags" | "memories.colScore" | "memories.colCreatedAt" | "memories.colUpdatedAt" | "memories.colActions" | "memories.deleteTitle" | "memories.deleteConfirm" | "memories.deleted" | "memories.tagEmpty" | "memories.searchEmpty" | "tags.title" | "tags.subtitle" | "tags.create" | "tags.colCreatedAt" | "tags.deleteTitle" | "tags.deleted" | "tags.filterPlaceholder" | "tags.colName" | "tags.colDescription" | "tags.colMemoryCount" | "tags.colLastUsed" | "tags.editTitle" | "tags.createTitle" | "tags.nameLabel" | "tags.namePlaceholder" | "tags.descLabel" | "tags.descPlaceholder" | "tags.deleteBefore" | "tags.deleteMiddle" | "tags.deleteAfter" | "tags.detach" | "tags.purge" | "tags.purgeConfirmTitle" | "tags.purgeConfirm" | "tags.purgeButton" | "tags.saved" | "tags.created" | "ops.title" | "ops.subtitle" | "ops.refresh" | "ops.statMemories" | "ops.statTags" | "ops.statSize" | "ops.dbCard" | "ops.path" | "ops.schemaVersion" | "ops.version" | "drawer.title" | "drawer.rendered" | "drawer.source" | "editor.editTitle" | "editor.createTitle" | "editor.created" | "editor.summaryLabel" | "editor.summaryPlaceholder" | "editor.contentLabel" | "editor.tabEdit" | "editor.tabPreview" | "editor.contentPlaceholder" | "editor.tagsLabel" | "editor.tagsPlaceholder" | "editor.updated" | "errors.http" | "errors.invalidBackup" | "shell.theme" | "shell.themeLight" | "shell.themeDark" | "shell.themeSystem" | "shell.language" | "shell.tokenPromptTitle" | "shell.tokenPromptDesc" | "shell.tokenPlaceholder" | "shell.tokenConfirm" | "shell.tokenInvalid" | "shell.identity" | "shell.addIdentity" | "shell.addIdentityDesc" | "shell.removeIdentity" | "access.title" | "access.subtitle" | "access.create" | "access.colCreatedAt" | "access.colActions" | "access.deleteTitle" | "access.deleteConfirm" | "access.deleted" | "access.colName" | "access.editTitle" | "access.createTitle" | "access.nameLabel" | "access.namePlaceholder" | "access.saved" | "access.created" | "access.needAdmin" | "access.openMode" | "access.colToken" | "access.colPermissions" | "access.permsLabel" | "access.presets" | "access.presetAdmin" | "access.presetMember" | "access.presetViewer" | "access.presetCustom" | "access.capRead" | "access.capCreate" | "access.capUpdate" | "access.capDelete" | "access.capTagManage" | "access.capAdmin" | "access.copyToken" | "access.copied" | "access.resetToken" | "access.resetTitle" | "access.resetConfirm" | "access.settingsTitle" | "access.instructionsLabel" | "access.instructionsPlaceholder" | "access.instructionsHint" | "access.conventionsLabel" | "access.conventionsPlaceholder" | "access.conventionsHint" | "access.viewDefault" | "access.empty" | "access.authTitle" | "access.authHint" | "access.authEnableConfirm" | "access.authDisableConfirm" | "access.backupCard" | "access.export" | "access.import" | "access.importHint" | "access.doctorCard" | "access.runDoctor" | "access.doctorOk" | "access.doctorFail" | "access.doctorEmpty" | "access.imported">;
 export declare function setMemoryUILocale(locale: MemoryUILocale): void;
 /** 应用 locale 偏好；'auto' 表示跟随浏览器语言 */
 export declare function applyMemoryUILocalePreference(preference: MemoryUILocaleOption): void;
