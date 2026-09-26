@@ -11,17 +11,17 @@
     </div>
 
     <el-row :gutter="14">
-      <el-col :span="compact ? 12 : 8">
+      <el-col :span="narrow ? 12 : 8">
         <el-card shadow="never">
           <el-statistic :title="t('ops.statMemories')" :value="stats.memories ?? 0" />
         </el-card>
       </el-col>
-      <el-col :span="compact ? 12 : 8">
+      <el-col :span="narrow ? 12 : 8">
         <el-card shadow="never">
           <el-statistic :title="t('ops.statTags')" :value="stats.tags ?? 0" />
         </el-card>
       </el-col>
-      <el-col :span="compact ? 12 : 8">
+      <el-col :span="narrow ? 12 : 8">
         <el-card shadow="never">
           <el-statistic :title="t('ops.statSize')" :value="sizeText" />
         </el-card>
@@ -31,12 +31,12 @@
     <el-card shadow="never">
       <template #header>{{ t('ops.dbCard') }}</template>
       <!-- 版本与数据库版本同行；文件路径较长独占一行 -->
-      <el-descriptions :column="compact ? 1 : 2" border>
+      <el-descriptions :column="narrow ? 1 : 2" border>
         <el-descriptions-item :label="t('ops.version')">{{ stats.version ?? version }}</el-descriptions-item>
         <el-descriptions-item :label="t('ops.schemaVersion')">
           {{ stats.schema_version ?? '—' }}
         </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.path')" :span="compact ? 1 : 2">
+        <el-descriptions-item :label="t('ops.path')" :span="narrow ? 1 : 2">
           {{ stats.path ?? '—' }}
         </el-descriptions-item>
       </el-descriptions>
@@ -121,7 +121,8 @@ const {
 } = useOps()
 
 const rootRef = ref<HTMLElement | null>(null)
-const { compact } = useContainerWidth(rootRef)
+// narrow（<720px）时统计卡两列排布、数据库信息单列
+const { narrow } = useContainerWidth(rootRef)
 
 const importInput = ref<HTMLInputElement | null>(null)
 

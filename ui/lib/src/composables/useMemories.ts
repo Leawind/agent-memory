@@ -30,7 +30,6 @@ export function useMemories() {
   const rows = ref<MemorySummary[]>([])
   const searchResults = ref<SearchResult[]>([])
   const total = ref(0)
-  const note = ref('')
   const loading = ref(false)
   const tagOptions = ref<string[]>([])
 
@@ -68,7 +67,6 @@ export function useMemories() {
         // 服务端片段是 HTML（<mark> 高亮），经 DOMPurify 消毒后再进 v-html
         searchResults.value = (data.results ?? []).map((r) => ({ ...r, snippet: sanitizeHtml(r.snippet) }))
         total.value = data.total_matches ?? 0
-        note.value = ''
       } else {
         const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`)) as MemoryListResp
         if (seq !== requestSeq) return
@@ -81,7 +79,6 @@ export function useMemories() {
         }
         rows.value = data.memories ?? []
         total.value = data.total ?? 0
-        note.value = data.note ?? ''
       }
     } finally {
       if (seq === requestSeq) loading.value = false
@@ -135,7 +132,6 @@ export function useMemories() {
     rows,
     searchResults,
     total,
-    note,
     loading,
     tagOptions,
     searching,

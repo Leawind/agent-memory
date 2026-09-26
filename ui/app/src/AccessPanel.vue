@@ -78,8 +78,7 @@
 
       <el-card shadow="never" class="block">
         <template #header>{{ t('access.settingsTitle') }}</template>
-        <!-- 留空即默认：无需“恢复默认”操作，清空内容保存即可回到内置行为 -->
-        <el-alert :title="t('access.settingsHint')" type="info" show-icon :closable="false" class="settings-hint" />
+        <!-- 留空即默认：行为说明放在各自字段的提示行里，紧邻输入框 -->
         <el-form label-position="top" @submit.prevent>
           <el-form-item :label="t('access.instructionsLabel')">
             <el-input
@@ -88,6 +87,7 @@
               :rows="5"
               :placeholder="t('access.instructionsPlaceholder')"
             />
+            <div class="field-hint">{{ t('access.instructionsHint') }}</div>
             <details v-if="instructions" class="default-view">
               <summary>{{ t('access.viewDefault') }}</summary>
               <pre class="default-text">{{ defaultInstructions }}</pre>
@@ -100,6 +100,7 @@
               :rows="4"
               :placeholder="t('access.conventionsPlaceholder')"
             />
+            <div class="field-hint">{{ t('access.conventionsHint') }}</div>
           </el-form-item>
         </el-form>
         <div class="save-row">
@@ -494,8 +495,12 @@ async function copyToken(token: string): Promise<void> {
 .muted {
   color: var(--el-text-color-secondary);
 }
-.settings-hint {
-  margin-bottom: 12px;
+.field-hint {
+  width: 100%;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
 }
 .default-view {
   margin-top: 6px;

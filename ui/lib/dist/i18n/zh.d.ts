@@ -28,6 +28,8 @@ declare const _default: {
         deleteTitle: string;
         deleteConfirm: string;
         deleted: string;
+        tagEmpty: string;
+        searchEmpty: string;
     };
     tags: {
         title: string;
@@ -153,11 +155,12 @@ declare const _default: {
         deleted: string;
         saved: string;
         settingsTitle: string;
-        settingsHint: string;
         instructionsLabel: string;
         instructionsPlaceholder: string;
+        instructionsHint: string;
         conventionsLabel: string;
         conventionsPlaceholder: string;
+        conventionsHint: string;
         viewDefault: string;
         empty: string;
         authTitle: string;

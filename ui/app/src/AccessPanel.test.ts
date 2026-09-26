@@ -74,9 +74,10 @@ describe('AccessPanel', () => {
     expect(textareas.length).toBe(2)
     expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
     expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
-    // 留空即默认：不再有"恢复默认"按钮，改为信息提示说明留空行为
+    // 留空即默认：不再有"恢复默认"按钮，行为说明在各自字段下方的提示行里
     expect(html).not.toContain('恢复默认')
-    expect(html).toContain('留空即使用默认')
+    expect(html).toContain('留空时使用内置默认提示词')
+    expect(html).toContain('追加在基础提示词之后')
     expect(html).toContain('新建身份')
     wrapper.unmount()
   })

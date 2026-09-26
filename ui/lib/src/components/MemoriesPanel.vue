@@ -35,7 +35,7 @@
       </el-select>
     </div>
 
-    <el-alert v-if="note" :title="note" type="info" show-icon :closable="false" />
+    <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
 
     <!-- 搜索模式：显示匹配片段与评分 -->
     <el-table v-if="searching" :data="searchResults" v-loading="loading">
@@ -46,7 +46,7 @@
           <div class="am-snippet" v-html="row.snippet" />
         </template>
       </el-table-column>
-      <el-table-column :label="t('memories.colTags')" width="220">
+      <el-table-column :label="t('memories.colTags')" min-width="150">
         <template #default="{ row }">
           <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
         </template>
@@ -73,8 +73,8 @@
       @sort-change="onSortChange"
     >
       <el-table-column prop="id" :label="t('memories.colId')" width="80" sortable="custom" />
-      <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="300" show-overflow-tooltip />
-      <el-table-column :label="t('memories.colTags')" width="220">
+      <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="180" show-overflow-tooltip />
+      <el-table-column :label="t('memories.colTags')" min-width="150">
         <template #default="{ row }">
           <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
         </template>
@@ -128,17 +128,17 @@
       v-model:visible="editorVisible"
       :memory-id="editingId"
       :tag-options="tagOptions"
-      :width="compact ? '96%' : '640px'"
+      :width="narrow ? '96%' : '640px'"
       @saved="onSaved"
     />
 
     <!-- 全文详情 -->
-    <MemoryDetailDrawer v-model:visible="detailVisible" :memory-id="detailId" :size="compact ? '100%' : '45%'" />
+    <MemoryDetailDrawer v-model:visible="detailVisible" :memory-id="detailId" :size="narrow ? '100%' : '45%'" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
@@ -171,7 +171,6 @@ const {
   rows,
   searchResults,
   total,
-  note,
   loading,
   tagOptions,
   searching,
@@ -181,9 +180,19 @@ const {
   removeMemory,
 } = useMemories()
 
+// 空结果提示本地生成（服务端 note 面向 agent，是英文契约文本，不在界面透传）：
+// 列表模式 = 标签无关联记忆；搜索模式 = 无命中
+const emptyNote = computed(() => {
+  if (loading.value || total.value !== 0) return ''
+  if (searching.value) return t('memories.searchEmpty')
+  const tag = tagFilter.value.trim()
+  return tag ? t('memories.tagEmpty', { tag }) : ''
+})
+
 const rootRef = ref<HTMLElement | null>(null)
-// 窄容器（宿主侧栏、卡片等）自动切 compact：隐藏低优先级列、收窄弹层
-const { compact } = useContainerWidth(rootRef)
+// 容器 <960px 切 compact（隐藏创建时间列，保证更新时间/操作列不被挤出视口）；
+// <720px 切 narrow（弹层收窄）
+const { compact, narrow } = useContainerWidth(rootRef)
 
 const editorVisible = ref(false)
 const editingId = ref<string | null>(null)

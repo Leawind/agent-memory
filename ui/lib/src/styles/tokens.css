@@ -113,6 +113,11 @@
   font-weight: 600;
 }
 
+/* 表头是排序点击热区：阻止连点/拖选时选中列头文本 */
+.memory-ui .el-table th.el-table__cell .cell {
+  user-select: none;
+}
+
 .memory-ui .el-table .el-table__cell {
   padding: 10px 0;
 }

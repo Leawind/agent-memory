@@ -42,7 +42,6 @@ export declare function useMemories(): {
         updated_at: number;
     }[]>;
     total: import('vue').Ref<number, number>;
-    note: import('vue').Ref<string, string>;
     loading: import('vue').Ref<boolean, boolean>;
     tagOptions: import('vue').Ref<string[], string[]>;
     searching: import('vue').ComputedRef<boolean>;

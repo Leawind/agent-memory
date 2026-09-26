@@ -22,15 +22,15 @@
     />
 
     <el-table :data="rows" v-loading="loading">
-      <el-table-column prop="name" :label="t('tags.colName')" min-width="160" sortable>
+      <el-table-column prop="name" :label="t('tags.colName')" min-width="140" sortable>
         <template #default="{ row }">
           <el-tag>{{ row.name }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="description" :label="t('tags.colDescription')" min-width="300" show-overflow-tooltip>
+      <el-table-column prop="description" :label="t('tags.colDescription')" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">{{ row.description || '—' }}</template>
       </el-table-column>
-      <el-table-column prop="memory_count" :label="t('tags.colMemoryCount')" width="100" sortable />
+      <el-table-column prop="memory_count" :label="t('tags.colMemoryCount')" width="90" sortable />
       <el-table-column
         prop="last_used_at"
         :label="t('tags.colLastUsed')"
@@ -60,7 +60,7 @@
     <el-dialog
       v-model="dialogVisible"
       :title="form.oldName ? t('tags.editTitle') : t('tags.createTitle')"
-      :width="compact ? '96%' : '480px'"
+      :width="narrow ? '96%' : '480px'"
     >
       <el-form label-position="top">
         <!-- 编辑时预填当前名：微小修改直接改，不再要求重输全名；与服务端约定同名提交 = 不改名 -->
@@ -85,7 +85,7 @@
     </el-dialog>
 
     <!-- 删除方式选择：富文本结构（标签名/计数）无法整句插值，拆为三段固定语序 -->
-    <el-dialog v-model="deleteVisible" :title="t('tags.deleteTitle')" :width="compact ? '96%' : '480px'">
+    <el-dialog v-model="deleteVisible" :title="t('tags.deleteTitle')" :width="narrow ? '96%' : '480px'">
       <p class="delete-body">
         {{ t('tags.deleteBefore') }}
         <el-tag>{{ target?.name }}</el-tag>
@@ -140,7 +140,8 @@ function applyFilterDebounced() {
 }
 
 const rootRef = ref<HTMLElement | null>(null)
-const { compact } = useContainerWidth(rootRef)
+// narrow（<720px）时弹层收窄；表格列均为可伸缩宽度，窄容器不丢列
+const { narrow } = useContainerWidth(rootRef)
 
 const saving = ref(false)
 const dialogVisible = ref(false)
