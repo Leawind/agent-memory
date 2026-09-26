@@ -71,6 +71,9 @@ describe('AdminPanel', () => {
     expect(html).toContain('导出备份')
     expect(html).toContain('数据体检')
     expect(html).toContain('新建身份')
+    // 语义搜索只有一张卡：配置 + 向量覆盖率小节同卡，不再出现第二张同名卡
+    expect(html.match(/语义搜索（embedding）/g)).toHaveLength(1)
+    expect(html).toContain('向量覆盖率')
     wrapper.unmount()
   })
 

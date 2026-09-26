@@ -24,11 +24,7 @@
             <span class="auth-label">{{ t('access.authTitle') }}</span>
             <span class="auth-hint">{{ t('access.authHint') }}</span>
           </div>
-          <el-tooltip
-            :disabled="hasAdminIdentity"
-            :content="t('access.enableBlocked')"
-            placement="top"
-          >
+          <el-tooltip :disabled="hasAdminIdentity" :content="t('access.enableBlocked')" placement="top">
             <el-switch
               v-model="authRequired"
               :before-change="confirmAuthToggle"
@@ -125,6 +121,34 @@
           :closable="false"
           class="settings-hint"
         />
+
+        <!-- 向量覆盖率与补跑：backfill 是 admin 端点（有界批量，按钮内循环直到清零） -->
+        <el-divider />
+        <div class="card-header">
+          <span class="section-title">{{ t('access.embeddingCoverageTitle') }}</span>
+          <el-button size="small" :icon="Refresh" :loading="backfilling" @click="runBackfill">
+            {{ t('access.runBackfill') }}
+          </el-button>
+        </div>
+        <template v-if="stats?.embedding?.enabled">
+          <el-descriptions :column="compact ? 1 : 2" border>
+            <el-descriptions-item :label="t('access.embeddingModel')">
+              {{ stats.embedding.model ?? '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('access.embeddingCoverage')">
+              {{ stats.embedding.embedded ?? 0 }} / {{ coverageTotal }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <el-alert
+            v-if="(stats.embedding.pending ?? 0) > 0"
+            :title="t('access.embeddingPending', { count: stats.embedding.pending })"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="settings-hint"
+          />
+        </template>
+        <el-alert v-else :title="t('access.embeddingDisabled')" type="info" show-icon :closable="false" />
       </el-card>
 
       <el-card shadow="never">
@@ -207,37 +231,6 @@
           </ul>
         </template>
         <el-empty v-else :description="t('access.doctorEmpty')" :image-size="60" />
-      </el-card>
-
-      <!-- 语义搜索覆盖率与补跑：backfill 是 admin 端点（有界批量，按钮内循环直到清零） -->
-      <el-card shadow="never">
-        <template #header>
-          <div class="card-header">
-            <span>{{ t('access.embeddingCard') }}</span>
-            <el-button size="small" :icon="Refresh" :loading="backfilling" @click="runBackfill">
-              {{ t('access.runBackfill') }}
-            </el-button>
-          </div>
-        </template>
-        <template v-if="stats?.embedding?.enabled">
-          <el-descriptions :column="compact ? 1 : 2" border>
-            <el-descriptions-item :label="t('access.embeddingModel')">
-              {{ stats.embedding.model ?? '—' }}
-            </el-descriptions-item>
-            <el-descriptions-item :label="t('access.embeddingCoverage')">
-              {{ stats.embedding.embedded ?? 0 }} / {{ coverageTotal }}
-            </el-descriptions-item>
-          </el-descriptions>
-          <el-alert
-            v-if="(stats.embedding.pending ?? 0) > 0"
-            :title="t('access.embeddingPending', { count: stats.embedding.pending })"
-            type="warning"
-            show-icon
-            :closable="false"
-            class="settings-hint"
-          />
-        </template>
-        <el-alert v-else :title="t('access.embeddingDisabled')" type="info" show-icon :closable="false" />
       </el-card>
     </template>
 
@@ -720,6 +713,11 @@ async function copyToken(token: string): Promise<void> {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.section-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
 }
 .auth-row {
   display: flex;

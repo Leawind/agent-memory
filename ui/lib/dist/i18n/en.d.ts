@@ -179,7 +179,7 @@ declare const _default: {
         doctorFail: string;
         doctorEmpty: string;
         imported: string;
-        embeddingCard: string;
+        embeddingCoverageTitle: string;
         embeddingModel: string;
         embeddingCoverage: string;
         embeddingPending: string;
