@@ -98,10 +98,7 @@ fn run(cli: Cli) -> i32 {
     let db_path = cli.db.unwrap_or_else(store::default_path);
     // 所有子命令共享默认库路径；cwd 相对名下"跑错目录"会静默新建空库，
     // 一律先在 stderr 报出解析后的实际位置（stdout 保留给命令结果）。
-    eprintln!(
-        "agent-memory: database: {}",
-        store::normalize_path(&db_path).display()
-    );
+    eprintln!("database: {}", store::normalize_path(&db_path).display());
     match cli.command.unwrap_or(Command::Serve {
         host: DEFAULT_HOST.to_string(),
         port: DEFAULT_PORT,
@@ -150,7 +147,7 @@ fn cmd_token_reset(db_path: &std::path::Path, name: Option<&str>) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("agent-memory: token reset failed: {e}");
+            eprintln!("token reset failed: {e}");
             1
         }
     }
@@ -161,14 +158,14 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
     let text = match std::fs::read_to_string(file) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("agent-memory: cannot read {}: {}", file.display(), e);
+            eprintln!("cannot read {}: {}", file.display(), e);
             return 1;
         }
     };
     let dump: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("agent-memory: {} is not valid JSON: {}", file.display(), e);
+            eprintln!("{} is not valid JSON: {}", file.display(), e);
             return 1;
         }
     };
@@ -183,7 +180,7 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("agent-memory: import failed: {e}");
+            eprintln!("import failed: {e}");
             1
         }
     }
@@ -196,12 +193,8 @@ fn read_db<T>(
     f: impl FnOnce(&store::Store) -> Result<T, String>,
 ) -> Result<T, i32> {
     store::with_db_in(db_path, store::TxMode::ReadOnly, f).map_err(|e| {
-        eprintln!(
-            "agent-memory: cannot read database at {} ({}).",
-            db_path.display(),
-            e
-        );
-        eprintln!("agent-memory: refusing to report on data that cannot be read cleanly.");
+        eprintln!("cannot read database at {} ({}).", db_path.display(), e);
+        eprintln!("refusing to report on data that cannot be read cleanly.");
         1
     })
 }
@@ -262,7 +255,7 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
     let mut body = match serde_json::to_string_pretty(&dump) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("agent-memory: failed to serialize export: {e}");
+            eprintln!("failed to serialize export: {e}");
             return 1;
         }
     };
@@ -275,23 +268,16 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
     {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            eprintln!(
-                "agent-memory: {} already exists; choose another name",
-                out_path.display()
-            );
+            eprintln!("{} already exists; choose another name", out_path.display());
             return 1;
         }
         Err(e) => {
-            eprintln!("agent-memory: cannot create {}: {}", out_path.display(), e);
+            eprintln!("cannot create {}: {}", out_path.display(), e);
             return 1;
         }
     };
     if let Err(e) = write_dump(file, &body) {
-        eprintln!(
-            "agent-memory: failed to write {}: {}",
-            out_path.display(),
-            e
-        );
+        eprintln!("failed to write {}: {}", out_path.display(), e);
         return 1;
     }
     println!(

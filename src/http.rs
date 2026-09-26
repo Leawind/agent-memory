@@ -35,20 +35,20 @@ struct UiAssets;
 pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, verbose: bool) -> i32 {
     if port == 0 {
         // 端口 0 会绑定到随机端口，但调用方无从得知实际端口，等于不可用
-        eprintln!("agent-memory: --port 0 is not supported; choose a fixed port");
+        eprintln!("--port 0 is not supported; choose a fixed port");
         return 2;
     }
     let addr = format!("{host}:{port}");
     // 启动前先打开一遍数据库（含迁移校验）；坏库拒绝启动，绝不带病服务。
     if let Err(e) = store::Store::open(db_path) {
-        eprintln!("agent-memory: cannot open database ({e}).");
-        eprintln!("agent-memory: refusing to start to protect your data.");
+        eprintln!("cannot open database ({e}).");
+        eprintln!("refusing to start to protect your data.");
         return 1;
     }
     // --auth 引导：空表时创建全能力管理员并打印 token（仅此一次）。
     if auth_enabled {
         if let Err(e) = bootstrap_admin_if_empty(db_path) {
-            eprintln!("agent-memory: cannot bootstrap admin identity ({e}).");
+            eprintln!("cannot bootstrap admin identity ({e}).");
             return 1;
         }
     }
@@ -56,14 +56,14 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
         Ok(0) => true,
         Ok(_) => false,
         Err(e) => {
-            eprintln!("agent-memory: cannot read identities ({e}).");
+            eprintln!("cannot read identities ({e}).");
             return 1;
         }
     };
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("agent-memory: cannot listen on {addr}: {e}");
+            eprintln!("cannot listen on {addr}: {e}");
             return 1;
         }
     };
@@ -124,12 +124,12 @@ fn bootstrap_admin_if_empty(db_path: &Path) -> Result<(), String> {
         },
     )?;
     if let Some(token) = created {
-        eprintln!("agent-memory: ============================================================");
-        eprintln!("agent-memory: 鉴权已启用，已创建管理员身份 '{BOOTSTRAP_ADMIN_NAME}'。");
-        eprintln!("agent-memory: 管理员 token（请立即复制保存，此后可在管理界面随时查看）：");
-        eprintln!("agent-memory:   {token}");
-        eprintln!("agent-memory: MCP 客户端与管理界面请求均须携带 Authorization: Bearer <token>");
-        eprintln!("agent-memory: ============================================================");
+        eprintln!("============================================================");
+        eprintln!("鉴权已启用，已创建管理员身份 '{BOOTSTRAP_ADMIN_NAME}'。");
+        eprintln!("管理员 token（请立即复制保存，此后可在管理界面随时查看）：");
+        eprintln!("  {token}");
+        eprintln!("MCP 客户端与管理界面请求均须携带 Authorization: Bearer <token>");
+        eprintln!("============================================================");
     }
     Ok(())
 }
@@ -199,7 +199,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
             Ok(ctx) => ctx,
             Err(fail) => {
                 if let AuthFail::Storage(reason) = &fail {
-                    eprintln!("agent-memory: auth lookup failed, failing closed: {reason}");
+                    eprintln!("auth lookup failed, failing closed: {reason}");
                 }
                 log_request(
                     verbose,
@@ -709,11 +709,7 @@ fn log_request(
         line.push(' ');
         line.push_str(d);
     }
-    eprintln!(
-        "agent-memory: {line} -> {} ({}ms)",
-        status,
-        elapsed.as_millis()
-    );
+    eprintln!("{line} -> {} ({}ms)", status, elapsed.as_millis());
 }
 
 #[cfg(test)]
