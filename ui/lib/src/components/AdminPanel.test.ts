@@ -1,10 +1,11 @@
 // AdminPanel 挂载测试：stub fetch + 真实渲染 Element Plus 组件
 // （el-* 导入由 unplugin-vue-components 在构建期注入，测试无需全局注册）
-// 覆盖：身份表/鉴权开关/自定义提示词渲染、非 admin 提示、备份与体检区
+// 覆盖：身份表/鉴权开关/自定义提示词渲染、非 admin 提示、备份与体检区、
+// token 一次性弹窗的「保存到本浏览器」钩子、开启鉴权的无 admin 预检
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { setMemoryUILocale } from '../i18n'
+import { MemoryUIConfigKey, setMemoryUILocale } from '../index'
 import AdminPanel from './AdminPanel.vue'
 import type { WhoAmI } from '../types'
 
@@ -153,6 +154,132 @@ describe('AdminPanel', () => {
     const html = wrapper.html()
     expect(html).toContain('发现 1 个问题')
     expect(html).toContain('orphan tag: ghost')
+    wrapper.unmount()
+  })
+
+  // 走完「新建身份 → token 一次性弹窗」流程的辅助：返回弹窗包装
+  async function createIdentityAndOpenTokenDialog(config?: { onIdentityToken: (name: string, token: string) => void }) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/identities') && init?.method === 'POST') {
+          return Promise.resolve(
+            jsonResponse({
+              name: 'bob',
+              token_hint: 'b2c3',
+              permissions: { read: true },
+              token: 'tok-bob-123',
+              created_at: 1,
+            }),
+          )
+        }
+        if (u.includes('/api/identities')) {
+          return Promise.resolve(
+            jsonResponse({
+              identities: [{ name: 'bob', token_hint: 'b2c3', permissions: { read: true }, created_at: 1 }],
+            }),
+          )
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: {
+        plugins: [ElementPlus],
+        ...(config ? { provide: { [MemoryUIConfigKey as symbol]: config } } : {}),
+      },
+    })
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '新建身份')!
+      .trigger('click')
+    await flushPromises()
+    await wrapper.find('.el-dialog input').setValue('bob')
+    // 限定在创建弹窗内找「保存」，避免命中自定义提示词卡片的同名按钮
+    await wrapper
+      .find('.el-dialog')
+      .findAll('button')
+      .find((b) => b.text() === '保存')!
+      .trigger('click')
+    await flushPromises()
+    await flushPromises()
+    return wrapper
+  }
+
+  // token 一次性弹窗（DOM 里同时存在隐藏的创建弹窗，按内容挑第二个）
+  function tokenDialog(wrapper: ReturnType<typeof mount>) {
+    const dialogs = wrapper.findAll('.el-dialog')
+    const found = dialogs.find((d) => d.text().includes('复制 Token'))
+    expect(found, 'token-once dialog should be visible').toBeTruthy()
+    return found!
+  }
+
+  it('token-once dialog has no save-to-browser without the host hook', async () => {
+    const wrapper = await createIdentityAndOpenTokenDialog()
+    const dialog = tokenDialog(wrapper)
+    expect(dialog.text()).not.toContain('保存到本浏览器')
+    wrapper.unmount()
+  })
+
+  it('save-to-browser button hands the one-time token to the host hook', async () => {
+    const saved: Array<{ name: string; token: string }> = []
+    const wrapper = await createIdentityAndOpenTokenDialog({
+      onIdentityToken: (name, token) => {
+        saved.push({ name, token })
+      },
+    })
+    const dialog = tokenDialog(wrapper)
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === '保存到本浏览器')!
+      .trigger('click')
+    await flushPromises()
+    expect(saved).toEqual([{ name: 'bob', token: 'tok-bob-123' }])
+    // 保存成功有反馈 toast（弹窗经过渡关闭，happy-dom 里 DOM 状态不可靠）
+    const toast = document.querySelector('.el-message')
+    expect(toast?.textContent).toContain('已保存身份')
+    wrapper.unmount()
+  })
+
+  it('blocks enabling auth with a guidance alert when no admin identity exists', async () => {
+    const settingsPuts: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/settings') && init?.method === 'PUT') {
+          settingsPuts.push(String(init.body))
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (u.includes('/api/identities')) {
+          return Promise.resolve(
+            jsonResponse({
+              identities: [{ name: 'eve', token_hint: 'e4f5', permissions: { read: true }, created_at: 1 }],
+            }),
+          )
+        }
+        if (u.includes('/api/settings')) {
+          return Promise.resolve(jsonResponse({ auth_required: false }))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    // 找到鉴权开关并触发切换（before-change 应拦下）
+    const switchEl = wrapper.find('.el-switch')
+    expect(switchEl.exists()).toBe(true)
+    await switchEl.trigger('click')
+    await flushPromises()
+    // 预检拦截：不发 PUT，开关保持关
+    expect(settingsPuts).toEqual([])
+    expect(wrapper.html()).not.toContain('el-switch.is-checked')
     wrapper.unmount()
   })
 })

@@ -12,6 +12,7 @@ export default {
     delete: 'Delete',
     cancel: 'Cancel',
     save: 'Save',
+    ok: 'Got it',
   },
   memories: {
     title: 'Memories',
@@ -163,9 +164,13 @@ export default {
     empty: 'No identities yet. Create an admin identity and save its token, then turn on the auth switch above.',
     authTitle: 'Token auth',
     authHint:
-      'When enabled, every /mcp and /api request must carry Authorization: Bearer <token>. Create an identity and save its token first; after enabling, this browser will show the token prompt once.',
+      'When enabled, every /mcp and /api request must carry Authorization: Bearer <token>. Create an identity and save its token first (the creation dialog offers one-click save to this browser); after enabling, this browser will show the token prompt once.',
     authEnableConfirm: 'Enable token auth? All /mcp and /api requests will then require a valid token.',
     authDisableConfirm: 'Disable token auth? All requests will be allowed without credentials (open mode).',
+    enableBlocked:
+      'Not ready to enable: no admin-capable identity exists yet. Create one, keep its token safe, then flip the switch.',
+    saveToBrowser: 'Save to this browser',
+    savedToBrowser: 'Token of identity "{name}" saved to this browser',
     backupCard: 'Backup import & export',
     export: 'Export backup (JSON)',
     import: 'Import backup',

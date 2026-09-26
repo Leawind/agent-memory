@@ -173,8 +173,20 @@ import {
   type WhoAmI,
 } from './auth'
 
-// 同源部署：API 经带鉴权头的 fetch（token 缺省时与原生 fetch 等价）
-provideMemoryUI({ fetch: authFetch })
+// 同源部署：API 经带鉴权头的 fetch（token 缺省时与原生 fetch 等价）。
+// onIdentityToken：管理面板创建/重置身份后「保存到本浏览器」的落点——
+// 记入多身份令牌表并立即切换到该身份，避免 token 只展示一次而错失保存。
+provideMemoryUI({
+  fetch: authFetch,
+  onIdentityToken: async (name, token) => {
+    addIdentity(name, token)
+    refreshIdentities()
+    await resolveIdentity()
+    refreshActivePanel()
+  },
+  // 鉴权开关切换后重新解析身份：开放 ↔ token 模式切换时右上角身份区即时反映
+  onAuthChanged: () => resolveIdentity(),
+})
 
 type AdminTab = 'memories' | 'tags' | 'ops' | 'admin'
 const active = ref<AdminTab>('memories')

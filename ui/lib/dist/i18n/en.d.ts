@@ -11,6 +11,7 @@ declare const _default: {
         delete: string;
         cancel: string;
         save: string;
+        ok: string;
     };
     memories: {
         title: string;
@@ -161,6 +162,9 @@ declare const _default: {
         authHint: string;
         authEnableConfirm: string;
         authDisableConfirm: string;
+        enableBlocked: string;
+        saveToBrowser: string;
+        savedToBrowser: string;
         backupCard: string;
         export: string;
         import: string;

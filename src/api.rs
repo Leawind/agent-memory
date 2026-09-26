@@ -231,10 +231,20 @@ pub fn handle(
                 }
                 if updates.is_empty() {
                     return Ok(bad_request(ToolError::invalid(
-                        "nothing to update: provide instructions and/or conventions",
+                        "nothing to update: provide instructions, conventions and/or auth_required",
                     )));
                 }
                 db_tx(db_path, TxMode::Write, |st| {
+                    // 开启鉴权前必须已有 admin 身份，否则开启后所有请求 401 且无人能再管理
+                    // （token 明文只在创建响应出现过一次）。同事务检查避免并发绕过。
+                    let enabling = updates
+                        .iter()
+                        .any(|(k, v)| *k == store::Store::SETTING_AUTH_REQUIRED && v == "true");
+                    if enabling && !st.has_admin_identity()? {
+                        return Err(ToolError::invalid(
+                            "cannot enable auth_required: no admin identity exists; create one first (open mode has full capabilities)",
+                        ));
+                    }
                     for (key, value) in &updates {
                         if *key == store::Store::SETTING_AUTH_REQUIRED {
                             st.set_auth_required(value == "true")
@@ -733,7 +743,7 @@ mod tests {
             br#"{"nope": "x"}"#,
         );
         assert_eq!(status, 400);
-        // 鉴权开关：布尔往返；非布尔拒绝
+        // 鉴权开关：布尔往返（此时 alice 已是 admin，守卫放行）；非布尔拒绝
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -775,6 +785,68 @@ mod tests {
         assert_eq!(status, 200);
         let (status, _) = handle(&db, &open_ctx(), "DELETE", "/api/identities/alice", "", &[]);
         assert_eq!(status, 404);
+
+        cleanup();
+    }
+
+    /// 开启鉴权开关的守卫：库里没有 admin 能力身份时拒绝（空表、只有只读身份
+    /// 都不行），创建 admin 后放行。防止开关翻上后无人持有 token、管理面锁死。
+    #[test]
+    fn settings_enable_auth_requires_admin_identity() {
+        let db =
+            std::env::temp_dir().join(format!("agent-memory-api-guard-{}.db", std::process::id()));
+        let cleanup = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{}", db.display(), suffix));
+            }
+        };
+        cleanup();
+
+        let enable = |db: &std::path::Path| {
+            handle(
+                db,
+                &open_ctx(),
+                "PUT",
+                "/api/settings",
+                "",
+                br#"{"auth_required": true}"#,
+            )
+        };
+
+        // 空表 → 400 且开关保持关闭
+        let (status, v) = enable(&db);
+        assert_eq!(status, 400, "{v}");
+        assert!(v.to_string().contains("no admin identity exists"));
+        let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(v["auth_required"], false, "guard must leave the switch off");
+
+        // 只有非 admin 身份 → 仍 400
+        let (status, v) = handle(
+            &db,
+            &open_ctx(),
+            "POST",
+            "/api/identities",
+            "",
+            br#"{"name": "lone-viewer", "permissions": {"read": true}}"#,
+        );
+        assert_eq!(status, 200, "{v}");
+        let (status, v) = enable(&db);
+        assert_eq!(status, 400, "{v}");
+
+        // 创建 admin → 放行，开关生效
+        let (status, v) = handle(
+            &db,
+            &open_ctx(),
+            "POST",
+            "/api/identities",
+            "",
+            br#"{"name": "boss", "permissions": {"read": true, "admin": true}}"#,
+        );
+        assert_eq!(status, 200, "{v}");
+        let (status, v) = enable(&db);
+        assert_eq!(status, 200, "{v}");
+        let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(v["auth_required"], true);
 
         cleanup();
     }

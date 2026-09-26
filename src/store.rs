@@ -560,10 +560,12 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    pub fn identity_count(&self) -> Result<u64, String> {
+    /// 是否存在具备 admin 能力的身份（permissions JSON 恒为全键紧凑对象，
+    /// LIKE '%"admin":true%' 精确命中）。开启鉴权开关的前置条件。
+    pub fn has_admin_identity(&self) -> Result<bool, String> {
         self.conn
-            .query_row(sql::IDENTITY_COUNT, [], |r| r.get::<_, i64>(0))
-            .map(|n| n as u64)
+            .query_row(sql::IDENTITY_ANY_ADMIN, [], |r| r.get::<_, i64>(0))
+            .map(|n| n != 0)
             .map_err(|e| e.to_string())
     }
 
@@ -710,8 +712,10 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// token 鉴权开关（settings 键，显式且持久化）：开启与否由操作者决定，
-    /// 与库里是否存在身份无关。缺省视为关闭（全新库 = 开放模式零配置）。
+    /// token 鉴权开关（settings 键，显式且持久化）：运行时强制与否只看这个值，
+    /// 缺省视为关闭（全新库 = 开放模式零配置）。**开启**有前置条件——至少存在
+    /// 一个 admin 身份（api 层把守，见 `has_admin_identity`），防止开关翻上后
+    /// 无人持有 token、管理面整体锁死。
     pub const SETTING_AUTH_REQUIRED: &'static str = "auth_required";
 
     pub fn auth_required(&self) -> Result<bool, String> {
@@ -1545,7 +1549,7 @@ mod tests {
         let path = temp_db("identity");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        assert_eq!(st.identity_count().unwrap(), 0);
+        assert!(st.identity_list().unwrap().is_empty());
 
         let (token, view) = st
             .identity_create("alice", &crate::auth::Permissions::all())
@@ -1586,7 +1590,7 @@ mod tests {
         // 删除后计数归零；再删返回 false
         assert!(st.identity_delete("alice").unwrap());
         assert!(!st.identity_delete("alice").unwrap());
-        assert_eq!(st.identity_count().unwrap(), 0);
+        assert!(st.identity_list().unwrap().is_empty());
         cleanup(&path);
     }
 

@@ -12,6 +12,7 @@ export default {
     delete: '删除',
     cancel: '取消',
     save: '保存',
+    ok: '知道了',
   },
   memories: {
     title: '记忆管理',
@@ -161,9 +162,12 @@ export default {
     empty: '尚无身份。先创建管理员身份并保存其 token，再打开上方的鉴权开关。',
     authTitle: 'Token 鉴权',
     authHint:
-      '开启后，所有 /mcp 与 /api 请求都必须携带 Authorization: Bearer <token>。开启前请先创建身份并保存 token；开启后本浏览器会弹出令牌输入框，输入一次即可。',
+      '开启后，所有 /mcp 与 /api 请求都必须携带 Authorization: Bearer <token>。开启前请先创建身份并保存 token（创建弹窗里可一键保存到本浏览器）；开启后本浏览器会弹出令牌输入框，输入一次即可。',
     authEnableConfirm: '开启 token 鉴权？此后所有 /mcp 与 /api 请求都必须携带有效 token。',
     authDisableConfirm: '关闭 token 鉴权？所有请求将免鉴权放行（开放模式）。',
+    enableBlocked: '尚不具备开启条件：库里还没有具备管理员能力的身份。请先创建身份并妥善保存其 token，再打开开关。',
+    saveToBrowser: '保存到本浏览器',
+    savedToBrowser: '已保存身份「{name}」的 token 到本浏览器',
     backupCard: '备份导入导出',
     export: '导出备份（JSON）',
     import: '导入备份',

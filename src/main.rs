@@ -49,11 +49,6 @@ enum Command {
         /// 监听端口
         #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
-        /// 显式开启 token 鉴权（写入设置持久生效，重启后仍有效；关闭走管理界面的开关）。
-        /// identities 为空时自动创建全能力管理员并打印 token。
-        /// 不开启时为无鉴权开放模式（个人本地部署）。
-        #[arg(long)]
-        auth: bool,
         /// 详细日志：记录全部请求（含静态资源/健康检查）并附带耗时、
         /// 请求者身份与 MCP 调用摘要。默认只记错误请求与启动/异常事件。
         #[arg(long)]
@@ -103,15 +98,13 @@ fn run(cli: Cli) -> i32 {
     match cli.command.unwrap_or(Command::Serve {
         host: DEFAULT_HOST.to_string(),
         port: DEFAULT_PORT,
-        auth: false,
         verbose: false,
     }) {
         Command::Serve {
             host,
             port,
-            auth,
             verbose,
-        } => http::serve_http(&host, port, &db_path, auth, verbose),
+        } => http::serve_http(&host, port, &db_path, verbose),
         Command::Stats => cmd_stats(&db_path),
         Command::Doctor => cmd_doctor(&db_path),
         Command::Export { path } => cmd_export(&db_path, &path),

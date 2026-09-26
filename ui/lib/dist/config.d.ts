@@ -9,8 +9,13 @@ export interface MemoryUIConfig {
     defaultPageSize?: number;
     /** 界面语言。'auto' 跟随浏览器（默认）；也可固定 'zh' / 'en'，运行时可用 setMemoryUILocale 切换 */
     locale?: MemoryUILocaleOption;
+    /** 管理面板创建/重置身份后的 token 一次性展示弹窗里，「保存到本浏览器」按钮的落点。
+     *  注入后按钮才渲染；独立站点壳用它把 token 存入自己的多身份令牌表。 */
+    onIdentityToken?: (name: string, token: string) => void;
+    /** 鉴权开关切换成功后回调（独立站点壳借此重新解析 whoami，右上角身份区即时反映 token 模式）。 */
+    onAuthChanged?: (enabled: boolean) => void;
 }
-export type ResolvedMemoryUIConfig = Required<MemoryUIConfig>;
+export type ResolvedMemoryUIConfig = Omit<Required<MemoryUIConfig>, 'onIdentityToken' | 'onAuthChanged'> & Pick<MemoryUIConfig, 'onIdentityToken' | 'onAuthChanged'>;
 export declare const MemoryUIConfigKey: InjectionKey<MemoryUIConfig>;
 /** 在组件 setup 中注入配置（也可直接用 app.provide(MemoryUIConfigKey, config)）。 */
 export declare function provideMemoryUI(config: MemoryUIConfig): void;

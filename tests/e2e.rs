@@ -596,7 +596,7 @@ fn rest_api_end_to_end() {
 fn token_auth_end_to_end() {
     let db = temp_db("auth");
     cleanup(&db);
-    // 不带 --auth：开放模式启动（个人部署零配置形态）
+    // 开放模式启动（个人部署零配置形态）
     let server = HttpProc::start(&db, "auth");
     let port = server.port;
 
@@ -611,6 +611,36 @@ fn token_auth_end_to_end() {
         Some(r#"{"summary": "open-mode write", "content": "c"}"#),
     );
     assert_eq!(status, 200);
+
+    // 守卫：无 admin 身份时开启鉴权被拒绝（否则开启后无人能再访问管理面）
+    let (status, body, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"auth_required": true}"#),
+    );
+    let guard_msg = String::from_utf8_lossy(&body);
+    assert_eq!(status, 400, "{guard_msg}");
+    assert!(
+        guard_msg.contains("no admin identity exists"),
+        "guard error must explain the precondition: {guard_msg}"
+    );
+
+    // 只有非 admin 身份同样拒绝（admin 缺失时 token reset 也无从恢复）
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/identities",
+        Some(r#"{"name": "lone-viewer", "permissions": {"read": true}}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, body, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"auth_required": true}"#),
+    );
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
 
     // 开放模式下创建身份不改变鉴权状态（开关才是唯一事实源）
     let (status, body, _) = request(
@@ -753,7 +783,8 @@ fn token_auth_end_to_end() {
     let (status, body, _) =
         try_request(port, "GET", "/api/identities", None, &admin_headers).unwrap();
     assert_eq!(status, 200);
-    assert_eq!(json_body(&body)["identities"].as_array().unwrap().len(), 2);
+    // admin、lone-viewer（守卫用例所建）、viewer 共三个
+    assert_eq!(json_body(&body)["identities"].as_array().unwrap().len(), 3);
     let (status, _, _) = try_request(
         port,
         "PUT",
@@ -840,29 +871,6 @@ fn token_auth_end_to_end() {
     let (status, _, _) = request(port, "GET", "/api/memories", None);
     assert_eq!(status, 200, "open mode must not require tokens");
 
-    drop(server);
-    cleanup(&db);
-}
-
-/// --auth 引导：空库启动时自动创建管理员，鉴权即刻生效（无 token → 401）；
-/// 开关写入 settings，不带 --auth 重启后仍生效。
-#[test]
-fn auth_flag_bootstraps_admin() {
-    let db = temp_db("auth-boot");
-    cleanup(&db);
-    let server = HttpProc::start_with(&db, "auth-boot", &["--auth"]);
-    let port = server.port;
-    let (status, _, _) = request(port, "GET", "/api/memories", None);
-    assert_eq!(
-        status, 401,
-        "bootstrap must have created the admin identity"
-    );
-    let (status, _, _) = request(port, "GET", "/", None);
-    assert_eq!(status, 200);
-    drop(server);
-    let server = HttpProc::start(&db, "auth-boot-restart");
-    let (status, _, _) = request(server.port, "GET", "/api/memories", None);
-    assert_eq!(status, 401, "auth switch must persist across restarts");
     drop(server);
     cleanup(&db);
 }

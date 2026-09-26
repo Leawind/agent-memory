@@ -195,6 +195,10 @@
       <p>{{ t('access.created') }}</p>
       <code class="new-token">{{ createdToken }}</code>
       <template #footer>
+        <!-- 宿主注入 onIdentityToken 时提供一键保存（独立站点壳存入多身份令牌表并切换） -->
+        <el-button v-if="config.onIdentityToken" type="primary" @click="saveTokenToBrowser">
+          {{ t('access.saveToBrowser') }}
+        </el-button>
         <el-button
           type="primary"
           @click="
@@ -218,6 +222,7 @@ import { Download, InfoFilled, Plus, Search, UploadFilled } from '@element-plus/
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useApiClient } from '../api/client'
+import { useMemoryConfig } from '../config'
 import { useAdmin } from '../composables/useAdmin'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import { toastError, toastSuccess } from '../toast'
@@ -238,6 +243,7 @@ const props = withDefaults(
 )
 
 const api = useApiClient()
+const config = useMemoryConfig()
 
 // 能力清单：key 与服务端 auth::Cap 的 JSON 键一致（唯一登记表）
 const CAPS = [
@@ -386,7 +392,7 @@ async function submit(): Promise<void> {
         }),
       )
       if (created?.token) {
-        showTokenOnce(t('access.createTitle'), created.token)
+        showTokenOnce(t('access.createTitle'), form.name.trim(), created.token)
       }
     }
     dialogVisible.value = false
@@ -416,6 +422,15 @@ async function askDelete(row: IdentityRow): Promise<void> {
 // ---- 鉴权开关：先确认再变更（el-switch before-change）----
 async function confirmAuthToggle(): Promise<boolean> {
   const target = !authRequired.value
+  // 预检：开启要求库里已有 admin 身份（服务端守卫同规则）。
+  // 不发必败请求，直接给出引导； token 拿到手之前别翻开关。
+  if (target && !identities.value.some((row) => row.permissions?.admin === true)) {
+    ElMessageBox.alert(t('access.enableBlocked'), t('access.authTitle'), {
+      type: 'warning',
+      confirmButtonText: t('common.ok'),
+    }).catch(() => {})
+    return false
+  }
   try {
     await ElMessageBox.confirm(
       t(target ? 'access.authEnableConfirm' : 'access.authDisableConfirm'),
@@ -431,7 +446,8 @@ async function confirmAuthToggle(): Promise<boolean> {
   }
   togglingAuth.value = true
   try {
-    await run(() => api.put('/api/settings', { auth_required: target }))
+    const saved = await run(() => api.put('/api/settings', { auth_required: target }))
+    if (saved !== undefined) config.onAuthChanged?.(target)
     return true
   } finally {
     togglingAuth.value = false
@@ -472,6 +488,7 @@ function onImportFile(e: Event) {
 // ---- 展示辅助 ----
 const tokenShown = ref(false)
 const tokenShownTitle = ref('')
+const tokenShownIdentityName = ref('')
 const createdToken = ref('')
 
 // token 只存哈希，列表只有尾缀提示
@@ -479,10 +496,25 @@ function maskToken(hint: string): string {
   return hint ? `…${hint}` : '—'
 }
 
-function showTokenOnce(title: string, token: string): void {
+function showTokenOnce(title: string, name: string, token: string): void {
   tokenShownTitle.value = title
+  tokenShownIdentityName.value = name
   createdToken.value = token
   tokenShown.value = true
+}
+
+// 「保存到本浏览器」：把一次性 token 交给宿主的令牌表（独立站点壳会记住并切换）。
+// 按钮仅在宿主注入 onIdentityToken 时渲染，这里非空调用。
+async function saveTokenToBrowser(): Promise<void> {
+  const name = tokenShownIdentityName.value
+  if (!name) return
+  try {
+    await config.onIdentityToken!(name, createdToken.value)
+    tokenShown.value = false
+    toastSuccess(t('access.savedToBrowser', { name }))
+  } catch (e) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
 }
 
 async function askResetToken(row: IdentityRow): Promise<void> {
@@ -499,7 +531,7 @@ async function askResetToken(row: IdentityRow): Promise<void> {
     api.post<{ token?: string }>(`/api/identities/${encodeURIComponent(row.name)}/token-reset`, {}),
   )
   if (reset === undefined) return
-  if (reset?.token) showTokenOnce(t('access.resetTitle'), reset.token)
+  if (reset?.token) showTokenOnce(t('access.resetTitle'), row.name, reset.token)
   await load()
 }
 

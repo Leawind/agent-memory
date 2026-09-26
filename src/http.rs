@@ -4,9 +4,9 @@
 //! - `/api/*`：管理后端（实现在 `crate::api`，复用工具层 handler），供管理界面使用
 //! - `/`：rust-embed 嵌入的 Vue3 管理界面（SPA）
 //!
-//! 另有 `GET /health` 探活。鉴权（`--auth` 引导启用）在传输层完成：请求携带
-//! `Authorization: Bearer <token>`，与 MCP 规范的载体一致；identities 表为空
-//! 时进入无鉴权开放模式（个人本地部署零配置）。仅有的其他防护是 Origin 校验
+//! 另有 `GET /health` 探活。鉴权在传输层完成：请求携带
+//! `Authorization: Bearer <token>`，与 MCP 规范的载体一致；鉴权开关未开启
+//! 时为无鉴权开放模式（个人本地部署零配置）。仅有的其他防护是 Origin 校验
 //! （防浏览器 DNS rebinding）。诊断日志只写 stderr。
 
 use crate::auth::{Cap, IdentityCtx};
@@ -25,14 +25,12 @@ const PREFIX_API: &str = "/api";
 const MAX_BODY: usize = 8 * 1024 * 1024;
 /// 并发 worker 数：写由 SQLite 串行化，多 worker 只为避免读请求排队。
 const WORKERS: usize = 4;
-/// 首个管理员身份的默认名字（--auth 启动且空表时自动创建）。
-const BOOTSTRAP_ADMIN_NAME: &str = "admin";
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist"]
 struct UiAssets;
 
-pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, verbose: bool) -> i32 {
+pub fn serve_http(host: &str, port: u16, db_path: &Path, verbose: bool) -> i32 {
     if port == 0 {
         // 端口 0 会绑定到随机端口，但调用方无从得知实际端口，等于不可用
         eprintln!("--port 0 is not supported; choose a fixed port");
@@ -44,14 +42,6 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
         eprintln!("cannot open database ({e}).");
         eprintln!("refusing to start to protect your data.");
         return 1;
-    }
-    // --auth 引导：显式开启鉴权开关（写入 settings，持久生效）；空表时
-    // 顺带创建全能力管理员并打印 token（仅此一次）。
-    if auth_enabled {
-        if let Err(e) = bootstrap_admin_if_empty(db_path) {
-            eprintln!("cannot bootstrap admin identity ({e}).");
-            return 1;
-        }
     }
     let open_mode =
         match store::with_db_in(db_path, store::TxMode::ReadOnly, |st| st.auth_required()) {
@@ -79,9 +69,7 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
     eprintln!("  MCP 端点  http://{addr}{ENDPOINT_MCP}");
     if open_mode {
         eprintln!("  鉴权      开放模式（鉴权开关未开启，所有请求放行；请只暴露给可信网络）");
-        eprintln!(
-            "            启用 token 鉴权：在管理界面「身份与访问」页打开开关，或以 --auth 重启"
-        );
+        eprintln!("            启用 token 鉴权：在管理界面「管理」页创建管理员身份后打开开关");
     } else {
         eprintln!("  鉴权      token 模式（/mcp 与 /api 须携带 Authorization: Bearer <token>）");
     }
@@ -110,33 +98,6 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
         let _ = h.join();
     }
     0
-}
-
-/// --auth 引导：把鉴权开关写为开启（幂等）；identities 为空时创建全能力
-/// 管理员，token 打印到 stderr 一次。已有身份时只开开关（重置走 `token reset`）。
-fn bootstrap_admin_if_empty(db_path: &Path) -> Result<(), String> {
-    let created: Option<String> = store::with_db_in(
-        db_path,
-        store::TxMode::Write,
-        |st| -> Result<Option<String>, String> {
-            st.set_auth_required(true)?;
-            if st.identity_count()? > 0 {
-                return Ok(None);
-            }
-            let (token, _) =
-                st.identity_create(BOOTSTRAP_ADMIN_NAME, &crate::auth::Permissions::all())?;
-            Ok(Some(token))
-        },
-    )?;
-    if let Some(token) = created {
-        eprintln!("============================================================");
-        eprintln!("鉴权已启用，已创建管理员身份 '{BOOTSTRAP_ADMIN_NAME}'。");
-        eprintln!("管理员 token（仅此一次显示，请立即复制保存；丢失可用 `token reset` 重置）：");
-        eprintln!("  {token}");
-        eprintln!("MCP 客户端与管理界面请求均须携带 Authorization: Bearer <token>");
-        eprintln!("============================================================");
-    }
-    Ok(())
 }
 
 fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
@@ -777,7 +738,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let db = std::env::temp_dir().join(format!("agent-memory-port-{}.db", std::process::id()));
-        let code = serve_http("127.0.0.1", port, &db, false, false);
+        let code = serve_http("127.0.0.1", port, &db, false);
         drop(listener);
         let _ = std::fs::remove_file(&db);
         assert_eq!(code, 1, "expected failure on occupied port");
