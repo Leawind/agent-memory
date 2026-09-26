@@ -8,10 +8,13 @@
     "scripts"
   ],
   "scripts": {
-    "build": "npm run build --workspace @agent-memory/ui && npm run build --workspace @agent-memory/app",
+    "build": "cross-env GOMAXPROCS=4 npm run build --workspace @agent-memory/ui && cross-env GOMAXPROCS=2 npm run build --workspace @agent-memory/app",
     "test": "npm run test --workspace @agent-memory/ui && npm run test --workspace @agent-memory/app",
     "typecheck": "npm run typecheck --if-present --workspaces",
     "format": "npm run format --workspace @agent-memory/ui && npm run format --workspace @agent-memory/app",
     "format:check": "npm run format:check --workspace @agent-memory/ui && npm run format:check --workspace @agent-memory/app"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }
