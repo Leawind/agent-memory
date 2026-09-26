@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 clap = { version = "4.5.61", features = ["derive"] }
+regex = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rust-embed = { version = "8.12.0", features = ["debug-embed"] }
 serde = { version = "1", features = ["derive"] }

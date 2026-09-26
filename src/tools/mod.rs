@@ -106,7 +106,7 @@ pub fn execute(
 
     match name {
         "tag_create" => tag_ops::tag_create(st, map),
-        "tag_list" => tag_ops::tag_list(st),
+        "tag_list" => tag_ops::tag_list(st, map),
         "tag_rename" => tag_ops::tag_rename(st, map),
         "tag_delete" => tag_ops::tag_delete(st, map),
         "memory_create" => memory_ops::memory_create(st, map),
@@ -361,9 +361,9 @@ mod tests {
             err.to_string().contains("'summray'") && err.to_string().contains("summary"),
             "got: {err}"
         );
-        // 无参数工具传了参数也要报错
-        let err = call(&path, "tag_list", json!({"filter": "x"})).unwrap_err();
-        assert!(err.to_string().contains("'filter'"), "got: {err}");
+        // 未知参数名报错（tag_list 现有合法参数 filter，拼错照样拒绝）
+        let err = call(&path, "tag_list", json!({"flter": "x"})).unwrap_err();
+        assert!(err.to_string().contains("'flter'"), "got: {err}");
         // 正常参数不受影响
         call(
             &path,
@@ -371,6 +371,76 @@ mod tests {
             json!({"summary": "ok", "content": "c"}),
         )
         .unwrap();
+
+        cleanup(&path);
+    }
+
+    /// 标签正则过滤：tag_list 的 filter、memory_list / memory_search 的
+    /// tag_filter（非法正则报错、与精确过滤 AND、零命中 note）。
+    #[test]
+    fn regex_filters_on_tags_and_memories() {
+        let path = temp_db("regex-filter");
+        call(&path, "tag_create", json!({"name": "proj/alpha"})).unwrap();
+        call(&path, "tag_create", json!({"name": "misc"})).unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "alpha note", "content": "c", "tags": ["proj/alpha"]}),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "misc note", "content": "c", "tags": ["misc"]}),
+        )
+        .unwrap();
+
+        // tag_list filter：非锚定子串匹配，^...$ 锚定全名
+        let tl = call(&path, "tag_list", json!({"filter": "^proj/"})).unwrap();
+        assert_eq!(tl["total_tags"], 1);
+        assert_eq!(tl["tags"][0]["name"], "proj/alpha");
+        let none = call(&path, "tag_list", json!({"filter": "zzz"})).unwrap();
+        assert_eq!(none["total_tags"], 0);
+        assert_eq!(none["tags"].as_array().unwrap().len(), 0);
+        // 非法正则 → Invalid（400 类）
+        let err = call(&path, "tag_list", json!({"filter": "("})).unwrap_err();
+        assert!(
+            err.to_string().contains("not a valid regular expression"),
+            "got: {err}"
+        );
+
+        // memory_list tag_filter：总数只算命中记忆
+        let ml = call(&path, "memory_list", json!({"tag_filter": "^proj/"})).unwrap();
+        assert_eq!(ml["total"], 1);
+        assert_eq!(ml["memories"][0]["summary"], "alpha note");
+        // 正则未命中任何标签 → note 提示
+        let ml_empty = call(&path, "memory_list", json!({"tag_filter": "zzz"})).unwrap();
+        assert_eq!(ml_empty["total"], 0);
+        assert!(
+            ml_empty["note"]
+                .as_str()
+                .unwrap()
+                .contains("matched no tags"),
+            "got: {ml_empty}"
+        );
+        // 与精确 tag 同时使用 = AND
+        let ml_and = call(
+            &path,
+            "memory_list",
+            json!({"tag": "misc", "tag_filter": "^proj/"}),
+        )
+        .unwrap();
+        assert_eq!(ml_and["total"], 0);
+
+        // memory_search tag_filter
+        let ms = call(
+            &path,
+            "memory_search",
+            json!({"query": "note", "tag_filter": "^proj/"}),
+        )
+        .unwrap();
+        assert_eq!(ms["total_matches"], 1);
+        assert_eq!(ms["results"][0]["summary"], "alpha note");
 
         cleanup(&path);
     }

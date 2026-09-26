@@ -430,6 +430,20 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["tags"].as_array().unwrap().len(), 2);
 
+    // 标签正则过滤：命中 / 不命中 / 非法正则 → 400
+    let (status, body, _) = request(port, "GET", "/api/tags?filter=%5E%E9%A1%B9", None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["tags"].as_array().unwrap().len(), 1);
+    let (status, body, _) = request(port, "GET", "/api/tags?filter=zzz", None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["tags"].as_array().unwrap().len(), 0);
+    let (status, body, _) = request(port, "GET", "/api/tags?filter=%28", None);
+    assert_eq!(status, 400);
+    assert!(json_body(&body)["error"]
+        .as_str()
+        .unwrap()
+        .contains("not a valid regular expression"));
+
     let (status, body, _) = request(
         port,
         "PUT",
@@ -466,6 +480,31 @@ fn rest_api_end_to_end() {
     );
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total"], 1);
+
+    // 记忆标签正则过滤：命中 / 与精确 tag AND 后为空
+    let (status, body, _) = request(
+        port,
+        "GET",
+        &format!(
+            "/api/memories?tag_filter={}&limit=10",
+            encodeURIComponent("^项目")
+        ),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["total"], 1);
+    let (status, body, _) = request(
+        port,
+        "GET",
+        &format!(
+            "/api/memories?tag={}&tag_filter={}&limit=10",
+            encodeURIComponent("偏好"),
+            encodeURIComponent("^外观")
+        ),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["total"], 0);
 
     let (status, body, _) = request(port, "GET", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 200);

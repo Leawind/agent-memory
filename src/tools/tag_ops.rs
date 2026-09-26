@@ -2,7 +2,7 @@
 
 use crate::model::normalize_tag_name;
 use crate::store::Store;
-use crate::tools::params::{opt_str, req_str, validate_description};
+use crate::tools::params::{opt_regex, opt_str, req_str, validate_description};
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
 
@@ -26,8 +26,12 @@ pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     Ok(out)
 }
 
-pub fn tag_list(st: &Store) -> Result<Value, ToolError> {
-    let tags = st.tag_views()?;
+pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let filter = opt_regex(args, "filter").map_err(ToolError::invalid)?;
+    let mut tags = st.tag_views()?;
+    if let Some(re) = &filter {
+        tags.retain(|t| re.is_match(t["name"].as_str().unwrap_or_default()));
+    }
     let total_memories = st.stats()?["memories"].clone();
     Ok(json!({
         "total_tags": tags.len(),

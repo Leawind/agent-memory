@@ -246,9 +246,15 @@ pub fn handle(
                     Ok((200, json!({ "saved": true })))
                 })
             }
-            ("GET", ["tags"]) => db_tx(db_path, tx_mode, |st| {
-                tools::execute(st, ctx, "tag_list", &json!({})).map(|v| (200, v))
-            }),
+            ("GET", ["tags"]) => {
+                let mut args = Map::new();
+                if let Some(f) = query_get(query, "filter") {
+                    args.insert("filter".into(), json!(f));
+                }
+                db_tx(db_path, tx_mode, |st| {
+                    tools::execute(st, ctx, "tag_list", &Value::Object(args)).map(|v| (200, v))
+                })
+            }
             ("POST", ["tags"]) => {
                 let args = match args_from_body() {
                     Ok(m) => m,
@@ -394,7 +400,16 @@ fn bad_request(e: ToolError) -> (u16, Value) {
 /// GET /api/memories 的查询串 → memory_list / memory_search 参数。
 fn list_or_search_args(query: &str) -> Value {
     let mut args = Map::new();
-    for key in ["query", "tag", "sort", "order", "offset", "limit", "tags"] {
+    for key in [
+        "query",
+        "tag",
+        "tag_filter",
+        "sort",
+        "order",
+        "offset",
+        "limit",
+        "tags",
+    ] {
         if let Some(v) = query_get(query, key) {
             let value = if key == "tags" {
                 // 逗号分隔的多标签过滤

@@ -9,11 +9,13 @@ export function useTags() {
   const client = useApiClient()
   const rows = ref<TagView[]>([])
   const loading = ref(false)
+  /** 标签名正则过滤（服务端执行）；空串 = 不过滤 */
+  const filter = ref('')
 
   async function reload() {
     loading.value = true
     try {
-      const data = await listTags(client)
+      const data = await listTags(client, filter.value.trim() || undefined)
       rows.value = data.tags ?? []
     } finally {
       loading.value = false
@@ -39,7 +41,7 @@ export function useTags() {
     void reload().catch(() => {}) // 首屏错误由调用方 toast（面板层包装）
   })
 
-  return { rows, loading, reload, create, rename, remove }
+  return { rows, loading, filter, reload, create, rename, remove }
 }
 
 export type TagsStore = ReturnType<typeof useTags>

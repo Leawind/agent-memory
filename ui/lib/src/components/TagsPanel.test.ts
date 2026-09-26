@@ -35,4 +35,19 @@ describe('TagsPanel', () => {
     expect(html).toContain('新建标签')
     wrapper.unmount()
   })
+
+  it('refetches with the regex filter query param', async () => {
+    const wrapper = mount(TagsPanel)
+    await flushPromises()
+    await flushPromises()
+    const input = wrapper.find('.am-tag-filter input')
+    expect(input.exists()).toBe(true)
+    await input.setValue('^proj/')
+    // 防抖 300ms 后应带 filter 参数重新请求
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]))
+    expect(calls.some((u) => u.includes('/api/tags?filter=%5Eproj%2F'))).toBe(true)
+    wrapper.unmount()
+  })
 })

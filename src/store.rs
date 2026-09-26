@@ -103,6 +103,29 @@ impl Store {
         }
     }
 
+    /// 名字匹配正则的既有标签名（按存储名返回，供 tag_set 过滤走 json_each）。
+    pub fn tag_names_matching(&self, re: &regex::Regex) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::TAG_ALL_NAMES)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| {
+            let n = match r {
+                Ok(n) => n,
+                Err(e) => return Some(Err(e.to_string())),
+            };
+            if re.is_match(&n) {
+                Some(Ok(n))
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
+
     /// 查找与给定名字仅大小写不同的既有标签（Rust 侧比较，Unicode 语义一致）。
     pub fn find_tag_case_insensitive(&self, name: &str) -> Result<Option<String>, String> {
         let mut st = self
@@ -381,14 +404,18 @@ impl Store {
         Ok(out)
     }
 
-    /// 分页浏览（可选标签过滤），返回 (总数, 当前页)。
+    /// 分页浏览（可选标签过滤：`tag` 精确单标签；`tag_set` 为标签名集合的
+    /// JSON 数组文本，命中任一即可——正则过滤由调用方先在标签全集上解析），
+    /// 返回 (总数, 当前页)。
     ///
-    /// 全静态 SQL（见 sql/memory_list_page.sql）：`?1` 为 NULL 时不过滤标签；
-    /// 排序列用 CASE 在 `?2` 间选择；`?3` 传 ±1 实现正/倒序（列均为整数）。
+    /// 全静态 SQL（见 sql/memory_list_page.sql）：`?1`/`?2` 为 NULL 时不过滤；
+    /// 集合过滤用 json_each 展开（SQLite 内建 JSON1）；排序列用 CASE 在
+    /// `?3` 间选择；`?4` 传 ±1 实现正/倒序（列均为整数）。
     /// `sort` 只接受 handler 白名单化后的取值。
     pub fn list_memories(
         &self,
         tag: Option<&str>,
+        tag_set: Option<&str>,
         sort: &str,
         asc: bool,
         offset: u64,
@@ -397,7 +424,9 @@ impl Store {
         let dir: i64 = if asc { 1 } else { -1 };
         let total: u64 = self
             .conn
-            .query_row(sql::MEMORY_LIST_COUNT, [tag], |r| r.get::<_, i64>(0))
+            .query_row(sql::MEMORY_LIST_COUNT, params![tag, tag_set], |r| {
+                r.get::<_, i64>(0)
+            })
             .map(|n| n as u64)
             .map_err(|e| e.to_string())?;
         let mut st = self
@@ -405,18 +434,21 @@ impl Store {
             .prepare(sql::MEMORY_LIST_PAGE)
             .map_err(|e| e.to_string())?;
         let rows = st
-            .query_map(params![tag, sort, dir, limit as i64, offset as i64], |r| {
-                let created: i64 = r.get(3)?;
-                let updated: i64 = r.get(4)?;
-                Ok(Memory {
-                    id: Self::format_id(r.get(0)?),
-                    summary: r.get(1)?,
-                    content: r.get(2)?,
-                    tags: Vec::new(),
-                    created_at: created as u64,
-                    updated_at: updated as u64,
-                })
-            })
+            .query_map(
+                params![tag, tag_set, sort, dir, limit as i64, offset as i64],
+                |r| {
+                    let created: i64 = r.get(3)?;
+                    let updated: i64 = r.get(4)?;
+                    Ok(Memory {
+                        id: Self::format_id(r.get(0)?),
+                        summary: r.get(1)?,
+                        content: r.get(2)?,
+                        tags: Vec::new(),
+                        created_at: created as u64,
+                        updated_at: updated as u64,
+                    })
+                },
+            )
             .map_err(|e| e.to_string())?;
         let mut page: Vec<Memory> = rows
             .collect::<Result<Vec<_>, _>>()
@@ -1283,22 +1315,48 @@ mod tests {
             st.insert_memory(&format!("s{i}"), "c", &["t1".into()], i, i)
                 .unwrap();
         }
-        let (total, page) = st.list_memories(None, "updated_at", false, 0, 3).unwrap();
+        let (total, page) = st
+            .list_memories(None, None, "updated_at", false, 0, 3)
+            .unwrap();
         assert_eq!(total, 5);
         assert_eq!(page.len(), 3);
         assert_eq!(page[0].summary, "s4");
-        let (total2, page2) = st.list_memories(None, "updated_at", false, 3, 3).unwrap();
+        let (total2, page2) = st
+            .list_memories(None, None, "updated_at", false, 3, 3)
+            .unwrap();
         assert_eq!(total2, 5);
         assert_eq!(page2.len(), 2);
         let (total3, page3) = st
-            .list_memories(Some("t1"), "updated_at", true, 0, 200)
+            .list_memories(Some("t1"), None, "updated_at", true, 0, 200)
             .unwrap();
         assert_eq!(total3, 5);
         assert_eq!(page3[0].summary, "s0");
         let (total4, _) = st
-            .list_memories(Some("t1"), "created_at", false, 0, 200)
+            .list_memories(Some("t1"), None, "created_at", false, 0, 200)
             .unwrap();
         assert_eq!(total4, 5);
+        // 标签集合过滤（tag_set 为 JSON 数组文本，json_each 展开；空集 = 无结果）
+        st.tag_create("t2", "").unwrap();
+        st.insert_memory("s-other", "c", &["t2".into()], 9, 9)
+            .unwrap();
+        let (total5, page5) = st
+            .list_memories(None, Some(r#"["t1"]"#), "updated_at", false, 0, 200)
+            .unwrap();
+        assert_eq!(total5, 5);
+        assert!(page5.iter().all(|m| m.summary != "s-other"));
+        let (total6, _) = st
+            .list_memories(None, Some(r#"["t1","t2"]"#), "updated_at", false, 0, 200)
+            .unwrap();
+        assert_eq!(total6, 6);
+        let (total7, _) = st
+            .list_memories(None, Some("[]"), "updated_at", false, 0, 200)
+            .unwrap();
+        assert_eq!(total7, 0);
+        // 精确 tag 与集合同时使用 = AND
+        let (total8, _) = st
+            .list_memories(Some("t2"), Some(r#"["t1"]"#), "updated_at", false, 0, 200)
+            .unwrap();
+        assert_eq!(total8, 0);
         cleanup(&path);
     }
 

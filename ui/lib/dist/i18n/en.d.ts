@@ -33,6 +33,7 @@ declare const _default: {
         title: string;
         subtitle: string;
         create: string;
+        filterPlaceholder: string;
         colName: string;
         colDescription: string;
         colMemoryCount: string;

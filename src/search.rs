@@ -58,7 +58,14 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
-pub fn run(memories: &[Memory], query: &str, tag_filter: &[String]) -> Vec<Hit> {
+/// `tag_filter`：精确标签 OR 语义；`tag_regex`：任一标签名命中正则即通过
+/// （与 tag_filter 为 AND 关系，二者都省略 = 不过滤）。
+pub fn run(
+    memories: &[Memory],
+    query: &str,
+    tag_filter: &[String],
+    tag_regex: Option<&regex::Regex>,
+) -> Vec<Hit> {
     let terms = parse_query(query);
     if terms.is_empty() {
         return Vec::new();
@@ -67,6 +74,11 @@ pub fn run(memories: &[Memory], query: &str, tag_filter: &[String]) -> Vec<Hit> 
     for (idx, m) in memories.iter().enumerate() {
         if !tag_filter.is_empty() && !tag_filter.iter().any(|t| m.tags.iter().any(|x| x == t)) {
             continue;
+        }
+        if let Some(re) = tag_regex {
+            if !m.tags.iter().any(|t| re.is_match(t)) {
+                continue;
+            }
         }
         let lc_summary = m.summary.to_lowercase();
         let lc_tags: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
@@ -328,7 +340,7 @@ mod tests {
             5,
         );
         let b = mem("m2", &[], "unrelated", "the borrow checker is strict", 9);
-        let hits = run(&[a, b], "borrow rust", &[]);
+        let hits = run(&[a, b], "borrow rust", &[], None);
         // 只有两词都命中的才返回；m1 标签+摘要双命中应排在 m2（仅正文命中）前面。
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
@@ -338,9 +350,24 @@ mod tests {
     fn tag_filter_restricts() {
         let a = mem("m1", &["rust"], "has keyword here", "x", 1);
         let b = mem("m2", &["other"], "has keyword here", "x", 2);
-        let hits = run(&[a, b], "keyword", &["rust".to_string()]);
+        let hits = run(&[a, b], "keyword", &["rust".to_string()], None);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
+    }
+
+    /// tag_regex：任一标签名命中正则即通过；与精确 tag_filter 为 AND。
+    #[test]
+    fn tag_regex_restricts() {
+        let a = mem("m1", &["proj/alpha"], "has keyword here", "x", 1);
+        let b = mem("m2", &["misc"], "has keyword here", "x", 2);
+        let re = regex::Regex::new("^proj/").unwrap();
+        let hits = run(&[a.clone(), b], "keyword", &[], Some(&re));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].idx, 0);
+        // 与精确过滤叠加时 AND 语义
+        let b2 = mem("m2", &["other"], "has keyword here", "x", 2);
+        let hits = run(&[a, b2], "keyword", &["misc".to_string()], Some(&re));
+        assert!(hits.is_empty());
     }
 
     /// 小写化会变长度的字符（U+0130 "İ" → "i̇"）不得使片段窗口错位：
@@ -350,7 +377,7 @@ mod tests {
         // "İ" 小写化从 2 字节变 3 字节：旧实现对偏移的换算会偏差 1 字节
         let content = format!("İ{}TARGET{}", "前".repeat(60), "后".repeat(60));
         let a = mem("m1", &[], "s", &content, 1);
-        let hits = run(&[a], "target", &[]);
+        let hits = run(&[a], "target", &[], None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(sn.starts_with('…') && sn.ends_with('…'));
@@ -389,19 +416,19 @@ mod tests {
             "Rust 的借用检查器会在编译期阻止数据竞争。",
             1,
         );
-        let hits = run(std::slice::from_ref(&a), "借用检查器", &[]);
+        let hits = run(std::slice::from_ref(&a), "借用检查器", &[], None);
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("借用检查器"));
 
         // AND 语义：不存在的词导致无结果
-        let hits = run(&[a], "借用检查器 完全不存在的词", &[]);
+        let hits = run(&[a], "借用检查器 完全不存在的词", &[], None);
         assert_eq!(hits.len(), 0);
     }
 
     #[test]
     fn case_insensitive_ascii() {
         let a = mem("m1", &[], "Config Loading", "uses Serde for JSON", 1);
-        let hits = run(&[a], "serde json", &[]);
+        let hits = run(&[a], "serde json", &[], None);
         assert_eq!(hits.len(), 1);
     }
 
@@ -409,7 +436,7 @@ mod tests {
     fn snippet_window_and_ellipses() {
         let long = format!("{}TARGET{}", "前".repeat(200), "后".repeat(200));
         let a = mem("m1", &[], "s", &long, 1);
-        let hits = run(&[a], "target", &[]);
+        let hits = run(&[a], "target", &[], None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(sn.starts_with('…') && sn.ends_with('…'));
@@ -417,14 +444,14 @@ mod tests {
 
         // 无正文命中时回退到开头
         let b = mem("m2", &[], "TARGET in summary", "short", 1);
-        let hits = run(&[b], "target", &[]);
+        let hits = run(&[b], "target", &[], None);
         assert_eq!(hits[0].snippet, "short");
     }
 
     #[test]
     fn empty_query_returns_nothing() {
         let a = mem("m1", &[], "s", "c", 1);
-        assert!(run(&[a], "   ", &[]).is_empty());
+        assert!(run(&[a], "   ", &[], None).is_empty());
     }
 
     #[test]
@@ -432,7 +459,7 @@ mod tests {
         // 两条都命中 "rust"：正文出现 3 次的应排在只出现 1 次的前面
         let a = mem("m1", &[], "s", "rust rust rust and more rust mentions", 1);
         let b = mem("m2", &[], "s", "rust once", 1);
-        let hits = run(&[b, a], "rust", &[]);
+        let hits = run(&[b, a], "rust", &[], None);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].idx, 1, "m1 (3+ content hits) must rank first");
     }
@@ -442,7 +469,7 @@ mod tests {
         // 查 "age"：整词命中的 m1 应排在子串误伤（"message"）的 m2 前面
         let a = mem("m1", &[], "s", "storage age limits apply here", 1);
         let b = mem("m2", &[], "message summary here", "s", 1);
-        let hits = run(&[b, a], "age", &[]);
+        let hits = run(&[b, a], "age", &[], None);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].idx, 0, "word-bounded hit must rank first");
     }
@@ -457,12 +484,13 @@ mod tests {
             &[adjacent.clone(), separated.clone()],
             "\"borrow checker\"",
             &[],
+            None,
         );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
 
         // 不加引号退回 AND 语义：两个词各自命中即可，两条都返回
-        let hits = run(&[adjacent, separated], "borrow checker", &[]);
+        let hits = run(&[adjacent, separated], "borrow checker", &[], None);
         assert_eq!(hits.len(), 2);
     }
 
@@ -477,7 +505,7 @@ mod tests {
             "x".repeat(10)
         );
         let a = mem("m1", &[], "s", &content, 1);
-        let hits = run(std::slice::from_ref(&a), "alpha beta", &[]);
+        let hits = run(std::slice::from_ref(&a), "alpha beta", &[], None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(
@@ -495,7 +523,7 @@ mod tests {
             "hello <img src=x onerror=alert(1)> world",
             1,
         );
-        let hits = run(std::slice::from_ref(&a), "img", &[]);
+        let hits = run(std::slice::from_ref(&a), "img", &[], None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(sn.contains("&lt;img"), "snippet must escape HTML: {sn}");

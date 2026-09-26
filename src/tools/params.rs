@@ -24,6 +24,16 @@ pub fn opt_str(args: &Map<String, Value>, key: &str) -> Result<Option<String>, S
     }
 }
 
+/// 可选正则参数：取字符串并编译（非法模式 → 可读错误，处理器映射为 400）。
+pub fn opt_regex(args: &Map<String, Value>, key: &str) -> Result<Option<regex::Regex>, String> {
+    match opt_str(args, key)? {
+        None => Ok(None),
+        Some(pattern) => regex::Regex::new(&pattern)
+            .map(Some)
+            .map_err(|e| format!("parameter '{key}' is not a valid regular expression: {e}")),
+    }
+}
+
 /// 字符串数组参数；容忍单个字符串写法（自动包装为单元素数组）。
 pub fn opt_str_list(args: &Map<String, Value>, key: &str) -> Result<Option<Vec<String>>, String> {
     match args.get(key) {

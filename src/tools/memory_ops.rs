@@ -4,8 +4,8 @@ use crate::model::{normalize_id, normalize_tag_name, now};
 use crate::search;
 use crate::store::Store;
 use crate::tools::params::{
-    normalize_tag_list, opt_str, opt_str_list, opt_u64, req_id_list, req_str, validate_content,
-    validate_summary,
+    normalize_tag_list, opt_regex, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
+    validate_content, validate_summary,
 };
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
@@ -32,6 +32,7 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         Some(t) => Some(normalize_tag_name(&t)?),
         None => None,
     };
+    let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let sort_opt = opt_str(args, "sort")?;
     let sort = match sort_opt.as_deref() {
         None => "updated_at",
@@ -54,7 +55,14 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     let limit = opt_u64(args, "limit")?.unwrap_or(20).clamp(1, 200);
 
-    let (total, page) = st.list_memories(tag.as_deref(), sort, asc, offset, limit)?;
+    // 正则先在标签全集上解析成标签名集合（SQL 无正则能力；json_each 展开保持 SQL 静态）
+    let tag_names = match &tag_re {
+        Some(re) => Some(st.tag_names_matching(re)?),
+        None => None,
+    };
+    let tag_set = tag_names.as_ref().map(|names| json!(names).to_string());
+    let (total, page) =
+        st.list_memories(tag.as_deref(), tag_set.as_deref(), sort, asc, offset, limit)?;
     let memories: Vec<Value> = page.iter().map(|m| m.summary_view()).collect();
 
     let mut out = json!({"total": total, "offset": offset, "limit": limit, "memories": memories});
@@ -63,6 +71,14 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
             out["note"] = json!(format!("tag '{}' does not exist yet; see tag_list", t));
         } else if total == 0 {
             out["note"] = json!(format!("tag '{}' exists but currently has no memories", t));
+        }
+    }
+    if let Some(re) = &tag_re {
+        if tag_names.as_ref().is_none_or(|n| n.is_empty()) {
+            out["note"] = json!(format!(
+                "tag_filter '{}' matched no tags; see tag_list for available names",
+                re.as_str()
+            ));
         }
     }
     Ok(out)
@@ -75,11 +91,12 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     }
     let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
     let tag_filter = normalize_tag_list(&raw_tags)?;
+    let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
 
     let memories = st.all_memories()?;
-    let hits = search::run(&memories, &query, &tag_filter);
+    let hits = search::run(&memories, &query, &tag_filter, tag_re.as_ref());
     let total = hits.len() as u64;
     let results: Vec<Value> = hits
         .iter()

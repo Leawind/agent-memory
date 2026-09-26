@@ -13,6 +13,7 @@ export declare function useTags(): {
         last_used_at: number | null;
     }[]>;
     loading: import('vue').Ref<boolean, boolean>;
+    filter: import('vue').Ref<string, string>;
     reload: () => Promise<void>;
     create: (name: string, description: string) => Promise<void>;
     rename: (oldName: string, newName: string, description: string) => Promise<void>;

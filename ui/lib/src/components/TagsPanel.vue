@@ -10,6 +10,17 @@
       <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('tags.create') }}</el-button>
     </div>
 
+    <!-- 标签名正则过滤（服务端执行；非法正则由服务端报错并 toast） -->
+    <el-input
+      v-model="filter"
+      class="am-tag-filter"
+      :placeholder="t('tags.filterPlaceholder')"
+      clearable
+      :prefix-icon="Search"
+      @input="applyFilterDebounced"
+      @clear="applyFilterDebounced"
+    />
+
     <el-table :data="rows" v-loading="loading">
       <el-table-column prop="name" :label="t('tags.colName')" min-width="160">
         <template #default="{ row }">
@@ -97,7 +108,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { InfoFilled, Plus } from '@element-plus/icons-vue'
+import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useTags } from '../composables/useTags'
@@ -116,7 +127,17 @@ const props = withDefaults(
   { showHeader: true },
 )
 
-const { rows, loading, reload, create, rename, remove } = useTags()
+const { rows, loading, filter, reload, create, rename, remove } = useTags()
+
+// 正则过滤输入 → 防抖后重新拉取；非法正则的错误由 reload 的异常路径 toast
+let filterTimer: ReturnType<typeof setTimeout> | null = null
+function applyFilterDebounced() {
+  if (filterTimer) clearTimeout(filterTimer)
+  filterTimer = setTimeout(() => {
+    filterTimer = null
+    reload().catch((e) => ElMessage.error(e instanceof Error ? e.message : String(e)))
+  }, 300)
+}
 
 const rootRef = ref<HTMLElement | null>(null)
 const { compact } = useContainerWidth(rootRef)
@@ -194,6 +215,10 @@ defineExpose({
 </script>
 
 <style scoped>
+.am-tag-filter {
+  margin-bottom: 12px;
+  max-width: 360px;
+}
 .delete-body {
   display: flex;
   align-items: center;

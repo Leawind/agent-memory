@@ -4,8 +4,10 @@ import type { TagListResp } from '../types'
 
 export type TagDeleteMode = 'detach' | 'purge'
 
-export function listTags(client: ApiClient): Promise<TagListResp> {
-  return client.get<TagListResp>('/api/tags')
+/** filter 为标签名正则（服务端过滤）；非法正则由服务端 400 */
+export function listTags(client: ApiClient, filter?: string): Promise<TagListResp> {
+  const suffix = filter ? `?filter=${encodeURIComponent(filter)}` : ''
+  return client.get<TagListResp>(`/api/tags${suffix}`)
 }
 
 export function createTag(client: ApiClient, name: string, description: string): Promise<void> {
