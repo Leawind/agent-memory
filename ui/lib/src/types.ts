@@ -47,9 +47,35 @@ export interface MemorySearchResp {
   total_matches: number
   offset: number
   returned: number
+  /** 实际使用的搜索方式：hybrid（关键词+语义）或 keyword */
+  mode?: 'hybrid' | 'keyword'
+  /** hybrid 请求因 embedding 服务不可用而回退关键词时为 true */
+  semantic_fallback?: boolean
   hint?: string
   note?: string
   results: SearchResult[]
+}
+
+/** stats.embedding：语义搜索向量覆盖率（enabled=false 表示未启用） */
+export interface EmbeddingCoverage {
+  enabled: boolean
+  model?: string
+  embedded?: number
+  pending?: number
+}
+
+export interface EmbedBackfillResp {
+  configured: boolean
+  processed?: number
+  remaining?: number
+  error?: string
+}
+
+export interface EmbedTestResp {
+  ok: boolean
+  dim?: number
+  elapsed_ms?: number
+  error?: string
 }
 
 export interface StatsInfo {
@@ -58,6 +84,7 @@ export interface StatsInfo {
   tags: number
   file_size: number
   schema_version: number
+  embedding?: EmbeddingCoverage
   version?: string
 }
 

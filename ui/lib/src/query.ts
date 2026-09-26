@@ -5,6 +5,8 @@
 export interface MemoriesQueryState {
   query: string
   tagFilter: string
+  /** 搜索模式：auto（服务端按配置决定）/ keyword / hybrid；auto 不传参数 */
+  mode: string
   sort: string
   order: string
   page: number
@@ -17,6 +19,7 @@ export function buildMemoriesQuery(s: MemoriesQueryState): string {
   if (searching) {
     p.set('query', s.query.trim())
     if (s.tagFilter) p.set('tags', s.tagFilter)
+    if (s.mode && s.mode !== 'auto') p.set('mode', s.mode)
   } else {
     if (s.tagFilter) p.set('tag', s.tagFilter)
     p.set('sort', s.sort)

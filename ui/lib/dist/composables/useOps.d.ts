@@ -6,6 +6,12 @@ export declare function useOps(): {
         tags?: number | undefined;
         file_size?: number | undefined;
         schema_version?: number | undefined;
+        embedding?: {
+            enabled: boolean;
+            model?: string | undefined;
+            embedded?: number | undefined;
+            pending?: number | undefined;
+        } | undefined;
         version?: string | undefined;
     }, Partial<StatsInfo> | {
         path?: string | undefined;
@@ -13,6 +19,12 @@ export declare function useOps(): {
         tags?: number | undefined;
         file_size?: number | undefined;
         schema_version?: number | undefined;
+        embedding?: {
+            enabled: boolean;
+            model?: string | undefined;
+            embedded?: number | undefined;
+            pending?: number | undefined;
+        } | undefined;
         version?: string | undefined;
     }>;
     version: import('vue').Ref<string, string>;

@@ -7,6 +7,7 @@ import { sanitizeHtml } from '../markdown'
 import { useMemoryConfig } from '../config'
 import { createMemory, deleteMemory, getMemory, updateMemory } from '../api/memories'
 import { listTags } from '../api/tags'
+import { t } from '../i18n'
 import type { MemoryFull, MemoryListResp, MemorySearchResp, MemorySummary, SearchResult, TagListResp } from '../types'
 
 /** 编辑器表单的形状：id 为 null 表示新建 */
@@ -23,6 +24,8 @@ export function useMemories() {
 
   const query = ref('')
   const tagFilter = ref('')
+  /** 搜索模式：auto（服务端按配置决定 hybrid/keyword）/ keyword / hybrid */
+  const mode = ref<'auto' | 'keyword' | 'hybrid'>('auto')
   const sort = ref<'updated_at' | 'created_at' | 'id'>('updated_at')
   const order = ref<'asc' | 'desc'>('desc')
   const page = ref(1)
@@ -45,6 +48,7 @@ export function useMemories() {
     return buildMemoriesQuery({
       query: query.value,
       tagFilter: tagFilter.value,
+      mode: mode.value,
       sort: sort.value,
       order: order.value,
       page: page.value,
@@ -67,6 +71,8 @@ export function useMemories() {
         // 服务端片段是 HTML（<mark> 高亮），经 DOMPurify 消毒后再进 v-html
         searchResults.value = (data.results ?? []).map((r) => ({ ...r, snippet: sanitizeHtml(r.snippet) }))
         total.value = data.total_matches ?? 0
+        // hybrid 请求因 embedding 服务不可用回退关键词时，明确告知（不静默）
+        note.value = data.semantic_fallback ? t('memories.semanticFallback') : ''
       } else {
         const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`)) as MemoryListResp
         if (seq !== requestSeq) return
@@ -125,6 +131,7 @@ export function useMemories() {
   return {
     query,
     tagFilter,
+    mode,
     sort,
     order,
     page,

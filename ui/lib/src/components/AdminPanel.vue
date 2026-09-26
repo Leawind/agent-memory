@@ -24,7 +24,18 @@
             <span class="auth-label">{{ t('access.authTitle') }}</span>
             <span class="auth-hint">{{ t('access.authHint') }}</span>
           </div>
-          <el-switch v-model="authRequired" :before-change="confirmAuthToggle" :loading="togglingAuth" />
+          <el-tooltip
+            :disabled="hasAdminIdentity"
+            :content="t('access.enableBlocked')"
+            placement="top"
+          >
+            <el-switch
+              v-model="authRequired"
+              :before-change="confirmAuthToggle"
+              :loading="togglingAuth"
+              :disabled="!hasAdminIdentity"
+            />
+          </el-tooltip>
         </div>
       </el-card>
 
@@ -70,6 +81,50 @@
             </template>
           </el-table-column>
         </el-table>
+      </el-card>
+
+      <!-- 语义搜索配置：OpenAI 兼容 /embeddings（云端或本地 Ollama）；服务不可用时自动回退关键词 -->
+      <el-card shadow="never">
+        <template #header>{{ t('access.embeddingTitle') }}</template>
+        <el-alert :title="t('access.embeddingHint')" type="info" show-icon :closable="false" class="settings-hint" />
+        <el-form label-position="top" @submit.prevent>
+          <el-form-item :label="t('access.embeddingEnabledLabel')">
+            <el-switch v-model="embeddingEnabled" />
+          </el-form-item>
+          <el-form-item :label="t('access.embeddingBaseUrl')">
+            <el-input
+              v-model="embeddingBaseUrl"
+              placeholder="https://api.siliconflow.cn/v1 或 http://127.0.0.1:11434/v1"
+            />
+          </el-form-item>
+          <el-form-item :label="t('access.embeddingModelLabel')">
+            <el-input v-model="embeddingModel" placeholder="BAAI/bge-m3 / bge-m3 / nomic-embed-text" />
+          </el-form-item>
+          <el-form-item :label="t('access.embeddingApiKeyLabel')">
+            <el-input v-model="embeddingApiKey" show-password :placeholder="t('access.embeddingApiKeyPlaceholder')" />
+          </el-form-item>
+        </el-form>
+        <div class="save-row">
+          <el-button type="primary" :loading="savingEmbedding" @click="saveAndTestEmbedding">
+            {{ t('access.embeddingSaveTest') }}
+          </el-button>
+        </div>
+        <el-alert
+          v-if="embeddingTest?.ok"
+          :title="t('access.embeddingTestOk', { dim: embeddingTest.dim ?? 0, ms: embeddingTest.elapsed_ms ?? 0 })"
+          type="success"
+          show-icon
+          :closable="false"
+          class="settings-hint"
+        />
+        <el-alert
+          v-else-if="embeddingTest && !embeddingTest.ok"
+          :title="t('access.embeddingTestFail', { error: embeddingTest.error ?? '' })"
+          type="error"
+          show-icon
+          :closable="false"
+          class="settings-hint"
+        />
       </el-card>
 
       <el-card shadow="never">
@@ -153,6 +208,37 @@
         </template>
         <el-empty v-else :description="t('access.doctorEmpty')" :image-size="60" />
       </el-card>
+
+      <!-- 语义搜索覆盖率与补跑：backfill 是 admin 端点（有界批量，按钮内循环直到清零） -->
+      <el-card shadow="never">
+        <template #header>
+          <div class="card-header">
+            <span>{{ t('access.embeddingCard') }}</span>
+            <el-button size="small" :icon="Refresh" :loading="backfilling" @click="runBackfill">
+              {{ t('access.runBackfill') }}
+            </el-button>
+          </div>
+        </template>
+        <template v-if="stats?.embedding?.enabled">
+          <el-descriptions :column="compact ? 1 : 2" border>
+            <el-descriptions-item :label="t('access.embeddingModel')">
+              {{ stats.embedding.model ?? '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('access.embeddingCoverage')">
+              {{ stats.embedding.embedded ?? 0 }} / {{ coverageTotal }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <el-alert
+            v-if="(stats.embedding.pending ?? 0) > 0"
+            :title="t('access.embeddingPending', { count: stats.embedding.pending })"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="settings-hint"
+          />
+        </template>
+        <el-alert v-else :title="t('access.embeddingDisabled')" type="info" show-icon :closable="false" />
+      </el-card>
     </template>
 
     <!-- 新建 / 编辑能力 -->
@@ -218,7 +304,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Download, InfoFilled, Plus, Search, UploadFilled } from '@element-plus/icons-vue'
+import { Download, InfoFilled, Plus, Refresh, Search, UploadFilled } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useApiClient } from '../api/client'
@@ -272,13 +358,51 @@ const togglingAuth = ref(false)
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
-const { doctor, doctorRan, doctorLoading, exporting, importing, runDoctor, exportData, importFile } = useAdmin()
+const {
+  doctor,
+  doctorRan,
+  doctorLoading,
+  exporting,
+  importing,
+  backfilling,
+  runDoctor,
+  exportData,
+  importFile,
+  backfill,
+} = useAdmin()
+
+// 语义搜索覆盖率：统计随 load 一并拉取（/api/stats 只需 read，但补跑按钮仅 admin 可用）
+const stats = ref<import('../types').StatsInfo | null>(null)
+
+// 覆盖率分母 = 已向量化 + 待补跑（未启用时为 0）
+const coverageTotal = computed(() => (stats.value?.embedding?.embedded ?? 0) + (stats.value?.embedding?.pending ?? 0))
+
+/** 补跑完成后给结果反馈（成功条数为 0 也算成功——本就无待办），并刷新覆盖率 */
+async function runBackfill(): Promise<void> {
+  const total = await run(backfill)
+  if (total === undefined) return
+  try {
+    stats.value = await api.get('/api/stats')
+  } catch {
+    /* 覆盖率刷新失败不掩盖补跑成功 */
+  }
+  if (total === 0) toastSuccess(t('access.embeddingUpToDate'))
+  else toastSuccess(t('access.embeddingDone', { count: total }))
+}
 
 const rootRef = ref<HTMLElement | null>(null)
 // compact（<960px）时创建时间列收起、对话框加宽到 96%
 const { compact } = useContainerWidth(rootRef)
 
 const importInput = ref<HTMLInputElement | null>(null)
+
+// 语义搜索配置（保存与连接测试一并走 PUT + POST /api/embeddings/test）
+const embeddingEnabled = ref(false)
+const embeddingBaseUrl = ref('')
+const embeddingModel = ref('')
+const embeddingApiKey = ref('')
+const savingEmbedding = ref(false)
+const embeddingTest = ref<null | { ok: boolean; dim?: number; elapsed_ms?: number; error?: string }>(null)
 
 async function run<T>(action: () => Promise<T>, successMsg?: string): Promise<T | undefined> {
   try {
@@ -293,20 +417,30 @@ async function run<T>(action: () => Promise<T>, successMsg?: string): Promise<T 
 
 async function load(): Promise<void> {
   await run(async () => {
-    const [list, settings] = await Promise.all([
+    const [list, settings, statsResp] = await Promise.all([
       api.get<{ identities?: IdentityRow[] }>('/api/identities'),
       api.get<{
         instructions?: string | null
         conventions?: string | null
         auth_required?: boolean
+        embedding_enabled?: boolean
+        embedding_base_url?: string | null
+        embedding_model?: string | null
+        embedding_api_key?: string | null
         default_instructions?: string | null
       }>('/api/settings'),
+      api.get<import('../types').StatsInfo>('/api/stats'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
     instructions.value = settings?.instructions ?? ''
     conventions.value = settings?.conventions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
     authRequired.value = settings?.auth_required === true
+    embeddingEnabled.value = settings?.embedding_enabled === true
+    embeddingBaseUrl.value = settings?.embedding_base_url ?? ''
+    embeddingModel.value = settings?.embedding_model ?? ''
+    embeddingApiKey.value = settings?.embedding_api_key ?? ''
+    stats.value = statsResp ?? null
   })
 }
 
@@ -420,15 +554,15 @@ async function askDelete(row: IdentityRow): Promise<void> {
 }
 
 // ---- 鉴权开关：先确认再变更（el-switch before-change）----
+// 无 admin 身份时开关禁用（disabled + tooltip 说明），这里的预检只作兜底。
+const hasAdminIdentity = computed(() => identities.value.some((row) => row.permissions?.admin === true))
+
 async function confirmAuthToggle(): Promise<boolean> {
   const target = !authRequired.value
-  // 预检：开启要求库里已有 admin 身份（服务端守卫同规则）。
-  // 不发必败请求，直接给出引导； token 拿到手之前别翻开关。
-  if (target && !identities.value.some((row) => row.permissions?.admin === true)) {
-    ElMessageBox.alert(t('access.enableBlocked'), t('access.authTitle'), {
-      type: 'warning',
-      confirmButtonText: t('common.ok'),
-    }).catch(() => {})
+  // 预检兜底：开启要求库里已有 admin 身份（服务端守卫同规则）。
+  // token 拿到手之前别翻开关。
+  if (target && !hasAdminIdentity.value) {
+    toastError(t('access.enableBlocked'))
     return false
   }
   try {
@@ -483,6 +617,28 @@ function onImportFile(e: Event) {
     .catch((err: unknown) => {
       toastError(err instanceof Error ? err.message : String(err))
     })
+}
+
+// ---- 语义搜索：保存配置后立刻用服务端配置做连通性测试 ----
+async function saveAndTestEmbedding(): Promise<void> {
+  savingEmbedding.value = true
+  embeddingTest.value = null
+  try {
+    const saved = await run(() =>
+      api.put('/api/settings', {
+        embedding_enabled: embeddingEnabled.value,
+        embedding_base_url: embeddingBaseUrl.value,
+        embedding_model: embeddingModel.value,
+        embedding_api_key: embeddingApiKey.value,
+      }),
+    )
+    if (saved === undefined) return // 保存失败已 toast
+    toastSuccess(t('access.saved'))
+    if (!embeddingEnabled.value) return // 关闭状态无需测试
+    embeddingTest.value = await run(() => api.post('/api/embeddings/test', {}))
+  } finally {
+    savingEmbedding.value = false
+  }
 }
 
 // ---- 展示辅助 ----

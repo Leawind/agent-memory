@@ -11,8 +11,10 @@ export declare function useAdmin(): {
     doctorLoading: import('vue').Ref<boolean, boolean>;
     exporting: import('vue').Ref<boolean, boolean>;
     importing: import('vue').Ref<boolean, boolean>;
+    backfilling: import('vue').Ref<boolean, boolean>;
     runDoctor: () => Promise<void>;
     exportData: () => Promise<void>;
     importFile: (file: File) => Promise<ImportResp>;
+    backfill: () => Promise<number>;
 };
 export type AdminStore = ReturnType<typeof useAdmin>;

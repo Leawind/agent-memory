@@ -33,6 +33,11 @@
       >
         <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
       </el-select>
+      <el-select v-model="mode" class="mode-select" @change="run(onSearch)">
+        <el-option :label="t('memories.modeAuto')" value="auto" />
+        <el-option :label="t('memories.modeKeyword')" value="keyword" />
+        <el-option :label="t('memories.modeHybrid')" value="hybrid" />
+      </el-select>
     </div>
 
     <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
@@ -165,6 +170,7 @@ const props = withDefaults(
 const {
   query,
   tagFilter,
+  mode,
   sort,
   order,
   page,
@@ -266,5 +272,8 @@ defineExpose({ refresh: () => run(reload) })
 }
 .tag-filter {
   width: 240px;
+}
+.mode-select {
+  width: 150px;
 }
 </style>
