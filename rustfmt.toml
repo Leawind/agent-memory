@@ -1,0 +1,3 @@
+# 格式规则保持 rustfmt 默认；这里只声明 Edition，供编辑器与裸 rustfmt 调用对齐
+# （cargo fmt 会自动从 Cargo.toml 取 Edition，两者保持一致）。
+edition = "2021"

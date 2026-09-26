@@ -1,0 +1,3 @@
+# clippy 参数配置（lint 级别在 Cargo.toml 的 [lints.clippy]，那是 cargo 的官方位置）。
+# msrv 与 Cargo.toml 的 rust-version 对齐：clippy 不再建议需要更新编译器的写法。
+msrv = "1.85"

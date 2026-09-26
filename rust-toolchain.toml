@@ -1,0 +1,4 @@
+# 本地开发统一走 stable（rustup 读取本文件）；MSRV 由 Cargo.toml 的
+# rust-version 声明、clippy.toml 的 msrv 对齐、CI 的 msrv job 用 1.85.0 校验。
+[toolchain]
+channel = "stable"
