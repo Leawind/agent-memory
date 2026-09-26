@@ -9,3 +9,9 @@
 *.json.lock
 node_modules/
 .zcode/
+
+# 本地 GUI 测试截图
+gui-test-screenshots/
+
+# ZCode 本地配置
+.zcodeignore
