@@ -115,7 +115,20 @@ pub fn handle(
                 db_tx(db_path, TxMode::Write, |st| {
                     st.identity_create(&name, &perms)
                         .map_err(ToolError::from)
-                        .map(|(_, view)| (200, view))
+                        .map(|(token, mut view)| {
+                            // token 明文仅随创建响应出现一次，库内只存哈希
+                            view["token"] = json!(token);
+                            (200, view)
+                        })
+                })
+            }
+            ("POST", ["identities", name, "token-reset"]) => {
+                ctx.require(Cap::Admin)?;
+                db_tx(db_path, TxMode::Write, |st| {
+                    st.identity_reset_token(name)
+                        .map_err(ToolError::from)?
+                        .map(|token| (200, json!({ "token": token })))
+                        .ok_or_else(|| ToolError::not_found(format!("identity '{name}' not found")))
                 })
             }
             ("PUT", ["identities", name]) => {
@@ -612,10 +625,33 @@ mod tests {
         );
         assert_eq!(status, 400);
 
-        // 列表含 token
+        // 列表只含尾缀提示，不含 token 明文
         let (status, v) = handle(&db, &open_ctx(), "GET", "/api/identities", "", &[]);
         assert_eq!(status, 200);
         assert_eq!(v["identities"].as_array().unwrap().len(), 1);
+        assert!(v["identities"][0]["token"].is_null());
+        assert_eq!(v["identities"][0]["token_hint"].as_str().unwrap().len(), 4);
+
+        // 重置 token：返回新明文一次，旧明文立即失效
+        let (status, v) = handle(
+            &db,
+            &open_ctx(),
+            "POST",
+            "/api/identities/alice/token-reset",
+            "",
+            &[],
+        );
+        assert_eq!(status, 200, "{v}");
+        assert!(v["token"].as_str().unwrap().len() == 64);
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "POST",
+            "/api/identities/nope/token-reset",
+            "",
+            &[],
+        );
+        assert_eq!(status, 404);
 
         // 改权限：全能力
         let (status, v) = handle(

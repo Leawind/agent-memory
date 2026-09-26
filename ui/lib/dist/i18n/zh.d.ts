@@ -144,6 +144,9 @@ declare const _default: {
         copyToken: string;
         copied: string;
         created: string;
+        resetToken: string;
+        resetTitle: string;
+        resetConfirm: string;
         editTitle: string;
         deleteTitle: string;
         deleteConfirm: string;

@@ -36,7 +36,7 @@ describe('AccessPanel', () => {
               identities: [
                 {
                   name: 'bob',
-                  token: 'a'.repeat(64),
+                  token_hint: 'a1b2',
                   permissions: { read: true },
                   created_at: 1700000000,
                 },
@@ -59,7 +59,9 @@ describe('AccessPanel', () => {
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('bob')
-    expect(html).toContain('aaaaaa')
+    // 列表只有尾缀提示（服务端只存哈希），并带重置入口
+    expect(html).toContain('…a1b2')
+    expect(html).toContain('重置 Token')
     // textarea 的值是 DOM property，不在 innerHTML 里
     const textareas = wrapper.findAll('textarea')
     expect(textareas.length).toBe(2)

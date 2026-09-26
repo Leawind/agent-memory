@@ -147,7 +147,11 @@ export default {
     capAdmin: 'Admin',
     copyToken: 'Copy token',
     copied: 'Copied',
-    created: 'Identity created; its token can be copied from the list anytime:',
+    created: 'Shown once only (the server stores a hash) — copy and save it now:',
+    resetToken: 'Reset token',
+    resetTitle: 'Reset token',
+    resetConfirm:
+      'Reset the token of identity "{name}"? The old token is revoked immediately; the new one is shown once.',
     editTitle: 'Edit capabilities: {name}',
     deleteTitle: 'Delete identity',
     deleteConfirm: 'Delete identity "{name}"? Its token is revoked immediately.',

@@ -28,9 +28,9 @@
           <el-table-column :label="t('access.colToken')" min-width="220">
             <template #default="{ row }">
               <div class="token-cell">
-                <code class="token-text">{{ maskToken(row.token) }}</code>
-                <el-button link type="primary" @click="copyToken(row.token)">
-                  {{ t('access.copyToken') }}
+                <code class="token-text">{{ maskToken(row.token_hint) }}</code>
+                <el-button link type="primary" @click="askResetToken(row)">
+                  {{ t('access.resetToken') }}
                 </el-button>
               </div>
             </template>
@@ -149,8 +149,8 @@
       </template>
     </el-dialog>
 
-    <!-- 新建成功：展示可复制的 token -->
-    <el-dialog v-model="tokenShown" :title="t('access.createTitle')" width="560px">
+    <!-- 新建 / 重置成功：token 明文仅此一次展示 -->
+    <el-dialog v-model="tokenShown" :title="tokenShownTitle" width="560px">
       <p>{{ t('access.created') }}</p>
       <code class="new-token">{{ createdToken }}</code>
       <template #footer>
@@ -192,7 +192,7 @@ const CAPS = [
 
 interface IdentityRow {
   name: string
-  token: string
+  token_hint: string
   permissions: Record<string, boolean>
   created_at: number
 }
@@ -309,14 +309,13 @@ async function submit(): Promise<void> {
       ElMessage.success(t('access.saved'))
     } else {
       const created = await run(() =>
-        api.post<IdentityRow>('/api/identities', {
+        api.post<IdentityRow & { token?: string }>('/api/identities', {
           name: form.name,
           permissions: { ...form.caps },
         }),
       )
       if (created?.token) {
-        createdToken.value = created.token
-        tokenShown.value = true
+        showTokenOnce(t('access.createTitle'), created.token)
       }
     }
     dialogVisible.value = false
@@ -368,11 +367,35 @@ async function saveSettings(): Promise<void> {
 
 // ---- 展示辅助 ----
 const tokenShown = ref(false)
+const tokenShownTitle = ref('')
 const createdToken = ref('')
 
-function maskToken(token: string): string {
-  if (typeof token !== 'string' || token.length <= 12) return token
-  return `${token.slice(0, 6)}…${token.slice(-4)}`
+// token 只存哈希，列表只有尾缀提示
+function maskToken(hint: string): string {
+  return hint ? `…${hint}` : '—'
+}
+
+function showTokenOnce(title: string, token: string): void {
+  tokenShownTitle.value = title
+  createdToken.value = token
+  tokenShown.value = true
+}
+
+async function askResetToken(row: IdentityRow): Promise<void> {
+  try {
+    await ElMessageBox.confirm(t('access.resetConfirm', { name: row.name }), t('access.resetTitle'), {
+      type: 'warning',
+      confirmButtonText: t('access.resetToken'),
+      cancelButtonText: t('common.cancel'),
+    })
+  } catch {
+    return
+  }
+  const reset = await run(() =>
+    api.post<{ token?: string }>(`/api/identities/${encodeURIComponent(row.name)}/token-reset`, {}),
+  )
+  if (reset?.token) showTokenOnce(t('access.resetTitle'), reset.token)
+  await load()
 }
 
 function enabledCaps(row: IdentityRow): string[] {

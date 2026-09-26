@@ -215,6 +215,11 @@ mod tests {
         handle_message(store_path, &IdentityCtx::open_mode(), negotiated, &msg)
     }
 
+    // token 明文只在创建返回值出现一次：闭包间传递用 thread_local 中转
+    thread_local! {
+        static ALICE_TOKEN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
+
     #[test]
     fn initialize_echoes_known_and_falls_back_to_latest() {
         let store = temp_db("init");
@@ -247,7 +252,8 @@ mod tests {
         store::with_db_in(&store, store::TxMode::Write, |st| -> Result<(), String> {
             st.settings_put("instructions", "这是团队共享记忆库，提交前先检索。")?;
             st.settings_put("conventions", "提交规范：摘要一行，标签用小写。")?;
-            st.identity_create("alice", &crate::auth::Permissions::all())?;
+            let (token, _) = st.identity_create("alice", &crate::auth::Permissions::all())?;
+            ALICE_TOKEN.with(|cell| *cell.borrow_mut() = Some(token));
             Ok(())
         })
         .unwrap();
@@ -255,10 +261,7 @@ mod tests {
             &store,
             store::TxMode::ReadOnly,
             |st| -> Result<crate::auth::IdentityCtx, String> {
-                let token = st.identity_list().unwrap()[0]["token"]
-                    .as_str()
-                    .unwrap()
-                    .to_string();
+                let token = ALICE_TOKEN.with(|cell| cell.take()).unwrap();
                 Ok(st.identity_ctx_by_token(&token).unwrap().unwrap())
             },
         )

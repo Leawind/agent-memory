@@ -74,6 +74,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(|e| format!("cannot enable foreign keys: {e}"))?;
         run_migrations(&conn)?;
+        hash_pending_legacy_tokens(&conn)?;
         Ok(Store {
             path: normalize_path(path),
             conn,
@@ -536,17 +537,19 @@ impl Store {
     }
 
     /// 新建身份：生成随机 token，返回 (token, 管理视图)。重名由唯一约束显式化。
+    /// token 明文只在本返回值出现一次，库内仅存哈希与尾缀提示。
     pub fn identity_create(
         &self,
         name: &str,
         permissions: &crate::auth::Permissions,
     ) -> Result<(String, Value), String> {
         let token = self.generate_token()?;
+        let (hash, hint) = token_hash_and_hint(&token);
         let stored = permissions.to_stored_string();
         self.conn
             .execute(
                 sql::IDENTITY_INSERT,
-                params![name, token, stored, crate::model::now() as i64],
+                params![name, hash, hint, stored, crate::model::now() as i64],
             )
             .map(|_| ())
             .map_err(|e| {
@@ -563,11 +566,13 @@ impl Store {
     }
 
     /// Bearer token → 请求身份；未知 token 返回 None（调用方决定 401）。
+    /// 入参哈希后与库存哈希比对，库内无明文。
     pub fn identity_ctx_by_token(
         &self,
         token: &str,
     ) -> Result<Option<crate::auth::IdentityCtx>, String> {
-        let row = self.conn.query_row(sql::IDENTITY_BY_TOKEN, [token], |r| {
+        let hash = crate::util::sha256_hex(token.as_bytes());
+        let row = self.conn.query_row(sql::IDENTITY_BY_TOKEN, [hash], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
@@ -584,8 +589,7 @@ impl Store {
         }
     }
 
-    /// 管理视图列表（含 token 明文：鉴权端点本身 admin 把守，且明文存储
-    /// 的设计决定就是"管理界面可随时查看复制"）。
+    /// 管理视图列表。token 只存哈希，这里只给尾缀提示（供辨认，不可复原）。
     pub fn identity_list(&self) -> Result<Vec<Value>, String> {
         let mut st = self
             .conn
@@ -606,7 +610,7 @@ impl Store {
             let perms = parse_stored_permissions(&perms_json)?;
             Ok(json!({
                 "name": name,
-                "token": token,
+                "token_hint": token,
                 "permissions": perms.to_json(),
                 "created_at": created_at,
             }))
@@ -633,12 +637,14 @@ impl Store {
         Ok(n > 0)
     }
 
-    /// 重置 token（旧 token 立即失效），返回新 token；身份不存在返回 None。
+    /// 重置 token（旧 token 立即失效），返回新 token 明文（仅此一次）；
+    /// 身份不存在返回 None。
     pub fn identity_reset_token(&self, name: &str) -> Result<Option<String>, String> {
         let token = self.generate_token()?;
+        let (hash, hint) = token_hash_and_hint(&token);
         let n = self
             .conn
-            .execute(sql::IDENTITY_UPDATE_TOKEN, params![token, name])
+            .execute(sql::IDENTITY_UPDATE_TOKEN, params![hash, hint, name])
             .map_err(|e| e.to_string())?;
         if n == 0 {
             return Ok(None);
@@ -978,6 +984,38 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// token → (存储哈希, 尾缀提示)。token 为 64 位 hex，提示取末 4 字符。
+fn token_hash_and_hint(token: &str) -> (String, String) {
+    let hint: String = token
+        .chars()
+        .skip(token.chars().count().saturating_sub(4))
+        .collect();
+    (crate::util::sha256_hex(token.as_bytes()), hint)
+}
+
+/// 迁移 3 的第二阶段：identities_legacy_token 暂存的明文逐一哈希回填
+/// （SQLite 算不了 SHA-256）。逐行独立提交，幂等——中断后重跑会对同一行
+/// 重算同样的哈希再清理。无待迁移行时是两次只读空转。
+fn hash_pending_legacy_tokens(conn: &Connection) -> Result<(), String> {
+    let mut st = conn
+        .prepare(sql::IDENTITY_PENDING_TOKENS)
+        .map_err(|e| e.to_string())?;
+    let rows = st
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(st);
+    for (id, token) in rows {
+        let (hash, hint) = token_hash_and_hint(&token);
+        conn.execute(sql::IDENTITY_SET_TOKEN_HASH, params![hash, hint, id])
+            .map_err(|e| e.to_string())?;
+        conn.execute(sql::IDENTITY_PENDING_DONE, [id])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 事务模式：只读请求用 DEFERRED（WAL 下获得一致性快照且不抢写锁，
 /// 读与读、读与写互不阻塞），写请求用 IMMEDIATE（一开始就取写锁，
 /// 配合 busy_timeout 让并发写者排队，避免 DEFERRED 读后升级写锁的死锁）。
@@ -1075,6 +1113,44 @@ mod tests {
             panic!("expected open to fail on newer schema")
         };
         assert!(err.contains("newer than supported"), "got: {err}");
+        cleanup(&path);
+    }
+
+    /// 迁移 3 第二阶段：暂存的旧明文 token 在打开时被哈希回填并清理，
+    /// 随后凭原 token 可正常鉴权。
+    #[test]
+    fn legacy_plaintext_token_is_hashed_on_open() {
+        let path = temp_db("legacytoken");
+        cleanup(&path);
+        let legacy_token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        {
+            let st = Store::open(&path).unwrap();
+            // 伪造迁移 3 完成前的中间态：空哈希行 + 暂存明文
+            st.conn
+                .execute_batch(&format!(
+                    r#"INSERT INTO identities(name, token_hash, token_hint, permissions, created_at)
+                     VALUES ('bob', '', 'cdef', '{{"read":true,"create":false,"update":false,"delete":false,"tag_manage":false,"admin":false}}', 1);
+                     INSERT INTO identities_legacy_token(id, token)
+                     SELECT id, '{legacy_token}' FROM identities;"#
+                ))
+                .unwrap();
+            // 迁移尚未完成，明文无法鉴权
+            assert!(st.identity_ctx_by_token(legacy_token).unwrap().is_none());
+        }
+        let st = Store::open(&path).unwrap();
+        let ctx = st.identity_ctx_by_token(legacy_token).unwrap().unwrap();
+        assert_eq!(ctx.name, "bob");
+        // 暂存表已清空；视图只留尾缀
+        let pending: i64 = st
+            .conn
+            .query_row("SELECT count(*) FROM identities_legacy_token", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(pending, 0);
+        let view = st.identity_view("bob").unwrap().unwrap();
+        assert_eq!(view["token_hint"], "cdef");
+        assert!(view["token"].is_null());
         cleanup(&path);
     }
 
@@ -1464,6 +1540,9 @@ mod tests {
         assert_eq!(token.len(), 64, "token = hex(randomblob(32))");
         assert_eq!(view["name"], "alice");
         assert_eq!(view["permissions"]["admin"], true);
+        // 库内无明文：视图只带尾缀提示，且哈希不可逆推出 token
+        assert_eq!(view["token_hint"], &token[token.len() - 4..]);
+        assert!(serde_json::to_string(&view).unwrap().find(&token).is_none());
         // 重名报错
         assert!(st
             .identity_create("alice", &crate::auth::Permissions::default())

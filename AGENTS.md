@@ -51,7 +51,7 @@ src/
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
   store.rs       SQLite 持久化：WAL / 迁移运行器 / 外键级联 / 体检 / 统计 / 导出；
-                 identities（token 即身份，明文存储——库泄露即数据泄露，哈希不增值）与 settings 的 CRUD
+                 identities（token 即身份，只存哈希 + 尾缀提示）与 settings 的 CRUD
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
                  中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
@@ -110,8 +110,9 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
     管理界面渲染前必须经 DOMPurify（`ui/lib/src/markdown.ts` 统一出口：
     Markdown 走 renderMarkdown，服务端 HTML 片段走 sanitizeHtml），
     新增渲染入口不得绕过它直接 `v-html`。
-11. **鉴权边界**：无账号体系（不注册、不登录、不引 OAuth）——token 即身份，明文存库
-    （库泄露即数据泄露，哈希不增值），token 生成只用 SQLite `randomblob`，不引随机数依赖。
+11. **鉴权边界**：无账号体系（不注册、不登录、不引 OAuth）——token 即身份，只存
+    SHA-256 + 尾缀提示（哈希手写在 `util.rs`，token 明文仅在创建/重置响应出现一次，
+    丢失即重置），token 生成只用 SQLite `randomblob`，不引随机数依赖。
     enforcement 条件 = identities 表非空（空表 = 开放模式，全能力，个人本地部署零配置；
     `--auth` 只负责空表时引导创建首个管理员）。能力登记表唯一权威在 `auth.rs::Cap`，
     permissions JSON 必须全键、未知键拒绝；工具能力要求登记在 `defs.rs::required_cap`，

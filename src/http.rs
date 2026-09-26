@@ -126,7 +126,7 @@ fn bootstrap_admin_if_empty(db_path: &Path) -> Result<(), String> {
     if let Some(token) = created {
         eprintln!("============================================================");
         eprintln!("鉴权已启用，已创建管理员身份 '{BOOTSTRAP_ADMIN_NAME}'。");
-        eprintln!("管理员 token（请立即复制保存，此后可在管理界面随时查看）：");
+        eprintln!("管理员 token（仅此一次显示，请立即复制保存；丢失可用 `token reset` 重置）：");
         eprintln!("  {token}");
         eprintln!("MCP 客户端与管理界面请求均须携带 Authorization: Bearer <token>");
         eprintln!("============================================================");
