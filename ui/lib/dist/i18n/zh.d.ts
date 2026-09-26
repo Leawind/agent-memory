@@ -161,6 +161,10 @@ declare const _default: {
         restoreDefault: string;
         viewDefault: string;
         empty: string;
+        authTitle: string;
+        authHint: string;
+        authEnableConfirm: string;
+        authDisableConfirm: string;
     };
 };
 export default _default;

@@ -49,8 +49,9 @@ enum Command {
         /// 监听端口
         #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
-        /// 启用 token 鉴权：identities 为空时自动创建全能力管理员并打印 token。
-        /// 不带此参数且未配置过身份时为无鉴权开放模式（个人本地部署）。
+        /// 显式开启 token 鉴权（写入设置持久生效，重启后仍有效；关闭走管理界面的开关）。
+        /// identities 为空时自动创建全能力管理员并打印 token。
+        /// 不开启时为无鉴权开放模式（个人本地部署）。
         #[arg(long)]
         auth: bool,
         /// 详细日志：记录全部请求（含静态资源/健康检查）并附带耗时、

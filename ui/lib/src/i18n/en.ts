@@ -123,7 +123,7 @@ export default {
     subtitle: 'A token is an identity (no account system); capabilities are toggled per identity',
     needAdmin: 'Admin permission is required to manage identities and settings',
     openMode:
-      'Open mode: no identities configured, all requests are unauthenticated (fine for personal local deployments). Once the first identity exists, every /mcp and /api request must carry Authorization: Bearer <token>. Make the first identity an admin.',
+      'Open mode: the auth switch is off, all requests are unauthenticated (fine for personal local deployments). Turn on the switch below to require Authorization: Bearer <token> on every /mcp and /api request. Create an admin identity and save its token first.',
     colName: 'Name',
     colToken: 'Token',
     colPermissions: 'Capabilities',
@@ -166,6 +166,11 @@ export default {
     conventionsPlaceholder: 'e.g. tag naming rules, summary style; leave empty = none',
     restoreDefault: 'Restore default',
     viewDefault: 'View built-in default',
-    empty: 'No identities yet. Create the first one to enable token auth.',
+    empty: 'No identities yet. Create an admin identity and save its token, then turn on the auth switch above.',
+    authTitle: 'Token auth',
+    authHint:
+      'When enabled, every /mcp and /api request must carry Authorization: Bearer <token>. Create an identity and save its token first (this browser will show the token prompt after enabling).',
+    authEnableConfirm: 'Enable token auth? All /mcp and /api requests will then require a valid token.',
+    authDisableConfirm: 'Disable token auth? All requests will be allowed without credentials (open mode).',
   },
 }

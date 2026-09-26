@@ -21,6 +21,17 @@
     <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" class="block" />
 
     <template v-if="who && isAdmin">
+      <!-- 鉴权开关：鉴权边界由显式开关决定，与是否已创建身份无关 -->
+      <el-card shadow="never" class="block">
+        <div class="auth-row">
+          <div class="auth-text">
+            <span class="auth-label">{{ t('access.authTitle') }}</span>
+            <span class="auth-hint">{{ t('access.authHint') }}</span>
+          </div>
+          <el-switch v-model="authRequired" :before-change="confirmAuthToggle" :loading="togglingAuth" />
+        </div>
+      </el-card>
+
       <el-card shadow="never" class="block">
         <el-empty v-if="identities.length === 0" :description="t('access.empty')" />
         <el-table v-else :data="identities">
@@ -202,6 +213,8 @@ const instructions = ref('')
 const conventions = ref('')
 const defaultInstructions = ref('')
 const savingSettings = ref(false)
+const authRequired = ref(false)
+const togglingAuth = ref(false)
 
 const isAdmin = computed(() => can(props.who, 'admin'))
 
@@ -223,6 +236,7 @@ async function load(): Promise<void> {
       api.get<{
         instructions?: string | null
         conventions?: string | null
+        auth_required?: boolean
         default_instructions?: string | null
       }>('/api/settings'),
     ])
@@ -230,6 +244,7 @@ async function load(): Promise<void> {
     instructions.value = settings?.instructions ?? ''
     conventions.value = settings?.conventions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
+    authRequired.value = settings?.auth_required === true
   })
 }
 
@@ -341,6 +356,31 @@ async function askDelete(row: IdentityRow): Promise<void> {
   await load()
 }
 
+// ---- 鉴权开关：先确认再变更（el-switch before-change）----
+async function confirmAuthToggle(): Promise<boolean> {
+  const target = !authRequired.value
+  try {
+    await ElMessageBox.confirm(
+      t(target ? 'access.authEnableConfirm' : 'access.authDisableConfirm'),
+      t('access.authTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.save'),
+        cancelButtonText: t('common.cancel'),
+      },
+    )
+  } catch {
+    return false
+  }
+  togglingAuth.value = true
+  try {
+    await run(() => api.put('/api/settings', { auth_required: target }))
+    return true
+  } finally {
+    togglingAuth.value = false
+  }
+}
+
 // ---- 设置：恢复默认 = 清空字段（服务端对空值回退内置文案），保存时一并提交 ----
 function restoreInstructions(): void {
   instructions.value = ''
@@ -441,6 +481,26 @@ async function copyToken(token: string): Promise<void> {
 }
 .block {
   margin: 0;
+}
+.auth-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.auth-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.auth-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+.auth-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .token-cell {
   display: flex;

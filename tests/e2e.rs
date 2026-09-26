@@ -551,8 +551,8 @@ fn rest_api_end_to_end() {
     cleanup(&db);
 }
 
-/// token 鉴权全流程：开放模式 → UI/API 创建身份启用鉴权 → 401/403/能力边界
-/// → token reset 兜底 → 删除全部身份回到开放模式。
+/// token 鉴权全流程：开放模式 → 创建管理员身份 → 显式打开鉴权开关 →
+/// 401/403/能力边界 → token reset 兜底 → 关闭开关回到开放模式。
 #[test]
 fn token_auth_end_to_end() {
     let db = temp_db("auth");
@@ -573,9 +573,7 @@ fn token_auth_end_to_end() {
     );
     assert_eq!(status, 200);
 
-    // 开放模式下创建第一个身份 = 「在管理界面启用鉴权」的 API 路径。
-    // 第一个身份一旦创建，鉴权即刻生效，因此它必须是管理员；
-    // 其余身份由管理员凭 token 创建。
+    // 开放模式下创建身份不改变鉴权状态（开关才是唯一事实源）
     let (status, body, _) = request(
         port,
         "POST",
@@ -589,7 +587,30 @@ fn token_auth_end_to_end() {
     assert_eq!(admin_token.len(), 64);
     let admin_auth = format!("Bearer {admin_token}");
     let admin_headers = [("Authorization", admin_auth.as_str())];
+    let (status, body, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 200);
+    assert_eq!(
+        json_body(&body)["mode"],
+        "open",
+        "identity alone must not enable auth"
+    );
 
+    // 显式打开鉴权开关（open 上下文具备 admin 能力）→ 鉴权即刻生效
+    let (status, _, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"auth_required": true}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, body, _) =
+        try_request(port, "GET", "/api/settings", None, &admin_headers).unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["auth_required"], true);
+    let (status, _, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 401);
+
+    // 其余身份由管理员凭 token 创建。
     let (status, body, _) = try_request(
         port,
         "POST",
@@ -764,27 +785,28 @@ fn token_auth_end_to_end() {
     .unwrap();
     assert_eq!(status, 200);
 
-    // 删除全部身份 → 回到开放模式
-    for name in ["viewer", "admin"] {
-        let (status, _, _) = try_request(
-            port,
-            "DELETE",
-            &format!("/api/identities/{name}"),
-            None,
-            &[("Authorization", fresh_admin.as_str())],
-        )
-        .unwrap();
-        assert_eq!(status, 200, "delete {name}");
-    }
+    // 关闭鉴权开关（而非删除身份）→ 回到开放模式；身份仍在库里
+    let (status, _, _) = try_request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"auth_required": false}"#),
+        &[("Authorization", fresh_admin.as_str())],
+    )
+    .unwrap();
+    assert_eq!(status, 200);
     let (status, body, _) = request(port, "GET", "/api/whoami", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["mode"], "open");
+    let (status, _, _) = request(port, "GET", "/api/memories", None);
+    assert_eq!(status, 200, "open mode must not require tokens");
 
     drop(server);
     cleanup(&db);
 }
 
-/// --auth 引导：空库启动时自动创建管理员，鉴权即刻生效（无 token → 401）。
+/// --auth 引导：空库启动时自动创建管理员，鉴权即刻生效（无 token → 401）；
+/// 开关写入 settings，不带 --auth 重启后仍生效。
 #[test]
 fn auth_flag_bootstraps_admin() {
     let db = temp_db("auth-boot");
@@ -798,6 +820,10 @@ fn auth_flag_bootstraps_admin() {
     );
     let (status, _, _) = request(port, "GET", "/", None);
     assert_eq!(status, 200);
+    drop(server);
+    let server = HttpProc::start(&db, "auth-boot-restart");
+    let (status, _, _) = request(server.port, "GET", "/api/memories", None);
+    assert_eq!(status, 401, "auth switch must persist across restarts");
     drop(server);
     cleanup(&db);
 }

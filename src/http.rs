@@ -45,21 +45,23 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
         eprintln!("refusing to start to protect your data.");
         return 1;
     }
-    // --auth 引导：空表时创建全能力管理员并打印 token（仅此一次）。
+    // --auth 引导：显式开启鉴权开关（写入 settings，持久生效）；空表时
+    // 顺带创建全能力管理员并打印 token（仅此一次）。
     if auth_enabled {
         if let Err(e) = bootstrap_admin_if_empty(db_path) {
             eprintln!("cannot bootstrap admin identity ({e}).");
             return 1;
         }
     }
-    let open_mode = match identity_count(db_path) {
-        Ok(0) => true,
-        Ok(_) => false,
-        Err(e) => {
-            eprintln!("cannot read identities ({e}).");
-            return 1;
-        }
-    };
+    let open_mode =
+        match store::with_db_in(db_path, store::TxMode::ReadOnly, |st| st.auth_required()) {
+            Ok(false) => true,
+            Ok(true) => false,
+            Err(e) => {
+                eprintln!("cannot read auth switch ({e}).");
+                return 1;
+            }
+        };
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
@@ -76,8 +78,10 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
     eprintln!("  管理界面  http://{addr}/");
     eprintln!("  MCP 端点  http://{addr}{ENDPOINT_MCP}");
     if open_mode {
-        eprintln!("  鉴权      开放模式（未配置任何身份，所有请求放行；请只暴露给可信网络）");
-        eprintln!("            启用 token 鉴权：在管理界面「身份与访问」页创建第一个身份，或以 --auth 重启");
+        eprintln!("  鉴权      开放模式（鉴权开关未开启，所有请求放行；请只暴露给可信网络）");
+        eprintln!(
+            "            启用 token 鉴权：在管理界面「身份与访问」页打开开关，或以 --auth 重启"
+        );
     } else {
         eprintln!("  鉴权      token 模式（/mcp 与 /api 须携带 Authorization: Bearer <token>）");
     }
@@ -108,13 +112,14 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, auth_enabled: bool, ver
     0
 }
 
-/// --auth 引导：identities 为空时创建全能力管理员，token 打印到 stderr 一次。
-/// 已有身份时不做任何事（重置走 `token reset` 子命令）。
+/// --auth 引导：把鉴权开关写为开启（幂等）；identities 为空时创建全能力
+/// 管理员，token 打印到 stderr 一次。已有身份时只开开关（重置走 `token reset`）。
 fn bootstrap_admin_if_empty(db_path: &Path) -> Result<(), String> {
     let created: Option<String> = store::with_db_in(
         db_path,
         store::TxMode::Write,
         |st| -> Result<Option<String>, String> {
+            st.set_auth_required(true)?;
             if st.identity_count()? > 0 {
                 return Ok(None);
             }
@@ -132,10 +137,6 @@ fn bootstrap_admin_if_empty(db_path: &Path) -> Result<(), String> {
         eprintln!("============================================================");
     }
     Ok(())
-}
-
-fn identity_count(db_path: &Path) -> Result<u64, String> {
-    store::with_db_in(db_path, store::TxMode::ReadOnly, |st| st.identity_count())
 }
 
 fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
@@ -192,7 +193,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
         }
     }
 
-    // 鉴权：/mcp 与 /api 必须携带有效 Bearer token（identities 非空时）。
+    // 鉴权：/mcp 与 /api 必须携带有效 Bearer token（鉴权开关开启时）。
     // 静态 UI 与 /health 免鉴权（页面本身不含数据，数据全走已鉴权的 /api）。
     let ctx = if matches!(route(&method, &path), Route::Mcp | Route::Api) {
         match resolve_identity(db_path, header_value(&req, "Authorization").as_deref()) {
@@ -594,15 +595,15 @@ enum AuthFail {
     Storage(String),
 }
 
-/// 解析请求身份。identities 为空 → 开放模式（全能力）；
-/// 否则必须携带有效 token。查库失败按"拒绝"处理（fail-closed）。
+/// 解析请求身份。鉴权开关（settings 的 auth_required）关闭 → 开放模式
+/// （全能力）；开启则必须携带有效 token。查库失败按"拒绝"处理（fail-closed）。
 fn resolve_identity(db_path: &Path, auth_header: Option<&str>) -> Result<IdentityCtx, AuthFail> {
     let token = auth_header.and_then(parse_bearer);
     // 内层 Result 把"正常拒绝（Denied）"与存储错误分开：存储错误在事务层
     // 以 String 传递，这里再包成 Storage（响应统一 401，日志区分记因）。
     let outcome: Result<Result<IdentityCtx, AuthFail>, String> =
         store::with_db_in(db_path, store::TxMode::ReadOnly, |st| {
-            if st.identity_count()? == 0 {
+            if !st.auth_required()? {
                 return Ok(Ok(IdentityCtx::open_mode()));
             }
             let Some(token) = token.clone() else {

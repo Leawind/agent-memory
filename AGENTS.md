@@ -37,7 +37,7 @@ src/
   main.rs        clap CLI：serve(默认)/stats/doctor/export/import/token reset；--host/--port/--db/--auth
                  全部命令行参数，无配置文件
   http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限；
-                 Bearer 鉴权拦截（resolve_identity，fail-closed）与 --auth 引导（空表建管理员、token 打印 stderr）
+                 Bearer 鉴权拦截（resolve_identity，fail-closed）与 --auth 引导（开启鉴权开关 + 空表建管理员、token 打印 stderr）
   auth.rs        身份与能力模型：Cap 能力登记表（唯一权威）、Permissions JSON 严格校验、
                  IdentityCtx（require/can/summary）；开放模式 = 全能力
   api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400/403 映射（业务逻辑不在此层）；
@@ -113,8 +113,9 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 11. **鉴权边界**：无账号体系（不注册、不登录、不引 OAuth）——token 即身份，只存
     SHA-256 + 尾缀提示（哈希手写在 `util.rs`，token 明文仅在创建/重置响应出现一次，
     丢失即重置），token 生成只用 SQLite `randomblob`，不引随机数依赖。
-    enforcement 条件 = identities 表非空（空表 = 开放模式，全能力，个人本地部署零配置；
-    `--auth` 只负责空表时引导创建首个管理员）。能力登记表唯一权威在 `auth.rs::Cap`，
+    enforcement 条件 = settings 的 `auth_required` 开关（显式、持久化——鉴权边界
+    由操作者决定，与是否已创建身份无关；`--auth` 把开关写为开启并在空表时
+    引导创建首个管理员；UI 在「身份与访问」页可切换）。能力登记表唯一权威在 `auth.rs::Cap`，
     permissions JSON 必须全键、未知键拒绝；工具能力要求登记在 `defs.rs::required_cap`，
     执行点在 `tools::execute` 入口集中把守，处理器内不得重复校验。鉴权解析在 HTTP 层
     一次完成（fail-closed：查库失败按 401 拒绝），ctx（`IdentityCtx`）自上而下贯穿

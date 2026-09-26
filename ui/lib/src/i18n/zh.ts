@@ -121,7 +121,7 @@ export default {
     subtitle: 'token 即身份（无账号体系）；每个身份的能力逐项开关',
     needAdmin: '需要 admin 权限才能管理身份与设置',
     openMode:
-      '开放模式：当前未配置任何身份，所有请求免鉴权（适合个人本地部署）。创建第一个身份后，所有 /mcp 与 /api 请求必须携带 Authorization: Bearer <token>。第一个身份建议设为管理员。',
+      '开放模式：鉴权开关未开启，所有请求免鉴权（适合个人本地部署）。在下方打开开关后，所有 /mcp 与 /api 请求必须携带 Authorization: Bearer <token>。开启前先创建管理员身份并保存其 token。',
     colName: '名称',
     colToken: 'Token',
     colPermissions: '能力',
@@ -162,6 +162,11 @@ export default {
     conventionsPlaceholder: '如：标签命名约定、摘要书写要求；留空 = 不追加',
     restoreDefault: '恢复默认',
     viewDefault: '查看内置默认',
-    empty: '尚无身份。创建第一个身份以启用 token 鉴权。',
+    empty: '尚无身份。先创建管理员身份并保存其 token，再打开上方的鉴权开关。',
+    authTitle: 'Token 鉴权',
+    authHint:
+      '开启后所有 /mcp 与 /api 请求必须携带 Authorization: Bearer <token>。开启前请先创建身份并保存其 token（开启后本浏览器会弹出令牌输入框）。',
+    authEnableConfirm: '开启 token 鉴权？此后所有 /mcp 与 /api 请求都必须携带有效 token。',
+    authDisableConfirm: '关闭 token 鉴权？所有请求将免鉴权放行（开放模式）。',
   },
 }

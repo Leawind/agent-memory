@@ -46,7 +46,12 @@ describe('AccessPanel', () => {
         }
         if (u.includes('/api/settings')) {
           return Promise.resolve(
-            jsonResponse({ instructions: 'team rules', conventions: null, default_instructions: 'built-in default' }),
+            jsonResponse({
+              instructions: 'team rules',
+              conventions: null,
+              auth_required: false,
+              default_instructions: 'built-in default',
+            }),
           )
         }
         return Promise.resolve(jsonResponse({}))
@@ -62,6 +67,8 @@ describe('AccessPanel', () => {
     // 列表只有尾缀提示（服务端只存哈希），并带重置入口
     expect(html).toContain('…a1b2')
     expect(html).toContain('重置 Token')
+    // 鉴权开关与身份列表同屏可见
+    expect(html).toContain('Token 鉴权')
     // textarea 的值是 DOM property，不在 innerHTML 里
     const textareas = wrapper.findAll('textarea')
     expect(textareas.length).toBe(2)

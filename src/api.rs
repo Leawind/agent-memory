@@ -178,6 +178,8 @@ pub fn handle(
                         json!({
                             "instructions": instructions,
                             "conventions": conventions,
+                            // 鉴权开关：鉴权边界由显式开关决定，与身份是否存在无关
+                            "auth_required": st.auth_required()?,
                             // 内置默认提示词：UI 展示"恢复默认"的目标
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -191,16 +193,27 @@ pub fn handle(
                     Err(e) => return Ok(bad_request(e)),
                 };
                 for key in args.keys() {
-                    if key != "instructions" && key != "conventions" {
+                    if key != "instructions" && key != "conventions" && key != "auth_required" {
                         return Ok(bad_request(ToolError::invalid(format!(
-                            "unknown settings key '{key}' (valid: instructions, conventions)"
+                            "unknown settings key '{key}' (valid: instructions, conventions, auth_required)"
                         ))));
                     }
                 }
                 let mut updates: Vec<(&str, String)> = Vec::new();
-                for key in ["instructions", "conventions"] {
+                for key in ["instructions", "conventions", "auth_required"] {
                     match args.get(key) {
                         None => continue, // 省略 = 不改动该项
+                        // 鉴权开关是唯一非文本项：只接受布尔
+                        Some(v) if key == "auth_required" => match v.as_bool() {
+                            Some(on) => {
+                                updates.push((key, if on { "true" } else { "false" }.into()))
+                            }
+                            None => {
+                                return Ok(bad_request(ToolError::invalid(
+                                    "auth_required must be a boolean",
+                                )))
+                            }
+                        },
                         Some(Value::String(s)) => {
                             if s.chars().count() > MAX_INSTRUCTIONS_CHARS {
                                 return Ok(bad_request(ToolError::invalid(format!(
@@ -223,7 +236,12 @@ pub fn handle(
                 }
                 db_tx(db_path, TxMode::Write, |st| {
                     for (key, value) in &updates {
-                        st.settings_put(key, value).map_err(ToolError::from)?;
+                        if *key == store::Store::SETTING_AUTH_REQUIRED {
+                            st.set_auth_required(value == "true")
+                                .map_err(ToolError::from)?;
+                        } else {
+                            st.settings_put(key, value).map_err(ToolError::from)?;
+                        }
                     }
                     Ok((200, json!({ "saved": true })))
                 })
@@ -698,6 +716,28 @@ mod tests {
             "/api/settings",
             "",
             br#"{"nope": "x"}"#,
+        );
+        assert_eq!(status, 400);
+        // 鉴权开关：布尔往返；非布尔拒绝
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"auth_required": true}"#,
+        );
+        assert_eq!(status, 200);
+        let (status, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(status, 200);
+        assert_eq!(v["auth_required"], true);
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"auth_required": "yes"}"#,
         );
         assert_eq!(status, 400);
         // 恢复默认 = 写空字符串

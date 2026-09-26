@@ -679,6 +679,21 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
+    /// token 鉴权开关（settings 键，显式且持久化）：开启与否由操作者决定，
+    /// 与库里是否存在身份无关。缺省视为关闭（全新库 = 开放模式零配置）。
+    pub const SETTING_AUTH_REQUIRED: &'static str = "auth_required";
+
+    pub fn auth_required(&self) -> Result<bool, String> {
+        Ok(self.settings_get(Self::SETTING_AUTH_REQUIRED)?.as_deref() == Some("true"))
+    }
+
+    pub fn set_auth_required(&self, on: bool) -> Result<(), String> {
+        self.settings_put(
+            Self::SETTING_AUTH_REQUIRED,
+            if on { "true" } else { "false" },
+        )
+    }
+
     // ---------------------------------------------------------------- 运维
 
     /// 体检：报告数据中的隐患（只读）。覆盖外键被关闭时可能混入的脏数据。
