@@ -723,7 +723,11 @@ mod tests {
             br#"{"name": "alice", "permissions": {"read": true, "create": true}}"#,
         );
         assert_eq!(status, 200, "{v}");
-        assert!(v["token"].as_str().unwrap().len() == 64);
+        let token = v["token"].as_str().unwrap();
+        assert!(
+            token.starts_with("sk_") && token.len() == 65,
+            "token = {token}"
+        );
         assert_eq!(v["permissions"]["read"], true);
         assert_eq!(v["permissions"]["delete"], false);
 
@@ -755,7 +759,11 @@ mod tests {
             &[],
         );
         assert_eq!(status, 200, "{v}");
-        assert!(v["token"].as_str().unwrap().len() == 64);
+        let token = v["token"].as_str().unwrap();
+        assert!(
+            token.starts_with("sk_") && token.len() == 65,
+            "token = {token}"
+        );
         let (status, _) = handle(
             &db,
             &open_ctx(),

@@ -1,1 +1,1 @@
-SELECT hex(randomblob(32));
+SELECT 'sk_' || lower(hex(randomblob(31)));

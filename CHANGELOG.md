@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **鉴权**：身份 token 改为 `sk_` 前缀 + 62 位小写十六进制（共 65 字符；SQLite `hex()` 输出大写，生成语句用 `lower()` 收敛），随机性仍全部来自 SQLite `randomblob`；库内按哈希比对，已签发的旧 token 继续有效，重置后获得新格式
 - **schema**：标签改用自增内部 id 关联记忆（`memory_tags(memory_id, tag_id)`），标签名唯一非空仍是对外唯一标识；id 是系统内部属性，对 MCP 使用者不可见，改名只动标签行、引用自动跟随。破坏性更改：基线迁移直接改写，旧库不兼容（schema 指纹校验会拒绝打开并给出 export/import 恢复指引）
 - **修复**：`Store::open` 新增 schema 指纹校验——`user_version` 只证明应用过几个迁移，不证明表真的存在/形状正确（就地改写基线的历史库曾以 `no such table: memory_embeddings` 的形式在 `memory_update` 深处爆炸）；现在打开时即把迁移文本声明的表与列和实测比对，不符则指名道姓地拒绝
 - **工具**：`tag_rename` 更名 `tag_update`（name + 可选 new_name/description，至少其一），响应新增 `renamed` / `description_updated` 布尔；`memory_create` / `memory_update` 回传 `tags_autocreated` / `tags_reused` / `tags_missing_description` 三分类；裸数字 id 进 `invalid_ids` 不再与"不存在"混淆（`memory_delete` 此前会把不可解析 id 同时报进 `deleted` 与 `missing`），`memory_update` 对非法 id 回 400 并写明 `m{n}` 格式，schema 加 `pattern` 约束；时间戳单位（epoch 秒 UTC）写进契约与服务端 instructions

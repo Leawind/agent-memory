@@ -66,7 +66,8 @@ fn token_auth_end_to_end() {
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let admin_token = json_body(&body)["token"].as_str().unwrap().to_string();
-    assert_eq!(admin_token.len(), 64);
+    assert_eq!(admin_token.len(), 65);
+    assert!(admin_token.starts_with("sk_"), "token = {admin_token}");
     let admin_auth = format!("Bearer {admin_token}");
     let admin_headers = [("Authorization", admin_auth.as_str())];
     let (status, body, _) = request(port, "GET", "/api/whoami", None);
@@ -247,7 +248,8 @@ fn token_auth_end_to_end() {
     assert!(out.status.success(), "token reset failed");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let new_token = stdout.lines().last().unwrap().trim().to_string();
-    assert_eq!(new_token.len(), 64, "reset stdout: {stdout}");
+    assert_eq!(new_token.len(), 65, "reset stdout: {stdout}");
+    assert!(new_token.starts_with("sk_"), "reset stdout: {stdout}");
     let (status, _, _) = try_request(
         port,
         "GET",

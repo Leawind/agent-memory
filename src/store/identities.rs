@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use super::{is_unique_violation, Store};
 
 impl Store {
-    /// 生成随机 token（64 位十六进制，SQLite PRNG 由系统熵播种）。
+    /// 生成随机 token：`sk_` 前缀 + 62 位小写十六进制（共 65 字符）。
+    /// 随机性全部来自 SQLite randomblob（PRNG 由系统熵播种）；
+    /// SQLite 的 hex() 输出大写，lower() 收敛为小写。
     pub fn generate_token(&self) -> Result<String, String> {
         self.conn
             .query_row(sql::TOKEN_GENERATE, [], |r| r.get::<_, String>(0))
@@ -149,7 +151,7 @@ impl Store {
     }
 }
 
-/// token → (存储哈希, 尾缀提示)。token 为 64 位 hex，提示取末 4 字符。
+/// token → (存储哈希, 尾缀提示)。token 形如 `sk_<62 位小写 hex>`，提示取末 4 字符。
 fn token_hash_and_hint(token: &str) -> (String, String) {
     let hint: String = token
         .chars()
@@ -164,6 +166,23 @@ fn parse_stored_permissions(json_text: &str) -> Result<crate::auth::Permissions,
     let v: Value =
         serde_json::from_str(json_text).map_err(|e| format!("corrupt permissions JSON: {e}"))?;
     crate::auth::Permissions::from_json(&v)
+}
+
+/// token 契约：`sk_` 前缀 + 62 位小写十六进制（共 65 字符）。
+#[cfg(test)]
+fn assert_token_format(token: &str) {
+    assert!(
+        token.starts_with("sk_"),
+        "token must start with sk_: {token}"
+    );
+    let hex_part = &token["sk_".len()..];
+    assert_eq!(hex_part.len(), 62, "token = {token}");
+    assert!(
+        hex_part
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, 'a'..='f')),
+        "token must be lowercase hex after the prefix: {token}"
+    );
 }
 
 #[cfg(test)]
@@ -181,7 +200,7 @@ mod tests {
         let (token, view) = st
             .identity_create("alice", &crate::auth::Permissions::all())
             .unwrap();
-        assert_eq!(token.len(), 64, "token = hex(randomblob(32))");
+        assert_token_format(&token);
         assert_eq!(view["name"], "alice");
         assert_eq!(view["permissions"]["admin"], true);
         // 库内无明文：视图只带尾缀提示，且哈希不可逆推出 token
@@ -208,6 +227,7 @@ mod tests {
 
         // 重置 token：旧 token 立即失效
         let new_token = st.identity_reset_token("alice").unwrap().unwrap();
+        assert_token_format(&new_token);
         assert_ne!(new_token, token);
         assert!(st.identity_ctx_by_token(&token).unwrap().is_none());
         assert!(st.identity_ctx_by_token(&new_token).unwrap().is_some());
@@ -218,6 +238,22 @@ mod tests {
         assert!(st.identity_delete("alice").unwrap());
         assert!(!st.identity_delete("alice").unwrap());
         assert!(st.identity_list().unwrap().is_empty());
+        cleanup(&path);
+    }
+
+    /// token 格式契约：多次抽样都满足 sk_ 前缀 + 62 位小写 hex，且互不相同。
+    #[test]
+    fn generated_tokens_are_sk_prefixed_lowercase_hex() {
+        let path = temp_db("token-format");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let mut drawn = std::collections::HashSet::new();
+        for _ in 0..8 {
+            let token = st.generate_token().unwrap();
+            assert_token_format(&token);
+            drawn.insert(token);
+        }
+        assert_eq!(drawn.len(), 8, "randomblob draws must not repeat");
         cleanup(&path);
     }
 }
