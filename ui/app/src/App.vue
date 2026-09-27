@@ -477,6 +477,15 @@ body,
 body {
   background: var(--el-bg-color-page);
 }
+/* 弹层宽度钳制：固定像素宽度（令牌框 440px 等）在手机上不超出视口 */
+@media (max-width: 720px) {
+  .el-dialog {
+    max-width: calc(100vw - 24px);
+  }
+  .el-message-box {
+    max-width: calc(100vw - 24px);
+  }
+}
 </style>
 
 <style scoped>
@@ -729,5 +738,60 @@ body {
   margin: 0 auto;
   padding: 24px;
   box-sizing: border-box;
+}
+
+/* ---- 移动端适配 ---- */
+/* ≤720px：顶栏折两行——首行「品牌行 + 偏好控件」，次行「导航」（放不下时横滑）。
+   单行布局在手机宽度必然溢出（导航项被挤出视口、与主题控件重叠） */
+@media (max-width: 720px) {
+  .topbar-inner {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 0 12px;
+    gap: 0 12px;
+  }
+  .brand {
+    order: 1;
+    flex: 1;
+    min-width: 0;
+  }
+  .actions {
+    order: 2;
+    padding: 8px 0;
+  }
+  .nav {
+    order: 3;
+    flex-basis: 100%;
+    height: 44px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+  .nav-item {
+    flex-shrink: 0;
+    height: 34px;
+  }
+  .identity-btn {
+    max-width: 150px;
+  }
+  .content {
+    padding: 12px;
+  }
+}
+/* ≤560px：品牌名收起只留图标（点击仍弹服务概况），身份名限宽防挤压 */
+@media (max-width: 560px) {
+  .brand-name,
+  .brand-sep {
+    display: none;
+  }
+  .identity-btn {
+    max-width: 130px;
+  }
+  .lang-btn {
+    padding: 0 9px;
+    gap: 3px;
+  }
 }
 </style>

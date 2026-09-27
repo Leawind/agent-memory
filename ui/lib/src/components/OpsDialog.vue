@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="visible"
     :title="t('ops.title')"
-    width="480px"
+    width="min(480px, calc(100vw - 24px))"
     @update:model-value="emit('update:visible', $event)"
   >
     <div class="stats-row">
