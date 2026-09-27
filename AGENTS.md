@@ -78,8 +78,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
                  产物输出 ui/dist；一个浏览器可存多个身份 token（auth.ts 的 localStorage 身份表，
                  标题处下拉切换/删除/添加，token 首尾提示本地计算），authFetch 为 lib 注入带 Authorization 的 fetch，
                  401 时移除失效身份并广播事件弹出令牌输入框；
-                 dev 默认走内置 mock API（mock/api.ts，Vite 中间件 + 内存假数据，模拟鉴权/回退等
-                 服务端语义，前端开发不依赖 Rust 后端），--mode live（npm run dev:live）代理真实服务器
+                 dev 默认走内置 mock API（mock/api.ts，内存假数据 + 固定 admin 身份，
+                 前端开发不依赖后端，重启复位），--mode live（npm run dev:live）代理真实服务器
                  记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 

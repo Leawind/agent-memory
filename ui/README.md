@@ -84,16 +84,10 @@ npm run dev:live  # 仅 app：连真实后端，/api、/mcp、/health 代理到 
 
 ### 前端独立开发（mock 模式）
 
-`npm run dev` 默认加载 `ui/app/mock/api.ts`（Vite dev 中间件，内存假数据，不进入构建产物），
-前端开发**不依赖任何后端**：
-
-- 模拟真实服务端语义：开放模式全能力；点管理页鉴权开关进入 token 模式后，无 token 请求 401
-  （弹出令牌输入框）、能力不足 403；预置 admin / 只读两个身份，token 见 dev server 启动横幅。
-- 种子数据 10 条中英混合 Markdown 记忆 + 8 个标签，覆盖列表/搜索高亮/详情/管理各面板；
-  搜索固定关键词模式（显式 `mode=hybrid` 按「embedding 未配置」语义回退并携带
-  `semantic_fallback` 标记，方便调试回退提示 UI）。
-- 数据改动只存内存，dev server 重启即复位；未实现的 /api 路由返回 404——出现了说明
-  mock 落后于契约，应补齐而非绕过。
+`npm run dev` 默认加载 `ui/app/mock/api.ts`（Vite dev 中间件）：内存假数据 + 固定 admin 身份，
+四个面板（含管理页）直接完整渲染，改代码即时热更新，**不依赖任何后端**。
+增删改会真的改内存数组（保存后列表可见变化），重启 dev server 复位。
+鉴权/搜索回退等服务端语义的联调用 `npm run dev:live` 连真实后端验证。
 
 ## 约定
 
