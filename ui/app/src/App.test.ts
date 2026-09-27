@@ -226,6 +226,9 @@ describe('App shell', () => {
     expect(wrapper.find('.identity-btn').exists()).toBe(true)
     expect(wrapper.find('.identity-btn').text()).toContain('未连接')
     expect(wrapper.find('.el-dialog').isVisible()).toBe(true)
+    // happy-dom 做不了真实命中检测：断言弹窗渲染容器带 penetrable 类（容器 pointer-events:none，
+    // 弹窗本体 auto），保证真实浏览器里弹窗开着时顶栏下拉不被全屏容器挡住（此前 modal=false 仍被拦）
+    expect(wrapper.find('.el-modal-dialog.is-penetrable').exists()).toBe(true)
     expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
 
     // 下拉仍列出其余身份，切换成功后令牌框收起、页面以新身份恢复

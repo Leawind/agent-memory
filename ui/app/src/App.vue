@@ -117,10 +117,12 @@
       </main>
 
       <!-- 令牌输入：401 或「添加身份」时弹出；保存前先验证再入库。
-           非模态：401 提示不锁页面，顶栏身份下拉始终可操作（切到其他已存身份即可恢复） -->
+           非模态 + 可穿透：401 提示不锁页面，顶栏身份下拉始终可操作（切到其他已存身份即可恢复）。
+           仅 modal=false 不够——EP 的全屏滚动容器仍拦截点击，penetrable 把它变成 pointer-events:none -->
       <el-dialog
         v-model="tokenDialog"
         :modal="false"
+        modal-penetrable
         :title="tokenDialogMode === 'add' ? t('shell.addIdentity') : t('shell.tokenPromptTitle')"
         width="440px"
       >
