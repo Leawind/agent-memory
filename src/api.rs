@@ -392,7 +392,9 @@ pub fn handle(
             }
             ("GET", ["memories", mem_id]) => db_tx(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, "memory_get", &json!({ "ids": [mem_id] })).map(|v| {
-                    if v["missing"].as_array().is_some_and(|m| !m.is_empty()) {
+                    let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
+                        || v["invalid_ids"].as_array().is_some_and(|m| !m.is_empty());
+                    if not_found {
                         (
                             404,
                             json!({ "error": format!("memory '{}' not found", mem_id) }),

@@ -24,9 +24,15 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     let id = st.insert_memory(&summary, &content, &linkage.ids, now(), now())?;
     let view = memory_view(st, id)?;
-    Ok(
-        json!({"memory": view, "tags_autocreated": linkage.autocreated, "duplicate_of": duplicate_of}),
-    )
+    // 标签挂载三分类始终回传：新建 / 复用 / 复用但缺描述（提示用 tag_update
+    // 补写），让 agent 不必事后 tag_list 核对挂载是否齐全
+    Ok(json!({
+        "memory": view,
+        "tags_autocreated": linkage.autocreated,
+        "tags_reused": linkage.reused,
+        "tags_missing_description": linkage.missing_description,
+        "duplicate_of": duplicate_of,
+    }))
 }
 
 pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -212,34 +218,58 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
 pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let ids = req_id_list(args, "ids", 50)?;
-    let mut numeric = Vec::new();
-    let mut unparsable = Vec::new();
-    for raw in ids {
-        let id = normalize_id(&raw);
-        match Store::parse_id(&id) {
-            Some(n) => numeric.push(n),
-            None => unparsable.push(id),
-        }
-    }
-    let (found, mut missing) = st.get_memories(&numeric)?;
-    missing.extend(unparsable);
+    let (numeric, invalid) = split_ids(&ids);
+    let (found, missing) = st.get_memories(&numeric)?;
     let memories: Vec<Value> = found.iter().map(|m| m.full_view()).collect();
     let mut out = json!({"memories": memories, "missing": missing});
-    if !missing.is_empty() {
-        out["note"] = json!(
-            "some ids were not found; use memory_list or memory_search to discover valid ids"
+    if !invalid.is_empty() {
+        out["invalid_ids"] = json!(invalid);
+    }
+    attach_id_note(&mut out, !missing.is_empty(), &invalid);
+    Ok(out)
+}
+
+/// 拆分 id 列表：可解析的数字与格式非法的原始串（缺 m 前缀等）。
+/// 两者分开呈现——"格式写错"和"不存在"对 agent 是不同的错误。
+fn split_ids(ids: &[String]) -> (Vec<i64>, Vec<String>) {
+    let mut numeric = Vec::new();
+    let mut invalid = Vec::new();
+    for raw in ids {
+        let id = normalize_id(raw);
+        match Store::parse_id(&id) {
+            Some(n) => numeric.push(n),
+            None => invalid.push(id),
+        }
+    }
+    (numeric, invalid)
+}
+
+/// 给含 id 的结果附上引导 note：missing 与 invalid 的提示各自独立、可并存。
+fn attach_id_note(out: &mut Value, has_missing: bool, invalid: &[String]) {
+    let mut notes: Vec<&str> = Vec::new();
+    if has_missing {
+        notes.push(
+            "some ids were not found; use memory_list or memory_search to discover valid ids",
         );
     }
-    Ok(out)
+    if !invalid.is_empty() {
+        notes.push(
+            "some ids are malformed; memory ids look like 'm123' (a leading 'm' is required)",
+        );
+    }
+    if !notes.is_empty() {
+        out["note"] = json!(notes.join("; "));
+    }
 }
 
 pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let raw_id = normalize_id(&req_str(args, "id")?);
-    let id = Store::parse_id(&raw_id).ok_or_else(|| {
-        ToolError::not_found(format!(
-            "memory '{raw_id}' not found (use memory_list or memory_search first)"
-        ))
-    })?;
+    // 裸数字等非法格式按 400 报出并写明格式要求，而不是混进"不存在"（404）
+    let Some(id) = Store::parse_id(&raw_id) else {
+        return Err(ToolError::invalid(format!(
+            "malformed memory id '{raw_id}': ids look like 'm123' (a leading 'm' is required)"
+        )));
+    };
     let summary = match opt_str(args, "summary")? {
         Some(s) => Some(validate_summary(&s)?),
         None => None,
@@ -263,13 +293,10 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     }
 
     // 先解析标签（改的是 tags 表），再改记忆，顺序与错误信息一致。
-    let mut autocreated = Vec::new();
-    let mut add_ids: Vec<i64> = Vec::new();
+    let mut linkage_opt = None;
     let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(add) = &add_tags {
-        let linkage = st.link_tags(add)?;
-        autocreated = linkage.autocreated;
-        add_ids = linkage.ids;
+        linkage_opt = Some(st.link_tags(add)?);
     }
     if let Some(remove) = &remove_tags {
         remove_ids = st.tag_ids_for_names(remove)?;
@@ -281,6 +308,10 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         )));
     }
 
+    let add_ids = linkage_opt
+        .as_ref()
+        .map(|l| l.ids.clone())
+        .unwrap_or_default();
     let changed = st.update_memory(
         id,
         summary.as_deref(),
@@ -290,27 +321,25 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     )?;
 
     let mut out = json!({"updated": changed, "memory": memory_view(st, id)?});
-    if !autocreated.is_empty() {
-        out["tags_autocreated"] = json!(autocreated);
+    // 与 memory_create 同款三分类；仅在本次确实新增了标签时携带
+    if let Some(linkage) = linkage_opt {
+        out["tags_autocreated"] = json!(linkage.autocreated);
+        out["tags_reused"] = json!(linkage.reused);
+        out["tags_missing_description"] = json!(linkage.missing_description);
     }
     Ok(out)
 }
 
 pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let ids = req_id_list(args, "ids", 50)?;
-    let mut numeric = Vec::new();
-    let mut unparsable = Vec::new();
-    for raw in ids {
-        let id = normalize_id(&raw);
-        match Store::parse_id(&id) {
-            Some(n) => numeric.push(n),
-            None => unparsable.push(id),
-        }
+    let (numeric, invalid) = split_ids(&ids);
+    let (deleted, missing) = st.delete_memories(&numeric)?;
+    let mut out = json!({"deleted": deleted, "missing": missing});
+    if !invalid.is_empty() {
+        out["invalid_ids"] = json!(invalid);
     }
-    let (mut deleted, mut missing) = st.delete_memories(&numeric)?;
-    deleted.extend(unparsable.iter().cloned());
-    missing.extend(unparsable);
-    Ok(json!({"deleted": deleted, "missing": missing}))
+    attach_id_note(&mut out, !missing.is_empty(), &invalid);
+    Ok(out)
 }
 
 /// 语义趟：查询向量化 + 与库存向量的余弦排名，与关键词趟 RRF 融合。

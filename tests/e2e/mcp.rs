@@ -143,6 +143,24 @@ fn mcp_endpoint_end_to_end() {
             .contains("SQLite")
     );
 
+    // 更新正文与摘要（回归：字段更新路径曾在嵌入表缺失时整条更新失败）
+    let updated = mcp_rpc(
+        port,
+        json!({"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {
+            "name": "memory_update", "arguments": {
+                "id": mem_id,
+                "summary": "项目使用混合检索的记忆系统",
+                "content": "正文已更新：SQLite 做持久化，关键词 + 语义混合排序。"
+            }
+        }}),
+    );
+    assert!(updated.get("error").is_none(), "update failed: {updated}");
+    assert_eq!(updated["result"]["structuredContent"]["updated"], true);
+    // 仅改字段的更新不携带标签字段
+    assert!(updated["result"]["structuredContent"]
+        .get("tags_autocreated")
+        .is_none());
+
     // 错误路径：未知工具 → -32602；未知方法 → -32601；参数错误 → isError
     let unknown_tool = mcp_rpc(
         port,

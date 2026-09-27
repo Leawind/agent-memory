@@ -21,7 +21,7 @@ use std::path::Path;
 
 pub use defs::{tool_definitions, TOOL_NAMES};
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps (created_at / updated_at / last_used_at) are epoch seconds in UTC. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// 工具层错误：按类别而非文本分类，REST 层据此映射 HTTP 状态码
 /// （NotFound → 404，Invalid → 400，Forbidden → 403），MCP 层一律以
@@ -211,6 +211,14 @@ mod tests {
         .unwrap();
         let id = created["memory"]["id"].as_str().unwrap().to_string();
         assert_eq!(created["tags_autocreated"].as_array().unwrap().len(), 2);
+        assert_eq!(created["tags_reused"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            created["tags_missing_description"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
 
         // 搜索命中，且不泄露正文（渐进式披露第一层）
         let found = call(&path, "memory_search", json!({"query": "borrow"})).unwrap();
@@ -233,7 +241,7 @@ mod tests {
             "The borrow checker forbids simultaneous aliasing and mutation."
         );
 
-        // 更新：增量增删标签
+        // 更新：增量增删标签（rust/notes 均由自动创建留下、描述为空）
         let upd = call(
             &path,
             "memory_update",
@@ -241,12 +249,99 @@ mod tests {
         )
         .unwrap();
         assert_eq!(upd["memory"]["tags"].as_array().unwrap().len(), 2);
+        // 三分类只描述本次 add_tags 传入的标签（rust 不在列表里，不参与分类）
+        assert_eq!(upd["tags_autocreated"], json!(["study"]));
+        assert_eq!(upd["tags_reused"], json!([]));
+        assert_eq!(upd["tags_missing_description"], json!([]));
+
+        // 更新正文与摘要（回归：字段更新路径曾在嵌入表缺失时整条更新失败）
+        let upd_fields = call(
+            &path,
+            "memory_update",
+            json!({"id": id, "summary": "Borrow checker 101", "content": "Updated body."}),
+        )
+        .unwrap();
+        assert_eq!(upd_fields["updated"], true);
+        assert!(
+            upd_fields.get("tags_autocreated").is_none(),
+            "field-only update carries no tag fields"
+        );
 
         // 删除
         let del = call(&path, "memory_delete", json!({"ids": [id]})).unwrap();
         assert_eq!(del["deleted"].as_array().unwrap().len(), 1);
         let after = call(&path, "memory_list", json!({})).unwrap();
         assert_eq!(after["total"], 0);
+
+        cleanup(&path);
+    }
+
+    /// memory_create 的标签挂载三分类：新建 / 复用 / 复用但缺描述。
+    #[test]
+    fn create_reports_tag_mount_classification() {
+        let path = temp_db("tag-mount");
+        call(
+            &path,
+            "tag_create",
+            json!({"name": "described", "description": "has one"}),
+        )
+        .unwrap();
+        let first = call(
+            &path,
+            "memory_create",
+            json!({"summary": "a", "content": "ca", "tags": ["described", "fresh"]}),
+        )
+        .unwrap();
+        assert_eq!(first["tags_autocreated"], json!(["fresh"]));
+        assert_eq!(first["tags_reused"], json!(["described"]));
+        assert_eq!(first["tags_missing_description"], json!([]));
+
+        // 第二次全部复用；fresh 由上次自动创建、描述为空 → 点名提示
+        let second = call(
+            &path,
+            "memory_create",
+            json!({"summary": "b", "content": "cb", "tags": ["described", "fresh"]}),
+        )
+        .unwrap();
+        assert_eq!(second["tags_autocreated"], json!([]));
+        assert_eq!(second["tags_reused"], json!(["described", "fresh"]));
+        assert_eq!(second["tags_missing_description"], json!(["fresh"]));
+
+        cleanup(&path);
+    }
+
+    /// 裸数字 id 与"不存在"分开呈现：get/delete 进 invalid_ids，
+    /// update 按 400 报格式错误；delete 绝不把没删的东西报进 deleted。
+    #[test]
+    fn invalid_ids_are_reported_separately_from_missing() {
+        let path = temp_db("invalid-ids");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": "c"}),
+        )
+        .unwrap();
+
+        let got = call(&path, "memory_get", json!({"ids": ["102", "m999"]})).unwrap();
+        assert_eq!(got["invalid_ids"], json!(["102"]));
+        assert_eq!(got["missing"], json!(["m999"]));
+        let note = got["note"].as_str().unwrap();
+        assert!(
+            note.contains("malformed") && note.contains("not found"),
+            "both hints coexist: {note}"
+        );
+
+        let del = call(&path, "memory_delete", json!({"ids": ["102"]})).unwrap();
+        assert_eq!(del["deleted"], json!([]));
+        assert_eq!(del["missing"], json!([]));
+        assert_eq!(del["invalid_ids"], json!(["102"]));
+
+        let err = call(&path, "memory_update", json!({"id": "102", "summary": "x"})).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("malformed") && msg.contains("m123"),
+            "got: {msg}"
+        );
 
         cleanup(&path);
     }
