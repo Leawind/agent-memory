@@ -37,9 +37,11 @@ src/
   main.rs        clap CLI：serve(默认)/stats/doctor/export/import/embed-backfill/token reset；--host/--port/--db
                  全部命令行参数，无配置文件
   http.rs        HTTP 传输：路由 /mcp·/api·静态 UI·/health，多 worker，Origin 防护，panic 隔离，body 上限；
-                 Bearer 鉴权拦截（resolve_identity，fail-closed，开关状态每次请求查库决定）
+                 Bearer 鉴权拦截（resolve_identity，fail-closed，开关状态每次请求查库决定；
+                 鉴权开启后无 token 请求按 anonymous_permissions 解析为匿名身份）
   auth.rs        身份与能力模型：Cap 能力登记表（唯一权威）、Permissions JSON 严格校验、
-                 IdentityCtx（require/can/summary）；开放模式 = 全能力
+                 IdentityCtx（require/can/summary，Mode 三态 open/anonymous/token）；
+                 开放模式 = 全能力，匿名身份能力集由 settings 配置
   api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400/403 映射（业务逻辑不在此层）；
                  例外：identities/settings 端点走专用 handler（agent 工具面不暴露权限管理）
   protocol.rs    MCP 协议层：initialize / ping / tools/list / tools/call，通知不回包，批量消息；
@@ -144,7 +146,11 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
     一次完成（fail-closed：查库失败按 401 拒绝），ctx（`IdentityCtx`）自上而下贯穿
     tools/api/protocol，不得绕过；401 响应不携带 WWW-Authenticate（避免规范客户端
     走 OAuth 发现流程）。静态 UI 与 /health 永远免鉴权。身份/设置管理不走 MCP 工具面，
-    走 admin 能力守卫的 REST 端点。
+    走 admin 能力守卫的 REST 端点。**匿名身份**：鉴权开启后无 token 请求按 settings 的
+    `anonymous_permissions`（Permissions 全键 JSON，REST/UI 可改）解析为匿名身份
+    （name `anonymous`，`mode: "anonymous"`）；未设置或全无能力 → 匿名被整体拒绝（401），
+    带无效 token 是认证失败、不回退匿名，能力不足 → 403 与其他身份同语义。
+    鉴权关闭（开放模式）时该键不生效——开放模式恒全能力。
 12. **语义搜索回退与事务纪律**：`embed.rs` 是全项目唯一的出站 HTTP 依赖
     （OpenAI 兼容 `/embeddings`，配置在 settings 四键 `embedding_*`，REST/UI 可改）；
     回退是硬性承诺——embedding 服务不可用只允许降级不允许失败：搜索回退纯关键词

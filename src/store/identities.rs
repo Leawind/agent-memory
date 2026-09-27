@@ -215,7 +215,7 @@ mod tests {
         let ctx = st.identity_ctx_by_token(&token).unwrap().unwrap();
         assert_eq!(ctx.name, "alice");
         assert!(ctx.can(crate::auth::Cap::Admin));
-        assert!(!ctx.open_mode);
+        assert_eq!(ctx.mode, crate::auth::Mode::Token);
         // 未知 token → None
         assert!(st.identity_ctx_by_token("nope").unwrap().is_none());
 

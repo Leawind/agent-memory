@@ -43,6 +43,39 @@ impl Store {
         )
     }
 
+    /// 匿名身份的能力集（settings 键，存全键布尔 JSON，与 identities.permissions
+    /// 同形态）：鉴权开启后无 token 请求按它解析为匿名身份；未设置或全无能力 =
+    /// 匿名被整体拒绝。鉴权关闭时不生效（开放模式恒全能力）。
+    pub const SETTING_ANONYMOUS_PERMISSIONS: &'static str = "anonymous_permissions";
+
+    /// 读取匿名能力集；None = 未设置（匿名被拒绝）。库中 JSON 损坏时报错而非
+    /// 静默放大权限——HTTP 层的解析随之 fail-closed（表现为 401）。
+    pub fn anonymous_permissions(&self) -> Result<Option<crate::auth::Permissions>, String> {
+        let Some(raw) = self.settings_get(Self::SETTING_ANONYMOUS_PERMISSIONS)? else {
+            return Ok(None);
+        };
+        let v: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("corrupt anonymous_permissions JSON: {e}"))?;
+        crate::auth::Permissions::from_json(&v).map(Some)
+    }
+
+    /// 写入/清除匿名能力集。Some 存全键紧凑 JSON；None = 删除键（匿名被拒绝）。
+    pub fn set_anonymous_permissions(
+        &self,
+        value: Option<&crate::auth::Permissions>,
+    ) -> Result<(), String> {
+        match value {
+            Some(p) => {
+                self.settings_put(Self::SETTING_ANONYMOUS_PERMISSIONS, &p.to_stored_string())
+            }
+            None => self
+                .conn
+                .execute(sql::SETTINGS_DELETE, [Self::SETTING_ANONYMOUS_PERMISSIONS])
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        }
+    }
+
     pub const SETTING_EMBEDDING_ENABLED: &'static str = "embedding_enabled";
     pub const SETTING_EMBEDDING_BASE_URL: &'static str = "embedding_base_url";
     pub const SETTING_EMBEDDING_MODEL: &'static str = "embedding_model";
@@ -105,6 +138,34 @@ mod tests {
             st.settings_get("instructions").unwrap().as_deref(),
             Some("v2")
         );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn anonymous_permissions_roundtrip_and_clear() {
+        let path = temp_db("anon-perms");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        // 未设置 = None（匿名被拒绝）
+        assert_eq!(st.anonymous_permissions().unwrap(), None);
+
+        let read_only =
+            crate::auth::Permissions::from_json(&serde_json::json!({ "read": true })).unwrap();
+        st.set_anonymous_permissions(Some(&read_only)).unwrap();
+        let got = st.anonymous_permissions().unwrap().unwrap();
+        assert!(got.has(crate::auth::Cap::Read));
+        assert!(!got.has(crate::auth::Cap::Admin));
+
+        // 覆盖写入与清除
+        st.set_anonymous_permissions(Some(&crate::auth::Permissions::all()))
+            .unwrap();
+        assert!(st
+            .anonymous_permissions()
+            .unwrap()
+            .unwrap()
+            .has(crate::auth::Cap::Admin));
+        st.set_anonymous_permissions(None).unwrap();
+        assert_eq!(st.anonymous_permissions().unwrap(), None);
         cleanup(&path);
     }
 }

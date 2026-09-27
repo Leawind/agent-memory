@@ -6,7 +6,9 @@
 //! 的非工具端点（身份/设置/运维）在 `api` 层各自要求能力。
 //!
 //! 开放模式（库中无任何身份）下请求免鉴权，[`IdentityCtx::open_mode`] 视为
-//! 全能力——这也是"启用鉴权"的入口：开放模式下即可创建第一个身份。
+//! 全能力——这也是"启用鉴权"的入口：开放模式下即可创建第一个身份。鉴权开启
+//! 后，无 token 请求按服务器设置 `anonymous_permissions` 解析为匿名身份
+//! （[`IdentityCtx::anonymous`]，能力可配置；未配置则拒绝）。
 
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
@@ -107,6 +109,11 @@ impl Permissions {
             .map(|c| c.as_str())
             .collect()
     }
+
+    /// 是否一个能力都没有（匿名能力集为空 = 匿名访问被整体拒绝）。
+    pub fn is_empty(&self) -> bool {
+        self.caps.is_empty()
+    }
 }
 
 fn valid_cap_list() -> String {
@@ -117,13 +124,21 @@ fn valid_cap_list() -> String {
         .join(", ")
 }
 
-/// 请求级身份上下文：HTTP 层解析 Bearer token 后构造，贯穿工具与 API 处理器。
+/// 请求的鉴权形态：开放模式（免鉴权、全能力）、匿名身份（配置的能力集）、
+/// token 身份（ identities 表中登记的身份）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Open,
+    Anonymous,
+    Token,
+}
+
+/// 请求级身份上下文：HTTP 层解析 Bearer token / 匿名设置后构造，贯穿工具与 API 处理器。
 #[derive(Debug, Clone)]
 pub struct IdentityCtx {
     pub name: String,
     pub permissions: Permissions,
-    /// 开放模式（库中无任何身份）：请求不需要 token。
-    pub open_mode: bool,
+    pub mode: Mode,
 }
 
 impl IdentityCtx {
@@ -133,7 +148,17 @@ impl IdentityCtx {
         IdentityCtx {
             name: "local".into(),
             permissions: Permissions::all(),
-            open_mode: true,
+            mode: Mode::Open,
+        }
+    }
+
+    /// 匿名身份上下文：鉴权开启后无 token 请求按 settings 的
+    /// `anonymous_permissions` 解析而来，能力集由操作者配置。
+    pub fn anonymous(permissions: Permissions) -> Self {
+        IdentityCtx {
+            name: "anonymous".into(),
+            permissions,
+            mode: Mode::Anonymous,
         }
     }
 
@@ -141,7 +166,7 @@ impl IdentityCtx {
         IdentityCtx {
             name: name.to_string(),
             permissions,
-            open_mode: false,
+            mode: Mode::Token,
         }
     }
 
@@ -165,23 +190,35 @@ impl IdentityCtx {
     pub fn summary(&self) -> Value {
         json!({
             "name": self.name,
-            "mode": if self.open_mode { "open" } else { "token" },
+            "mode": self.mode.as_str(),
             "permissions": self.permissions.to_json(),
         })
     }
 
     /// 附加到 initialize instructions 的人类可读一行。
     pub fn describe_line(&self) -> String {
-        if self.open_mode {
-            "Access mode: open (no identities configured); all permissions granted.".to_string()
+        let perms = self.permissions.names();
+        let list = if perms.is_empty() {
+            "(none)".to_string()
         } else {
-            let perms = self.permissions.names();
-            let list = if perms.is_empty() {
-                "(none)".to_string()
-            } else {
-                perms.join(", ")
-            };
-            format!("Caller identity: {}; permissions: {list}.", self.name)
+            perms.join(", ")
+        };
+        match self.mode {
+            Mode::Open => {
+                "Access mode: open (no identities configured); all permissions granted.".to_string()
+            }
+            Mode::Anonymous => format!("Access mode: anonymous (no token); permissions: {list}."),
+            Mode::Token => format!("Caller identity: {}; permissions: {list}.", self.name),
+        }
+    }
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Open => "open",
+            Mode::Anonymous => "anonymous",
+            Mode::Token => "token",
         }
     }
 }
@@ -243,6 +280,38 @@ mod tests {
         for cap in Cap::ALL {
             assert!(open.can(cap));
         }
-        assert!(open.open_mode);
+        assert_eq!(open.mode, Mode::Open);
+    }
+
+    #[test]
+    fn anonymous_ctx_reports_mode_and_capabilities() {
+        let perms = Permissions::from_json(&json!({ "read": true })).unwrap();
+        let anon = IdentityCtx::anonymous(perms);
+        assert_eq!(anon.name, "anonymous");
+        assert_eq!(anon.mode, Mode::Anonymous);
+        assert!(anon.can(Cap::Read));
+        assert!(!anon.can(Cap::Create));
+
+        // whoami 摘要带匿名 mode 与全键能力对象
+        let summary = anon.summary();
+        assert_eq!(summary["name"], "anonymous");
+        assert_eq!(summary["mode"], "anonymous");
+        assert_eq!(summary["permissions"]["read"], true);
+        assert_eq!(summary["permissions"]["admin"], false);
+
+        // initialize 身份行
+        let line = anon.describe_line();
+        assert!(line.contains("anonymous"), "got: {line}");
+        assert!(line.contains("read"), "got: {line}");
+
+        // 空能力集可被 is_empty 识别（HTTP 层据此整体拒绝匿名）；
+        // 显式 false 同样不授予能力
+        assert!(Permissions::default().is_empty());
+        assert!(Permissions::from_json(&json!({ "read": false }))
+            .map(|p| p.is_empty())
+            .unwrap());
+        // 能力全无时 describe_line 显示 (none)
+        let none = IdentityCtx::anonymous(Permissions::default());
+        assert!(none.describe_line().contains("(none)"));
     }
 }

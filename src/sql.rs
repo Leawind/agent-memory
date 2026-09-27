@@ -56,6 +56,7 @@ pub const IDENTITY_UPDATE_TOKEN: &str = include_str!("../sql/identity_update_tok
 pub const IDENTITY_ANY_ADMIN: &str = include_str!("../sql/identity_any_admin.sql");
 pub const SETTINGS_GET: &str = include_str!("../sql/settings_get.sql");
 pub const SETTINGS_PUT: &str = include_str!("../sql/settings_put.sql");
+pub const SETTINGS_DELETE: &str = include_str!("../sql/settings_delete.sql");
 pub const TOKEN_GENERATE: &str = include_str!("../sql/token_generate.sql");
 
 pub const STATS_MEMORY_COUNT: &str = include_str!("../sql/stats_memory_count.sql");
@@ -143,6 +144,7 @@ mod tests {
             ("IDENTITY_ANY_ADMIN", IDENTITY_ANY_ADMIN),
             ("SETTINGS_GET", SETTINGS_GET),
             ("SETTINGS_PUT", SETTINGS_PUT),
+            ("SETTINGS_DELETE", SETTINGS_DELETE),
             ("TOKEN_GENERATE", TOKEN_GENERATE),
         ]
         .iter()

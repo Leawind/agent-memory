@@ -190,6 +190,11 @@ pub fn handle(
                             "conventions": conventions,
                             // 鉴权开关：鉴权边界由显式开关决定，与身份是否存在无关
                             "auth_required": st.auth_required()?,
+                            // 匿名身份能力集：鉴权开启后无 token 请求按它解析；
+                            // null = 未设置（匿名被拒绝）
+                            "anonymous_permissions": st
+                                .anonymous_permissions()?
+                                .map(|p| p.to_json()),
                             "embedding_enabled": st.embedding_enabled()?,
                             "embedding_base_url": base_url,
                             "embedding_model": model,
@@ -210,6 +215,7 @@ pub fn handle(
                     "instructions",
                     "conventions",
                     "auth_required",
+                    store::Store::SETTING_ANONYMOUS_PERMISSIONS,
                     store::Store::SETTING_EMBEDDING_ENABLED,
                     store::Store::SETTING_EMBEDDING_BASE_URL,
                     store::Store::SETTING_EMBEDDING_MODEL,
@@ -223,13 +229,30 @@ pub fn handle(
                         ))));
                     }
                 }
-                // 布尔键：auth_required 与 embedding_enabled，其余为文本项
+                // 布尔键：auth_required 与 embedding_enabled；文本项走 String 分支；
+                // anonymous_permissions 是对象/null 特例，单独收集
                 const BOOL_KEYS: &[&str] =
                     &["auth_required", store::Store::SETTING_EMBEDDING_ENABLED];
                 let mut updates: Vec<(&str, String)> = Vec::new();
+                // 外层 Some = 请求带了该键；内层 None = 清除（匿名被拒绝）
+                let mut anon_perms: Option<Option<Permissions>> = None;
                 for key in VALID_KEYS {
                     match args.get(*key) {
                         None => continue, // 省略 = 不改动该项
+                        Some(v) if *key == store::Store::SETTING_ANONYMOUS_PERMISSIONS => {
+                            let parsed = match v {
+                                Value::Null => None,
+                                Value::Object(_) => {
+                                    Some(Permissions::from_json(v).map_err(ToolError::invalid)?)
+                                }
+                                _ => {
+                                    return Ok(bad_request(ToolError::invalid(format!(
+                                        "{key} must be a permissions object or null"
+                                    ))))
+                                }
+                            };
+                            anon_perms = Some(parsed);
+                        }
                         Some(v) if BOOL_KEYS.contains(key) => match v.as_bool() {
                             Some(on) => {
                                 updates.push((key, if on { "true" } else { "false" }.into()))
@@ -255,7 +278,7 @@ pub fn handle(
                         }
                     }
                 }
-                if updates.is_empty() {
+                if updates.is_empty() && anon_perms.is_none() {
                     return Ok(bad_request(ToolError::invalid(
                         "nothing to update: provide at least one settings key",
                     )));
@@ -278,6 +301,10 @@ pub fn handle(
                         } else {
                             st.settings_put(key, value).map_err(ToolError::from)?;
                         }
+                    }
+                    if let Some(perms) = anon_perms {
+                        st.set_anonymous_permissions(perms.as_ref())
+                            .map_err(ToolError::from)?;
                     }
                     Ok((200, json!({ "saved": true })))
                 })
@@ -925,6 +952,86 @@ mod tests {
         assert_eq!(status, 200, "{v}");
         let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
         assert_eq!(v["auth_required"], true);
+
+        cleanup();
+    }
+
+    /// 匿名能力集的设置端点往返：部分键对象写入 → GET 读回全键对象；
+    /// null 清除（GET 回 null）；未知能力名 / 非布尔值 / 非对象类型拒绝；
+    /// 只写该键也是有效更新。
+    #[test]
+    fn settings_anonymous_permissions_roundtrip() {
+        let db =
+            std::env::temp_dir().join(format!("agent-memory-api-anon-{}.db", std::process::id()));
+        let cleanup = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{}", db.display(), suffix));
+            }
+        };
+        cleanup();
+
+        // 未设置 → null
+        let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(v["anonymous_permissions"], json!(null));
+
+        // 部分键对象写入 → 读回全键对象（缺省键 = false）
+        let (status, v) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"anonymous_permissions": {"read": true}}"#,
+        );
+        assert_eq!(status, 200, "{v}");
+        let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(v["anonymous_permissions"]["read"], true);
+        assert_eq!(v["anonymous_permissions"]["create"], false);
+        assert_eq!(v["anonymous_permissions"]["admin"], false);
+
+        // 未知能力名 → 400
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"anonymous_permissions": {"riter": true}}"#,
+        );
+        assert_eq!(status, 400);
+        // 非布尔值 → 400
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"anonymous_permissions": {"read": "yes"}}"#,
+        );
+        assert_eq!(status, 400);
+        // 既非对象也非 null → 400
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"anonymous_permissions": "read"}"#,
+        );
+        assert_eq!(status, 400);
+
+        // null 清除 → GET 回 null
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"anonymous_permissions": null}"#,
+        );
+        assert_eq!(status, 200);
+        let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
+        assert_eq!(v["anonymous_permissions"], json!(null));
 
         cleanup();
     }

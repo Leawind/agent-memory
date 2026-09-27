@@ -289,3 +289,179 @@ fn token_auth_end_to_end() {
     drop(server);
     cleanup(&db);
 }
+
+/// 匿名身份：鉴权开启后，无 token 请求按 settings 的 anonymous_permissions
+/// 解析为匿名身份（能力可配置）；未设置/全无能力 → 401；带无效 token 不回退
+/// 匿名；能力不足 → 403（与其他身份同一套语义）。
+#[test]
+fn anonymous_permissions_end_to_end() {
+    let db = temp_db("anon-auth");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "anon-auth");
+    let port = server.port;
+
+    // 准备：admin 身份 + 打开鉴权（此后匿名配置只能由 admin 修改）
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/identities",
+        Some(
+            r#"{"name": "admin", "permissions": {"read": true, "create": true, "update": true, "delete": true, "tag_manage": true, "admin": true}}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let admin_token = json_body(&body)["token"].as_str().unwrap().to_string();
+    let admin_auth = format!("Bearer {admin_token}");
+    let admin_headers = [("Authorization", admin_auth.as_str())];
+    let (status, _, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"auth_required": true}"#),
+    );
+    assert_eq!(status, 200);
+
+    // 基线：未配置匿名能力集 → 无 token 一律 401（原有行为）
+    let (status, _, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 401);
+    let (status, _, _) = request(port, "GET", "/api/memories", None);
+    assert_eq!(status, 401);
+
+    // 配置匿名 = 只读
+    let (status, _, _) = try_request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"anonymous_permissions": {"read": true}}"#),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+
+    // 无 token whoami → 匿名身份摘要
+    let (status, body, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 200);
+    let who = json_body(&body);
+    assert_eq!(who["mode"], "anonymous");
+    assert_eq!(who["name"], "anonymous");
+    assert_eq!(who["permissions"]["read"], true);
+    assert_eq!(who["permissions"]["create"], false);
+
+    // 只读放行；写/管理 → 403（错误信息带匿名身份名）
+    let (status, _, _) = request(port, "GET", "/api/memories", None);
+    assert_eq!(status, 200);
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary": "anon write", "content": "c"}"#),
+    );
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(
+        String::from_utf8_lossy(&body).contains("anonymous"),
+        "403 must name the anonymous identity"
+    );
+    let (status, _, _) = request(port, "GET", "/api/identities", None);
+    assert_eq!(status, 403);
+    let (status, _, _) = request(port, "GET", "/api/export", None);
+    assert_eq!(status, 403);
+
+    // MCP 同语义：initialize 自述匿名；list 放行；create 以 isError 回显权限错误
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/mcp",
+        Some(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"}
+            }))
+            .unwrap(),
+        ),
+    );
+    assert_eq!(status, 200);
+    let init_resp = json_body(&body);
+    let instructions = init_resp["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("Access mode: anonymous"),
+        "{instructions}"
+    );
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/mcp",
+        Some(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "memory_list", "arguments": {}}
+            }))
+            .unwrap(),
+        ),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["result"]["isError"], json!(null));
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/mcp",
+        Some(
+            &serde_json::to_string(&json!({
+                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": {"name": "memory_create", "arguments": {"summary": "s", "content": "c"}}
+            }))
+            .unwrap(),
+        ),
+    );
+    assert_eq!(status, 200);
+    let resp = json_body(&body);
+    assert_eq!(resp["result"]["isError"], true);
+    assert!(
+        resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("permission"),
+        "{resp}"
+    );
+
+    // 带无效 token 是认证失败，不回退匿名
+    let (status, _, _) = try_request(
+        port,
+        "GET",
+        "/api/memories",
+        None,
+        &[("Authorization", "Bearer wrong-token")],
+    )
+    .unwrap();
+    assert_eq!(status, 401);
+
+    // 全无能力 = 匿名被整体拒绝（与未设置同义）
+    let (status, _, _) = try_request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"anonymous_permissions": {"read": false}}"#),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let (status, _, _) = request(port, "GET", "/api/memories", None);
+    assert_eq!(status, 401);
+
+    // null 清除 → 回到基线 401；admin 自身不受影响
+    let (status, _, _) = try_request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"anonymous_permissions": null}"#),
+        &admin_headers,
+    )
+    .unwrap();
+    assert_eq!(status, 200);
+    let (status, _, _) = request(port, "GET", "/api/whoami", None);
+    assert_eq!(status, 401);
+    let (status, _, _) = try_request(port, "GET", "/api/memories", None, &admin_headers).unwrap();
+    assert_eq!(status, 200);
+
+    drop(server);
+    cleanup(&db);
+}

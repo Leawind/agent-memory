@@ -557,7 +557,9 @@ enum AuthFail {
 }
 
 /// 解析请求身份。鉴权开关（settings 的 auth_required）关闭 → 开放模式
-/// （全能力）；开启则必须携带有效 token。查库失败按"拒绝"处理（fail-closed）。
+/// （全能力）；开启后：无 token 按 `anonymous_permissions` 解析为匿名身份
+/// （未设置或全无能力 → 拒绝），携带 token 则必须有效——无效 token 是认证
+/// 失败，不回退匿名。查库失败按"拒绝"处理（fail-closed）。
 fn resolve_identity(db_path: &Path, auth_header: Option<&str>) -> Result<IdentityCtx, AuthFail> {
     let token = auth_header.and_then(parse_bearer);
     // 内层 Result 把"正常拒绝（Denied）"与存储错误分开：存储错误在事务层
@@ -568,7 +570,11 @@ fn resolve_identity(db_path: &Path, auth_header: Option<&str>) -> Result<Identit
                 return Ok(Ok(IdentityCtx::open_mode()));
             }
             let Some(token) = token.clone() else {
-                return Ok(Err(AuthFail::Denied));
+                return match st.anonymous_permissions()? {
+                    // 空能力集与未设置同义：匿名整体拒绝
+                    Some(perms) if !perms.is_empty() => Ok(Ok(IdentityCtx::anonymous(perms))),
+                    _ => Ok(Err(AuthFail::Denied)),
+                };
             };
             Ok(st.identity_ctx_by_token(&token)?.ok_or(AuthFail::Denied))
         });
