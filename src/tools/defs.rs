@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 pub const TOOL_NAMES: &[&str] = &[
     "tag_create",
     "tag_list",
-    "tag_rename",
+    "tag_update",
     "tag_delete",
     "memory_create",
     "memory_list",
@@ -50,16 +50,16 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            "tag_rename",
-            "Rename a tag (updates every memory referencing it) and/or update its description. At least one of new_name / description is required.",
+            "tag_update",
+            "Update a tag: rename it and/or set its description (the only way to fill in a description after tag_create). Memories referencing the tag follow a rename automatically - only the label changes. Omit new_name to keep the current name; omit description to keep the current one; at least one of the two is required. The response flags renamed / description_updated tell which parts actually changed.",
             json!({
                 "type": "object",
                 "properties": {
-                    "old_name": {"type": "string"},
+                    "name": {"type": "string", "description": "Current tag name."},
                     "new_name": {"type": "string", "description": "New unique name. Omit to keep the current name."},
                     "description": {"type": "string", "description": "New description. Omit to keep the current one."}
                 },
-                "required": ["old_name"],
+                "required": ["name"],
                 "additionalProperties": false
             }),
             false, false,
@@ -238,7 +238,7 @@ pub fn required_cap(tool: &str) -> Cap {
         [
             ("tag_create", Cap::TagManage),
             ("tag_list", Cap::Read),
-            ("tag_rename", Cap::TagManage),
+            ("tag_update", Cap::TagManage),
             ("tag_delete", Cap::TagManage),
             ("memory_create", Cap::Create),
             ("memory_list", Cap::Read),
@@ -291,6 +291,6 @@ mod tests {
         assert_eq!(required_cap("memory_create"), Cap::Create);
         assert_eq!(required_cap("memory_update"), Cap::Update);
         assert_eq!(required_cap("memory_delete"), Cap::Delete);
-        assert_eq!(required_cap("tag_rename"), Cap::TagManage);
+        assert_eq!(required_cap("tag_update"), Cap::TagManage);
     }
 }

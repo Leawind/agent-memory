@@ -66,7 +66,7 @@ impl Store {
         for group in groups.values() {
             if group.len() > 1 {
                 issues.push(format!(
-                    "case-conflicting tag group: {} (keep one and merge the rest with tag_rename)",
+                    "case-conflicting tag group: {} (keep one and merge the rest with tag_update)",
                     group.join(" / ")
                 ));
             }

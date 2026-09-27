@@ -53,7 +53,9 @@ fn rest_api_end_to_end() {
         Some(r#"{"new_name": "项目A", "description": "改名后的描述"}"#),
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(json_body(&body)["new_name"], "项目A");
+    assert_eq!(json_body(&body)["name"], "项目A");
+    assert_eq!(json_body(&body)["renamed"], true);
+    assert_eq!(json_body(&body)["description_updated"], true);
 
     // 记忆：创建 → 列表/过滤 → 取全文 → 更新 → 搜索 → 删除
     let (status, body, _) = request(

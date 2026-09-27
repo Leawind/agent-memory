@@ -12,7 +12,7 @@ pub const TAG_ALL_NAMES: &str = include_str!("../sql/tag_all_names.sql");
 pub const TAG_BY_NAME: &str = include_str!("../sql/tag_by_name.sql");
 pub const TAG_VIEW: &str = include_str!("../sql/tag_view.sql");
 pub const TAG_VIEW_ALL: &str = include_str!("../sql/tag_view_all.sql");
-pub const TAG_RENAME: &str = include_str!("../sql/tag_rename.sql");
+pub const TAG_SET_NAME: &str = include_str!("../sql/tag_set_name.sql");
 pub const TAG_SET_DESCRIPTION: &str = include_str!("../sql/tag_set_description.sql");
 pub const TAG_DELETE: &str = include_str!("../sql/tag_delete.sql");
 pub const TAG_MEMORY_COUNT: &str = include_str!("../sql/tag_memory_count.sql");
@@ -96,7 +96,7 @@ mod tests {
             ("TAG_BY_NAME", TAG_BY_NAME),
             ("TAG_VIEW", TAG_VIEW),
             ("TAG_VIEW_ALL", TAG_VIEW_ALL),
-            ("TAG_RENAME", TAG_RENAME),
+            ("TAG_SET_NAME", TAG_SET_NAME),
             ("TAG_SET_DESCRIPTION", TAG_SET_DESCRIPTION),
             ("TAG_DELETE", TAG_DELETE),
             ("TAG_MEMORY_COUNT", TAG_MEMORY_COUNT),

@@ -343,14 +343,14 @@ pub fn handle(
                     Err(e) => return Ok(bad_request(e)),
                 };
                 let mut full = Map::new();
-                full.insert("old_name".into(), json!(tag_name));
+                full.insert("name".into(), json!(tag_name));
                 for (k, v) in args {
                     if k == "new_name" || k == "description" {
                         full.insert(k, v);
                     }
                 }
                 db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "tag_rename", &Value::Object(full.clone()))
+                    tools::execute(st, ctx, "tag_update", &Value::Object(full.clone()))
                         .map(|v| (200, v))
                 })
             }

@@ -112,35 +112,37 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 改名/改描述。标签以内部 id 关联记忆，改名只动 name，引用自动跟随；
-    /// 目标名已存在时报错（与"精确重名建标签报错"同一语义）。
-    /// 返回引用该标签（随之改显新名）的记忆条数。
-    pub fn tag_rename(
+    /// 更新标签：改名和/或改描述。标签以内部 id 关联记忆，改名只动 name，
+    /// 引用自动跟随；目标名已存在时报错（与"精确重名建标签报错"同一语义）。
+    /// 返回 (是否发生了改名, 是否写入了描述)。
+    pub fn tag_update(
         &self,
-        old: &str,
+        name: &str,
         new_name: Option<&str>,
         description: Option<&str>,
-    ) -> Result<u64, String> {
-        if !self.tag_exists(old)? {
-            return Err(format!("tag '{old}' not found (see tag_list)"));
+    ) -> Result<(bool, bool), String> {
+        if !self.tag_exists(name)? {
+            return Err(format!("tag '{name}' not found (see tag_list)"));
         }
-        let final_name = new_name.unwrap_or(old);
-        let mut memories_updated = 0u64;
-        if final_name != old {
+        let final_name = new_name.unwrap_or(name);
+        let mut renamed = false;
+        if final_name != name {
             if self.tag_exists(final_name)? {
                 return Err(format!("tag '{final_name}' already exists"));
             }
-            memories_updated = self.tag_memory_count(old)?;
             self.conn
-                .execute(sql::TAG_RENAME, params![final_name, old])
+                .execute(sql::TAG_SET_NAME, params![final_name, name])
                 .map_err(|e| e.to_string())?;
+            renamed = true;
         }
+        let mut description_updated = false;
         if let Some(d) = description {
             self.conn
                 .execute(sql::TAG_SET_DESCRIPTION, params![d, final_name])
                 .map_err(|e| e.to_string())?;
+            description_updated = true;
         }
-        Ok(memories_updated)
+        Ok((renamed, description_updated))
     }
 
     fn tag_memory_count(&self, name: &str) -> Result<u64, String> {
@@ -297,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_rename_cascades_and_rejects_existing_target() {
+    fn tag_update_renames_and_sets_description() {
         let path = temp_db("rename");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
@@ -307,26 +309,37 @@ mod tests {
         let _b = insert_with_tags(&st, "b", "cb", &["rust"], 1);
 
         // 改名到已存在的标签：报错
-        let err = st.tag_rename("rust", Some("lang"), None).unwrap_err();
+        let err = st.tag_update("rust", Some("lang"), None).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
 
-        // 正常改名：级联同步所有引用，返回受影响记忆数
-        let updated = st.tag_rename("rust", Some("systems"), None).unwrap();
-        assert_eq!(updated, 2);
+        // 正常改名：记忆引用跟随新名（内部 id 不变）
+        let (renamed, description_updated) = st.tag_update("rust", Some("systems"), None).unwrap();
+        assert!(renamed);
+        assert!(!description_updated);
         assert!(!st.tag_exists("rust").unwrap());
         assert!(st.tag_exists("systems").unwrap());
         let (found, _) = st.get_memories(&[a]).unwrap();
         assert_eq!(found[0].tags, vec!["systems".to_string()]);
 
-        // 改描述
-        st.tag_rename("systems", None, Some("programming")).unwrap();
+        // 只改描述：不改名（new_name 省略），返回值区分两部分
+        let (renamed, description_updated) =
+            st.tag_update("systems", None, Some("programming")).unwrap();
+        assert!(!renamed);
+        assert!(description_updated);
         assert_eq!(
             st.tag_view("systems").unwrap()["description"],
             "programming"
         );
 
+        // new_name 与当前名相同：不算改名，描述照常写入
+        let (renamed, _) = st
+            .tag_update("systems", Some("systems"), Some("langs"))
+            .unwrap();
+        assert!(!renamed);
+        assert_eq!(st.tag_view("systems").unwrap()["description"], "langs");
+
         // 不存在的标签报错
-        assert!(st.tag_rename("nope", Some("x"), None).is_err());
+        assert!(st.tag_update("nope", Some("x"), None).is_err());
         cleanup(&path);
     }
 

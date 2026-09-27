@@ -113,7 +113,7 @@ pub fn execute(
     match name {
         "tag_create" => tag_ops::tag_create(st, map),
         "tag_list" => tag_ops::tag_list(st, map),
-        "tag_rename" => tag_ops::tag_rename(st, map),
+        "tag_update" => tag_ops::tag_update(st, map),
         "tag_delete" => tag_ops::tag_delete(st, map),
         "memory_create" => memory_ops::memory_create(st, map),
         "memory_list" => memory_ops::memory_list(st, map),
@@ -271,13 +271,16 @@ mod tests {
         )
         .unwrap();
 
-        // 重命名会同步所有记忆
-        call(
+        // 更新：改名 + 改描述一次完成，记忆引用跟随新名
+        let upd = call(
             &path,
-            "tag_rename",
-            json!({"old_name": "rust", "new_name": "lang", "description": "Programming languages"}),
+            "tag_update",
+            json!({"name": "rust", "new_name": "lang", "description": "Programming languages"}),
         )
         .unwrap();
+        assert_eq!(upd["renamed"], true);
+        assert_eq!(upd["description_updated"], true);
+        assert_eq!(upd["name"], "lang");
         let tl = call(&path, "tag_list", json!({})).unwrap();
         let tags = tl["tags"].as_array().unwrap();
         assert_eq!(tags.len(), 1);
@@ -517,7 +520,7 @@ mod tests {
         call(&path, "tag_create", json!({"name": "rust"})).unwrap();
         let second = call(&path, "tag_create", json!({"name": "Rust"})).unwrap();
         assert_eq!(second["similar_existing"], "rust");
-        assert!(second["note"].as_str().unwrap().contains("tag_rename"));
+        assert!(second["note"].as_str().unwrap().contains("tag_update"));
         // 非阻塞：两个标签都创建成功
         let tl = call(&path, "tag_list", json!({})).unwrap();
         assert_eq!(tl["tags"].as_array().unwrap().len(), 2);
@@ -526,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_rename_supports_case_only_rename() {
+    fn tag_update_supports_case_only_rename() {
         let path = temp_db("case-rename");
         call(
             &path,
@@ -538,13 +541,24 @@ mod tests {
         // 仅大小写改名是 similar_existing 提示的指定修复路径，必须可用
         let r = call(
             &path,
-            "tag_rename",
-            json!({"old_name": "rust", "new_name": "Rust"}),
+            "tag_update",
+            json!({"name": "rust", "new_name": "Rust"}),
         )
         .unwrap();
-        assert_eq!(r["memories_updated"], 1);
+        assert_eq!(r["renamed"], true);
         let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
         assert_eq!(got["memories"][0]["tags"][0], "Rust");
+
+        // 只补描述：不改名时 renamed=false、description_updated=true
+        let d = call(
+            &path,
+            "tag_update",
+            json!({"name": "Rust", "description": "the language"}),
+        )
+        .unwrap();
+        assert_eq!(d["renamed"], false);
+        assert_eq!(d["description_updated"], true);
+        assert_eq!(d["tag"]["description"], "the language");
 
         // 改名后再建任何其他大小写拼写的变体：提示都应触发（这正是防碎片化的场景）
         let back = call(&path, "tag_create", json!({"name": "rust"})).unwrap();
