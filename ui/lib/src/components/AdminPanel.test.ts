@@ -42,6 +42,11 @@ describe('AdminPanel', () => {
         if (u.includes('/api/settings')) {
           return Promise.resolve(jsonResponse({ instructions: 'team rules', conventions: null, auth_required: true }))
         }
+        if (u.includes('/api/stats')) {
+          return Promise.resolve(
+            jsonResponse({ embedding: { enabled: true, model: 'bge-m3', embedded: 3, pending: 1 } }),
+          )
+        }
         return Promise.resolve(jsonResponse({}))
       }),
     )
@@ -71,9 +76,18 @@ describe('AdminPanel', () => {
     expect(html).toContain('导出备份')
     expect(html).toContain('数据体检')
     expect(html).toContain('新建身份')
+    // 新建身份入口在身份卡片头部右侧，紧贴表格（不再远隔警告行与鉴权开关）
+    const createBtn = wrapper.findAll('button').find((b) => b.text() === '新建身份')
+    expect(createBtn).toBeTruthy()
+    expect(createBtn!.element.closest('.el-card__header')).toBeTruthy()
     // 语义搜索只有一张卡：配置 + 向量覆盖率小节同卡，不再出现第二张同名卡
     expect(html.match(/语义搜索（embedding）/g)).toHaveLength(1)
     expect(html).toContain('向量覆盖率')
+    expect(html).toContain('补跑向量化')
+    expect(html).toContain('1 条记忆缺最新向量')
+    // 缺键回退不再出现（vue-i18n 缺键时会把键名原样回显）
+    expect(html).not.toContain('access.embedding')
+    expect(html).not.toContain('access.identityCard')
     wrapper.unmount()
   })
 

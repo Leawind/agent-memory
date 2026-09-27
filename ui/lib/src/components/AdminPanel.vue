@@ -7,9 +7,6 @@
           <el-icon class="am-info"><InfoFilled /></el-icon>
         </el-tooltip>
       </div>
-      <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="formDialog?.openCreate()">
-        {{ t('access.create') }}
-      </el-button>
     </div>
 
     <el-alert v-if="!who" type="info" :title="t('access.needAdmin')" :closable="false" />
@@ -22,16 +19,21 @@
       <IdentityTableCard
         :identities="identities"
         :compact="compact"
+        @create="formDialog?.openCreate()"
         @edit="formDialog?.openEdit($event)"
         @delete="askDelete"
         @reset-token="askResetToken"
       />
 
+      <!-- 语义搜索配置 + 向量覆盖率同卡（原底部独立覆盖率卡已并入） -->
       <EmbeddingSettingsCard
         :embedding-enabled="embeddingEnabled"
         :embedding-base-url="embeddingBaseUrl"
         :embedding-model="embeddingModel"
         :embedding-api-key="embeddingApiKey"
+        :stats="stats"
+        :compact="compact"
+        @changed="load"
       />
 
       <PromptSettingsCard
@@ -43,8 +45,6 @@
       <BackupCard />
 
       <DoctorCard />
-
-      <EmbeddingCoverageCard :stats="stats" :compact="compact" @changed="load" />
     </template>
 
     <!-- 新建 / 编辑身份；成功后的列表刷新在父层 -->
@@ -58,7 +58,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { InfoFilled, Plus } from '@element-plus/icons-vue'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { useApiClient } from '../api/client'
 import { useContainerWidth } from '../composables/useContainerWidth'
@@ -73,7 +73,6 @@ import EmbeddingSettingsCard from './admin/EmbeddingSettingsCard.vue'
 import PromptSettingsCard from './admin/PromptSettingsCard.vue'
 import BackupCard from './admin/BackupCard.vue'
 import DoctorCard from './admin/DoctorCard.vue'
-import EmbeddingCoverageCard from './admin/EmbeddingCoverageCard.vue'
 
 const props = withDefaults(
   defineProps<{

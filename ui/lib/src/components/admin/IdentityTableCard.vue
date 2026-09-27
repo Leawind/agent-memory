@@ -1,5 +1,14 @@
 <template>
   <el-card shadow="never">
+    <!-- 新建入口紧贴身份表（卡片头部右侧），开放模式警告与鉴权开关留在其原有语义位置 -->
+    <template #header>
+      <div class="card-header">
+        <span>{{ t('access.identityCard') }}</span>
+        <el-button type="primary" :icon="Plus" @click="emit('create')">
+          {{ t('access.create') }}
+        </el-button>
+      </div>
+    </template>
     <el-empty v-if="identities.length === 0" :description="t('access.empty')" />
     <el-table v-else :data="identities">
       <el-table-column prop="name" :label="t('access.colName')" min-width="120" />
@@ -47,6 +56,7 @@
 <script setup lang="ts">
 import { t } from '../../i18n'
 import { formatTime } from '../../format'
+import { Plus } from '@element-plus/icons-vue'
 import { capLabel, enabledCaps, maskToken, type IdentityRow } from './caps'
 
 defineProps<{
@@ -56,6 +66,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
+  create: []
   edit: [row: IdentityRow]
   delete: [row: IdentityRow]
   'reset-token': [row: IdentityRow]
@@ -63,6 +74,11 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
 .token-cell {
   display: flex;
   align-items: center;

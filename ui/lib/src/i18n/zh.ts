@@ -124,6 +124,7 @@ export default {
     needAdmin: '需要 admin 权限才能管理身份与设置',
     openMode:
       '开放模式：鉴权开关未开启，所有请求免鉴权，仅适合个人本地部署。启用鉴权前，先在下方创建管理员身份并保存其 token；开启开关后，所有 /mcp 与 /api 请求必须携带有效 token。',
+    identityCard: '身份',
     colName: '名称',
     colToken: 'Token',
     colPermissions: '能力',
@@ -196,7 +197,9 @@ export default {
     embeddingHint:
       '配置 OpenAI 兼容的 /embeddings 服务：云端（如 SiliconFlow：https://api.siliconflow.cn/v1 + BAAI/bge-m3）或本地 Ollama（http://127.0.0.1:11434/v1 + bge-m3）。服务不可用时搜索自动回退关键词，写入不中断；缺向量的记忆可点击下方「补跑向量化」重建。',
     embeddingEnabledLabel: '启用语义搜索',
+    embeddingEnabledHint: '关闭时搜索自动回退关键词，写入不中断',
     embeddingBaseUrl: '服务地址（base_url，OpenAI 兼容）',
+    embeddingBaseUrlPlaceholder: 'https://api.siliconflow.cn/v1 或 http://127.0.0.1:11434/v1',
     embeddingModelLabel: '模型名',
     embeddingApiKeyLabel: 'API Key',
     embeddingApiKeyPlaceholder: '本地服务可留空',

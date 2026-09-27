@@ -68,7 +68,7 @@ export function useAdmin() {
       let total = 0
       for (;;) {
         const out = await backfillEmbeddings(client)
-        if (!out.configured) throw new Error(t('ops.embeddingNotConfigured'))
+        if (!out.configured) throw new Error(t('access.embeddingNotConfigured'))
         if (out.error) throw new Error(out.error)
         total += out.processed ?? 0
         if ((out.processed ?? 0) === 0) break

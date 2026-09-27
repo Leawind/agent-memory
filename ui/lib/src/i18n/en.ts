@@ -125,6 +125,7 @@ export default {
     needAdmin: 'Admin permission is required to manage identities and settings',
     openMode:
       'Open mode: the auth switch is off and all requests are unauthenticated, only suitable for personal local deployments. Before enabling, create an admin identity below and save its token; once the switch is on, every /mcp and /api request must carry a valid token.',
+    identityCard: 'Identities',
     colName: 'Name',
     colToken: 'Token',
     colPermissions: 'Capabilities',
@@ -200,7 +201,9 @@ export default {
     embeddingHint:
       'Configure an OpenAI-compatible /embeddings service: cloud (e.g. SiliconFlow: https://api.siliconflow.cn/v1 + BAAI/bge-m3) or local Ollama (http://127.0.0.1:11434/v1 + bge-m3). If the service is unavailable, search falls back to keywords and writes are never blocked; missing vectors can be rebuilt via "Backfill embeddings" below.',
     embeddingEnabledLabel: 'Enable semantic search',
+    embeddingEnabledHint: 'When off, search falls back to keywords; writes are never blocked',
     embeddingBaseUrl: 'Service base URL (OpenAI-compatible)',
+    embeddingBaseUrlPlaceholder: 'https://api.siliconflow.cn/v1 or http://127.0.0.1:11434/v1',
     embeddingModelLabel: 'Model name',
     embeddingApiKeyLabel: 'API key',
     embeddingApiKeyPlaceholder: 'Leave empty for local services',
