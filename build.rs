@@ -6,15 +6,39 @@
 //! zero-padding is optional (`1-init.sql` and `10-ten.sql` sort numerically).
 //! Files that do not follow the pattern are ignored; duplicate numbers abort
 //! the build.
+//!
+//! Also materializes a placeholder `ui/dist/index.html` when the real UI has
+//! not been built yet (`pnpm build`), because build outputs are not tracked in
+//! git while rust-embed aborts compilation when the folder is missing.
 
 use std::env;
 use std::fs;
 use std::path::Path;
 
+/// Served when the embeddable UI has not been built; `pnpm build` at the repo
+/// root replaces it with the real Vue app (vite empties the directory first).
+const UI_PLACEHOLDER: &str = r#"<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>agent-memory</title>
+  </head>
+  <body style="font-family: system-ui, sans-serif; margin: 4rem; color: #555">
+    <h1>管理界面尚未构建</h1>
+    <p>
+      当前嵌入的是占位页。在仓库根目录执行 <code>pnpm install &amp;&amp; pnpm build</code>
+      生成 ui/dist，再重新 <code>cargo build</code> 即可嵌入完整界面。
+    </p>
+  </body>
+</html>
+"#;
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
     let migrations_dir = Path::new(&manifest_dir).join("migrations");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
+
+    ensure_ui_placeholder(Path::new(&manifest_dir));
 
     let mut ordered: Vec<(usize, String)> = Vec::new();
     for entry in fs::read_dir(&migrations_dir).expect("failed to read the migrations directory") {
@@ -54,6 +78,21 @@ fn main() {
         .expect("failed to write the generated migrations module");
 
     println!("cargo:rerun-if-changed=migrations");
+    // 目录级跟踪：pnpm build 重写 ui/dist 后，下次 cargo build 会重跑本脚本并
+    // 重编译（rust-embed 随之重新嵌入），无需 cargo clean。
+    println!("cargo:rerun-if-changed=ui/dist");
+}
+
+/// rust-embed embeds `ui/dist` at compile time and aborts the build when the
+/// folder is absent; since build outputs stay out of version control, a fresh
+/// clone needs this stub to remain compilable.
+fn ensure_ui_placeholder(manifest_dir: &Path) {
+    let dist = manifest_dir.join("ui").join("dist");
+    let index = dist.join("index.html");
+    if !index.exists() {
+        fs::create_dir_all(&dist).expect("failed to create ui/dist");
+        fs::write(&index, UI_PLACEHOLDER).expect("failed to write the ui/dist placeholder");
+    }
 }
 
 /// Returns the leading migration number of a `NUM-NAME.sql` file name.

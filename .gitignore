@@ -10,6 +10,10 @@
 node_modules/
 .zcode/
 
+# 前端构建产物（pnpm build 生成；ui/dist 缺失时由 build.rs 落占位页）
+/ui/dist/
+/ui/lib/dist/
+
 # 本地 GUI 测试截图
 gui-test-screenshots/
 

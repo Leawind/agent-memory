@@ -74,7 +74,7 @@ agent-memory serve       # 默认 127.0.0.1:8899，数据库为当前目录下 m
 ## 从源码开发
 
 ```bash
-pnpm install && pnpm build   # 仅改了 ui/ 时需要（dist 已入库，不改前端可跳过）
+pnpm install && pnpm build   # 仅改了 ui/ 时需要（构建产物不入库；未构建时二进制内嵌占位页）
 cargo install --path .       # 安装到 ~/.cargo/bin
 cargo test                   # Rust 与前端全部测试（e2e 真实起服务器）
 cargo clippy --all-targets   # 提交前应零告警

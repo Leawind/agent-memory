@@ -722,8 +722,8 @@ mod tests {
         assert!(matches!(route("PUT", "/elsewhere"), Route::NotFound));
     }
 
-    /// ui/dist 必须带着 index.html（rust-embed 嵌入的 SPA 入口）。
-    /// 目录被清空/未提交时，此测试会在 cargo test 阶段就暴露。
+    /// rust-embed 的资产装配必须带 SPA 入口（ui/dist/index.html）。dist 未构建时
+    /// build.rs 会落一个占位页，同样满足此断言；这里守住的是嵌入机制本身。
     #[test]
     fn embedded_ui_has_index_entry() {
         assert!(

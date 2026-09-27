@@ -9,8 +9,8 @@
   弹层组件（编辑对话框、详情抽屉、Markdown 视图），供其他 Vue3 系统作为组件集成。
 - **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言
   切换 + 多身份令牌下拉），直接组装四个面板（「管理」页仅对 admin 能力身份显示）。
-  构建产物输出到 `ui/dist/` 并提交入库，由 Rust 侧 rust-embed
-  编译期嵌入二进制。
+  构建产物输出到 `ui/dist/`（不入库），由 Rust 侧 rust-embed
+  编译期嵌入二进制；dist 缺失时 build.rs 落占位页兜底。
 
 ## 组件库集成指南
 
@@ -92,9 +92,10 @@ pnpm dev:live     # 仅 app：连真实后端，/api、/mcp、/health 代理到 
 ## 约定
 
 - **全部源码 TypeScript**（strict）：服务端响应类型集中在 `ui/lib/src/types.ts`；禁止新建 .js 源文件
-- **dist 必须提交**：cargo 构建不依赖 node，二进制是唯一交付物
-- ⚠️ **rust-embed 陷阱**：仅在编译期已存在的文件会被跟踪，**新增**的 dist 产物文件不会触发 Rust 重编译——
-  改完前端后 `cargo build` 前先 `cargo clean -p agent-memory`，否则二进制里可能还是旧 UI
+- **构建产物不入库**：`ui/dist`、`ui/lib/dist` 均在 .gitignore；dist 缺失时 build.rs
+  生成占位 index.html，保证 cargo 构建不依赖 node（全新 clone 可直接编译）
+- build.rs 以 `rerun-if-changed=ui/dist` 跟踪目录：改完前端 `pnpm build` 后直接
+  `cargo build` 即可重新嵌入，无需 cargo clean
 - 界面数据全部走 `/api/*`（服务端复用 MCP 工具层的 handler，校验语义一致）
 - **所有 v-html 入口必须消毒**：Markdown 走 `renderMarkdown()`，服务端 HTML 片段（搜索 snippet）走
   `sanitizeHtml()`，统一出口 `ui/lib/src/markdown.ts`，不得绕过

@@ -18,9 +18,9 @@ cargo clippy --all-targets   # 提交前应零告警（Cargo.toml [lints.clippy]
 cargo fmt --check            # 提交前格式必须通过
 cargo install --path . --force   # 更新本机安装（改完 Rust 代码后跑，否则运行中的是旧二进制）
                   # 部署方式：源码 cargo install，MCP 客户端配置走 HTTP 地址，无构建脚本
-pnpm build        # 仅当改了 ui/ 时需要；先 lib 后 app 两 workspace，app 产物 ui/dist 入库并由 rust-embed 嵌入
-                  # ⚠️ 新增 dist 产物文件不会触发 Rust 重编译（rust-embed 只跟踪编译期已存在的文件），
-                  # 改完前端 cargo build 前先 cargo clean -p agent-memory，否则二进制里可能还是旧 UI
+pnpm build        # 仅当改了 ui/ 时需要；先 lib 后 app 两 workspace，app 产物 ui/dist 由 rust-embed 嵌入
+                  # 构建产物不入库（见不变量 8）；build.rs 以 rerun-if-changed=ui/dist 跟踪目录，
+                  # pnpm build 后直接 cargo build 即可重新嵌入，无需 cargo clean
 ```
 
 注意：若通过 CARGO_TARGET_DIR 或 build.target-dir 配置了共享/非默认输出目录（编译产物不在
@@ -111,9 +111,12 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 6. **协议兼容**：MCP 协议版本支持 2024-11-05 / 2025-03-26 / 2025-06-18；id 边界格式
    严格为 `"m{n}"`——normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
-8. **嵌入资产**：ui/dist 必须存在且被提交（rust-embed debug-embed 编译期嵌入）；
-   改前端后先 `pnpm format && pnpm build` 再 `cargo clean -p agent-memory && cargo build`
-   （新增的 dist 文件不在 rust-embed 的跟踪范围，不清理会嵌到旧产物）。
+8. **仓库只有源码，构建产物一律不入库**：`ui/dist`、`ui/lib/dist`（连同 target/、
+   node_modules/）全部 gitignore；rust-embed debug-embed 编译期嵌入 `ui/dist`，
+   其缺失时由 build.rs 生成占位 index.html 兜底（全新 clone / CI 不装 node 也能
+   cargo build，只是没有真实界面）。改前端后 `pnpm format && pnpm build` 再
+   `cargo build`——build.rs 以 rerun-if-changed=ui/dist 跟踪目录，dist 变化自动
+   触发重编译重嵌入，无需 cargo clean。
 9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置在根
    .prettierrc.json）；CI 强制 `format:check`，提交前先 `pnpm format`。
 10. **Markdown 渲染必须消毒**：记忆正文是多 agent 共写的外部输入，
