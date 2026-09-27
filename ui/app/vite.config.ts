@@ -1,29 +1,35 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import { mockApi } from './mock/api'
 
 // 独立站薄壳：业务组件全部来自 @agent-memory/ui（workspace 依赖，须先构建 lib）。
 // 产物输出到 ui/dist，由 Rust 侧 rust-embed 编译期嵌入二进制。
-// 开发时代理到本机运行中的服务器。
-export default defineConfig({
-  plugins: [vue()],
-  build: {
-    outDir: '../dist',
-    emptyOutDir: true,
-    // 单文件内嵌的管理界面（Element Plus 全量 + marked/dompurify），
-    // 一次性加载，不做代码分割，只压掉无意义的 chunk 警告
-    chunkSizeWarningLimit: 1500,
-  },
-  server: {
-    proxy: {
-      '/api': `http://127.0.0.1:8899`,
-      '/mcp': `http://127.0.0.1:8899`,
+// dev 默认启用内置 mock API（内存假数据，无需 Rust 后端，重启复位）；
+// `npm run dev:live`（--mode live）改为代理到本机真实服务器（默认 127.0.0.1:8899）。
+export default defineConfig(({ mode }) => {
+  const live = mode === 'live'
+  return {
+    plugins: [vue(), ...(live ? [] : [mockApi()])],
+    build: {
+      outDir: '../dist',
+      emptyOutDir: true,
+      // 单文件内嵌的管理界面（Element Plus 全量 + marked/dompurify），
+      // 一次性加载，不做代码分割，只压掉无意义的 chunk 警告
+      chunkSizeWarningLimit: 1500,
     },
-  },
-  test: {
-    environment: 'happy-dom',
-    setupFiles: ['./src/test-setup.ts'],
-    // vitest 默认按 CPU 核数开满线程池，跑测试时其他程序会卡；用例很轻，限两个线程
-    pool: 'threads',
-    maxWorkers: 2,
-  },
+    server: {
+      proxy: {
+        '/api': `http://127.0.0.1:8899`,
+        '/mcp': `http://127.0.0.1:8899`,
+        '/health': `http://127.0.0.1:8899`,
+      },
+    },
+    test: {
+      environment: 'happy-dom',
+      setupFiles: ['./src/test-setup.ts'],
+      // vitest 默认按 CPU 核数开满线程池，跑测试时其他程序会卡；用例很轻，限两个线程
+      pool: 'threads',
+      maxWorkers: 2,
+    },
+  }
 })

@@ -77,8 +77,23 @@ npm run build     # 先 lib 后 app；app 产物输出 ui/dist（改完前端必
 npm test          # vitest：lib（配置注入/API 封装/查询串/Markdown 消毒/三面板挂载）+ app 壳
 npm run typecheck # vue-tsc 两包（strict）
 npm run format    # Prettier（配置在根 .prettierrc.json：无分号、单引号、120 列）
-npm run dev       # 仅 app：热更新，/api 与 /mcp 代理到 127.0.0.1:8899
+npm run dev       # 仅 app：热更新。默认启用内置 mock API（ui/app/mock/，内存假数据，
+                  # 无需 Rust 后端；重启复位），终端横幅会打印预置身份 token
+npm run dev:live  # 仅 app：连真实后端，/api、/mcp、/health 代理到 127.0.0.1:8899
 ```
+
+### 前端独立开发（mock 模式）
+
+`npm run dev` 默认加载 `ui/app/mock/api.ts`（Vite dev 中间件，内存假数据，不进入构建产物），
+前端开发**不依赖任何后端**：
+
+- 模拟真实服务端语义：开放模式全能力；点管理页鉴权开关进入 token 模式后，无 token 请求 401
+  （弹出令牌输入框）、能力不足 403；预置 admin / 只读两个身份，token 见 dev server 启动横幅。
+- 种子数据 10 条中英混合 Markdown 记忆 + 8 个标签，覆盖列表/搜索高亮/详情/管理各面板；
+  搜索固定关键词模式（显式 `mode=hybrid` 按「embedding 未配置」语义回退并携带
+  `semantic_fallback` 标记，方便调试回退提示 UI）。
+- 数据改动只存内存，dev server 重启即复位；未实现的 /api 路由返回 404——出现了说明
+  mock 落后于契约，应补齐而非绕过。
 
 ## 约定
 
