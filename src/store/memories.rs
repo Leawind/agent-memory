@@ -28,12 +28,12 @@ impl Store {
         Ok(out)
     }
 
-    /// 插入记忆并关联标签（标签须已存在——handler 先 ensure_tags_exist）。
+    /// 插入记忆并按内部标签 id 关联（id 由 handler 先经 `link_tags` 解析）。
     pub fn insert_memory(
         &self,
         summary: &str,
         content: &str,
-        tags: &[String],
+        tag_ids: &[i64],
         created_at: u64,
         updated_at: u64,
     ) -> Result<i64, String> {
@@ -44,9 +44,9 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
         let id = self.conn.last_insert_rowid();
-        for tag in tags {
+        for tag_id in tag_ids {
             self.conn
-                .execute(sql::MEMORY_LINK_TAG, params![id, tag])
+                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id])
                 .map_err(|e| e.to_string())?;
         }
         Ok(id)
@@ -130,8 +130,9 @@ impl Store {
         Ok(out)
     }
 
-    /// 分页浏览（可选标签过滤：`tag` 精确单标签；`tag_set` 为标签名集合的
-    /// JSON 数组文本，命中任一即可——正则过滤由调用方先在标签全集上解析），
+    /// 分页浏览（可选标签过滤：`tag` 精确单标签；`tag_set` 为标签内部 id
+    /// 集合的 JSON 数组文本，命中任一即可——名字 → id 的解析与正则过滤
+    /// 由调用方先在标签全集上完成），
     /// 返回 (总数, 当前页)。
     ///
     /// 全静态 SQL（见 sql/memory_list_page.sql）：`?1`/`?2` 为 NULL 时不过滤；
@@ -200,13 +201,15 @@ impl Store {
     }
 
     /// 更新记忆字段与标签；返回是否发生变更（决定是否刷新 updated_at）。
+    /// 标签以内部 id 增删（add 由 handler 先 `link_tags` 解析，remove 由
+    /// `tag_ids_for_names` 解析——不存在的名字静默跳过）。
     pub fn update_memory(
         &self,
         id: i64,
         summary: Option<&str>,
         content: Option<&str>,
-        add_tags: &[String],
-        remove_tags: &[String],
+        add_tag_ids: &[i64],
+        remove_tag_ids: &[i64],
     ) -> Result<bool, String> {
         if !self.memory_exists(id)? {
             return Err(format!(
@@ -229,20 +232,17 @@ impl Store {
         }
         // 契约（defs.rs）：add_tags 先于 remove_tags 执行，两个列表都含同一
         // 标签时最终结果是移除（显式 remove 的意图优先）。
-        if !add_tags.is_empty() {
-            self.ensure_tags_exist(add_tags)?;
-            for t in add_tags {
-                let n = self
-                    .conn
-                    .execute(sql::MEMORY_LINK_TAG, params![id, t])
-                    .map_err(|e| e.to_string())?;
-                changed = changed || n > 0;
-            }
-        }
-        for tag in remove_tags {
+        for tag_id in add_tag_ids {
             let n = self
                 .conn
-                .execute(sql::MEMORY_UNLINK_TAG, params![id, tag])
+                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id])
+                .map_err(|e| e.to_string())?;
+            changed = changed || n > 0;
+        }
+        for tag_id in remove_tag_ids {
+            let n = self
+                .conn
+                .execute(sql::MEMORY_UNLINK_TAG, params![id, tag_id])
                 .map_err(|e| e.to_string())?;
             changed = changed || n > 0;
         }
@@ -285,20 +285,24 @@ impl Store {
 mod tests {
     use super::super::test_support::{cleanup, temp_db};
     use super::*;
+    use serde_json::json;
+
+    /// 测试辅助：按标签名建链并插入记忆（生产路径由 handler 解析 id）。
+    fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
+        let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        let ids = st.link_tags(&names).unwrap().ids;
+        st.insert_memory(summary, content, &ids, at, at).unwrap()
+    }
 
     #[test]
     fn memory_lifecycle_with_tags() {
         let path = temp_db("lifecycle");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        let tags = vec!["rust".to_string(), "notes".to_string()];
-        st.ensure_tags_exist(&tags).unwrap();
 
         let dup = st.find_duplicates_by_summary("Rust notes").unwrap();
         assert!(dup.is_empty());
-        let id = st
-            .insert_memory("Rust notes", "borrow checker", &tags, 10, 10)
-            .unwrap();
+        let id = insert_with_tags(&st, "Rust notes", "borrow checker", &["rust", "notes"], 10);
         assert_eq!(Store::format_id(id), "m1");
 
         // 重复检测（大小写不敏感）
@@ -310,15 +314,11 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].tags, vec!["notes".to_string(), "rust".to_string()]);
 
-        // 更新：改字段 + 增删标签
+        // 更新：改字段 + 增删标签（名字 → id 的解析走与 handler 相同的路径）
+        let add = st.link_tags(&["study".into()]).unwrap();
+        let remove = st.tag_ids_for_names(&["notes".into()]).unwrap();
         let changed = st
-            .update_memory(
-                id,
-                Some("new summary"),
-                None,
-                &["study".into()],
-                &["notes".into()],
-            )
+            .update_memory(id, Some("new summary"), None, &add.ids, &remove)
             .unwrap();
         assert!(changed);
         let (found, missing) = st.get_memories(&[id]).unwrap();
@@ -342,10 +342,8 @@ mod tests {
         let path = temp_db("list");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        st.ensure_tags_exist(&["t1".into()]).unwrap();
         for i in 0..5 {
-            st.insert_memory(&format!("s{i}"), "c", &["t1".into()], i, i)
-                .unwrap();
+            insert_with_tags(&st, &format!("s{i}"), "c", &["t1"], i);
         }
         let (total, page) = st
             .list_memories(None, None, "updated_at", false, 0, 3)
@@ -367,17 +365,26 @@ mod tests {
             .list_memories(Some("t1"), None, "created_at", false, 0, 200)
             .unwrap();
         assert_eq!(total4, 5);
-        // 标签集合过滤（tag_set 为 JSON 数组文本，json_each 展开；空集 = 无结果）
-        st.tag_create("t2", "").unwrap();
-        st.insert_memory("s-other", "c", &["t2".into()], 9, 9)
-            .unwrap();
+        // 标签集合过滤（tag_set 为 id JSON 数组文本，json_each 展开；空集 = 无结果）
+        insert_with_tags(&st, "s-other", "c", &["t2"], 9);
+        let id_set = |names: &[&str]| {
+            let owned: Vec<String> = names.iter().map(|t| t.to_string()).collect();
+            json!(st.tag_ids_for_names(&owned).unwrap()).to_string()
+        };
         let (total5, page5) = st
-            .list_memories(None, Some(r#"["t1"]"#), "updated_at", false, 0, 200)
+            .list_memories(None, Some(&id_set(&["t1"])), "updated_at", false, 0, 200)
             .unwrap();
         assert_eq!(total5, 5);
         assert!(page5.iter().all(|m| m.summary != "s-other"));
         let (total6, _) = st
-            .list_memories(None, Some(r#"["t1","t2"]"#), "updated_at", false, 0, 200)
+            .list_memories(
+                None,
+                Some(&id_set(&["t1", "t2"])),
+                "updated_at",
+                false,
+                0,
+                200,
+            )
             .unwrap();
         assert_eq!(total6, 6);
         let (total7, _) = st
@@ -386,7 +393,14 @@ mod tests {
         assert_eq!(total7, 0);
         // 精确 tag 与集合同时使用 = AND
         let (total8, _) = st
-            .list_memories(Some("t2"), Some(r#"["t1"]"#), "updated_at", false, 0, 200)
+            .list_memories(
+                Some("t2"),
+                Some(&id_set(&["t1"])),
+                "updated_at",
+                false,
+                0,
+                200,
+            )
             .unwrap();
         assert_eq!(total8, 0);
         cleanup(&path);
@@ -399,10 +413,10 @@ mod tests {
         let path = temp_db("add-remove");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        st.ensure_tags_exist(&["a".into(), "b".into()]).unwrap();
-        let id = st.insert_memory("s", "c", &["a".into()], 1, 1).unwrap();
-        st.update_memory(id, None, None, &["a".into(), "b".into()], &["a".into()])
-            .unwrap();
+        let id = insert_with_tags(&st, "s", "c", &["a"], 1);
+        let add = st.link_tags(&["a".into(), "b".into()]).unwrap();
+        let remove = st.tag_ids_for_names(&["a".into()]).unwrap();
+        st.update_memory(id, None, None, &add.ids, &remove).unwrap();
         let (found, _) = st.get_memories(&[id]).unwrap();
         assert_eq!(found[0].tags, vec!["b".to_string()]);
         cleanup(&path);

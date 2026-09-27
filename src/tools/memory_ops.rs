@@ -16,15 +16,17 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
     let tags = normalize_tag_list(&raw_tags)?;
 
-    let autocreated = st.ensure_tags_exist(&tags)?;
+    let linkage = st.link_tags(&tags)?;
 
     // 重复检测（确定性规则：摘要归一化后完全相等）。在插入前计算，避免匹配到自己。
     // 目的不是阻止存储，而是提醒 agent：已有同摘要记忆时应改用 memory_update。
     let duplicate_of = st.find_duplicates_by_summary(&summary)?;
 
-    let id = st.insert_memory(&summary, &content, &tags, now(), now())?;
+    let id = st.insert_memory(&summary, &content, &linkage.ids, now(), now())?;
     let view = memory_view(st, id)?;
-    Ok(json!({"memory": view, "tags_autocreated": autocreated, "duplicate_of": duplicate_of}))
+    Ok(
+        json!({"memory": view, "tags_autocreated": linkage.autocreated, "duplicate_of": duplicate_of}),
+    )
 }
 
 pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -55,12 +57,19 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     let limit = opt_u64(args, "limit")?.unwrap_or(20).clamp(1, 200);
 
-    // 正则先在标签全集上解析成标签名集合（SQL 无正则能力；json_each 展开保持 SQL 静态）
+    // 正则先在标签全集上解析成标签名集合，再换算成内部 id 集合
+    // （SQL 无正则能力；json_each 展开保持 SQL 静态）
     let tag_names = match &tag_re {
         Some(re) => Some(st.tag_names_matching(re)?),
         None => None,
     };
-    let tag_set = tag_names.as_ref().map(|names| json!(names).to_string());
+    let tag_set = match &tag_names {
+        Some(names) => {
+            let ids = st.tag_ids_for_names(names)?;
+            Some(json!(ids).to_string())
+        }
+        None => None,
+    };
     let (total, page) =
         st.list_memories(tag.as_deref(), tag_set.as_deref(), sort, asc, offset, limit)?;
     let memories: Vec<Value> = page.iter().map(|m| m.summary_view()).collect();
@@ -253,10 +262,17 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         ));
     }
 
-    // 先确保新标签存在（改的是 tags 表），再改记忆，顺序与错误信息一致。
+    // 先解析标签（改的是 tags 表），再改记忆，顺序与错误信息一致。
     let mut autocreated = Vec::new();
+    let mut add_ids: Vec<i64> = Vec::new();
+    let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(add) = &add_tags {
-        autocreated = st.ensure_tags_exist(add)?;
+        let linkage = st.link_tags(add)?;
+        autocreated = linkage.autocreated;
+        add_ids = linkage.ids;
+    }
+    if let Some(remove) = &remove_tags {
+        remove_ids = st.tag_ids_for_names(remove)?;
     }
 
     if !st.memory_exists(id)? {
@@ -269,8 +285,8 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         id,
         summary.as_deref(),
         content.as_deref(),
-        add_tags.as_deref().unwrap_or(&[]),
-        remove_tags.as_deref().unwrap_or(&[]),
+        &add_ids,
+        &remove_ids,
     )?;
 
     let mut out = json!({"updated": changed, "memory": memory_view(st, id)?});

@@ -1,1 +1,2 @@
-SELECT COUNT(DISTINCT memory_id) FROM memory_tags WHERE tag_name = ?1
+SELECT COUNT(DISTINCT memory_id) FROM memory_tags
+WHERE tag_id = (SELECT id FROM tags WHERE name = ?1)

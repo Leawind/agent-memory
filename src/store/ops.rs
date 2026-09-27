@@ -9,19 +9,23 @@ impl Store {
     /// 体检：报告数据中的隐患（只读）。覆盖外键被关闭时可能混入的脏数据。
     pub fn hygiene_issues(&self) -> Result<Vec<String>, String> {
         let mut issues = Vec::new();
-        // 孤儿引用：关联表指向不存在的标签
-        let orphans: Vec<String> = self
+        // 孤儿引用：关联行指向不存在的标签 id（外键被关闭时可能混入）
+        let orphan_ids: Vec<i64> = self
             .conn
             .prepare(sql::HYGIENE_ORPHANS)
             .map_err(|e| e.to_string())?
-            .query_map([], |r| r.get::<_, String>(0))
+            .query_map([], |r| r.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        if !orphans.is_empty() {
+        if !orphan_ids.is_empty() {
             issues.push(format!(
-                "memories reference tags missing from the tag table: {} (fix with tag_create, or remove the references)",
-                orphans.join(", ")
+                "memory_tags rows reference missing tags (schema corruption): tag ids {}",
+                orphan_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         // 反向孤儿：关联行指向不存在的记忆（外键被关闭时可能混入）
@@ -259,8 +263,9 @@ impl Store {
                 })
                 .transpose()?
                 .unwrap_or_default();
-            self.ensure_tags_exist(&tags)?;
-            self.insert_memory(&summary, &content, &tags, created_at, updated_at)?;
+            self.link_tags(&tags)?;
+            let tag_ids = self.tag_ids_for_names(&tags)?;
+            self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
         }
         Ok((memories.len(), tags.len()))
     }
@@ -330,24 +335,23 @@ mod tests {
 
         // 关闭外键注入孤儿引用、反向孤儿、大小写冲突、空摘要
         st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+        let rust_id = st.link_tags(&["rust".into()]).unwrap().ids[0];
+        // 孤儿引用：关联行指向不存在的标签 id 999
         st.conn
             .execute(
-                "INSERT INTO memory_tags(memory_id, tag_name) VALUES (1, 'ghost')",
+                "INSERT INTO memory_tags(memory_id, tag_id) VALUES (1, 999)",
                 [],
             )
             .unwrap();
-        // 反向孤儿：关联行指向不存在的记忆 m42
+        // 反向孤儿：关联行指向不存在的记忆 m42（rust 标签本身存在）
         st.conn
             .execute(
-                "INSERT INTO memory_tags(memory_id, tag_name) VALUES (42, 'rust')",
-                [],
+                "INSERT INTO memory_tags(memory_id, tag_id) VALUES (42, ?1)",
+                [rust_id],
             )
             .unwrap();
         st.conn
             .execute("INSERT INTO tags(name, created_at) VALUES ('Rust', 1)", [])
-            .unwrap();
-        st.conn
-            .execute("INSERT INTO tags(name, created_at) VALUES ('rust', 1)", [])
             .unwrap();
         st.conn
             .execute(
@@ -357,7 +361,7 @@ mod tests {
             )
             .unwrap();
         let issues = st.hygiene_issues().unwrap().join("\n");
-        assert!(issues.contains("ghost"), "missing orphan: {issues}");
+        assert!(issues.contains("999"), "missing orphan: {issues}");
         assert!(
             issues.contains("pointing to missing memories"),
             "missing reverse orphan: {issues}"
@@ -376,8 +380,8 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         st.tag_create("t", "desc").unwrap();
-        st.ensure_tags_exist(&["t".into()]).unwrap();
-        st.insert_memory("s", "body", &["t".into()], 1, 1).unwrap();
+        let ids = st.link_tags(&["t".into()]).unwrap().ids;
+        st.insert_memory("s", "body", &ids, 1, 1).unwrap();
         let dump = st.export_dump().unwrap();
         assert_eq!(dump["total_memories"], 1);
         assert_eq!(dump["tags"][0]["name"], "t");
@@ -394,9 +398,8 @@ mod tests {
         let dump = {
             let st = Store::open(&src).unwrap();
             st.tag_create("t", "带描述的标签").unwrap();
-            st.ensure_tags_exist(&["t".into()]).unwrap();
-            st.insert_memory("s1", "body1", &["t".into()], 100, 200)
-                .unwrap();
+            let ids = st.link_tags(&["t".into()]).unwrap().ids;
+            st.insert_memory("s1", "body1", &ids, 100, 200).unwrap();
             st.insert_memory("s2", "body2", &[], 300, 400).unwrap();
             st.export_dump().unwrap()
         };

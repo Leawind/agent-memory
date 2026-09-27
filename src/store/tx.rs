@@ -53,8 +53,8 @@ mod tests {
         let path = temp_db("tx");
         cleanup(&path);
         let r: Result<(), String> = with_db_in(&path, TxMode::Write, |st| {
-            st.ensure_tags_exist(&["t".into()])?;
-            st.insert_memory("s", "c", &["t".into()], 1, 1)?;
+            let ids = st.link_tags(&["t".into()])?.ids;
+            st.insert_memory("s", "c", &ids, 1, 1)?;
             Err("boom".into())
         });
         assert!(r.is_err());

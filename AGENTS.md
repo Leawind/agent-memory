@@ -50,10 +50,13 @@ src/
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
-  store/         SQLite 持久化目录：mod.rs 是 Store 结构体与 open/id 换算，tx.rs 是
+  store/         SQLite 持久化目录：mod.rs 是 Store 结构体与 open/id 换算（open 时按迁移
+                 文本做 schema 指纹校验：表 + 列与实测不符即拒绝打开），tx.rs 是
                  事务入口（TxMode/with_db_in），migrate.rs 是迁移运行器；
                  tags/memories/identities/settings/embeddings 各以 impl Store 承载数据操作，
-                 ops.rs 是体检/统计/导出导入（identities token 即身份，只存哈希 + 尾缀提示）
+                 ops.rs 是体检/统计/导出导入（identities token 即身份，只存哈希 + 尾缀提示）；
+                 标签以自增内部 id 关联记忆（memory_tags.tag_id），标签名唯一非空是对外
+                 唯一标识，id 对 MCP 使用者完全不可见，改名不动 id
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
                  中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
@@ -97,11 +100,15 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    （每条一个文件，`src/sql.rs` include_str! 登记，同步测试把守），schema 在
    `migrations/NUM-NAME.sql`（build.rs 编译期生成 `MIGRATIONS`，目录即唯一事实源）。
    **迁移策略**：项目未发布，允许破坏性更改——改 schema 直接改写基线
-   `1-init.sql`（当前全部表都在基线里），旧库删掉重建，不为旧库写
-   兼容迁移；**发布后**任何 schema 变更只能新增
-   `2-xxx.sql`、`3-xxx.sql` 等新迁移文件，绝不改写已发布的迁移。
+   `1-init.sql`，旧库删掉重建，不为旧库写兼容迁移（换库走 export/import，
+   导出含标签描述与记忆时间戳，id 重新编号）；**发布后**任何 schema 变更只能
+   新增 `2-xxx.sql`、`3-xxx.sql` 等新迁移文件，绝不改写已发布的迁移。
    运行器按 `PRAGMA user_version` 逐个事务应用，恰好一次；数据库比已知迁移
-   更新时拒绝打开（防降级写坏数据）。
+   更新时拒绝打开（防降级写坏数据）。**user_version 只证明应用过几个迁移，
+   不证明表真的存在/形状正确**（就地改写迁移的历史库两数值都对）——所以
+   `Store::open` 在迁移后做 schema 指纹校验：从迁移文本解析期望的表与列，
+   与 sqlite_master/table_info 实测比对，不符即拒绝打开并给出 export/import
+   恢复指引（migrate.rs/mod.rs 各有测试把守）。
 4. **跨平台数据**：schema 内不得存平台相关状态（绝对路径、换行风格等）；SQLite 文件
    格式平台无关，同一份 .db 跨机复制可用（停服后复制，或用 export）。
 5. **defs.rs 是契约**：新增/修改工具先改 defs.rs 的 schema（含描述），参数校验自动从

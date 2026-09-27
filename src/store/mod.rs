@@ -30,7 +30,9 @@ mod tx;
 pub use tx::{with_db_in, TxMode};
 
 use rusqlite::Connection;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const BUSY_TIMEOUT_MS: u64 = 5000;
@@ -85,6 +87,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(|e| format!("cannot enable foreign keys: {e}"))?;
         migrate::run_migrations(&conn)?;
+        verify_schema(&conn)?;
         Ok(Store {
             path: normalize_path(path),
             conn,
@@ -107,6 +110,151 @@ impl Store {
 
 fn is_unique_violation(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(ee, _) if ee.code == rusqlite::ErrorCode::ConstraintViolation)
+}
+
+/// 期望 schema：从嵌入的迁移文本解析（表名小写 → 列名小写列表），
+/// 进程内缓存一份——迁移文本编译期固定，解析结果不会变。
+fn expected_schema() -> &'static HashMap<String, Vec<String>> {
+    static EXPECTED: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    EXPECTED.get_or_init(|| {
+        let mut tables = HashMap::new();
+        for source in MIGRATIONS {
+            parse_create_tables(source, &mut tables);
+        }
+        tables
+    })
+}
+
+/// 从一段 SQL 里解析 CREATE TABLE（含 IF NOT EXISTS 形式）的表名与列名。
+/// 只需覆盖本项目迁移的写法：先去掉 `--` 行注释；表名取到 `(` 为止；
+/// 列定义取每个顶层逗号段的首个标识符，约束段（PRIMARY KEY 等）跳过。
+fn parse_create_tables(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
+    let mut cleaned = String::with_capacity(sql_text.len());
+    for line in sql_text.lines() {
+        match line.find("--") {
+            Some(pos) => cleaned.push_str(&line[..pos]),
+            None => cleaned.push_str(line),
+        }
+        cleaned.push('\n');
+    }
+    let upper = cleaned.to_ascii_uppercase();
+    let mut cursor = 0usize;
+    while let Some(found) = upper[cursor..].find("CREATE TABLE") {
+        let start = cursor + found;
+        let mut name_start = start + "CREATE TABLE".len();
+        if upper[name_start..].starts_with(" IF NOT EXISTS") {
+            name_start += " IF NOT EXISTS".len();
+        }
+        let Some(paren) = cleaned[name_start..].find('(') else {
+            break;
+        };
+        let paren = name_start + paren;
+        let table_name = cleaned[name_start..paren]
+            .trim()
+            .trim_matches('"')
+            .to_ascii_lowercase();
+        // 列定义体：括号配对到收口的 ')'
+        let bytes = cleaned.as_bytes();
+        let mut depth = 1usize;
+        let mut end = paren + 1;
+        while end < bytes.len() && depth > 0 {
+            match bytes[end] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            end += 1;
+        }
+        let body = &cleaned[paren + 1..end.saturating_sub(1)];
+        let mut columns = Vec::new();
+        for part in split_top_level(body) {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let first = part.split_whitespace().next().unwrap_or_default();
+            if matches!(
+                first.to_ascii_uppercase().as_str(),
+                "CONSTRAINT" | "PRIMARY" | "UNIQUE" | "CHECK" | "FOREIGN"
+            ) {
+                continue;
+            }
+            columns.push(first.trim_matches('"').to_ascii_lowercase());
+        }
+        out.insert(table_name, columns);
+        cursor = end;
+    }
+}
+
+/// 按括号深度 0 的逗号切分（列定义里不含嵌套括号时退化为普通切分）。
+fn split_top_level(body: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    for ch in body.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut current));
+            }
+            _ => current.push(ch),
+        }
+    }
+    parts.push(current);
+    parts
+}
+
+/// schema 指纹校验：user_version 只记录"应用了几个迁移"，不证明表真的存在
+/// （就地改写过迁移的库两数值都对，表却可能缺失或形状陈旧）。打开时把迁移
+/// 文本声明的表与列和实测比对，不符即拒绝打开——把"操作深处才爆的
+/// no such table"提前变成指名道姓的启动失败，并给出恢复路径。
+fn verify_schema(conn: &Connection) -> Result<(), String> {
+    const GUIDANCE: &str = "the file was created by an incompatible version; export your data with the matching older build, then import into a fresh database";
+    let expected = expected_schema();
+    let actual_tables: HashSet<String> = {
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok())
+            .filter(|name| !name.starts_with("sqlite_"))
+            .collect()
+    };
+    for (table, columns) in expected.iter() {
+        if !actual_tables.contains(table) {
+            return Err(format!(
+                "database schema mismatch: expected table '{table}' is missing ({GUIDANCE})"
+            ));
+        }
+        let actual_columns: HashSet<String> = {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        let want: HashSet<String> = columns.iter().cloned().collect();
+        let missing: Vec<_> = want.difference(&actual_columns).collect();
+        let unexpected: Vec<_> = actual_columns.difference(&want).collect();
+        if !missing.is_empty() || !unexpected.is_empty() {
+            return Err(format!(
+                "database schema mismatch: table '{table}' columns differ from the current schema \
+                 (missing: {missing:?}, unexpected: {unexpected:?}) ({GUIDANCE})"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -155,5 +303,56 @@ mod tests {
         assert_eq!(Store::parse_id("m0"), None);
         assert_eq!(Store::parse_id("abc"), None);
         assert_eq!(Store::format_id(12), "m12");
+    }
+
+    /// 指纹校验：user_version 对但表缺失的库必须拒绝打开，且错误指名道姓
+    /// （把"操作深处才爆的 no such table"提前成打开失败）。
+    #[test]
+    fn schema_fingerprint_rejects_missing_table() {
+        let path = temp_db("fingerprint");
+        cleanup(&path);
+        {
+            let st = Store::open(&path).unwrap();
+            st.conn
+                .execute_batch("DROP TABLE memory_embeddings")
+                .unwrap();
+        }
+        let Err(err) = Store::open(&path) else {
+            panic!("opening a database with a missing table must fail");
+        };
+        assert!(
+            err.contains("memory_embeddings") && err.contains("missing"),
+            "got: {err}"
+        );
+        cleanup(&path);
+    }
+
+    /// 指纹校验：形状陈旧的表（旧 schema 按名关联、无 id 列）同样拒绝，
+    /// 错误列出缺失与多余的列名。
+    #[test]
+    fn schema_fingerprint_rejects_stale_table_shape() {
+        let path = temp_db("fingerprint-stale");
+        cleanup(&path);
+        {
+            let st = Store::open(&path).unwrap();
+            st.conn
+                .execute_batch(
+                    "DROP TABLE memory_tags;
+                     CREATE TABLE memory_tags (
+                         memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                         tag_name TEXT NOT NULL,
+                         PRIMARY KEY (memory_id, tag_name)
+                     );",
+                )
+                .unwrap();
+        }
+        let Err(err) = Store::open(&path) else {
+            panic!("opening a database with a stale table shape must fail");
+        };
+        assert!(
+            err.contains("memory_tags") && err.contains("tag_id") && err.contains("tag_name"),
+            "got: {err}"
+        );
+        cleanup(&path);
     }
 }

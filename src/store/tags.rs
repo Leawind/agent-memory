@@ -6,6 +6,18 @@ use serde_json::{json, Value};
 
 use super::{is_unique_violation, Store};
 
+/// 一批标签名的关联结果（见 `link_tags`）。
+pub struct TagLinkage {
+    /// 与输入名字逐一对齐的内部标签 id（对外不可见）。
+    pub ids: Vec<i64>,
+    /// 本次调用新建的标签名。
+    pub autocreated: Vec<String>,
+    /// 已存在而被复用的标签名。
+    pub reused: Vec<String>,
+    /// 复用标签中描述为空的（提示补写）。
+    pub missing_description: Vec<String>,
+}
+
 impl Store {
     pub fn tag_exists(&self, name: &str) -> Result<bool, String> {
         match self.conn.query_row(sql::TAG_EXISTS, [name], |_| Ok(())) {
@@ -100,9 +112,9 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 改名/改描述。改名利用外键 ON UPDATE CASCADE 同步全部引用；
+    /// 改名/改描述。标签以内部 id 关联记忆，改名只动 name，引用自动跟随；
     /// 目标名已存在时报错（与"精确重名建标签报错"同一语义）。
-    /// 返回受改名影响的记忆条数。
+    /// 返回引用该标签（随之改显新名）的记忆条数。
     pub fn tag_rename(
         &self,
         old: &str,
@@ -112,19 +124,20 @@ impl Store {
         if !self.tag_exists(old)? {
             return Err(format!("tag '{old}' not found (see tag_list)"));
         }
-        let mut memories_updated = 0u64;
         let final_name = new_name.unwrap_or(old);
+        let mut memories_updated = 0u64;
         if final_name != old {
             if self.tag_exists(final_name)? {
                 return Err(format!("tag '{final_name}' already exists"));
             }
             memories_updated = self.tag_memory_count(old)?;
             self.conn
-                .execute(sql::TAG_RENAME, params![final_name, description, old])
+                .execute(sql::TAG_RENAME, params![final_name, old])
                 .map_err(|e| e.to_string())?;
-        } else if let Some(d) = description {
+        }
+        if let Some(d) = description {
             self.conn
-                .execute(sql::TAG_SET_DESCRIPTION, params![d, old])
+                .execute(sql::TAG_SET_DESCRIPTION, params![d, final_name])
                 .map_err(|e| e.to_string())?;
         }
         Ok(memories_updated)
@@ -177,19 +190,57 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 确保标签存在（自动创建，空描述），返回新建的标签名列表。
-    pub fn ensure_tags_exist(&self, names: &[String]) -> Result<Vec<String>, String> {
-        let mut autocreated = Vec::new();
+    /// 确保标签存在（自动创建，空描述）并解析出内部 id，返回逐名对齐的
+    /// 关联信息：`ids` 与输入名字一一对应；`autocreated` 是本次新建的标签，
+    /// `reused` 是已存在的标签，`missing_description` 是复用标签中描述为空
+    /// 的（多半由早前自动创建留下——提交给调用方决定是否提醒补写）。
+    pub fn link_tags(&self, names: &[String]) -> Result<TagLinkage, String> {
+        let mut out = TagLinkage {
+            ids: Vec::with_capacity(names.len()),
+            autocreated: Vec::new(),
+            reused: Vec::new(),
+            missing_description: Vec::new(),
+        };
         for n in names {
             let inserted = self
                 .conn
                 .execute(sql::TAG_AUTOCREATE, params![n, crate::model::now() as i64])
                 .map_err(|e| e.to_string())?;
+            let (id, description): (i64, String) = self
+                .conn
+                .query_row(sql::TAG_BY_NAME, [n], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| e.to_string())?;
+            out.ids.push(id);
             if inserted > 0 {
-                autocreated.push(n.clone());
+                out.autocreated.push(n.clone());
+            } else {
+                out.reused.push(n.clone());
+                if description.is_empty() {
+                    out.missing_description.push(n.clone());
+                }
             }
         }
-        Ok(autocreated)
+        Ok(out)
+    }
+
+    /// 解析既有标签名为内部 id；不存在的名字直接跳过（与旧的按名 unlink
+    /// 静默无操作语义一致）。
+    pub fn tag_ids_for_names(&self, names: &[String]) -> Result<Vec<i64>, String> {
+        let mut ids = Vec::with_capacity(names.len());
+        for n in names {
+            let id = match self
+                .conn
+                .query_row(sql::TAG_BY_NAME, [n], |r| r.get::<_, i64>(0))
+            {
+                Ok(id) => Some(id),
+                Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                Err(e) => return Err(e.to_string()),
+            };
+            if let Some(id) = id {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
     }
 }
 
@@ -211,6 +262,40 @@ mod tests {
     use super::super::test_support::{cleanup, temp_db};
     use super::*;
 
+    /// 测试辅助：按标签名建链并插入记忆（生产路径由 handler 解析 id）。
+    fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
+        let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        let ids = st.link_tags(&names).unwrap().ids;
+        st.insert_memory(summary, content, &ids, at, at).unwrap()
+    }
+
+    /// link_tags 的三分类：新建 / 复用 / 复用且缺描述；ids 与输入逐名对齐。
+    #[test]
+    fn link_tags_classifies_autocreated_reused_and_missing_description() {
+        let path = temp_db("link-tags");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.tag_create("described", "has description").unwrap();
+
+        let first = st.link_tags(&["described".into(), "fresh".into()]).unwrap();
+        assert_eq!(first.autocreated, vec!["fresh".to_string()]);
+        assert_eq!(first.reused, vec!["described".to_string()]);
+        assert!(first.missing_description.is_empty());
+        assert_eq!(first.ids.len(), 2);
+
+        // 第二次全部复用；此前自动创建的 fresh 描述为空 → 进 missing_description
+        let second = st.link_tags(&["described".into(), "fresh".into()]).unwrap();
+        assert!(second.autocreated.is_empty());
+        assert_eq!(
+            second.reused,
+            vec!["described".to_string(), "fresh".to_string()]
+        );
+        assert_eq!(second.missing_description, vec!["fresh".to_string()]);
+        // 同名 → 同 id（标签 id 恒定，改名不改 id）
+        assert_eq!(first.ids, second.ids);
+        cleanup(&path);
+    }
+
     #[test]
     fn tag_rename_cascades_and_rejects_existing_target() {
         let path = temp_db("rename");
@@ -218,9 +303,8 @@ mod tests {
         let st = Store::open(&path).unwrap();
         st.tag_create("rust", "language").unwrap();
         st.tag_create("lang", "").unwrap();
-        st.ensure_tags_exist(&["rust".into()]).unwrap();
-        let a = st.insert_memory("a", "ca", &["rust".into()], 1, 1).unwrap();
-        let _b = st.insert_memory("b", "cb", &["rust".into()], 1, 1).unwrap();
+        let a = insert_with_tags(&st, "a", "ca", &["rust"], 1);
+        let _b = insert_with_tags(&st, "b", "cb", &["rust"], 1);
 
         // 改名到已存在的标签：报错
         let err = st.tag_rename("rust", Some("lang"), None).unwrap_err();
@@ -253,11 +337,9 @@ mod tests {
         let st = Store::open(&path).unwrap();
         st.tag_create("x", "").unwrap();
         st.tag_create("keep", "").unwrap();
-        st.ensure_tags_exist(&["x".into(), "keep".into()]).unwrap();
-        st.insert_memory("a", "ca", &["x".into()], 1, 1).unwrap();
-        st.insert_memory("b", "cb", &["x".into(), "keep".into()], 1, 1)
-            .unwrap();
-        st.insert_memory("c", "cc", &["keep".into()], 1, 1).unwrap();
+        insert_with_tags(&st, "a", "ca", &["x"], 1);
+        insert_with_tags(&st, "b", "cb", &["x", "keep"], 1);
+        insert_with_tags(&st, "c", "cc", &["keep"], 1);
 
         let updated = st.tag_delete_detach("x").unwrap();
         assert_eq!(updated, 2);
@@ -266,11 +348,10 @@ mod tests {
 
         // 重建 x 并 purge：连带删除记忆
         st.tag_create("x", "").unwrap();
-        st.ensure_tags_exist(&["x".into()]).unwrap();
         let all = st.all_memories().unwrap();
         let b_id = Store::parse_id(&all[1].id).unwrap();
-        st.update_memory(b_id, None, None, &["x".into()], &[])
-            .unwrap();
+        let x_id = st.tag_ids_for_names(&["x".into()]).unwrap();
+        st.update_memory(b_id, None, None, &x_id, &[]).unwrap();
         let deleted = st.tag_delete_purge("x").unwrap();
         assert_eq!(deleted.len(), 1);
         assert_eq!(st.all_memories().unwrap().len(), 2);

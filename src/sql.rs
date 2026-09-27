@@ -9,6 +9,7 @@ pub const TAG_EXISTS: &str = include_str!("../sql/tag_exists.sql");
 pub const TAG_CREATE: &str = include_str!("../sql/tag_create.sql");
 pub const TAG_AUTOCREATE: &str = include_str!("../sql/tag_autocreate.sql");
 pub const TAG_ALL_NAMES: &str = include_str!("../sql/tag_all_names.sql");
+pub const TAG_BY_NAME: &str = include_str!("../sql/tag_by_name.sql");
 pub const TAG_VIEW: &str = include_str!("../sql/tag_view.sql");
 pub const TAG_VIEW_ALL: &str = include_str!("../sql/tag_view_all.sql");
 pub const TAG_RENAME: &str = include_str!("../sql/tag_rename.sql");
@@ -92,6 +93,7 @@ mod tests {
             ("TAG_CREATE", TAG_CREATE),
             ("TAG_AUTOCREATE", TAG_AUTOCREATE),
             ("TAG_ALL_NAMES", TAG_ALL_NAMES),
+            ("TAG_BY_NAME", TAG_BY_NAME),
             ("TAG_VIEW", TAG_VIEW),
             ("TAG_VIEW_ALL", TAG_VIEW_ALL),
             ("TAG_RENAME", TAG_RENAME),

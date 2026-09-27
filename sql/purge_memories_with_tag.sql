@@ -1,1 +1,4 @@
-DELETE FROM memories WHERE id IN (SELECT memory_id FROM memory_tags WHERE tag_name = ?1)
+DELETE FROM memories
+WHERE id IN (SELECT mt.memory_id FROM memory_tags mt
+             JOIN tags t ON t.id = mt.tag_id
+             WHERE t.name = ?1)

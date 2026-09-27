@@ -5,8 +5,13 @@
 -- 等新迁移文件，绝不改写已发布的迁移——迁移运行器按 `PRAGMA user_version`
 -- 记录已应用数量，逐个事务执行，保证每个迁移恰好应用一次。
 
+-- tags：标签自带代理主键 id（系统内部属性，对 MCP 使用者不可见）。
+-- 标签名唯一非空，是对外的唯一标识；改名只动 name，id 恒定，
+-- 记忆与标签的关联因此不受改名影响。
+
 CREATE TABLE IF NOT EXISTS tags (
-    name TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
 );
@@ -19,13 +24,15 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at INTEGER NOT NULL
 );
 
+-- memory_tags 只存 tag id，不冗余标签名（改名零成本、不留陈旧名）。
+
 CREATE TABLE IF NOT EXISTS memory_tags (
     memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-    tag_name TEXT NOT NULL REFERENCES tags(name) ON UPDATE CASCADE ON DELETE CASCADE,
-    PRIMARY KEY (memory_id, tag_name)
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (memory_id, tag_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_memory_tags_tag_name ON memory_tags(tag_name);
+CREATE INDEX IF NOT EXISTS idx_memory_tags_tag_id ON memory_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
 
 -- identities：访问身份（token 即身份，无账号/注册/登录——由操作者经 Web UI
