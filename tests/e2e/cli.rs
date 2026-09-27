@@ -40,10 +40,13 @@ fn cli_subcommands_work() {
     let out = run_cli(&["export", export_path.to_str().unwrap(), "--db", &db_s]);
     assert!(out.status.success(), "export failed");
     assert!(export_path.exists());
-    let dump: Value =
-        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
-    assert_eq!(dump["total_memories"], 1);
-    assert_eq!(dump["memories"][0]["content"], "body");
+    let dump_text = std::fs::read_to_string(&export_path).unwrap();
+    let dump: Value = serde_json::from_str(&dump_text).unwrap();
+    // 紧凑 JSON（单行）且以 id 为键，无派生字段
+    assert_eq!(dump_text.trim_end().lines().count(), 1, "must be compact");
+    assert!(dump.get("total_memories").is_none());
+    assert_eq!(dump["memories"].as_object().unwrap().len(), 1);
+    assert_eq!(dump["memories"]["m1"]["content"], "body");
 
     let out = run_cli(&["export", export_path.to_str().unwrap(), "--db", &db_s]);
     assert!(!out.status.success(), "export must refuse to overwrite");

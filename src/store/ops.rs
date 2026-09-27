@@ -1,7 +1,8 @@
 //! 聚合查询与运维入口：体检（hygiene）、统计（stats）、导出导入。
 
 use crate::sql;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use std::collections::{HashMap, HashSet};
 
 use super::Store;
 
@@ -183,21 +184,96 @@ impl Store {
     }
 
     /// 导出内容：完整记忆 + 标签表，独立于存储内部模式（跨平台迁移也可走这里）。
+    ///
+    /// 形状：`tags` / `memories` 都是以 id 为键的对象——tag 键是内部自增 id 的
+    /// 十进制字符串，记忆键是 `m<N>`（与 `format_id` 一致）；记忆的 `tags` 数组
+    /// 按 tag id 字符串引用。只含主数据（名称/描述/正文/时间戳），不含
+    /// memory_count、last_used_at、条目总数等派生信息（均可由本文件推出）。
+    /// 导入会重新编号，id 键只在文件内充当引用记号。
     pub fn export_dump(&self) -> Result<Value, String> {
-        let tags = self.tag_views()?;
-        let memories: Vec<Value> = self.all_memories()?.iter().map(|m| m.full_view()).collect();
+        let mut tags = Map::new();
+        let mut st = self
+            .conn
+            .prepare(sql::TAG_EXPORT_ALL)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (id, name, description, created_at) = row.map_err(|e| e.to_string())?;
+            tags.insert(
+                id.to_string(),
+                json!({
+                    "name": name,
+                    "description": description,
+                    "created_at": created_at,
+                }),
+            );
+        }
+
+        // 记忆 ↔ 标签关联按内部 id 取对（memory_id 升序、tag_id 升序）。
+        let mut refs: HashMap<i64, Vec<String>> = HashMap::new();
+        let mut pairs = self
+            .conn
+            .prepare(sql::MEMORY_TAG_ID_PAIRS)
+            .map_err(|e| e.to_string())?;
+        let pair_rows = pairs
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for pair in pair_rows {
+            let (memory_id, tag_id) = pair.map_err(|e| e.to_string())?;
+            refs.entry(memory_id).or_default().push(tag_id.to_string());
+        }
+
+        let mut memories = Map::new();
+        let mut st = self
+            .conn
+            .prepare(sql::MEMORY_ALL)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (id, summary, content, created_at, updated_at) = row.map_err(|e| e.to_string())?;
+            let tags = refs.remove(&id).unwrap_or_default();
+            memories.insert(
+                Self::format_id(id),
+                json!({
+                    "summary": summary,
+                    "content": content,
+                    "tags": tags,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }),
+            );
+        }
         Ok(json!({
             "exported_at": crate::model::now(),
-            "total_memories": memories.len(),
-            "total_tags": tags.len(),
-            "tags": tags,
-            "memories": memories,
+            "tags": Value::Object(tags),
+            "memories": Value::Object(memories),
         }))
     }
 
     /// 从 `export_dump` 产生的 JSON 恢复数据。要求目标库为空——导入是"恢复/
     /// 迁移"而非合并，避免与既有数据的 id、标签描述产生歧义。
-    /// 记忆的 created_at / updated_at 按导出值保留；id 不保留（重新编号）。
+    /// 记忆的 created_at / updated_at 按导出值保留；id 不保留（重新编号），
+    /// 导出文件里的 id 键只用来表达记忆对标签的引用——引用了导出中不存在的
+    /// tag id 直接报错。旧版数组形状的导出一律拒绝，不写兼容。
     /// 返回 (导入的记忆数, 导入的标签数)。
     pub fn import_dump(&self, dump: &Value) -> Result<(usize, usize), String> {
         let empty = self.stats()?;
@@ -209,28 +285,60 @@ impl Store {
         }
         let tags = dump
             .get("tags")
-            .and_then(Value::as_array)
-            .ok_or("invalid export: missing 'tags' array")?;
+            .and_then(Value::as_object)
+            .ok_or("invalid export: 'tags' must be an object keyed by tag id")?;
         let memories = dump
             .get("memories")
-            .and_then(Value::as_array)
-            .ok_or("invalid export: missing 'memories' array")?;
+            .and_then(Value::as_object)
+            .ok_or("invalid export: 'memories' must be an object keyed by memory id")?;
 
-        for t in tags {
+        // id 键导入后重新编号，但仍是引用记号，先按导出格式从严校验：
+        // tag 键为正整数十进制串，记忆键为 "m<N>"。
+        for key in tags.keys() {
+            let valid = key.parse::<u64>().map(|n| n > 0).unwrap_or(false);
+            if !valid {
+                return Err(format!(
+                    "invalid export: tag key '{key}' is not a positive integer id"
+                ));
+            }
+        }
+        for key in memories.keys() {
+            if Store::parse_id(key).is_none() {
+                return Err(format!(
+                    "invalid export: memory key '{key}' does not follow the \"m<N>\" id format"
+                ));
+            }
+        }
+
+        // 建标签（导出文件内重名同样拒绝——库里 name 唯一），
+        // 导出 tag id → 库内新 id 的映射供记忆引用换算。
+        let mut tag_id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
+        let mut seen_names = HashSet::with_capacity(tags.len());
+        for (key, t) in tags {
             let name = t
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or("invalid export: tag without name")?;
             let description = t.get("description").and_then(Value::as_str).unwrap_or("");
             let name = crate::model::normalize_tag_name(name)?;
+            if !seen_names.insert(name.clone()) {
+                return Err(format!("invalid export: duplicate tag name '{name}'"));
+            }
             let description = validate_max_len(
                 description,
                 "tag description",
                 crate::model::MAX_TAG_DESC_CHARS,
             )?;
             self.tag_create(&name, &description)?;
+            let id = self
+                .tag_ids_for_names(std::slice::from_ref(&name))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?;
+            tag_id_by_key.insert(key.as_str(), id);
         }
-        for m in memories {
+
+        for (key, m) in memories {
             let summary = m
                 .get("summary")
                 .and_then(Value::as_str)
@@ -248,23 +356,21 @@ impl Store {
                 .get("updated_at")
                 .and_then(Value::as_u64)
                 .unwrap_or(created_at);
-            let tags: Vec<String> = m
+            let empty_tags: Vec<Value> = Vec::new();
+            let tag_refs = m
                 .get("tags")
                 .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .map(|t| {
-                            let s = t
-                                .as_str()
-                                .ok_or("invalid export: memory tags must be strings")?;
-                            crate::model::normalize_tag_name(s)
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-            self.link_tags(&tags)?;
-            let tag_ids = self.tag_ids_for_names(&tags)?;
+                .unwrap_or(&empty_tags);
+            let mut tag_ids = Vec::with_capacity(tag_refs.len());
+            for r in tag_refs {
+                let s = r
+                    .as_str()
+                    .ok_or("invalid export: memory tags must be tag id strings")?;
+                let id = tag_id_by_key.get(s).ok_or_else(|| {
+                    format!("invalid export: memory {key} references unknown tag id '{s}'")
+                })?;
+                tag_ids.push(*id);
+            }
             self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
         }
         Ok((memories.len(), tags.len()))
@@ -375,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn export_dump_contains_full_data() {
+    fn export_dump_keys_by_id_and_carries_no_derived_fields() {
         let path = temp_db("export");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
@@ -383,9 +489,29 @@ mod tests {
         let ids = st.link_tags(&["t".into()]).unwrap().ids;
         st.insert_memory("s", "body", &ids, 1, 1).unwrap();
         let dump = st.export_dump().unwrap();
-        assert_eq!(dump["total_memories"], 1);
-        assert_eq!(dump["tags"][0]["name"], "t");
-        assert_eq!(dump["memories"][0]["content"], "body");
+
+        // 派生信息一律不进导出（都可由导出文件本身推出）
+        assert!(dump.get("total_memories").is_none());
+        assert!(dump.get("total_tags").is_none());
+        // tags 以内部自增 id 为键，只含主数据
+        let tag_key = ids[0].to_string();
+        let tag = &dump["tags"][&tag_key];
+        assert_eq!(tag["name"], "t");
+        assert_eq!(tag["description"], "desc");
+        assert!(tag.get("memory_count").is_none());
+        assert!(tag.get("last_used_at").is_none());
+        // memories 以 "m<N>" 为键，标签引用按 tag id 字符串
+        let memory = &dump["memories"]["m1"];
+        assert_eq!(memory["summary"], "s");
+        assert_eq!(memory["content"], "body");
+        assert_eq!(memory["tags"], json!([tag_key]));
+        assert_eq!(memory["created_at"], 1);
+        assert_eq!(memory["updated_at"], 1);
+        assert!(dump["exported_at"].as_u64().is_some());
+        // 无标签记忆导出为空数组
+        st.insert_memory("s2", "body2", &[], 2, 2).unwrap();
+        let dump = st.export_dump().unwrap();
+        assert_eq!(dump["memories"]["m2"]["tags"], json!([]));
         cleanup(&path);
     }
 
@@ -404,7 +530,7 @@ mod tests {
             st.export_dump().unwrap()
         };
 
-        // 恢复到空库：计数与时间戳都保留
+        // 恢复到空库：计数与时间戳都保留；tag id 重新编号后引用自动换算
         let (memories, tags) = Store::open(&dst).unwrap().import_dump(&dump).unwrap();
         assert_eq!(memories, 2);
         assert_eq!(tags, 1);
@@ -426,46 +552,118 @@ mod tests {
         let dst2 = temp_db("import-broken");
         cleanup(&dst2);
         let st2 = Store::open(&dst2).unwrap();
-        let err = st2.import_dump(&json!({"memories": []})).unwrap_err();
-        assert!(err.contains("missing 'tags'"), "got: {err}");
+        let err = st2.import_dump(&json!({"memories": {}})).unwrap_err();
+        assert!(err.contains("'tags' must be an object"), "got: {err}");
         cleanup(&src);
         cleanup(&dst);
         cleanup(&dst2);
     }
 
-    /// 导入与 API 契约一致：空白摘要、超长标签名、非字符串标签都要被拒。
+    /// 旧版数组形状的导出一律拒绝（无版本兼容），错误要说清期望的形状。
     #[test]
-    fn import_dump_rejects_contract_violations() {
-        let dst = temp_db("import-invalid");
+    fn import_dump_rejects_legacy_array_format() {
+        let dst = temp_db("import-legacy");
         cleanup(&dst);
         let st = Store::open(&dst).unwrap();
-
-        // 空白摘要
-        let bad_summary = json!({
+        let legacy = json!({
+            "exported_at": 1,
+            "total_memories": 0,
+            "total_tags": 0,
             "tags": [],
-            "memories": [{"summary": "   ", "content": "c"}]
+            "memories": [],
         });
-        let err = st.import_dump(&bad_summary).unwrap_err();
-        assert!(err.contains("must not be empty"), "got: {err}");
-
-        // 超长标签名（>100 字符）
-        let bad_tag = json!({
-            "tags": [{"name": "x".repeat(101)}],
-            "memories": []
-        });
-        let err = st.import_dump(&bad_tag).unwrap_err();
-        assert!(err.contains("too long"), "got: {err}");
-
-        // 记忆的标签不是字符串
-        let bad_tags = json!({
-            "tags": [],
-            "memories": [{"summary": "s", "content": "c", "tags": [42]}]
-        });
-        let err = st.import_dump(&bad_tags).unwrap_err();
-        assert!(err.contains("must be strings"), "got: {err}");
-
-        // 以上任何失败都不能落库
+        let err = st.import_dump(&legacy).unwrap_err();
+        assert!(err.contains("must be an object"), "got: {err}");
+        // 两个方向都各自点名
+        let err = st
+            .import_dump(&json!({"tags": {}, "memories": []}))
+            .unwrap_err();
+        assert!(err.contains("'memories' must be an object"), "got: {err}");
         assert_eq!(st.stats().unwrap()["memories"], 0);
         cleanup(&dst);
+    }
+
+    /// 导入与 API 契约一致：空白摘要、超长标签名、非字符串/未知 tag 引用、
+    /// 非法 id 键、文件内重名标签都要被拒。每个用例独立空库（生产路径里
+    /// import 在单写事务内执行，失败整体回滚——回滚本身由下面的专项测试把守）。
+    #[test]
+    fn import_dump_rejects_contract_violations() {
+        let cases: Vec<(&str, Value, &str)> = vec![
+            // 空白摘要
+            (
+                "blank-summary",
+                json!({"tags": {}, "memories": {"m1": {"summary": "   ", "content": "c"}}}),
+                "must not be empty",
+            ),
+            // 超长标签名（>100 字符）
+            (
+                "oversized-tag",
+                json!({"tags": {"1": {"name": "x".repeat(101)}}, "memories": {}}),
+                "too long",
+            ),
+            // 记忆的标签引用不是字符串（tag id 是字符串记号）
+            (
+                "non-string-ref",
+                json!({"tags": {}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [42]}}}),
+                "must be tag id strings",
+            ),
+            // 引用了导出中不存在的 tag id → 报错（值从严错报）
+            (
+                "unknown-ref",
+                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": ["2"]}}}),
+                "unknown tag id '2'",
+            ),
+            // 非法 id 键：tag 键非正整数、记忆键缺 m 前缀
+            (
+                "bad-tag-key",
+                json!({"tags": {"t1": {"name": "t", "description": ""}}, "memories": {}}),
+                "tag key 't1' is not a positive integer",
+            ),
+            (
+                "bad-memory-key",
+                json!({"tags": {}, "memories": {"1": {"summary": "s", "content": "c"}}}),
+                "memory key '1' does not follow",
+            ),
+            // 导出文件内标签重名 → 报错（库里 name 唯一）
+            (
+                "duplicate-tag",
+                json!({"tags": {"1": {"name": "t", "description": ""}, "2": {"name": "t", "description": "other"}}, "memories": {}}),
+                "duplicate tag name 't'",
+            ),
+        ];
+        for (slug, dump, expect) in &cases {
+            let path = temp_db(&format!("import-invalid-{slug}"));
+            cleanup(&path);
+            let st = Store::open(&path).unwrap();
+            let err = st.import_dump(dump).unwrap_err();
+            assert!(err.contains(expect), "{slug}: got: {err}");
+            // 拒绝不得落库任何记忆
+            assert_eq!(st.stats().unwrap()["memories"], 0, "{slug}");
+            cleanup(&path);
+        }
+    }
+
+    /// 生产路径中 import 在单个写事务内执行：中途失败时已建出的标签也随
+    /// 事务整体回滚，不残留半份数据。
+    #[test]
+    fn import_dump_failure_rolls_back_whole_transaction() {
+        let path = temp_db("import-rollback");
+        cleanup(&path);
+        let dump = json!({
+            "tags": {
+                "1": {"name": "kept", "description": ""},
+                "2": {"name": "other", "description": ""},
+            },
+            "memories": {"m1": {"summary": "s", "content": "c", "tags": ["3"]}},
+        });
+        let err = crate::store::with_db_in(&path, crate::store::TxMode::Write, |st: &Store| {
+            st.import_dump(&dump).map(|_| ())
+        })
+        .unwrap_err();
+        assert!(err.contains("unknown tag id '3'"), "got: {err}");
+        let st = Store::open(&path).unwrap();
+        assert_eq!(st.stats().unwrap()["tags"], 0, "tags must roll back");
+        assert_eq!(st.stats().unwrap()["memories"], 0);
+        cleanup(&path);
     }
 }

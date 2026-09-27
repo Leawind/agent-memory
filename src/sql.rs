@@ -16,6 +16,7 @@ pub const TAG_SET_NAME: &str = include_str!("../sql/tag_set_name.sql");
 pub const TAG_SET_DESCRIPTION: &str = include_str!("../sql/tag_set_description.sql");
 pub const TAG_DELETE: &str = include_str!("../sql/tag_delete.sql");
 pub const TAG_MEMORY_COUNT: &str = include_str!("../sql/tag_memory_count.sql");
+pub const TAG_EXPORT_ALL: &str = include_str!("../sql/tag_export_all.sql");
 
 pub const MEMORY_IDS_WITH_TAG: &str = include_str!("../sql/memory_ids_with_tag.sql");
 pub const PURGE_MEMORIES_WITH_TAG: &str = include_str!("../sql/purge_memories_with_tag.sql");
@@ -27,6 +28,7 @@ pub const MEMORY_EXISTS: &str = include_str!("../sql/memory_exists.sql");
 pub const MEMORY_TAGS_OF: &str = include_str!("../sql/memory_tags_of.sql");
 pub const MEMORY_ALL: &str = include_str!("../sql/memory_all.sql");
 pub const MEMORY_TAG_PAIRS: &str = include_str!("../sql/memory_tag_pairs.sql");
+pub const MEMORY_TAG_ID_PAIRS: &str = include_str!("../sql/memory_tag_id_pairs.sql");
 pub const MEMORY_LIST_PAGE: &str = include_str!("../sql/memory_list_page.sql");
 pub const MEMORY_LIST_COUNT: &str = include_str!("../sql/memory_list_count.sql");
 pub const MEMORY_UPDATE_FIELDS: &str = include_str!("../sql/memory_update_fields.sql");
@@ -100,6 +102,7 @@ mod tests {
             ("TAG_SET_DESCRIPTION", TAG_SET_DESCRIPTION),
             ("TAG_DELETE", TAG_DELETE),
             ("TAG_MEMORY_COUNT", TAG_MEMORY_COUNT),
+            ("TAG_EXPORT_ALL", TAG_EXPORT_ALL),
             ("MEMORY_IDS_WITH_TAG", MEMORY_IDS_WITH_TAG),
             ("PURGE_MEMORIES_WITH_TAG", PURGE_MEMORIES_WITH_TAG),
             ("MEMORY_INSERT", MEMORY_INSERT),
@@ -110,6 +113,7 @@ mod tests {
             ("MEMORY_TAGS_OF", MEMORY_TAGS_OF),
             ("MEMORY_ALL", MEMORY_ALL),
             ("MEMORY_TAG_PAIRS", MEMORY_TAG_PAIRS),
+            ("MEMORY_TAG_ID_PAIRS", MEMORY_TAG_ID_PAIRS),
             ("MEMORY_LIST_PAGE", MEMORY_LIST_PAGE),
             ("MEMORY_LIST_COUNT", MEMORY_LIST_COUNT),
             ("MEMORY_UPDATE_FIELDS", MEMORY_UPDATE_FIELDS),

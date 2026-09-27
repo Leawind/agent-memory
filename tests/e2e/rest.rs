@@ -157,7 +157,7 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert!(ctype.contains("application/json"));
     let dump: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(dump["total_memories"], 1);
+    assert_eq!(dump["memories"].as_object().unwrap().len(), 1);
 
     // 删除记忆 → 再查 404
     let (status, _, _) = request(port, "DELETE", &format!("/api/memories/{mem_id}"), None);

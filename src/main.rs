@@ -293,7 +293,8 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
         Ok(d) => d,
         Err(code) => return code,
     };
-    let mut body = match serde_json::to_string_pretty(&dump) {
+    // 导出一律紧凑 JSON：备份面向程序（import），不面向人读。
+    let mut body = match serde_json::to_string(&dump) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("failed to serialize export: {e}");
@@ -323,8 +324,8 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
     }
     println!(
         "exported {} memories, {} tags to {}",
-        dump["total_memories"],
-        dump["total_tags"],
+        dump["memories"].as_object().map(|m| m.len()).unwrap_or(0),
+        dump["tags"].as_object().map(|t| t.len()).unwrap_or(0),
         out_path.display()
     );
     0

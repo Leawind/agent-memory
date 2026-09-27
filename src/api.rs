@@ -454,10 +454,10 @@ pub fn handle(
 }
 
 /// 导出备份的字节流（附件下载的内容，独立于 JSON 响应通道）。
-/// 调用方的 admin 能力由 http 层在拦截时校验。
+/// 调用方的 admin 能力由 http 层在拦截时校验。紧凑 JSON，与 CLI 导出一致。
 pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
     store::with_db_in(db_path, TxMode::ReadOnly, |st| st.export_dump()).map(|dump| {
-        let mut bytes = serde_json::to_vec_pretty(&dump).unwrap_or_default();
+        let mut bytes = serde_json::to_vec(&dump).unwrap_or_default();
         bytes.push(b'\n');
         bytes
     })
