@@ -43,6 +43,6 @@ export default defineConfig({
     setupFiles: ['./src/test-setup.ts'],
     // vitest 默认按 CPU 核数开满线程池，跑测试时其他程序会卡；用例很轻，限两个线程
     pool: 'threads',
-    poolOptions: { threads: { maxThreads: 2, minThreads: 1 } },
+    maxWorkers: 2,
   },
 })

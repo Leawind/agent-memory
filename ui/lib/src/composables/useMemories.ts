@@ -32,6 +32,8 @@ export function useMemories() {
   const pageSize = ref(defaultPageSize)
   const rows = ref<MemorySummary[]>([])
   const searchResults = ref<SearchResult[]>([])
+  /** 语义回退提示：hybrid 请求因 embedding 服务不可用回退关键词时非空（明确告知，不静默） */
+  const note = ref('')
   const total = ref(0)
   const loading = ref(false)
   const tagOptions = ref<string[]>([])
@@ -85,6 +87,7 @@ export function useMemories() {
         }
         rows.value = data.memories ?? []
         total.value = data.total ?? 0
+        note.value = ''
       }
     } finally {
       if (seq === requestSeq) loading.value = false
@@ -138,6 +141,7 @@ export function useMemories() {
     pageSize,
     rows,
     searchResults,
+    note,
     total,
     loading,
     tagOptions,

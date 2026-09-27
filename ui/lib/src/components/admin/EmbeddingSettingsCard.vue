@@ -61,7 +61,7 @@ const baseUrl = ref(props.embeddingBaseUrl)
 const model = ref(props.embeddingModel)
 const apiKey = ref(props.embeddingApiKey)
 watch(
-  () => [props.embeddingEnabled, props.embeddingBaseUrl, props.embeddingModel, props.embeddingApiKey],
+  () => [props.embeddingEnabled, props.embeddingBaseUrl, props.embeddingModel, props.embeddingApiKey] as const,
   ([e, u, m, k]) => {
     enabled.value = e
     baseUrl.value = u
@@ -72,7 +72,8 @@ watch(
 
 const api = useApiClient()
 const saving = ref(false)
-const test = ref<null | { ok: boolean; dim?: number; elapsed_ms?: number; error?: string }>(null)
+// run 失败时返回 undefined（已 toast），test 需容纳三种态：null=未测、undefined=测试失败、对象=结果
+const test = ref<null | undefined | { ok: boolean; dim?: number; elapsed_ms?: number; error?: string }>(null)
 
 // 保存配置后立刻用服务端配置做连通性测试
 async function saveAndTest(): Promise<void> {

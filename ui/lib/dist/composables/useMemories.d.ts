@@ -42,6 +42,7 @@ export declare function useMemories(): {
         snippet: string;
         updated_at: number;
     }[]>;
+    note: import('vue').Ref<string, string>;
     total: import('vue').Ref<number, number>;
     loading: import('vue').Ref<boolean, boolean>;
     tagOptions: import('vue').Ref<string[], string[]>;

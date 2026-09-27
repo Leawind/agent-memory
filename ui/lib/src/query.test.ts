@@ -7,6 +7,7 @@ describe('buildMemoriesQuery', () => {
     const qs = buildMemoriesQuery({
       query: '',
       tagFilter: '项目',
+      mode: 'auto',
       sort: 'created_at',
       order: 'asc',
       page: 2,
@@ -25,6 +26,7 @@ describe('buildMemoriesQuery', () => {
     const qs = buildMemoriesQuery({
       query: '  rust  ',
       tagFilter: '项目',
+      mode: 'hybrid',
       sort: 'updated_at',
       order: 'desc',
       page: 1,
@@ -33,6 +35,7 @@ describe('buildMemoriesQuery', () => {
     const p = new URLSearchParams(qs)
     expect(p.get('query')).toBe('rust')
     expect(p.get('tags')).toBe('项目')
+    expect(p.get('mode')).toBe('hybrid')
     expect(p.has('tag')).toBe(false)
     expect(p.has('sort')).toBe(false)
   })
@@ -41,6 +44,7 @@ describe('buildMemoriesQuery', () => {
     const qs = buildMemoriesQuery({
       query: '',
       tagFilter: '',
+      mode: 'auto',
       sort: 'updated_at',
       order: 'desc',
       page: 3,

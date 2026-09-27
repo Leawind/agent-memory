@@ -40,6 +40,7 @@
       </el-select>
     </div>
 
+    <el-alert v-if="note" :title="note" type="warning" show-icon :closable="false" />
     <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
 
     <!-- 搜索模式：显示匹配片段与评分 -->
@@ -177,6 +178,7 @@ const {
   pageSize,
   rows,
   searchResults,
+  note,
   total,
   loading,
   tagOptions,

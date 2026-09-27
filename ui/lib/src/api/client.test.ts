@@ -4,7 +4,7 @@ import { createApiClient } from './client'
 import type { ResolvedMemoryUIConfig } from '../config'
 
 function makeConfig(fetchImpl: typeof fetch, baseUrl = ''): ResolvedMemoryUIConfig {
-  return { baseUrl, fetch: fetchImpl, defaultPageSize: 20 }
+  return { baseUrl, fetch: fetchImpl, defaultPageSize: 20, locale: 'en' }
 }
 
 function mockFetch(status: number, body: unknown, raw = false): ReturnType<typeof vi.fn> {
