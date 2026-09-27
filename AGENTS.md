@@ -69,15 +69,17 @@ migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生�
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
 ui/              前端分两个 workspace 包（详见 ui/README.md）：
   ui/lib         @agent-memory/ui —— 可嵌入 Vue3 组件库（Element Plus 作 peerDependency，lib mode 构建）
-                 核心是四个自包含可复用面板 MemoriesPanel/TagsPanel/OpsPanel（只读概况）/
-                 AdminPanel（admin 专属：身份、鉴权开关、自定义提示词、备份、体检；who prop 门控）
-                 （show-header/title/subtitle props 裁剪），另附便捷壳 MemoryAdmin（sidebar/tabs）
+                 核心是三个自包含可复用面板 MemoriesPanel/TagsPanel/AdminPanel（admin 专属：
+                 身份、鉴权开关、自定义提示词、备份、体检；who prop 门控）（show-header/title/
+                 subtitle props 裁剪），概况弹窗 OpsDialog 承载只读统计与版本信息（每次打开重拉，
+                 无运维标签页），另附便捷壳 MemoryAdmin（sidebar/tabs；侧栏标题点击弹概况）
                  与弹层组件；多语言内置 vue-i18n（zh/en，独立作用域实例，auto 跟随浏览器，
                  setMemoryUILocale 运行时切换）；配置经 provideMemoryUI 注入（baseUrl/自定义
                  fetch/默认分页/locale）；数据操作在 composables，面板层只渲染与 toast
                  （toast.ts 统一出口：可点击关闭、起始位置让开顶栏）；样式全部引用 --el-* 变量跟随宿主主题
   ui/app         @agent-memory/app —— 独立站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言切换），
-                 直接组装四个面板（「管理」标签页按 admin 能力显示，非 admin 身份不产生管理请求），
+                 直接组装三个面板（「管理」标签页按 admin 能力显示，非 admin 身份不产生管理请求），
+                 点击顶栏标题弹出服务概况（OpsDialog），
                  产物输出 ui/dist；一个浏览器可存多个身份 token（auth.ts 的 localStorage 身份表，
                  标题处下拉切换/删除/添加，token 首尾提示本地计算），authFetch 为 lib 注入带 Authorization 的 fetch，
                  401 时移除失效身份并广播事件弹出令牌输入框；

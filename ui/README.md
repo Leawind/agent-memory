@@ -2,13 +2,15 @@
 
 前端拆成两个 pnpm workspace 包（lockfile 在仓库根目录）：
 
-- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出四个自包含可复用面板
-  `MemoriesPanel` / `TagsPanel` / `OpsPanel`（只读概况）/ `AdminPanel`（admin 专属：身份、鉴权
-  开关、自定义提示词、备份、体检，经 `who` prop 门控），均支持 `show-header` /
-  `title` / `subtitle` props 裁剪；另附便捷壳 `MemoryAdmin`（sidebar/tabs 双布局）与
-  弹层组件（编辑对话框、详情抽屉、Markdown 视图），供其他 Vue3 系统作为组件集成。
+- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出三个自包含可复用面板
+  `MemoriesPanel` / `TagsPanel` / `AdminPanel`（admin 专属：身份、鉴权开关、自定义提示词、
+  备份、体检，经 `who` prop 门控），面板支持 `show-header` / `title` / `subtitle` props 裁剪；
+  只读统计与版本信息在概况弹窗 `OpsDialog`（每次打开重拉，无运维标签页）；另附便捷壳
+  `MemoryAdmin`（sidebar/tabs 双布局，侧栏标题点击弹概况）与弹层组件（编辑对话框、
+  详情抽屉、Markdown 视图），供其他 Vue3 系统作为组件集成。
 - **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言
-  切换 + 多身份令牌下拉），直接组装四个面板（「管理」页仅对 admin 能力身份显示）。
+  切换 + 多身份令牌下拉），直接组装三个面板（「管理」页仅对 admin 能力身份显示），
+  点击顶栏标题弹出服务概况（OpsDialog）。
   构建产物输出到 `ui/dist/`（不入库），由 Rust 侧 rust-embed
   编译期嵌入二进制；dist 缺失时 build.rs 落占位页兜底。
 
@@ -85,7 +87,7 @@ pnpm dev:live     # 仅 app：连真实后端，/api、/mcp、/health 代理到 
 ### 前端独立开发（mock 模式）
 
 `pnpm dev` 默认加载 `ui/app/mock/api.ts`（Vite dev 中间件）：内存假数据 + 固定 admin 身份，
-四个面板（含管理页）直接完整渲染，改代码即时热更新，**不依赖任何后端**。
+三个面板（含管理页）与概况弹窗直接完整渲染，改代码即时热更新，**不依赖任何后端**。
 增删改会真的改内存数组（保存后列表可见变化），重启 dev server 复位。
 鉴权/搜索回退等服务端语义的联调用 `pnpm dev:live` 连真实后端验证。
 

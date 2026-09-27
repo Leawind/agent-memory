@@ -3,10 +3,13 @@
     <el-container class="layout">
       <el-aside v-if="layout === 'sidebar'" width="200px" class="aside">
         <div class="brand">
-          <span class="brand-mark">
-            <el-icon :size="16"><Collection /></el-icon>
-          </span>
-          <span>{{ title }}</span>
+          <!-- 点击标题弹出服务概况（OpsDialog） -->
+          <button type="button" class="brand-btn" @click="opsVisible = true">
+            <span class="brand-mark">
+              <el-icon :size="16"><Collection /></el-icon>
+            </span>
+            <span>{{ title }}</span>
+          </button>
         </div>
         <el-menu :default-active="active" class="menu" @select="active = $event">
           <el-menu-item index="memories">
@@ -16,10 +19,6 @@
           <el-menu-item index="tags">
             <el-icon><PriceTag /></el-icon>
             <span>{{ t('nav.tags') }}</span>
-          </el-menu-item>
-          <el-menu-item index="ops">
-            <el-icon><Odometer /></el-icon>
-            <span>{{ t('nav.ops') }}</span>
           </el-menu-item>
         </el-menu>
         <div class="aside-footer">
@@ -31,25 +30,24 @@
         <el-tabs v-if="layout === 'tabs'" v-model="active" class="tabs-bar">
           <el-tab-pane :label="t('nav.memories')" name="memories" />
           <el-tab-pane :label="t('nav.tags')" name="tags" />
-          <el-tab-pane :label="t('nav.ops')" name="ops" />
         </el-tabs>
 
         <!-- 面板常驻挂载：切换导航不销毁、不重新请求 -->
         <MemoriesPanel v-show="active === 'memories'" />
         <TagsPanel v-show="active === 'tags'" />
-        <OpsPanel v-show="active === 'ops'" />
       </el-main>
     </el-container>
+    <OpsDialog :visible="opsVisible" @update:visible="opsVisible = $event" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { t } from '../i18n'
-import { Collection, Notebook, Odometer, PriceTag } from '@element-plus/icons-vue'
+import { Collection, Notebook, PriceTag } from '@element-plus/icons-vue'
 import MemoriesPanel from './MemoriesPanel.vue'
 import TagsPanel from './TagsPanel.vue'
-import OpsPanel from './OpsPanel.vue'
+import OpsDialog from './OpsDialog.vue'
 
 /**
  * 管理台根组件。layout:
@@ -61,8 +59,10 @@ withDefaults(defineProps<{ layout?: 'sidebar' | 'tabs'; title?: string }>(), {
   title: 'Agent Memory',
 })
 
-type AdminTab = 'memories' | 'tags' | 'ops'
+type AdminTab = 'memories' | 'tags'
 const active = ref<AdminTab>('memories')
+// 服务概况弹窗：sidebar 布局点击侧栏标题打开；tabs 布局无标题区，宿主自行挂 OpsDialog
+const opsVisible = ref(false)
 </script>
 
 <style scoped>
@@ -82,12 +82,29 @@ const active = ref<AdminTab>('memories')
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
   font-weight: 700;
   font-size: 16px;
   letter-spacing: -0.01em;
   padding: 20px 20px 14px;
   color: var(--el-text-color-primary);
+}
+/* 标题按钮：点击弹出服务概况；还原纯文字外观（负 margin 抵消按钮内边距），悬浮换表面色 */
+.brand-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px -8px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--el-border-radius-base);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.brand-btn:hover {
+  background: var(--el-fill-color);
 }
 /* 品牌图标：品牌绿渐变圆角块（Modrinth 的 --brand-gradient-bg） */
 .brand-mark {

@@ -3,7 +3,6 @@ export default {
   nav: {
     memories: 'Memories',
     tags: 'Tags',
-    ops: 'Operations',
     admin: 'Admin',
   },
   common: {
@@ -67,13 +66,10 @@ export default {
     deleted: 'Deleted',
   },
   ops: {
-    title: 'Operations',
-    subtitle: 'Database overview and version info',
-    refresh: 'Refresh overview',
+    title: 'Overview',
     statMemories: 'Memories',
     statTags: 'Tags',
     statSize: 'DB size',
-    dbCard: 'Database',
     path: 'File path',
     schemaVersion: 'Schema version',
     version: 'Version',

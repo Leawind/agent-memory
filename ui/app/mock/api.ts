@@ -40,9 +40,9 @@ const memories: MockMemory[] = [
   },
   {
     id: 3,
-    summary: '组件库四面板设计',
+    summary: '组件库面板设计',
     content:
-      '# 四个自包含面板\n\n1. `MemoriesPanel`：列表/搜索双模式\n2. `TagsPanel`：标签表\n3. `OpsPanel`：只读概况\n4. `AdminPanel`：身份、鉴权开关、提示词、备份\n\n样式全部引用 `--el-*` 变量，跟随宿主主题。',
+      '# 三个自包含面板\n\n1. `MemoriesPanel`：列表/搜索双模式\n2. `TagsPanel`：标签表\n3. `AdminPanel`：身份、鉴权开关、提示词、备份\n\n概况是弹窗 `OpsDialog`：点击顶栏/侧栏标题打开，每次打开重拉数据。样式全部引用 `--el-*` 变量，跟随宿主主题。',
     tags: ['前端', '设计'],
     created_at: t - 20 * DAY,
     updated_at: t - 1 * DAY,

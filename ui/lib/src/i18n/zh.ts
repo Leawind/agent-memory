@@ -3,7 +3,6 @@ export default {
   nav: {
     memories: '记忆管理',
     tags: '标签管理',
-    ops: '运维',
     admin: '管理',
   },
   common: {
@@ -67,13 +66,10 @@ export default {
     deleted: '已删除',
   },
   ops: {
-    title: '运维',
-    subtitle: '数据库概况与版本信息',
-    refresh: '刷新概况',
+    title: '服务概况',
     statMemories: '记忆条数',
     statTags: '标签数',
     statSize: '数据库大小',
-    dbCard: '数据库',
     path: '文件路径',
     schemaVersion: '数据库版本',
     version: '版本',

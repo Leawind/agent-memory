@@ -1,13 +1,13 @@
-// OpsPanel 挂载冒烟测试：统计卡片与数据库概况（只读；体检/备份在 AdminPanel）
+// OpsDialog 挂载冒烟测试：打开后显示统计与数据库概况；每次打开重新拉取，未打开不请求
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import OpsPanel from './OpsPanel.vue'
+import OpsDialog from './OpsDialog.vue'
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) }
 }
 
-describe('OpsPanel', () => {
+describe('OpsDialog', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -32,11 +32,21 @@ describe('OpsPanel', () => {
     )
   })
 
-  it('renders stats cards from the API', async () => {
-    const wrapper = mount(OpsPanel)
+  function countStatsCalls(): number {
+    return vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).includes('/api/stats')).length
+  }
+
+  it('fetches and renders stats only when opened, refetching on each open', async () => {
+    const wrapper = mount(OpsDialog, { props: { visible: false } })
+    await flushPromises()
+    // 未打开不产生请求（弹窗常驻挂载，靠 visible 触发拉取）
+    expect(countStatsCalls()).toBe(0)
+
+    await wrapper.setProps({ visible: true })
     await flushPromises()
     await flushPromises()
     const html = wrapper.html()
+    expect(countStatsCalls()).toBe(1)
     expect(html).toContain('/tmp/memory.db')
     expect(html).toContain('数据库版本')
     // 体检与备份属 admin 功能，已移入 AdminPanel
@@ -45,6 +55,13 @@ describe('OpsPanel', () => {
     // next_id / 最近更新不再展示
     expect(html).not.toContain('下一个记忆 ID')
     expect(html).not.toContain('最近更新')
+
+    // 重新打开重拉：概况即点即新，无需手动刷新
+    await wrapper.setProps({ visible: false })
+    await flushPromises()
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    expect(countStatsCalls()).toBe(2)
     wrapper.unmount()
   })
 })

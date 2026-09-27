@@ -4,10 +4,13 @@
       <header class="topbar">
         <div class="topbar-inner">
           <div class="brand">
-            <span class="brand-mark">
-              <el-icon :size="16"><Collection /></el-icon>
-            </span>
-            <span class="brand-name">Agent Memory</span>
+            <!-- 点击标题弹出服务概况弹窗（OpsDialog） -->
+            <button type="button" class="brand-btn" @click="opsDialogVisible = true">
+              <span class="brand-mark">
+                <el-icon :size="16"><Collection /></el-icon>
+              </span>
+              <span class="brand-name">Agent Memory</span>
+            </button>
             <!-- 身份切换在标题处：Agent Memory / 身份名。只在确认开放模式（who.mode === 'open'）时
                  隐藏；当前身份失效（who 为空）时下拉照常渲染，仍可切换/添加身份 -->
             <template v-if="showIdentities">
@@ -110,11 +113,13 @@
         <div class="memory-ui">
           <MemoriesPanel ref="memoriesPanel" v-show="active === 'memories'" />
           <TagsPanel ref="tagsPanel" v-show="active === 'tags'" />
-          <OpsPanel ref="opsPanel" v-show="active === 'ops'" />
           <!-- 管理面板：只对 admin 身份挂载（v-if），非 admin 身份不产生任何管理请求 -->
           <AdminPanel v-if="isAdmin" ref="adminPanel" v-show="active === 'admin'" :who="who" />
         </div>
       </main>
+
+      <!-- 服务概况：点击顶栏标题弹出；每次打开由 OpsDialog 自行重拉 -->
+      <OpsDialog :visible="opsDialogVisible" @update:visible="opsDialogVisible = $event" />
 
       <!-- 令牌输入：401 或「添加身份」时弹出；保存前先验证再入库。
            非模态 + 可穿透：401 提示不锁页面，顶栏身份下拉始终可操作（切到其他已存身份即可恢复）。
@@ -158,14 +163,21 @@ import {
   Monitor,
   Moon,
   Notebook,
-  Odometer,
   Plus,
   PriceTag,
   Sunny,
 } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
-import { AdminPanel, MemoriesPanel, OpsPanel, TagsPanel, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
+import {
+  AdminPanel,
+  MemoriesPanel,
+  OpsDialog,
+  TagsPanel,
+  provideMemoryUI,
+  setMemoryUILocale,
+  t,
+} from '@agent-memory/ui'
 import {
   UNAUTHORIZED_EVENT,
   addIdentity,
@@ -195,8 +207,10 @@ provideMemoryUI({
   onAuthChanged: () => resolveIdentity(),
 })
 
-type AdminTab = 'memories' | 'tags' | 'ops' | 'admin'
+type AdminTab = 'memories' | 'tags' | 'admin'
 const active = ref<AdminTab>('memories')
+// 服务概况弹窗：点击顶栏标题打开
+const opsDialogVisible = ref(false)
 
 // ---- 身份与令牌：本浏览器可保存多个身份，标题处下拉切换/删除/添加 ----
 const who = ref<WhoAmI | null>(null)
@@ -220,7 +234,6 @@ const navItems = computed(() => {
   const items: { key: AdminTab; label: string; icon: typeof Notebook }[] = [
     { key: 'memories', label: t('nav.memories'), icon: Notebook },
     { key: 'tags', label: t('nav.tags'), icon: PriceTag },
-    { key: 'ops', label: t('nav.ops'), icon: Odometer },
   ]
   if (isAdmin.value) items.push({ key: 'admin', label: t('nav.admin'), icon: Key })
   return items
@@ -236,14 +249,12 @@ interface RefreshablePanel {
 }
 const memoriesPanel = ref<RefreshablePanel | null>(null)
 const tagsPanel = ref<RefreshablePanel | null>(null)
-const opsPanel = ref<RefreshablePanel | null>(null)
 const adminPanel = ref<RefreshablePanel | null>(null)
 
 function refreshActivePanel(): void {
   const panel = {
     memories: memoriesPanel.value,
     tags: tagsPanel.value,
-    ops: opsPanel.value,
     admin: adminPanel.value,
   }[active.value]
   panel?.refresh()
@@ -494,6 +505,24 @@ body {
   letter-spacing: -0.01em;
   color: var(--el-text-color-primary);
   flex-shrink: 0;
+}
+/* 标题按钮：点击弹出服务概况；负 margin 抵消按钮内边距，保持与导航基线对齐 */
+.brand-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px -8px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--el-border-radius-base);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.brand-btn:hover {
+  background: var(--el-fill-color);
 }
 /* 品牌图标：品牌绿渐变圆角块（Modrinth 的 --brand-gradient-bg） */
 .brand-mark {
