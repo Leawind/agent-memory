@@ -10,7 +10,7 @@
 ## 快速开始
 
 ```bash
-cargo install --path .   # 界面产物已入库，克隆后可直接安装
+cargo install --path .   # 克隆后可直接安装；构建产物不入库，未跑 pnpm build 时界面为占位页
 agent-memory serve       # 默认 127.0.0.1:8899，数据库为当前目录下 memory.db
 ```
 
