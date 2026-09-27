@@ -14,6 +14,9 @@ categories = ["database", "development-tools", "web-programming::http-server"]
 # 发布即交付完整管理界面：ui/dist 虽不入 git（构建产物），但发布流程先跑
 # `pnpm build` 产出 dist，include 把它打进 .crate 包，用户 cargo install 时
 # rust-embed 直接嵌入，无需 node。白名单语义：新增目录须显式登记。
+# 注意：发布前必须删除各处 node_modules——pnpm 在 Windows 上以 junction 链接
+# 依赖包，cargo 的打包遍历会跟进 junction 把 node_modules 吸进 .crate，
+# include/exclude 均拦不住（见 .github/workflows/release.yml 的处理）。
 include = [
     "src/**",
     "migrations/**",

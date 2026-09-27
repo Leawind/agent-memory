@@ -22,8 +22,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # 发布前人工核对包内容：ui/dist 必须在列，tests/scripts/ui 源码不在列
-      - run: cargo package --list --locked
+      # 打包前必须删除 node_modules：pnpm 在 Windows 上用 NTFS junction 链接包，
+      # cargo 的打包遍历会跟进 junction 把整个 node_modules 吸进 .crate
+      # （include/exclude 均拦不住），产物从 ~90 文件膨胀到 3300+。构建完成后
+      # node_modules 不再需要，删除后 cargo package 的文件清单即回归干净。
+      - run: rm -rf node_modules ui/node_modules ui/lib/node_modules ui/app/node_modules scripts/node_modules
+      # 发布前人工核对包内容：ui/dist 必须在列，node_modules 必须不在列
+      - run: test -z "$(cargo package --list --locked | grep node_modules)" && cargo package --list --locked | grep -q "ui/dist/index.html"
       - run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
