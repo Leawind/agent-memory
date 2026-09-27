@@ -1,8 +1,9 @@
 name: ui
 
+# 与 check.yml 同理：Actions 额度有限，前端检查按需手动运行
+# （`gh workflow run ui.yml`），不做 push/PR 自动触发。
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   ui-tests:

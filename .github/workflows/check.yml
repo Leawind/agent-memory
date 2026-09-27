@@ -1,8 +1,10 @@
 name: check
 
+# Actions 额度有限：不做 push/PR 自动触发，按需手动运行
+# （GitHub UI 的 Run workflow 按钮，或 `gh workflow run check.yml`）。
+# 发布正确性由 release workflow 的 cargo test 兜底，日常提交不强制过 CI。
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   check:

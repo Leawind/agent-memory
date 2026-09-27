@@ -22,6 +22,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # 唯一的自动正确性闸门：check/ui 均为手动触发，tag 可能打在未过 CI 的提交上，
+      # 发布前必须实际跑一遍测试（e2e 真实启动服务器，dev profile 嵌入刚构建的 dist）
+      - run: cargo test --locked
       # 打包前必须删除 node_modules：pnpm 在 Windows 上用 NTFS junction 链接包，
       # cargo 的打包遍历会跟进 junction 把整个 node_modules 吸进 .crate
       # （include/exclude 均拦不住），产物从 ~90 文件膨胀到 3300+。构建完成后
