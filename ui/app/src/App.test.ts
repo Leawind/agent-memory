@@ -130,6 +130,29 @@ describe('App shell', () => {
     wrapper.unmount()
   })
 
+  it('works as the anonymous identity when the server grants anonymous capabilities', async () => {
+    // 鉴权开启但配置了匿名只读：无 token 也能浏览，不弹令牌框，
+    // 身份区显示匿名标签且下拉可用（便于添加身份升级）
+    const anonWho = { name: 'anonymous', mode: 'anonymous' as const, permissions: viewerCaps }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) => {
+        if (String(url).includes('/api/whoami')) return Promise.resolve(jsonWithJson(anonWho))
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+    expect(dialogOpen(wrapper)).toBe(false)
+    expect(wrapper.find('.identity-btn').exists()).toBe(true)
+    expect(wrapper.find('.identity-btn').text()).toContain('匿名访问')
+    // 只读匿名：内容面板照常渲染，管理标签页隐藏（无 admin 能力）
+    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
+    expect(wrapper.html()).toContain('新建记忆')
+    wrapper.unmount()
+  })
+
   it('shows the admin tab with its management panel only for admin identities', async () => {
     const adminWho = { name: 'admin', mode: 'token' as const, permissions: adminCaps }
     vi.stubGlobal(

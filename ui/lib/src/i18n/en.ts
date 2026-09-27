@@ -105,6 +105,7 @@ export default {
     tokenInvalid: 'Token is invalid or revoked, please retry',
     identity: 'Identity',
     identityNone: 'Not connected',
+    anonymous: 'Anonymous',
     addIdentity: 'Add identity',
     addIdentityDesc: 'Paste an identity token; this browser will remember it and switch to it',
     removeIdentity: 'Remove the token saved in this browser',
@@ -165,6 +166,11 @@ export default {
     authDisableConfirm: 'Disable token auth? All requests will be allowed without credentials (open mode).',
     enableBlocked:
       'Not ready to enable: no admin-capable identity exists yet. Create one, keep its token safe, then flip the switch.',
+    anonTitle: 'Anonymous access',
+    anonHint:
+      'When token auth is on, requests without a token act as an "anonymous identity" with the capabilities checked here (e.g. read-only). While auth is off, anonymous requests are rejected with 401; an invalid token never falls back to anonymous.',
+    anonDisabled: 'Takes effect only after token auth is enabled',
+    anonSaved: 'Anonymous access settings saved',
     saveToBrowser: 'Save to this browser',
     savedToBrowser: 'Token of identity "{name}" saved to this browser',
     backupCard: 'Backup import & export',

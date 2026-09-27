@@ -19,8 +19,15 @@ export interface IdentityRow {
   created_at: number
 }
 
+export type PresetKey = 'admin' | 'member' | 'viewer' | 'custom'
+
 export function emptyCaps(): Record<string, boolean> {
   return Object.fromEntries(CAPS.map((c) => [c.key, false]))
+}
+
+/** 一个能力都没有（匿名能力集为空 = 匿名访问被整体拒绝）。 */
+export function isEmptyCaps(p?: Record<string, boolean> | null): boolean {
+  return !p || CAPS.every((c) => p[c.key] !== true)
 }
 
 export const PRESETS: Record<string, string[]> = {

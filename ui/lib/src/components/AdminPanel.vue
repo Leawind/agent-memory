@@ -14,7 +14,10 @@
     <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
     <template v-if="who && isAdmin">
-      <AuthSwitchCard :auth-required="authRequired" :has-admin-identity="hasAdminIdentity" />
+      <AuthSwitchCard :auth-required="authRequired" :has-admin-identity="hasAdminIdentity" @changed="load" />
+
+      <!-- 匿名访问：鉴权开启后无 token 请求按配置的能力集解析 -->
+      <AnonymousAccessCard :auth-required="authRequired" :anonymous-permissions="anonymousPermissions" @saved="load" />
 
       <IdentityTableCard
         :identities="identities"
@@ -66,6 +69,7 @@ import { toastSuccess } from '../toast'
 import type { WhoAmI } from '../types'
 import { run, type IdentityRow } from './admin/caps'
 import AuthSwitchCard from './admin/AuthSwitchCard.vue'
+import AnonymousAccessCard from './admin/AnonymousAccessCard.vue'
 import IdentityTableCard from './admin/IdentityTableCard.vue'
 import IdentityFormDialog from './admin/IdentityFormDialog.vue'
 import TokenOnceDialog from './admin/TokenOnceDialog.vue'
@@ -95,6 +99,7 @@ const instructions = ref('')
 const conventions = ref('')
 const defaultInstructions = ref('')
 const authRequired = ref(false)
+const anonymousPermissions = ref<Record<string, boolean> | null>(null)
 const embeddingEnabled = ref(false)
 const embeddingBaseUrl = ref('')
 const embeddingModel = ref('')
@@ -117,6 +122,7 @@ async function load(): Promise<void> {
         instructions?: string | null
         conventions?: string | null
         auth_required?: boolean
+        anonymous_permissions?: Record<string, boolean> | null
         embedding_enabled?: boolean
         embedding_base_url?: string | null
         embedding_model?: string | null
@@ -130,6 +136,7 @@ async function load(): Promise<void> {
     conventions.value = settings?.conventions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
     authRequired.value = settings?.auth_required === true
+    anonymousPermissions.value = settings?.anonymous_permissions ?? null
     embeddingEnabled.value = settings?.embedding_enabled === true
     embeddingBaseUrl.value = settings?.embedding_base_url ?? ''
     embeddingModel.value = settings?.embedding_model ?? ''

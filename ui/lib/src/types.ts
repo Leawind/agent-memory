@@ -103,9 +103,9 @@ export interface ImportResp {
   imported_tags: number
 }
 
-/** /api/whoami 返回的调用者身份摘要（mode=open 时 permissions 为全能力） */
+/** /api/whoami 返回的调用者身份摘要（mode=open 时 permissions 为全能力；mode=anonymous 时为匿名身份的配置能力集） */
 export interface WhoAmI {
   name: string
-  mode: 'open' | 'token'
+  mode: 'open' | 'anonymous' | 'token'
   permissions: Record<string, boolean>
 }

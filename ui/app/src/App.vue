@@ -224,10 +224,17 @@ const needToken = ref(false)
 const isAdmin = computed(() => can(who.value, 'admin'))
 
 // 身份区可见性：只在确认开放模式（who.mode === 'open'）时隐藏；当前身份是否有效不影响——
-// 401 失效（who 为空）时只要有已存身份或服务端明确要求 token，下拉就必须可用，否则无法自救
-const showIdentities = computed(() => who.value?.mode !== 'open' && (identities.value.length > 0 || needToken.value))
-// 触发器标签：优先已验证身份名，其次本地当前指针，都没有即未连接
-const identityLabel = computed(() => who.value?.name ?? currentName.value ?? t('shell.identityNone'))
+// 401 失效（who 为空）时只要有已存身份或服务端明确要求 token，下拉就必须可用，否则无法自救；
+// 匿名模式（有匿名能力但本浏览器没存 token）同样要能打开下拉添加身份升级
+const showIdentities = computed(
+  () =>
+    who.value?.mode !== 'open' && (identities.value.length > 0 || needToken.value || who.value?.mode === 'anonymous'),
+)
+// 触发器标签：优先已验证身份名，其次本地当前指针，都没有即未连接；匿名身份显示专属标签
+const identityLabel = computed(() => {
+  if (who.value?.mode === 'anonymous') return t('shell.anonymous')
+  return who.value?.name ?? currentName.value ?? t('shell.identityNone')
+})
 
 // 管理标签页仅 admin 可见；当前页失去可见性时（如切到低权限身份）退回记忆管理
 const navItems = computed(() => {

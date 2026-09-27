@@ -46,6 +46,11 @@ const togglingAuth = ref(false)
 const api = useApiClient()
 const config = useMemoryConfig()
 
+const emit = defineEmits<{
+  /** 开关状态实际改变（父层据此刷新 settings，匿名访问卡的可用性随之联动） */
+  changed: [enabled: boolean]
+}>()
+
 // 先确认再变更（el-switch before-change）。
 // 无 admin 身份时开关禁用（disabled + tooltip 说明），这里的预检只作兜底。
 async function confirmAuthToggle(): Promise<boolean> {
@@ -72,7 +77,10 @@ async function confirmAuthToggle(): Promise<boolean> {
   togglingAuth.value = true
   try {
     const saved = await run(() => api.put('/api/settings', { auth_required: target }))
-    if (saved !== undefined) config.onAuthChanged?.(target)
+    if (saved !== undefined) {
+      config.onAuthChanged?.(target)
+      emit('changed', target)
+    }
     return true
   } finally {
     togglingAuth.value = false
