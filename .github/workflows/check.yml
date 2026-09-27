@@ -18,6 +18,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # 编译缓存：rusqlite bundled 要从源码编整个 SQLite，冷构建需要数分钟。
+      # 缓存键含 job 名 + rustc 版本 + lockfile，矩阵两平台互不冲突；
+      # rust-cache 只在默认分支的运行上保存缓存，从其他分支手动触发仅读取。
+      - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --check
       - name: Clippy
@@ -32,4 +36,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0
+      # rustc 版本参与缓存键，与上面 stable 的缓存互不覆盖
+      - uses: Swatinem/rust-cache@v2
       - run: cargo check

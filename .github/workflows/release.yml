@@ -20,6 +20,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
+      # cargo test 与 cargo publish 各自完整编译依赖树，缓存收益同样明显
+      - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       # 唯一的自动正确性闸门：check/ui 均为手动触发，tag 可能打在未过 CI 的提交上，
