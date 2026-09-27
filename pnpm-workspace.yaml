@@ -1,0 +1,7 @@
+packages:
+  - ui/lib
+  - ui/app
+  - scripts
+allowBuilds:
+  # esbuild 的 postinstall 校验/落位平台二进制（vite 构建链）
+  esbuild: true

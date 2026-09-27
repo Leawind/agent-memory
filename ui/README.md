@@ -1,6 +1,6 @@
 # ui — agent-memory 前端
 
-前端拆成两个 npm workspace 包（lockfile 在仓库根目录）：
+前端拆成两个 pnpm workspace 包（lockfile 在仓库根目录）：
 
 - **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出四个自包含可复用面板
   `MemoriesPanel` / `TagsPanel` / `OpsPanel`（只读概况）/ `AdminPanel`（admin 专属：身份、鉴权
@@ -70,24 +70,24 @@ provideMemoryUI({
 
 ## 常用命令
 
-根目录一次 `npm install`；以下经根脚本转发到两个 ui workspace：
+根目录一次 `pnpm install`；以下经根脚本转发到两个 ui workspace：
 
 ```bash
-npm run build     # 先 lib 后 app；app 产物输出 ui/dist（改完前端必须跑）
-npm test          # vitest：lib（配置注入/API 封装/查询串/Markdown 消毒/三面板挂载）+ app 壳
-npm run typecheck # vue-tsc 两包（strict）
-npm run format    # Prettier（配置在根 .prettierrc.json：无分号、单引号、120 列）
-npm run dev       # 仅 app：热更新。默认启用内置 mock API（ui/app/mock/，内存假数据，
+pnpm build        # 先 lib 后 app；app 产物输出 ui/dist（改完前端必须跑）
+pnpm test         # vitest：lib（配置注入/API 封装/查询串/Markdown 消毒/三面板挂载）+ app 壳
+pnpm typecheck    # vue-tsc 两包（strict）
+pnpm format       # Prettier（配置在根 .prettierrc.json：无分号、单引号、120 列）
+pnpm dev          # 仅 app：热更新。默认启用内置 mock API（ui/app/mock/，内存假数据，
                   # 无需 Rust 后端；重启复位），终端横幅会打印预置身份 token
-npm run dev:live  # 仅 app：连真实后端，/api、/mcp、/health 代理到 127.0.0.1:8899
+pnpm dev:live     # 仅 app：连真实后端，/api、/mcp、/health 代理到 127.0.0.1:8899
 ```
 
 ### 前端独立开发（mock 模式）
 
-`npm run dev` 默认加载 `ui/app/mock/api.ts`（Vite dev 中间件）：内存假数据 + 固定 admin 身份，
+`pnpm dev` 默认加载 `ui/app/mock/api.ts`（Vite dev 中间件）：内存假数据 + 固定 admin 身份，
 四个面板（含管理页）直接完整渲染，改代码即时热更新，**不依赖任何后端**。
 增删改会真的改内存数组（保存后列表可见变化），重启 dev server 复位。
-鉴权/搜索回退等服务端语义的联调用 `npm run dev:live` 连真实后端验证。
+鉴权/搜索回退等服务端语义的联调用 `pnpm dev:live` 连真实后端验证。
 
 ## 约定
 

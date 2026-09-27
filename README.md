@@ -11,7 +11,7 @@
 ## 快速开始
 
 ```bash
-# 从源码安装（产物进入 ~/.cargo/bin，需先 npm install && npm run build 以准备嵌入的界面产物）
+# 从源码安装（产物进入 ~/.cargo/bin，需先 pnpm install && pnpm build 以准备嵌入的界面产物）
 cargo install --path .
 
 # 启动（默认 127.0.0.1:8899，数据库在当前工作目录 memory.db）

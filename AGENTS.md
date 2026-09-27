@@ -18,7 +18,7 @@ cargo clippy --all-targets   # 提交前应零告警（Cargo.toml [lints.clippy]
 cargo fmt --check            # 提交前格式必须通过
 cargo install --path . --force   # 更新本机安装（改完 Rust 代码后跑，否则运行中的是旧二进制）
                   # 部署方式：源码 cargo install，MCP 客户端配置走 HTTP 地址，无构建脚本
-npm run build     # 仅当改了 ui/ 时需要；先 lib 后 app 两 workspace，app 产物 ui/dist 入库并由 rust-embed 嵌入
+pnpm build        # 仅当改了 ui/ 时需要；先 lib 后 app 两 workspace，app 产物 ui/dist 入库并由 rust-embed 嵌入
                   # ⚠️ 新增 dist 产物文件不会触发 Rust 重编译（rust-embed 只跟踪编译期已存在的文件），
                   # 改完前端 cargo build 前先 cargo clean -p agent-memory，否则二进制里可能还是旧 UI
 ```
@@ -26,9 +26,9 @@ npm run build     # 仅当改了 ui/ 时需要；先 lib 后 app 两 workspace�
 注意：若通过 CARGO_TARGET_DIR 或 build.target-dir 配置了共享/非默认输出目录（编译产物不在
 ./target），e2e 测试等需要定位二进制时用 `cargo metadata` 从 cargo 元数据取真实输出目录。
 
-JS 侧（ui/ 与 scripts/）由根 package.json 的 npm workspaces 统一管理：根目录一次
-`npm install` 生成唯一 lockfile（package-lock.json），`npm run test` / `typecheck` /
-`format` 等命令在根目录直接可用（内部转发到对应 workspace）。
+JS 侧（ui/ 与 scripts/）由 pnpm workspaces 统一管理（pnpm-workspace.yaml，版本锁定在根
+package.json 的 packageManager）：根目录一次 `pnpm install` 生成唯一 lockfile（pnpm-lock.yaml），
+`pnpm test` / `typecheck` / `format` 等命令在根目录直接可用（内部转发到对应 workspace）。
 
 ## 模块结构
 
@@ -79,7 +79,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
                  标题处下拉切换/删除/添加，token 首尾提示本地计算），authFetch 为 lib 注入带 Authorization 的 fetch，
                  401 时移除失效身份并广播事件弹出令牌输入框；
                  dev 默认走内置 mock API（mock/api.ts，内存假数据 + 固定 admin 身份，
-                 前端开发不依赖后端，重启复位），--mode live（npm run dev:live）代理真实服务器
+                 前端开发不依赖后端，重启复位），--mode live（pnpm run dev:live）代理真实服务器
                  记忆正文按 Markdown 渲染：ui/lib/src/markdown.ts（marked + DOMPurify）→ MarkdownView.vue
 ```
 
@@ -112,10 +112,10 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    严格为 `"m{n}"`——normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **嵌入资产**：ui/dist 必须存在且被提交（rust-embed debug-embed 编译期嵌入）；
-   改前端后先 `npm run format && npm run build` 再 `cargo clean -p agent-memory && cargo build`
+   改前端后先 `pnpm format && pnpm build` 再 `cargo clean -p agent-memory && cargo build`
    （新增的 dist 文件不在 rust-embed 的跟踪范围，不清理会嵌到旧产物）。
 9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置在根
-   .prettierrc.json）；CI 强制 `format:check`，提交前先 `npm run format`。
+   .prettierrc.json）；CI 强制 `format:check`，提交前先 `pnpm format`。
 10. **Markdown 渲染必须消毒**：记忆正文是多 agent 共写的外部输入，
     管理界面渲染前必须经 DOMPurify（`ui/lib/src/markdown.ts` 统一出口：
     Markdown 走 renderMarkdown，服务端 HTML 片段走 sanitizeHtml），
@@ -162,7 +162,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 
 - `sdk-compat-check.ts`：用官方 MCP TypeScript SDK 走完整 agent 流程的兼容性
   回归（initialize/listTools/callTool/错误通道/无状态重连），发布前必跑。
-  用法：根目录 `npm install` 后 `MCP_URL=http://127.0.0.1:8899/mcp node scripts/sdk-compat-check.ts`。
+  用法：根目录 `pnpm install` 后 `MCP_URL=http://127.0.0.1:8899/mcp node scripts/sdk-compat-check.ts`。
 - `soak.ts`：双进程混合负载浸泡（写/搜/列表/标签轮转并发），失败分类能区分
   客户端过载（ECONNREFUSED 风暴）与服务端真实错误（5xx/BUSY）。
-- 两个脚本的类型检查：`npm run typecheck`（workspace 命令，CI ui-tests job 一并执行）。
+- 两个脚本的类型检查：`pnpm typecheck`（workspace 命令，CI ui-tests job 一并执行）。

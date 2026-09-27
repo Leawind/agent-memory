@@ -1,18 +1,14 @@
 {
   "name": "agent-memory",
   "private": true,
-  "description": "Workspace root: unifies the ui/ component library + standalone app and scripts/ dev tooling under npm workspaces",
-  "workspaces": [
-    "ui/lib",
-    "ui/app",
-    "scripts"
-  ],
+  "description": "Workspace root: unifies the ui/ component library + standalone app and scripts/ dev tooling under pnpm workspaces",
+  "packageManager": "pnpm@12.6.0",
   "scripts": {
-    "build": "cross-env GOMAXPROCS=4 npm run build --workspace @agent-memory/ui && cross-env GOMAXPROCS=2 npm run build --workspace @agent-memory/app",
-    "test": "npm run test --workspace @agent-memory/ui && npm run test --workspace @agent-memory/app",
-    "typecheck": "npm run typecheck --if-present --workspaces",
-    "format": "npm run format --workspace @agent-memory/ui && npm run format --workspace @agent-memory/app",
-    "format:check": "npm run format:check --workspace @agent-memory/ui && npm run format:check --workspace @agent-memory/app"
+    "build": "cross-env GOMAXPROCS=4 pnpm --filter @agent-memory/ui run build && cross-env GOMAXPROCS=2 pnpm --filter @agent-memory/app run build",
+    "test": "pnpm --filter @agent-memory/ui run test && pnpm --filter @agent-memory/app run test",
+    "typecheck": "pnpm -r run typecheck",
+    "format": "pnpm --filter @agent-memory/ui run format && pnpm --filter @agent-memory/app run format",
+    "format:check": "pnpm --filter @agent-memory/ui run format:check && pnpm --filter @agent-memory/app run format:check"
   },
   "devDependencies": {
     "cross-env": "^10.1.0"

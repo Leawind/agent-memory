@@ -1,7 +1,7 @@
 // 官方 TypeScript SDK 兼容性联调：真实 MCP 客户端 ↔ agent-memory HTTP 服务器
 //
 // 用法（需先启动服务器，如 agent-memory serve --port 8899）：
-//   cd scripts && npm install
+//   pnpm install（仓库根目录）
 //   node sdk-compat-check.ts            # 默认 http://127.0.0.1:8899/mcp
 //   MCP_URL=http://127.0.0.1:8899/mcp node sdk-compat-check.ts
 // 服务器启用 token 鉴权时：MCP_TOKEN=xxx node sdk-compat-check.ts

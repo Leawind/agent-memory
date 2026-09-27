@@ -728,7 +728,7 @@ mod tests {
     fn embedded_ui_has_index_entry() {
         assert!(
             UiAssets::get("index.html").is_some(),
-            "ui/dist/index.html is missing; run: cd ui && npm run build"
+            "ui/dist/index.html is missing; run: pnpm build (repo root)"
         );
     }
 

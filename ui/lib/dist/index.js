@@ -420,7 +420,7 @@ const xe = Ct({
   // 面向宿主组件库，缺 key 时静默回退即可，不刷控制台
   missingWarn: !1,
   fallbackWarn: !1
-}), { t: a } = xe.global;
+}), a = xe.global.t;
 function Gt(t) {
   xe.global.locale.value = t;
 }

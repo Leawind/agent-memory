@@ -26,8 +26,10 @@ export const memoryUIi18n = createI18n({
   fallbackWarn: false,
 })
 
-/** 库内组件统一从这里取 t（composer.t 为响应式） */
-export const { t } = memoryUIi18n.global
+/** 库内组件统一从这里取 t（composer.t 为响应式）。
+ * 显式标注：pnpm 隔离布局下 TS 无法可移植地命名推断类型（TS2742），d.ts 产物需要具名引用。 */
+type MemoryUIComposer = typeof memoryUIi18n.global
+export const t: MemoryUIComposer['t'] = memoryUIi18n.global.t
 
 export function setMemoryUILocale(locale: MemoryUILocale): void {
   memoryUIi18n.global.locale.value = locale
