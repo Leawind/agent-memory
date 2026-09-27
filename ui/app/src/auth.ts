@@ -39,12 +39,13 @@ export function listIdentityNames(): string[] {
   return Object.keys(readMap())
 }
 
-/** token 首尾提示：前 4 位 + ... + 后 4 位，过短则原样返回 */
+/** token 尾缀提示：省略号 + 末 4 位，与管理界面（lib 的 maskToken）同风格。
+ * token 是 sk_ 固定前缀格式，头部无辨识度，绝不外显。 */
 export function tokenHint(token: string): string {
-  return token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : token
+  return token ? `…${token.slice(-4)}` : ''
 }
 
-/** 全部身份及 token 首尾提示（按添加顺序），供身份下拉展示 */
+/** 全部身份及 token 尾缀提示（按添加顺序），供身份下拉展示 */
 export function listIdentities(): { name: string; hint: string }[] {
   return Object.entries(readMap()).map(([name, token]) => ({ name, hint: tokenHint(token) }))
 }

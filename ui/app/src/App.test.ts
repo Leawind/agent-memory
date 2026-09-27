@@ -180,8 +180,8 @@ describe('App shell', () => {
       el.textContent?.includes('viewer'),
     )
     expect(viewerItem).toBeTruthy()
-    // 每个身份行带 token 首尾提示
-    expect(viewerItem!.textContent).toContain('tok-...ewer')
+    // 每个身份行带 token 尾缀提示（与管理界面同风格：省略号 + 末 4 位）
+    expect(viewerItem!.textContent).toContain('…ewer')
     viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     await flushPromises()

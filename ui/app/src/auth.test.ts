@@ -52,21 +52,20 @@ describe('multi-identity token store', () => {
     expect(readStoredToken()).toBe('')
   })
 
-  it('lists identities with token head/tail hints in insertion order', () => {
+  it('lists identities with ellipsis + tail token hints in insertion order', () => {
     expect(listIdentities()).toEqual([])
     addIdentity('admin', 'abcdefghijklmnop')
     addIdentity('viewer', 'qwertyuiop')
     expect(listIdentities()).toEqual([
-      { name: 'admin', hint: 'abcd...mnop' },
-      { name: 'viewer', hint: 'qwer...uiop' },
+      { name: 'admin', hint: '…mnop' },
+      { name: 'viewer', hint: '…uiop' },
     ])
   })
 
-  it('returns short tokens verbatim as the hint', () => {
+  it('masks tokens as ellipsis plus the last four characters', () => {
     expect(tokenHint('')).toBe('')
-    expect(tokenHint('abcd')).toBe('abcd')
-    expect(tokenHint('abcdefgh')).toBe('abcdefgh')
-    expect(tokenHint('abcdefghi')).toBe('abcd...fghi')
+    expect(tokenHint('abc')).toBe('…abc')
+    expect(tokenHint('sk_abcdefghijklmnop')).toBe('…mnop')
   })
 
   it('adopts a legacy single token under its identity name after first whoami success', async () => {
