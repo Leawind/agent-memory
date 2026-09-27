@@ -7,8 +7,6 @@
 - **可选鉴权**：token 多身份 + 逐项能力开关；不开启则是本机开放模式
 - **可选语义搜索**：配置 OpenAI 兼容 embedding 服务即升级混合检索，服务不可用自动回退关键词
 
-![记忆管理](docs/ui-memories.png)
-
 ## 快速开始
 
 ```bash
@@ -61,8 +59,6 @@ agent-memory serve       # 默认 127.0.0.1:8899，数据库为当前目录下 m
 | 阿里云百炼 / 智谱等 | 各家 OpenAI 兼容端点 | 对应 embedding 模型 | 必填 |
 
 开启后 `memory_search` 自动融合关键词与语义两路召回（RRF），换说法、跨语言的查询也能命中。**回退是承诺**：embedding 服务不可用时搜索自动降级回纯关键词（响应带 `semantic_fallback` 标记），写入永不因此阻塞，缺向量随时一键补跑。
-
-![运维](docs/ui-ops.png)
 
 ## MCP 工具（10 个）
 
