@@ -5,6 +5,27 @@ edition = "2021"
 rust-version = "1.85"
 description = "Self-hosted MCP memory server for AI agents: SQLite-backed, HTTP-only, shared by multiple agents, with an embedded Vue3 management UI."
 license = "MIT"
+repository = "https://github.com/Leawind/agent-memory"
+homepage = "https://github.com/Leawind/agent-memory"
+readme = "README.md"
+keywords = ["mcp", "memory", "ai", "sqlite", "http-server"]
+categories = ["database", "development-tools", "web-programming::http-server"]
+
+# 发布即交付完整管理界面：ui/dist 虽不入 git（构建产物），但发布流程先跑
+# `pnpm build` 产出 dist，include 把它打进 .crate 包，用户 cargo install 时
+# rust-embed 直接嵌入，无需 node。白名单语义：新增目录须显式登记。
+include = [
+    "src/**",
+    "migrations/**",
+    "sql/**",
+    "ui/dist/**",
+    "build.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+]
 
 [dependencies]
 clap = { version = "4.5.61", features = ["derive"] }

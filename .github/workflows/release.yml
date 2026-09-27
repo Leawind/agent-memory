@@ -1,0 +1,29 @@
+name: release
+
+# 发布流程：先构建前端（ui/dist 必须随 .crate 包分发，见 Cargo.toml include），
+# 再 cargo publish。用户侧 cargo install agent-memory 时 rust-embed 直接嵌入
+# 包内 dist，无需 node。
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # 发布前人工核对包内容：ui/dist 必须在列，tests/scripts/ui 源码不在列
+      - run: cargo package --list --locked
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
