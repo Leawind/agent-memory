@@ -27,10 +27,19 @@ function navLabels(wrapper: ReturnType<typeof mount>): string[] {
   return wrapper.findAll('nav button').map((b) => b.text())
 }
 
+/** 令牌弹窗的开关状态（App.vue 的 tokenDialog）。el-dialog 的关闭过渡在 happy-dom
+ * 里不会真正走完，DOM 断言收起状态不可靠，只能看驱动它的组件状态 */
+function dialogOpen(wrapper: ReturnType<typeof mount>): boolean {
+  return (wrapper.vm.$ as unknown as { setupState: { tokenDialog: boolean } }).setupState.tokenDialog
+}
+
 describe('App shell', () => {
   beforeEach(() => {
     setMemoryUILocale('zh')
     localStorage.clear()
+    // el-dropdown 菜单 teleport 到 body，上一个用例的弹层可能残留并截走 querySelector：
+    // 清空 body，保证每个用例从干净 DOM 开始
+    document.body.innerHTML = ''
     // 模拟持久化的中文语言偏好（happy-dom 的 navigator.language 是 en-US）
     localStorage.setItem('agent-memory-locale', 'zh')
     document.documentElement.classList.remove('dark')
@@ -187,6 +196,146 @@ describe('App shell', () => {
     await flushPromises()
     expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理', '运维'])
     expect(wrapper.find('.identity-btn').text()).toContain('viewer')
+    wrapper.unmount()
+  })
+
+  it('keeps the identity dropdown usable when the current token turns invalid', async () => {
+    // broken 的 token 已被服务端拒绝；viewer 仍有效，切换后必须能恢复页面
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        const auth = String(new Headers(init?.headers).get('Authorization') ?? '')
+        if (u.includes('/api/whoami')) {
+          if (auth.includes('tok-viewer')) {
+            return Promise.resolve(jsonWithJson({ name: 'viewer', mode: 'token', permissions: viewerCaps }))
+          }
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve('') })
+        }
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    localStorage.setItem('agent-memory-identities', JSON.stringify({ broken: 'tok-broken', viewer: 'tok-viewer' }))
+    localStorage.setItem('agent-memory-identity', 'broken')
+
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+
+    // 回归：当前身份失效只移除它自己并弹令牌框，下拉必须仍在（此前随 who 一起消失，无法切换自救）
+    expect(wrapper.find('.identity-btn').exists()).toBe(true)
+    expect(wrapper.find('.identity-btn').text()).toContain('未连接')
+    expect(wrapper.find('.el-dialog').isVisible()).toBe(true)
+    expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
+
+    // 下拉仍列出其余身份，切换成功后令牌框收起、页面以新身份恢复
+    await wrapper.find('.identity-btn').trigger('click')
+    await flushPromises()
+    const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
+      el.textContent?.includes('viewer'),
+    )
+    expect(viewerItem).toBeTruthy()
+    viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('.identity-btn').text()).toContain('viewer')
+    // el-dialog 的关闭过渡在 happy-dom 里不会真正走完（display:none 不落地），
+    // 改断言驱动弹窗的组件状态本身
+    expect(dialogOpen(wrapper)).toBe(false)
+    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理', '运维'])
+    wrapper.unmount()
+  })
+
+  it('recovers through the unauthorized event when the active token is revoked mid-session', async () => {
+    // 挂载时 admin 有效；中途被服务端重置：此后带 tok-admin 的请求一律 401
+    let revoked = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        const auth = String(new Headers(init?.headers).get('Authorization') ?? '')
+        if (auth.includes('tok-admin') && revoked) {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve('') })
+        }
+        if (u.includes('/api/whoami')) {
+          if (auth.includes('tok-admin')) {
+            return Promise.resolve(jsonWithJson({ name: 'admin', mode: 'token', permissions: adminCaps }))
+          }
+          if (auth.includes('tok-viewer')) {
+            return Promise.resolve(jsonWithJson({ name: 'viewer', mode: 'token', permissions: viewerCaps }))
+          }
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve('') })
+        }
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    localStorage.setItem('agent-memory-identities', JSON.stringify({ admin: 'tok-admin', viewer: 'tok-viewer' }))
+    localStorage.setItem('agent-memory-identity', 'admin')
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('.identity-btn').text()).toContain('admin')
+
+    // 面板请求收到 401 → authFetch 广播 UNAUTHORIZED_EVENT → 移除失效身份并弹令牌框
+    revoked = true
+    await wrapper.findAll('nav button')[1].trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
+    expect(wrapper.find('.identity-btn').exists()).toBe(true)
+    expect(dialogOpen(wrapper)).toBe(true)
+
+    // 非模态弹窗不锁顶栏：身份下拉仍可操作，切到 viewer 即恢复
+    await wrapper.find('.identity-btn').trigger('click')
+    await flushPromises()
+    const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
+      el.textContent?.includes('viewer'),
+    )
+    expect(viewerItem).toBeTruthy()
+    viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('.identity-btn').text()).toContain('viewer')
+    expect(dialogOpen(wrapper)).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('falls back to the next stored identity when removing the current one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        const auth = String(new Headers(init?.headers).get('Authorization') ?? '')
+        if (u.includes('/api/whoami')) {
+          if (auth.includes('tok-viewer')) {
+            return Promise.resolve(jsonWithJson({ name: 'viewer', mode: 'token', permissions: viewerCaps }))
+          }
+          return Promise.resolve(jsonWithJson({ name: 'admin', mode: 'token', permissions: adminCaps }))
+        }
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    localStorage.setItem('agent-memory-identities', JSON.stringify({ admin: 'tok-admin', viewer: 'tok-viewer' }))
+    localStorage.setItem('agent-memory-identity', 'admin')
+    const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await flushPromises()
+
+    // 打开下拉，删除当前身份 admin：自动切到剩余的 viewer，身份表只剩它
+    await wrapper.find('.identity-btn').trigger('click')
+    await flushPromises()
+    const adminRemove = [...document.querySelectorAll('.el-dropdown-menu__item .id-remove')][0]
+    expect(adminRemove).toBeTruthy()
+    adminRemove!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
+    expect(wrapper.find('.identity-btn').text()).toContain('viewer')
+    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理', '运维'])
     wrapper.unmount()
   })
 

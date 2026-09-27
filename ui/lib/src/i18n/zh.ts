@@ -113,6 +113,7 @@ export default {
     tokenConfirm: '保存并连接',
     tokenInvalid: '令牌无效或已失效，请重试',
     identity: '身份',
+    identityNone: '未连接',
     addIdentity: '添加身份',
     addIdentityDesc: '粘贴身份的访问令牌，本浏览器会记住它并切换过去',
     removeIdentity: '移除此浏览器保存的令牌',

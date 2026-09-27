@@ -114,6 +114,7 @@ export default {
     tokenConfirm: 'Save & connect',
     tokenInvalid: 'Token is invalid or revoked, please retry',
     identity: 'Identity',
+    identityNone: 'Not connected',
     addIdentity: 'Add identity',
     addIdentityDesc: 'Paste an identity token; this browser will remember it and switch to it',
     removeIdentity: 'Remove the token saved in this browser',

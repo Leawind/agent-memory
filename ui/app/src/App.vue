@@ -8,12 +8,13 @@
               <el-icon :size="16"><Collection /></el-icon>
             </span>
             <span class="brand-name">Agent Memory</span>
-            <!-- 身份切换在标题处：Agent Memory / 身份名；开放模式无身份区 -->
-            <template v-if="who && who.mode === 'token'">
+            <!-- 身份切换在标题处：Agent Memory / 身份名。只在确认开放模式（who.mode === 'open'）时
+                 隐藏；当前身份失效（who 为空）时下拉照常渲染，仍可切换/添加身份 -->
+            <template v-if="showIdentities">
               <span class="brand-sep">/</span>
               <el-dropdown trigger="click" @command="onIdentityCommand">
                 <button type="button" class="identity-btn" :aria-label="t('shell.identity')">
-                  <span class="identity-name">{{ who.name }}</span>
+                  <span class="identity-name">{{ identityLabel }}</span>
                   <el-icon :size="12" class="identity-caret"><ArrowDown /></el-icon>
                 </button>
                 <template #dropdown>
@@ -22,13 +23,13 @@
                       v-for="it in identities"
                       :key="it.name"
                       :command="{ type: 'switch', name: it.name }"
-                      :data-checked="it.name === who?.name"
+                      :data-checked="it.name === currentName"
                     >
                       <span class="id-option">
                         <span class="id-name">{{ it.name }}</span>
                         <span class="id-hint">{{ it.hint }}</span>
                       </span>
-                      <el-icon v-if="it.name === who?.name" class="id-check"><Check /></el-icon>
+                      <el-icon v-if="it.name === currentName" class="id-check"><Check /></el-icon>
                       <el-icon
                         class="id-remove"
                         :title="t('shell.removeIdentity')"
@@ -115,12 +116,13 @@
         </div>
       </main>
 
-      <!-- 令牌输入：401 或「添加身份」时弹出；保存前先验证再入库 -->
+      <!-- 令牌输入：401 或「添加身份」时弹出；保存前先验证再入库。
+           非模态：401 提示不锁页面，顶栏身份下拉始终可操作（切到其他已存身份即可恢复） -->
       <el-dialog
         v-model="tokenDialog"
+        :modal="false"
         :title="tokenDialogMode === 'add' ? t('shell.addIdentity') : t('shell.tokenPromptTitle')"
         width="440px"
-        :close-on-click-modal="false"
       >
         <p class="token-desc">
           {{ tokenDialogMode === 'add' ? t('shell.addIdentityDesc') : t('shell.tokenPromptDesc') }}
@@ -197,8 +199,19 @@ const active = ref<AdminTab>('memories')
 // ---- 身份与令牌：本浏览器可保存多个身份，标题处下拉切换/删除/添加 ----
 const who = ref<WhoAmI | null>(null)
 const identities = ref<{ name: string; hint: string }[]>([])
+// 本地当前身份指针（localStorage），与 who（服务端验证结果）解耦：
+// who 只反映「最近一次 whoami」，失效时下拉的可用性不能跟着丢
+const currentName = ref<string | null>(null)
+// 最近一次 whoami 明确返回 401（服务端开着 token 鉴权）——此时即使 who 为空也属于 token 模式
+const needToken = ref(false)
 
 const isAdmin = computed(() => can(who.value, 'admin'))
+
+// 身份区可见性：只在确认开放模式（who.mode === 'open'）时隐藏；当前身份是否有效不影响——
+// 401 失效（who 为空）时只要有已存身份或服务端明确要求 token，下拉就必须可用，否则无法自救
+const showIdentities = computed(() => who.value?.mode !== 'open' && (identities.value.length > 0 || needToken.value))
+// 触发器标签：优先已验证身份名，其次本地当前指针，都没有即未连接
+const identityLabel = computed(() => who.value?.name ?? currentName.value ?? t('shell.identityNone'))
 
 // 管理标签页仅 admin 可见；当前页失去可见性时（如切到低权限身份）退回记忆管理
 const navItems = computed(() => {
@@ -239,6 +252,7 @@ watch(active, () => refreshActivePanel())
 // ---- 身份下拉与令牌弹窗状态 ----
 function refreshIdentities(): void {
   identities.value = listIdentities()
+  currentName.value = currentIdentityName()
 }
 
 const tokenDialog = ref(false)
@@ -247,12 +261,20 @@ const tokenInput = ref('')
 const tokenError = ref(false)
 const checkingToken = ref(false)
 
-async function resolveIdentity(): Promise<void> {
+/** 解析当前身份，返回是否得到有效身份。401 时只移除失效的那一个身份并弹令牌框，
+ * 绝不清空身份表——其余身份留在下拉里供切换自救。 */
+async function resolveIdentity(): Promise<boolean> {
   const r = await fetchWhoAmI()
   if (r.ok) {
+    needToken.value = false
     who.value = r.who
-  } else if (r.needToken) {
-    // 当前 token 已失效：移除这个失效身份（若有效 token 在请求中，服务端不会 401）
+    // fetchWhoAmI 可能把旧版单 token 收编进身份表，同步本地列表
+    refreshIdentities()
+    return true
+  }
+  if (r.needToken) {
+    // 当前 token 已被服务端拒绝（重置/删除）：移除这个失效身份（若有效 token 在请求中，服务端不会 401）
+    needToken.value = true
     const name = currentIdentityName()
     if (name) removeIdentity(name)
     refreshIdentities()
@@ -260,13 +282,19 @@ async function resolveIdentity(): Promise<void> {
     tokenDialogMode.value = 'required'
     tokenDialog.value = true
   }
+  return false
 }
 
 async function switchTo(name: string): Promise<void> {
   switchIdentity(name)
   refreshIdentities()
   who.value = null
-  await resolveIdentity()
+  if (await resolveIdentity()) {
+    // 切换成功即页面恢复：收起令牌框（无论它是 401 提示还是未完成的添加）
+    tokenDialog.value = false
+    tokenInput.value = ''
+    tokenError.value = false
+  }
   refreshActivePanel()
 }
 
@@ -281,6 +309,7 @@ async function saveToken(): Promise<void> {
   if (r.ok) {
     addIdentity(r.who.name, token)
     refreshIdentities()
+    needToken.value = false
     who.value = r.who
     tokenDialog.value = false
     tokenInput.value = ''
@@ -603,7 +632,7 @@ body {
   flex-shrink: 0;
   color: var(--el-text-color-secondary);
 }
-/* 下拉行：身份名 + token 首尾提示靠左，勾选与删除靠右 */
+/* 下拉行：身份名 + token 尾缀提示靠左，勾选与删除靠右 */
 .id-option {
   display: flex;
   align-items: baseline;
