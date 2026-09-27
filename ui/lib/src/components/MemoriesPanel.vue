@@ -61,11 +61,14 @@
       <el-table-column :label="t('memories.colUpdatedAt')" width="170">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column :label="t('memories.colActions')" width="190" fixed="right">
+      <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row.id)">{{ t('common.detail') }}</el-button>
-          <el-button link type="primary" @click="openEdit(row.id)">{{ t('common.edit') }}</el-button>
-          <el-button link type="danger" @click="remove(row)">{{ t('common.delete') }}</el-button>
+          <el-tooltip :content="t('common.edit')" placement="top">
+            <el-button link type="primary" :icon="Edit" @click="openEdit(row.id)" />
+          </el-tooltip>
+          <el-tooltip :content="t('common.delete')" placement="top">
+            <el-button link type="danger" :icon="Delete" @click="remove(row)" />
+          </el-tooltip>
         </template>
       </el-table-column>
     </el-table>
@@ -97,11 +100,14 @@
       <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="170" sortable="custom">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column :label="t('memories.colActions')" width="190" fixed="right">
+      <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row.id)">{{ t('common.detail') }}</el-button>
-          <el-button link type="primary" @click="openEdit(row.id)">{{ t('common.edit') }}</el-button>
-          <el-button link type="danger" @click="remove(row)">{{ t('common.delete') }}</el-button>
+          <el-tooltip :content="t('common.edit')" placement="top">
+            <el-button link type="primary" :icon="Edit" @click="openEdit(row.id)" />
+          </el-tooltip>
+          <el-tooltip :content="t('common.delete')" placement="top">
+            <el-button link type="danger" :icon="Delete" @click="remove(row)" />
+          </el-tooltip>
         </template>
       </el-table-column>
     </el-table>
@@ -137,9 +143,6 @@
       :width="narrow ? '96%' : '640px'"
       @saved="onSaved"
     />
-
-    <!-- 全文详情 -->
-    <MemoryDetailDrawer v-model:visible="detailVisible" :memory-id="detailId" :size="narrow ? '100%' : '45%'" />
   </div>
 </template>
 
@@ -147,14 +150,13 @@
 import { computed, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
-import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
+import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import type { MemorySummary } from '../types'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
-import MemoryDetailDrawer from './MemoryDetailDrawer.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -205,8 +207,6 @@ const { compact, narrow } = useContainerWidth(rootRef)
 
 const editorVisible = ref(false)
 const editingId = ref<string | null>(null)
-const detailVisible = ref(false)
-const detailId = ref<string | null>(null)
 
 // 动作统一包装：失败 toast（错误语义在数据层，展示在这里）
 function run(action: () => Promise<unknown>) {
@@ -221,11 +221,6 @@ function openCreate() {
 function openEdit(id: string) {
   editingId.value = id
   editorVisible.value = true
-}
-
-function openDetail(id: string) {
-  detailId.value = id
-  detailVisible.value = true
 }
 
 function onSaved() {

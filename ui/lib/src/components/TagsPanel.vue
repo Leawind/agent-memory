@@ -49,10 +49,14 @@
       >
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column :label="t('memories.colActions')" width="150" fixed="right">
+      <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button link type="danger" @click="openDelete(row)">{{ t('common.delete') }}</el-button>
+          <el-tooltip :content="t('common.edit')" placement="top">
+            <el-button link type="primary" :icon="Edit" @click="openEdit(row)" />
+          </el-tooltip>
+          <el-tooltip :content="t('common.delete')" placement="top">
+            <el-button link type="danger" :icon="Delete" @click="openDelete(row)" />
+          </el-tooltip>
         </template>
       </el-table-column>
     </el-table>
@@ -109,7 +113,7 @@
 import { reactive, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
-import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
+import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useTags } from '../composables/useTags'

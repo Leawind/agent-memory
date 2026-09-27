@@ -7,7 +7,7 @@
   备份、体检，经 `who` prop 门控），面板支持 `show-header` / `title` / `subtitle` props 裁剪；
   只读统计与版本信息在概况弹窗 `OpsDialog`（每次打开重拉，无运维标签页）；另附便捷壳
   `MemoryAdmin`（sidebar/tabs 双布局，侧栏标题点击弹概况）与弹层组件（编辑对话框、
-  详情抽屉、Markdown 视图），供其他 Vue3 系统作为组件集成。
+  Markdown 视图），供其他 Vue3 系统作为组件集成。
 - **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言
   切换 + 多身份令牌下拉），直接组装三个面板（「管理」页仅对 admin 能力身份显示），
   点击顶栏标题弹出服务概况（OpsDialog）。

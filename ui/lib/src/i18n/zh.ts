@@ -6,7 +6,6 @@ export default {
     admin: '管理',
   },
   common: {
-    detail: '详情',
     edit: '编辑',
     delete: '删除',
     cancel: '取消',
@@ -73,11 +72,6 @@ export default {
     path: '文件路径',
     schemaVersion: '数据库版本',
     version: '版本',
-  },
-  drawer: {
-    title: '记忆 {id}',
-    rendered: '渲染',
-    source: '源码',
   },
   editor: {
     editTitle: '编辑记忆',

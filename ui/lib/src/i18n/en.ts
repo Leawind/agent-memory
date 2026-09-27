@@ -6,7 +6,6 @@ export default {
     admin: 'Admin',
   },
   common: {
-    detail: 'Details',
     edit: 'Edit',
     delete: 'Delete',
     cancel: 'Cancel',
@@ -73,11 +72,6 @@ export default {
     path: 'File path',
     schemaVersion: 'Schema version',
     version: 'Version',
-  },
-  drawer: {
-    title: 'Memory {id}',
-    rendered: 'Rendered',
-    source: 'Source',
   },
   editor: {
     editTitle: 'Edit Memory',
