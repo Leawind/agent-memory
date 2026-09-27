@@ -28,7 +28,7 @@ describe('locale switching', () => {
   it('setMemoryUILocale switches t() output and is reactive in both languages', () => {
     setMemoryUILocale('zh')
     expect(currentMemoryUILocale()).toBe('zh')
-    expect(t('nav.memories')).toBe('记忆管理')
+    expect(t('nav.memories')).toBe('记忆')
     setMemoryUILocale('en')
     expect(t('nav.memories')).toBe('Memories')
     setMemoryUILocale('zh')

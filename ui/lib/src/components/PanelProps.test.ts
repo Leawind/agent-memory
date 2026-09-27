@@ -31,7 +31,7 @@ describe('MemoriesPanel reusable props', () => {
     const wrapper = mount(MemoriesPanel)
     await flushPromises()
     expect(wrapper.find('.am-panel-header').exists()).toBe(true)
-    expect(wrapper.find('.am-panel-title').text()).toBe('记忆管理')
+    expect(wrapper.find('.am-panel-title').text()).toBe('记忆')
     wrapper.unmount()
   })
 

@@ -1,8 +1,8 @@
 // 中文文案（key 按组件分组；en.ts 必须与本题 key 一一对应，i18n.test.ts 把守）
 export default {
   nav: {
-    memories: '记忆管理',
-    tags: '标签管理',
+    memories: '记忆',
+    tags: '标签',
     admin: '管理',
   },
   common: {
@@ -13,7 +13,7 @@ export default {
     ok: '知道了',
   },
   memories: {
-    title: '记忆管理',
+    title: '记忆',
     subtitle: '多 agent 共享的记忆库，正文支持 Markdown',
     create: '新建记忆',
     searchPlaceholder: '关键词搜索（空格分隔、全部命中；中文按子串匹配）',
@@ -36,7 +36,7 @@ export default {
     searchEmpty: '没有记忆命中全部关键词，可减少关键词或改用更宽泛的词',
   },
   tags: {
-    title: '标签管理',
+    title: '标签',
     subtitle: '标签是 agent 自主维护的分类体系；改名会同步更新所有引用它的记忆',
     create: '新建标签',
     filterPlaceholder: '正则过滤标签名，如 ^proj/ 、rust$（大小写敏感）',

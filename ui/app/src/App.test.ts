@@ -67,9 +67,9 @@ describe('App shell', () => {
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('Agent Memory')
-    expect(html).toContain('记忆管理')
+    expect(html).toContain('记忆')
     expect(html).toContain('新建记忆')
-    expect(html).toContain('标签管理')
+    expect(html).toContain('标签')
     // 运维标签页已取消：概况改为点击顶栏标题弹窗展示
     expect(html).not.toContain('运维')
     wrapper.unmount()
@@ -109,7 +109,7 @@ describe('App shell', () => {
     const html = wrapper.html()
     expect(html).toContain('Memories')
     expect(html).toContain('Tags')
-    expect(html).not.toContain('记忆管理')
+    expect(html).not.toContain('记忆')
     wrapper.unmount()
   })
 
@@ -155,7 +155,7 @@ describe('App shell', () => {
     await flushPromises()
     await flushPromises()
     // admin 身份：三个标签页齐全，管理面板已挂载（身份表可见）
-    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理', '管理'])
+    expect(navLabels(wrapper)).toEqual(['记忆', '标签', '管理'])
     expect(wrapper.html()).toContain('Token 鉴权')
     wrapper.unmount()
 
@@ -171,7 +171,7 @@ describe('App shell', () => {
     const viewer = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
-    expect(navLabels(viewer)).toEqual(['记忆管理', '标签管理'])
+    expect(navLabels(viewer)).toEqual(['记忆', '标签'])
     expect(viewer.html()).not.toContain('Token 鉴权')
     viewer.unmount()
   })
@@ -214,7 +214,7 @@ describe('App shell', () => {
     viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     await flushPromises()
-    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理'])
+    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
     expect(wrapper.find('.identity-btn').text()).toContain('viewer')
     wrapper.unmount()
   })
@@ -266,7 +266,7 @@ describe('App shell', () => {
     // el-dialog 的关闭过渡在 happy-dom 里不会真正走完（display:none 不落地），
     // 改断言驱动弹窗的组件状态本身
     expect(dialogOpen(wrapper)).toBe(false)
-    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理'])
+    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
     wrapper.unmount()
   })
 
@@ -358,7 +358,7 @@ describe('App shell', () => {
 
     expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
     expect(wrapper.find('.identity-btn').text()).toContain('viewer')
-    expect(navLabels(wrapper)).toEqual(['记忆管理', '标签管理'])
+    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
     wrapper.unmount()
   })
 
@@ -419,7 +419,7 @@ describe('App shell', () => {
     await navButtons[1].trigger('click')
     await flushPromises()
     await flushPromises()
-    // 回归：面板 v-show 常驻不会重新挂载，切回标签管理必须显式刷新（此前一直显示陈旧数据）
+    // 回归：面板 v-show 常驻不会重新挂载，切回标签必须显式刷新（此前一直显示陈旧数据）
     expect(countTagsCalls()).toBeGreaterThan(before)
     wrapper.unmount()
   })
