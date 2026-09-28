@@ -495,13 +495,12 @@ body {
   flex-direction: column;
 }
 
-/* 顶栏：品牌 + 导航 + 偏好控件 */
+/* 顶栏：品牌 + 导航 + 偏好控件。与页面主体同色（不划出独立区域），无边框 */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color-page);
 }
 .topbar-inner {
   max-width: 1240px;
@@ -551,19 +550,21 @@ body {
   color: var(--el-color-primary);
   background: linear-gradient(135deg, rgba(68, 182, 138, 0.25) 0%, rgba(58, 250, 112, 0.18) 100%);
 }
-/* 导航：Modrinth 顶栏风格——无组容器，悬停/选中项浮起一块略亮于顶栏的药丸底，
-   与顶栏融为一体而非划出独立区域 */
+/* 导航：分段药丸（与右侧主题切换同款）——容器沉一块填充色，选中项浮起 */
 .nav {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--el-fill-color);
 }
 .nav-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  height: 30px;
   padding: 0 14px;
   border: none;
   border-radius: 999px;
@@ -575,13 +576,13 @@ body {
   cursor: pointer;
 }
 .nav-item:hover {
-  background: var(--el-fill-color);
   color: var(--el-text-color-primary);
 }
 .nav-item.active {
-  background: var(--el-fill-color);
-  color: var(--el-text-color-primary);
+  background: var(--el-bg-color);
+  color: var(--el-color-primary);
   font-weight: 600;
+  box-shadow: var(--el-box-shadow-light);
 }
 .actions {
   display: flex;
