@@ -18,18 +18,7 @@
         <template #label>
           <div class="content-label">
             <span>{{ t('editor.contentLabel') }}</span>
-            <el-radio-group v-model="contentTab" size="small">
-              <el-tooltip :content="t('editor.tabEdit')" placement="top" :enterable="false">
-                <el-radio-button value="edit" :aria-label="t('editor.tabEdit')">
-                  <el-icon><Edit /></el-icon>
-                </el-radio-button>
-              </el-tooltip>
-              <el-tooltip :content="t('editor.tabPreview')" placement="top" :enterable="false">
-                <el-radio-button value="preview" :aria-label="t('editor.tabPreview')">
-                  <el-icon><View /></el-icon>
-                </el-radio-button>
-              </el-tooltip>
-            </el-radio-group>
+            <MarkdownModeToggle v-model="contentTab" />
           </div>
         </template>
         <el-input
@@ -70,8 +59,8 @@ import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, getMemory, updateMemory } from '../api/memories'
 import type { MemoryDraft } from '../composables/useMemories'
-import { Edit, View } from '@element-plus/icons-vue'
 import MarkdownView from './MarkdownView.vue'
+import MarkdownModeToggle from './MarkdownModeToggle.vue'
 import { t } from '../i18n'
 
 const props = defineProps<{

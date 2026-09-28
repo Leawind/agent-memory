@@ -3,19 +3,8 @@
     <template #header>
       <div class="card-header">
         <span>{{ t('access.settingsTitle') }}</span>
-        <!-- 与记忆编辑器同款：编辑/预览切换，两个槽位联动 -->
-        <el-radio-group v-model="mode" size="small">
-          <el-tooltip :content="t('editor.tabEdit')" placement="top" :enterable="false">
-            <el-radio-button value="edit" :aria-label="t('editor.tabEdit')">
-              <el-icon><Edit /></el-icon>
-            </el-radio-button>
-          </el-tooltip>
-          <el-tooltip :content="t('editor.tabPreview')" placement="top" :enterable="false">
-            <el-radio-button value="preview" :aria-label="t('editor.tabPreview')">
-              <el-icon><View /></el-icon>
-            </el-radio-button>
-          </el-tooltip>
-        </el-radio-group>
+        <!-- 与记忆编辑器同款：编辑/预览单图标切换 -->
+        <MarkdownModeToggle v-model="mode" />
       </div>
     </template>
     <!-- 淡色即内置默认：透明度纯由内容推导，所见即生效；用法说明收进标签旁的 ⓘ -->
@@ -71,11 +60,12 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Edit, InfoFilled, View } from '@element-plus/icons-vue'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { toastSuccess } from '../../toast'
 import MarkdownView from '../MarkdownView.vue'
+import MarkdownModeToggle from '../MarkdownModeToggle.vue'
 import { run } from './caps'
 
 const props = defineProps<{

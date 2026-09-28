@@ -74,19 +74,16 @@ describe('AdminPanel', () => {
     expect(textareas.length).toBe(2)
     expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
     expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
-    // 用法说明收进标签旁的 ⓘ（面板标题 + 两个字段 = 至少 3 个）；编辑/预览切换在卡片头部
+    // 用法说明收进标签旁的 ⓘ（面板标题 + 两个字段 = 至少 3 个）；编辑/预览是卡片头部的单图标切换
     expect(wrapper.findAll('.am-info').length).toBeGreaterThanOrEqual(3)
-    expect(wrapper.findAll('.el-radio-button input').length).toBe(2)
-    // 切到预览：两个 textarea 换成 Markdown 渲染
-    const radioInputs = wrapper.findAll('.el-radio-button input')
-    ;(radioInputs[1].element as HTMLInputElement).checked = true
-    await radioInputs[1].trigger('change')
+    expect(wrapper.findAll('.md-mode-toggle').length).toBe(1)
+    // 点击切到预览：两个 textarea 换成 Markdown 渲染
+    await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('textarea').length).toBe(0)
     expect(wrapper.find('.md-body').exists()).toBe(true)
-    // 切回编辑
-    ;(radioInputs[0].element as HTMLInputElement).checked = true
-    await radioInputs[0].trigger('change')
+    // 再点切回编辑
+    await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('textarea').length).toBe(2)
     const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')
