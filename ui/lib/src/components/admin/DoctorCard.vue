@@ -21,7 +21,8 @@
         <li v-for="(issue, i) in doctor.issues" :key="i">{{ issue }}</li>
       </ul>
     </template>
-    <el-empty v-else :description="t('access.doctorEmpty')" :image-size="60" />
+    <!-- 未运行只留一行说明，不占大块空间 -->
+    <div v-else class="pending">{{ t('access.doctorEmpty') }}</div>
   </el-card>
 </template>
 
@@ -44,5 +45,10 @@ const { doctor, doctorRan, doctorLoading, runDoctor } = useAdmin()
   margin: 12px 0 0;
   padding-left: 20px;
   line-height: 1.9;
+}
+.pending {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
 }
 </style>

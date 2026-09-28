@@ -9,9 +9,9 @@
         </el-button>
       </div>
     </template>
-    <el-empty v-if="identities.length === 0" :description="t('access.empty')" />
-    <!-- 窄容器：卡片列表替代表格——el-table 的固定操作列在手机宽度会把能力标签挤碎 -->
-    <div v-else-if="compact" class="id-cards">
+    <!-- 空身份时不占正文空间（新建入口在卡片头部）；窄容器：卡片列表替代表格——
+         el-table 的固定操作列在手机宽度会把能力标签挤碎 -->
+    <div v-if="compact && identities.length > 0" class="id-cards">
       <div v-for="row in identities" :key="row.name" class="id-card">
         <div class="id-card-head">
           <span class="id-card-name">{{ row.name }}</span>
@@ -54,7 +54,7 @@
         <code class="token-text">{{ maskToken(row.token_hint) }}</code>
       </div>
     </div>
-    <el-table v-else :data="identities">
+    <el-table v-else-if="identities.length > 0" :data="identities">
       <el-table-column prop="name" :label="t('access.colName')" min-width="120" />
       <el-table-column :label="t('access.colPermissions')" min-width="240">
         <template #default="{ row }">
@@ -70,10 +70,10 @@
           <span v-if="enabledCaps(row).length === 0" class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column :label="t('access.colCreatedAt')" width="170">
+      <el-table-column :label="t('access.colCreatedAt')" min-width="170">
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column :label="t('access.colToken')" min-width="200">
+      <el-table-column :label="t('access.colToken')" min-width="110">
         <template #default="{ row }">
           <code class="token-text">{{ maskToken(row.token_hint) }}</code>
         </template>

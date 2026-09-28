@@ -153,12 +153,13 @@ export default {
     settingsTitle: 'Custom instructions',
     instructionsLabel: 'Base prompt',
     instructionsPlaceholder: 'Leave empty to use the built-in default',
-    instructionsHint: 'Faded text is the built-in default; edit it directly.',
+    instructionsInfo:
+      'Sent to agents in the MCP initialize response, replacing the built-in default; faded text is the built-in default, edit it directly.',
     conventionsLabel: 'Conventions',
     conventionsPlaceholder: 'e.g. tag naming rules, summary style',
-    conventionsHint: 'Appended after the base prompt.',
+    conventionsInfo:
+      'Appended after the base prompt and sent to agents in the initialize response; leave empty for none.',
     resetToDefault: 'Reset to default',
-    empty: 'No identities yet. Create an admin identity and save its token, then turn on the auth switch above.',
     authTitle: 'Token auth',
     authHint:
       'When enabled, every /mcp and /api request must carry Authorization: Bearer <token>. Create an identity and save its token first (the creation dialog offers one-click save to this browser); after enabling, this browser will show the token prompt once.',
