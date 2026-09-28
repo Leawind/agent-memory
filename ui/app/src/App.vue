@@ -551,41 +551,53 @@ body {
   color: var(--el-color-primary);
   background: linear-gradient(135deg, rgba(68, 182, 138, 0.25) 0%, rgba(58, 250, 112, 0.18) 100%);
 }
+/* 导航：Modrinth 风格药丸组——整组一个胶囊容器，选中项铺实心品牌绿药丸 */
 .nav {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex: 1;
+  gap: 2px;
   min-width: 0;
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 999px;
+  background: var(--el-fill-color-light);
 }
-/* 导航项：胶囊形，悬浮换表面色，选中铺品牌绿软底 */
+/* 导航项：胶囊形，选中铺实心主色（文字色由 --el-color-white 随主题自动适配对比） */
 .nav-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 36px;
+  height: 32px;
   padding: 0 14px;
   border: none;
-  border-radius: var(--el-border-radius-base);
+  border-radius: 999px;
   background: transparent;
   color: var(--el-text-color-regular);
   font-size: 14px;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
 }
 .nav-item:hover {
-  background: var(--el-fill-color-light);
+  background: var(--el-fill-color);
+  color: var(--el-text-color-primary);
 }
 .nav-item.active {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background: var(--el-color-primary);
+  color: var(--el-color-white);
   font-weight: 600;
+}
+.nav-item.active:hover {
+  background: var(--el-color-primary);
+  color: var(--el-color-white);
 }
 .actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 /* 主题分段：iOS 风格胶囊，激活项浮起 */
