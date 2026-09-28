@@ -78,7 +78,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
                  subtitle props 裁剪），概况弹窗 OpsDialog 承载只读统计与版本信息（每次打开重拉，
                  无运维标签页），另附便捷壳 MemoryAdmin（sidebar/tabs；侧栏标题点击弹概况）
                  与弹层组件；多语言内置 vue-i18n（zh/en，独立作用域实例，auto 跟随浏览器，
-                 setMemoryUILocale 运行时切换）；配置经 provideMemoryUI 注入（baseUrl/自定义
+                 setMemoryUILocale 运行时切换；Element Plus 组件文案经各顶层组件内置
+                 ElConfigProvider 跟随同一 locale，宿主无需另配 EP 语言）；配置经 provideMemoryUI 注入（baseUrl/自定义
                  fetch/默认分页/locale）；数据操作在 composables，面板层只渲染与 toast
                  （toast.ts 统一出口：可点击关闭、起始位置让开顶栏）；样式全部引用 --el-* 变量跟随宿主主题
   ui/app         @agent-memory/app —— 独立站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言切换），

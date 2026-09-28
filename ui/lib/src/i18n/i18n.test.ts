@@ -1,6 +1,7 @@
 // i18n: one-to-one zh/en dictionary keys, interpolation and language switching
 import { describe, expect, it } from 'vitest'
 import { memoryUIi18n, setMemoryUILocale, currentMemoryUILocale, t } from './index'
+import { elementPlusLocale } from './elementPlus'
 import zh from './zh'
 import en from './en'
 
@@ -42,5 +43,13 @@ describe('locale switching', () => {
   it('the shared composer exposes t for use outside component setup', () => {
     // pure TS modules such as format.ts / client.ts depend on this shape
     expect(typeof memoryUIi18n.global.t).toBe('function')
+  })
+
+  it('the Element Plus locale follows the library locale', () => {
+    setMemoryUILocale('zh')
+    expect(elementPlusLocale.value.name).toBe('zh-cn')
+    setMemoryUILocale('en')
+    expect(elementPlusLocale.value.name).toBe('en')
+    setMemoryUILocale('zh')
   })
 })

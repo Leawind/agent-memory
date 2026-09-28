@@ -1,153 +1,156 @@
 <template>
   <div ref="rootRef" class="am-panel">
-    <div v-if="showHeader" class="am-panel-header">
-      <div class="am-heading">
-        <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
-        <el-tooltip :content="props.subtitle ?? t('memories.subtitle')" placement="top">
-          <el-icon class="am-info"><InfoFilled /></el-icon>
-        </el-tooltip>
+    <el-config-provider :locale="elementPlusLocale">
+      <div v-if="showHeader" class="am-panel-header">
+        <div class="am-heading">
+          <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
+          <el-tooltip :content="props.subtitle ?? t('memories.subtitle')" placement="top">
+            <el-icon class="am-info"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </div>
+        <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
-    </div>
 
-    <div class="am-toolbar">
-      <el-input
-        v-model="query"
-        :placeholder="t('memories.searchPlaceholder')"
-        clearable
-        class="search"
-        @keyup.enter="run(onSearch)"
-        @clear="run(onSearch)"
+      <div class="am-toolbar">
+        <el-input
+          v-model="query"
+          :placeholder="t('memories.searchPlaceholder')"
+          clearable
+          class="search"
+          @keyup.enter="run(onSearch)"
+          @clear="run(onSearch)"
+        >
+          <template #append>
+            <el-button :icon="Search" @click="run(onSearch)" />
+          </template>
+        </el-input>
+        <el-select
+          v-model="tagFilter"
+          :placeholder="t('memories.tagFilter')"
+          clearable
+          filterable
+          class="tag-filter"
+          @change="run(onSearch)"
+        >
+          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
+        </el-select>
+        <el-select v-model="mode" class="mode-select" @change="run(onSearch)">
+          <el-option :label="t('memories.modeAuto')" value="auto" />
+          <el-option :label="t('memories.modeKeyword')" value="keyword" />
+          <el-option :label="t('memories.modeHybrid')" value="hybrid" />
+        </el-select>
+      </div>
+
+      <el-alert v-if="note" :title="note" type="warning" show-icon :closable="false" />
+      <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
+
+      <!-- Search mode: show matched snippets and scores -->
+      <el-table v-if="searching" :data="searchResults" v-loading="loading">
+        <el-table-column prop="id" :label="t('memories.colId')" width="80" />
+        <el-table-column :label="t('memories.colSummary')">
+          <template #default="{ row }">
+            <div class="am-summary">{{ row.summary }}</div>
+            <div class="am-snippet" v-html="row.snippet" />
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('memories.colTags')" min-width="150">
+          <template #default="{ row }">
+            <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="score" :label="t('memories.colScore')" width="80" sortable />
+        <el-table-column :label="t('memories.colUpdatedAt')" width="170">
+          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+              <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row.id)" />
+            </el-tooltip>
+            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
+              <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="remove(row)" />
+            </el-tooltip>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- List mode: click the created/updated column headers to sort (convention: direction shown on the right of the active header, click to toggle) -->
+      <el-table
+        v-else
+        :data="rows"
+        v-loading="loading"
+        :default-sort="{ prop: sort, order: order === 'asc' ? 'ascending' : 'descending' }"
+        @sort-change="onSortChange"
       >
-        <template #append>
-          <el-button :icon="Search" @click="run(onSearch)" />
-        </template>
-      </el-input>
-      <el-select
-        v-model="tagFilter"
-        :placeholder="t('memories.tagFilter')"
-        clearable
-        filterable
-        class="tag-filter"
-        @change="run(onSearch)"
-      >
-        <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
-      </el-select>
-      <el-select v-model="mode" class="mode-select" @change="run(onSearch)">
-        <el-option :label="t('memories.modeAuto')" value="auto" />
-        <el-option :label="t('memories.modeKeyword')" value="keyword" />
-        <el-option :label="t('memories.modeHybrid')" value="hybrid" />
-      </el-select>
-    </div>
+        <el-table-column prop="id" :label="t('memories.colId')" width="80" sortable="custom" />
+        <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="180" show-overflow-tooltip />
+        <el-table-column :label="t('memories.colTags')" min-width="150">
+          <template #default="{ row }">
+            <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column
+          v-if="!compact"
+          prop="created_at"
+          :label="t('memories.colCreatedAt')"
+          width="170"
+          sortable="custom"
+        >
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="170" sortable="custom">
+          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+              <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row.id)" />
+            </el-tooltip>
+            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
+              <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="remove(row)" />
+            </el-tooltip>
+          </template>
+        </el-table-column>
+      </el-table>
 
-    <el-alert v-if="note" :title="note" type="warning" show-icon :closable="false" />
-    <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
+      <div class="am-pager" v-if="!searching">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[20, 50, 100, 200]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="run(reload)"
+          @size-change="run(reload)"
+        />
+      </div>
+      <div class="am-pager" v-else>
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="run(reload)"
+          @size-change="run(reload)"
+        />
+      </div>
 
-    <!-- Search mode: show matched snippets and scores -->
-    <el-table v-if="searching" :data="searchResults" v-loading="loading">
-      <el-table-column prop="id" :label="t('memories.colId')" width="80" />
-      <el-table-column :label="t('memories.colSummary')">
-        <template #default="{ row }">
-          <div class="am-summary">{{ row.summary }}</div>
-          <div class="am-snippet" v-html="row.snippet" />
-        </template>
-      </el-table-column>
-      <el-table-column :label="t('memories.colTags')" min-width="150">
-        <template #default="{ row }">
-          <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="score" :label="t('memories.colScore')" width="80" sortable />
-      <el-table-column :label="t('memories.colUpdatedAt')" width="170">
-        <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
-      </el-table-column>
-      <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
-        <template #default="{ row }">
-          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
-            <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row.id)" />
-          </el-tooltip>
-          <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
-            <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="remove(row)" />
-          </el-tooltip>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <!-- List mode: click the created/updated column headers to sort (convention: direction shown on the right of the active header, click to toggle) -->
-    <el-table
-      v-else
-      :data="rows"
-      v-loading="loading"
-      :default-sort="{ prop: sort, order: order === 'asc' ? 'ascending' : 'descending' }"
-      @sort-change="onSortChange"
-    >
-      <el-table-column prop="id" :label="t('memories.colId')" width="80" sortable="custom" />
-      <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="180" show-overflow-tooltip />
-      <el-table-column :label="t('memories.colTags')" min-width="150">
-        <template #default="{ row }">
-          <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column
-        v-if="!compact"
-        prop="created_at"
-        :label="t('memories.colCreatedAt')"
-        width="170"
-        sortable="custom"
-      >
-        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="170" sortable="custom">
-        <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
-      </el-table-column>
-      <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
-        <template #default="{ row }">
-          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
-            <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row.id)" />
-          </el-tooltip>
-          <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
-            <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="remove(row)" />
-          </el-tooltip>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <div class="am-pager" v-if="!searching">
-      <el-pagination
-        v-model:current-page="page"
-        v-model:page-size="pageSize"
-        :total="total"
-        :page-sizes="[20, 50, 100, 200]"
-        layout="total, sizes, prev, pager, next"
-        @current-change="run(reload)"
-        @size-change="run(reload)"
+      <!-- Create / edit -->
+      <MemoryEditorDialog
+        v-model:visible="editorVisible"
+        :memory-id="editingId"
+        :tag-options="tagOptions"
+        :width="narrow ? '96%' : '640px'"
+        @saved="onSaved"
       />
-    </div>
-    <div class="am-pager" v-else>
-      <el-pagination
-        v-model:current-page="page"
-        v-model:page-size="pageSize"
-        :total="total"
-        :page-sizes="[10, 20, 50]"
-        layout="total, sizes, prev, pager, next"
-        @current-change="run(reload)"
-        @size-change="run(reload)"
-      />
-    </div>
-
-    <!-- Create / edit -->
-    <MemoryEditorDialog
-      v-model:visible="editorVisible"
-      :memory-id="editingId"
-      :tag-options="tagOptions"
-      :width="narrow ? '96%' : '640px'"
-      @saved="onSaved"
-    />
+    </el-config-provider>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
 import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'

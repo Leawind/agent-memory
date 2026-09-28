@@ -1,116 +1,119 @@
 <template>
   <div ref="rootRef" class="am-panel">
-    <div v-if="showHeader" class="am-panel-header">
-      <div class="am-heading">
-        <h2 class="am-panel-title">{{ props.title ?? t('tags.title') }}</h2>
-        <el-tooltip :content="props.subtitle ?? t('tags.subtitle')" placement="top">
-          <el-icon class="am-info"><InfoFilled /></el-icon>
-        </el-tooltip>
+    <el-config-provider :locale="elementPlusLocale">
+      <div v-if="showHeader" class="am-panel-header">
+        <div class="am-heading">
+          <h2 class="am-panel-title">{{ props.title ?? t('tags.title') }}</h2>
+          <el-tooltip :content="props.subtitle ?? t('tags.subtitle')" placement="top">
+            <el-icon class="am-info"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </div>
+        <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('tags.create') }}</el-button>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('tags.create') }}</el-button>
-    </div>
 
-    <!-- Regex filter on tag names (applied server-side; invalid regexes are reported by the server and toasted) -->
-    <el-input
-      v-model="filter"
-      class="am-tag-filter"
-      :placeholder="t('tags.filterPlaceholder')"
-      clearable
-      :prefix-icon="Search"
-      @input="applyFilterDebounced"
-      @clear="applyFilterDebounced"
-    />
+      <!-- Regex filter on tag names (applied server-side; invalid regexes are reported by the server and toasted) -->
+      <el-input
+        v-model="filter"
+        class="am-tag-filter"
+        :placeholder="t('tags.filterPlaceholder')"
+        clearable
+        :prefix-icon="Search"
+        @input="applyFilterDebounced"
+        @clear="applyFilterDebounced"
+      />
 
-    <el-table :data="rows" v-loading="loading">
-      <el-table-column prop="name" :label="t('tags.colName')" min-width="140" sortable>
-        <template #default="{ row }">
-          <el-tag>{{ row.name }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="description" :label="t('tags.colDescription')" min-width="150" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.description || '—' }}</template>
-      </el-table-column>
-      <el-table-column prop="memory_count" :label="t('tags.colMemoryCount')" width="90" sortable />
-      <el-table-column
-        prop="last_used_at"
-        :label="t('tags.colLastUsed')"
-        width="170"
-        sortable
-        :sort-method="byTimeField('last_used_at')"
+      <el-table :data="rows" v-loading="loading">
+        <el-table-column prop="name" :label="t('tags.colName')" min-width="140" sortable>
+          <template #default="{ row }">
+            <el-tag>{{ row.name }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="description" :label="t('tags.colDescription')" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.description || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="memory_count" :label="t('tags.colMemoryCount')" width="90" sortable />
+        <el-table-column
+          prop="last_used_at"
+          :label="t('tags.colLastUsed')"
+          width="170"
+          sortable
+          :sort-method="byTimeField('last_used_at')"
+        >
+          <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
+        </el-table-column>
+        <el-table-column
+          prop="created_at"
+          :label="t('tags.colCreatedAt')"
+          width="170"
+          sortable
+          :sort-method="byTimeField('created_at')"
+        >
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+              <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row)" />
+            </el-tooltip>
+            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
+              <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="openDelete(row)" />
+            </el-tooltip>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-dialog
+        v-model="dialogVisible"
+        :title="form.oldName ? t('tags.editTitle') : t('tags.createTitle')"
+        :width="narrow ? '96%' : '480px'"
       >
-        <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
-      </el-table-column>
-      <el-table-column
-        prop="created_at"
-        :label="t('tags.colCreatedAt')"
-        width="170"
-        sortable
-        :sort-method="byTimeField('created_at')"
-      >
-        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
-        <template #default="{ row }">
-          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
-            <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row)" />
-          </el-tooltip>
-          <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
-            <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="openDelete(row)" />
-          </el-tooltip>
+        <el-form label-position="top">
+          <!-- Prefill the current name when editing: small tweaks are direct edits, no need to retype the full name; the server treats an unchanged-name submit as a no-rename -->
+          <el-form-item :label="t('tags.nameLabel')">
+            <el-input v-model="form.name" maxlength="100" show-word-limit :placeholder="t('tags.namePlaceholder')" />
+          </el-form-item>
+          <el-form-item :label="t('tags.descLabel')">
+            <el-input
+              v-model="form.description"
+              type="textarea"
+              :rows="3"
+              maxlength="512"
+              show-word-limit
+              :placeholder="t('tags.descPlaceholder')"
+            />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
+          <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
         </template>
-      </el-table-column>
-    </el-table>
+      </el-dialog>
 
-    <el-dialog
-      v-model="dialogVisible"
-      :title="form.oldName ? t('tags.editTitle') : t('tags.createTitle')"
-      :width="narrow ? '96%' : '480px'"
-    >
-      <el-form label-position="top">
-        <!-- Prefill the current name when editing: small tweaks are direct edits, no need to retype the full name; the server treats an unchanged-name submit as a no-rename -->
-        <el-form-item :label="t('tags.nameLabel')">
-          <el-input v-model="form.name" maxlength="100" show-word-limit :placeholder="t('tags.namePlaceholder')" />
-        </el-form-item>
-        <el-form-item :label="t('tags.descLabel')">
-          <el-input
-            v-model="form.description"
-            type="textarea"
-            :rows="3"
-            maxlength="512"
-            show-word-limit
-            :placeholder="t('tags.descPlaceholder')"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- Delete-mode choice: the rich structure (tag name / count) can't be interpolated as one sentence, so it's split into three fixed-order segments -->
-    <el-dialog v-model="deleteVisible" :title="t('tags.deleteTitle')" :width="narrow ? '96%' : '480px'">
-      <p class="delete-body">
-        {{ t('tags.deleteBefore') }}
-        <el-tag>{{ target?.name }}</el-tag>
-        {{ t('tags.deleteMiddle') }}
-        <b>{{ target?.memory_count }}</b>
-        {{ t('tags.deleteAfter') }}
-      </p>
-      <el-radio-group v-model="deleteMode">
-        <el-radio value="detach">{{ t('tags.detach') }}</el-radio>
-        <el-radio value="purge">{{ t('tags.purge') }}</el-radio>
-      </el-radio-group>
-      <template #footer>
-        <el-button @click="deleteVisible = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="danger" :loading="saving" @click="doDelete">{{ t('common.delete') }}</el-button>
-      </template>
-    </el-dialog>
+      <!-- Delete-mode choice: the rich structure (tag name / count) can't be interpolated as one sentence, so it's split into three fixed-order segments -->
+      <el-dialog v-model="deleteVisible" :title="t('tags.deleteTitle')" :width="narrow ? '96%' : '480px'">
+        <p class="delete-body">
+          {{ t('tags.deleteBefore') }}
+          <el-tag>{{ target?.name }}</el-tag>
+          {{ t('tags.deleteMiddle') }}
+          <b>{{ target?.memory_count }}</b>
+          {{ t('tags.deleteAfter') }}
+        </p>
+        <el-radio-group v-model="deleteMode">
+          <el-radio value="detach">{{ t('tags.detach') }}</el-radio>
+          <el-radio value="purge">{{ t('tags.purge') }}</el-radio>
+        </el-radio-group>
+        <template #footer>
+          <el-button @click="deleteVisible = false">{{ t('common.cancel') }}</el-button>
+          <el-button type="danger" :loading="saving" @click="doDelete">{{ t('common.delete') }}</el-button>
+        </template>
+      </el-dialog>
+    </el-config-provider>
   </div>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
+import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
 import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'

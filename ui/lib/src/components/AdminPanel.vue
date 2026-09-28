@@ -1,66 +1,69 @@
 <template>
   <div ref="rootRef" class="am-panel admin-panel">
-    <div v-if="showHeader" class="am-panel-header">
-      <div class="am-heading">
-        <h2 class="am-panel-title">{{ props.title ?? t('access.title') }}</h2>
-        <el-tooltip :content="props.subtitle ?? t('access.subtitle')" placement="top">
-          <el-icon class="am-info"><InfoFilled /></el-icon>
-        </el-tooltip>
+    <el-config-provider :locale="elementPlusLocale">
+      <div v-if="showHeader" class="am-panel-header">
+        <div class="am-heading">
+          <h2 class="am-panel-title">{{ props.title ?? t('access.title') }}</h2>
+          <el-tooltip :content="props.subtitle ?? t('access.subtitle')" placement="top">
+            <el-icon class="am-info"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </div>
       </div>
-    </div>
 
-    <el-alert v-if="!who" type="info" :title="t('access.needAdmin')" :closable="false" />
-    <el-alert v-else-if="who.mode === 'open'" type="warning" :title="t('access.openMode')" :closable="false" />
-    <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
+      <el-alert v-if="!who" type="info" :title="t('access.needAdmin')" :closable="false" />
+      <el-alert v-else-if="who.mode === 'open'" type="warning" :title="t('access.openMode')" :closable="false" />
+      <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
-    <template v-if="who && isAdmin">
-      <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
-      <AuthCard
-        :auth-required="authRequired"
-        :has-admin-identity="hasAdminIdentity"
-        :anonymous-permissions="anonymousPermissions"
-        :identities="identities"
-        :compact="compact"
-        @changed="load"
-        @saved="load"
-        @create="formDialog?.openCreate()"
-        @edit="formDialog?.openEdit($event)"
-        @delete="askDelete"
-        @reset-token="askResetToken"
-      />
+      <template v-if="who && isAdmin">
+        <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
+        <AuthCard
+          :auth-required="authRequired"
+          :has-admin-identity="hasAdminIdentity"
+          :anonymous-permissions="anonymousPermissions"
+          :identities="identities"
+          :compact="compact"
+          @changed="load"
+          @saved="load"
+          @create="formDialog?.openCreate()"
+          @edit="formDialog?.openEdit($event)"
+          @delete="askDelete"
+          @reset-token="askResetToken"
+        />
 
-      <!-- Semantic search config and vector coverage share a card (the former standalone coverage card at the bottom was merged in) -->
-      <EmbeddingSettingsCard
-        :embedding-enabled="embeddingEnabled"
-        :embedding-base-url="embeddingBaseUrl"
-        :embedding-model="embeddingModel"
-        :embedding-api-key="embeddingApiKey"
-        :stats="stats"
-        :compact="compact"
-        @changed="load"
-      />
+        <!-- Semantic search config and vector coverage share a card (the former standalone coverage card at the bottom was merged in) -->
+        <EmbeddingSettingsCard
+          :embedding-enabled="embeddingEnabled"
+          :embedding-base-url="embeddingBaseUrl"
+          :embedding-model="embeddingModel"
+          :embedding-api-key="embeddingApiKey"
+          :stats="stats"
+          :compact="compact"
+          @changed="load"
+        />
 
-      <PromptSettingsCard
-        :instructions="instructions"
-        :conventions="conventions"
-        :default-instructions="defaultInstructions"
-      />
+        <PromptSettingsCard
+          :instructions="instructions"
+          :conventions="conventions"
+          :default-instructions="defaultInstructions"
+        />
 
-      <BackupCard />
+        <BackupCard />
 
-      <DoctorCard />
-    </template>
+        <DoctorCard />
+      </template>
 
-    <!-- Create / edit identity; the parent refreshes the list on success -->
-    <IdentityFormDialog ref="formDialog" :compact="compact" @saved="load" @created="onIdentityCreated" />
+      <!-- Create / edit identity; the parent refreshes the list on success -->
+      <IdentityFormDialog ref="formDialog" :compact="compact" @saved="load" @created="onIdentityCreated" />
 
-    <!-- After create / reset: the token is shown in plaintext only once -->
-    <TokenOnceDialog ref="tokenDialog" :compact="compact" />
+      <!-- After create / reset: the token is shown in plaintext only once -->
+      <TokenOnceDialog ref="tokenDialog" :compact="compact" />
+    </el-config-provider>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { t } from '../i18n'

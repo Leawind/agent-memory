@@ -1,48 +1,51 @@
 <template>
   <div class="memory-ui">
-    <el-container class="layout">
-      <el-aside v-if="layout === 'sidebar'" width="200px" class="aside">
-        <div class="brand">
-          <!-- Click the title to open the server overview (OpsDialog) -->
-          <button type="button" class="brand-btn" @click="opsVisible = true">
-            <span class="brand-mark">
-              <el-icon :size="16"><Collection /></el-icon>
-            </span>
-            <span>{{ title }}</span>
-          </button>
-        </div>
-        <el-menu :default-active="active" class="menu" @select="active = $event">
-          <el-menu-item index="memories">
-            <el-icon><Notebook /></el-icon>
-            <span>{{ t('nav.memories') }}</span>
-          </el-menu-item>
-          <el-menu-item index="tags">
-            <el-icon><PriceTag /></el-icon>
-            <span>{{ t('nav.tags') }}</span>
-          </el-menu-item>
-        </el-menu>
-        <div class="aside-footer">
-          <slot name="footer" />
-        </div>
-      </el-aside>
+    <el-config-provider :locale="elementPlusLocale">
+      <el-container class="layout">
+        <el-aside v-if="layout === 'sidebar'" width="200px" class="aside">
+          <div class="brand">
+            <!-- Click the title to open the server overview (OpsDialog) -->
+            <button type="button" class="brand-btn" @click="opsVisible = true">
+              <span class="brand-mark">
+                <el-icon :size="16"><Collection /></el-icon>
+              </span>
+              <span>{{ title }}</span>
+            </button>
+          </div>
+          <el-menu :default-active="active" class="menu" @select="active = $event">
+            <el-menu-item index="memories">
+              <el-icon><Notebook /></el-icon>
+              <span>{{ t('nav.memories') }}</span>
+            </el-menu-item>
+            <el-menu-item index="tags">
+              <el-icon><PriceTag /></el-icon>
+              <span>{{ t('nav.tags') }}</span>
+            </el-menu-item>
+          </el-menu>
+          <div class="aside-footer">
+            <slot name="footer" />
+          </div>
+        </el-aside>
 
-      <el-main class="main">
-        <el-tabs v-if="layout === 'tabs'" v-model="active" class="tabs-bar">
-          <el-tab-pane :label="t('nav.memories')" name="memories" />
-          <el-tab-pane :label="t('nav.tags')" name="tags" />
-        </el-tabs>
+        <el-main class="main">
+          <el-tabs v-if="layout === 'tabs'" v-model="active" class="tabs-bar">
+            <el-tab-pane :label="t('nav.memories')" name="memories" />
+            <el-tab-pane :label="t('nav.tags')" name="tags" />
+          </el-tabs>
 
-        <!-- Panels stay mounted: switching tabs keeps state and avoids refetching -->
-        <MemoriesPanel v-show="active === 'memories'" />
-        <TagsPanel v-show="active === 'tags'" />
-      </el-main>
-    </el-container>
-    <OpsDialog :visible="opsVisible" @update:visible="opsVisible = $event" />
+          <!-- Panels stay mounted: switching tabs keeps state and avoids refetching -->
+          <MemoriesPanel v-show="active === 'memories'" />
+          <TagsPanel v-show="active === 'tags'" />
+        </el-main>
+      </el-container>
+      <OpsDialog :visible="opsVisible" @update:visible="opsVisible = $event" />
+    </el-config-provider>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { elementPlusLocale } from '../i18n/elementPlus'
 import { t } from '../i18n'
 import { Collection, Notebook, PriceTag } from '@element-plus/icons-vue'
 import MemoriesPanel from './MemoriesPanel.vue'
