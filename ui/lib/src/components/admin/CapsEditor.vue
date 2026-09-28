@@ -1,5 +1,5 @@
 <template>
-  <!-- 能力预设 + 勾选：身份表单与匿名访问卡共用；caps/preset 两个状态由父层持有（v-model 双向绑定） -->
+  <!-- Capability presets + checkboxes: shared by the identity form and the anonymous access card; caps/preset state lives in the parent (v-model two-way binding) -->
   <div>
     <div class="presets">
       <span class="presets-label">{{ t('access.presets') }}</span>

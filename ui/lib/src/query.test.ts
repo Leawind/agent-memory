@@ -1,4 +1,4 @@
-// 查询串组装的单元测试（与 server 端 tools::params 行为对齐的约定）
+// Unit tests for query string assembly (conventions aligned with the server's tools::params behavior)
 import { describe, expect, it } from 'vitest'
 import { buildMemoriesQuery, isSearchMode } from './query.js'
 

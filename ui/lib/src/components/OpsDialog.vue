@@ -24,12 +24,14 @@ import { t } from '../i18n'
 import { useOps } from '../composables/useOps'
 import { toastError } from '../toast'
 
-const props = defineProps<{ /** 显隐（由宿主的标题点击等入口控制） */ visible: boolean }>()
+const props = defineProps<{
+  /** Visibility (controlled by host entry points such as a title click) */ visible: boolean
+}>()
 const emit = defineEmits<{ 'update:visible': [value: boolean] }>()
 
 const { stats, version, sizeText, reload } = useOps()
 
-// 每次打开都重拉：概况即点即新，无需手动刷新
+// Refetch on every open: the overview is always fresh when clicked, no manual refresh needed
 watch(
   () => props.visible,
   (open) => {

@@ -1,6 +1,7 @@
 /*
- * Markdown 正文排版（.md-body 命名空间，全局而非 scoped：v-html 子节点
- * 拿不到 scope 属性）。颜色全部引用 Element Plus 变量以跟随宿主主题。
+ * Markdown body typography (.md-body namespace, global rather than scoped: v-html
+ * child nodes never receive scope attributes). All colors reference Element Plus
+ * variables to follow the host theme.
  */
 .md-body {
   font-size: 14px;

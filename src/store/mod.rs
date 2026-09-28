@@ -1,22 +1,22 @@
-//! SQLite 持久化：单个数据库文件（WAL 模式）。
+//! SQLite persistence: a single database file (WAL mode).
 //!
-//! 数据库文件格式是平台无关的（SQLite 自身处理字节序与对齐），同一份 .db
-//! 可以在 Windows / Linux / macOS 之间直接复制使用。
+//! The database file format is platform-independent (SQLite handles byte order and alignment itself), so the same .db
+//! file can be copied directly between Windows / Linux / macOS.
 //!
-//! **SQL 全部外置**：业务语句在仓库根 `sql/` 目录（见 `crate::sql`），
-//! schema 迁移在 `migrations/` 目录（build.rs 编译期生成 `MIGRATIONS`，
-//! 目录即唯一事实源——加迁移只需丢入 `NUM-NAME.sql` 并重新编译）。
-//! 迁移运行器按 `PRAGMA user_version` 记录进度，每个迁移独立事务，
-//! 保证恰好应用一次；发布前允许破坏性更改（改写基线、删库重建），
-//! 发布后只能新增迁移文件。
+//! **All SQL lives outside Rust**: business statements are in the repo-root `sql/` directory (see `crate::sql`),
+//! and schema migrations in the `migrations/` directory (build.rs generates `MIGRATIONS` at compile time;
+//! the directory is the single source of truth — adding a migration is just dropping in `NUM-NAME.sql` and recompiling).
+//! The migration runner tracks progress via `PRAGMA user_version`, applying each migration in its own transaction
+//! so each applies exactly once. Before release, breaking changes are allowed (rewriting the baseline, dropping and rebuilding the database);
+//! after release, only new migration files may be added.
 //!
-//! 本层只做数据存取与少量聚合查询，不做参数校验；校验见 `tools::params`，
-//! 纯数据模型见 `model`。所有请求在一个事务内执行（见 `with_db`），
-//! panic 或错误时事务回滚，数据保持原样。
+//! This layer only stores and retrieves data plus a few aggregate queries — no argument validation; see `tools::params` for that,
+//! and `model` for the pure data model. Every request executes inside one transaction (see `with_db`);
+//! on panic or error the transaction rolls back and the data stays untouched.
 //!
-//! 按领域拆分：`tags` / `memories` / `identities` / `settings` /
-//! `embeddings` 各以 `impl Store` 承载数据操作，`ops` 是体检 / 统计 /
-//! 导出导入等聚合查询，`tx` 是事务入口，`migrate` 是迁移运行器。
+//! Split by domain: `tags` / `memories` / `identities` / `settings` /
+//! `embeddings` each carry their data operations as `impl Store`; `ops` holds the aggregate queries (health check / statistics /
+//! export/import), `tx` is the transaction entry point, and `migrate` is the migration runner.
 
 mod embeddings;
 mod identities;
@@ -46,14 +46,14 @@ pub struct Store {
     pub conn: Connection,
 }
 
-/// 数据库文件路径的默认位置（当前工作目录下；--db 参数可覆盖）。
-/// 设计用法是用户自己在固定目录运行维护：数据就在启动目录里，可见可控。
-/// 所有子命令共享这一默认——维护命令须与 serve 在同一目录执行，或显式 --db。
+/// Default location of the database file (the current working directory; the --db flag overrides it).
+/// The intended usage is for the user to run maintenance from a fixed directory: the data sits in the startup directory, visible and under control.
+/// All subcommands share this default — maintenance commands must run in the same directory as serve, or pass --db explicitly.
 pub fn default_path() -> PathBuf {
     PathBuf::from("memory.db")
 }
 
-/// 相对路径锚定到当前工作目录，保证 stats / 运维面板展示的始终是明确路径。
+/// Relative paths are anchored to the current working directory, so stats / the ops panel always show an unambiguous path.
 pub fn normalize_path(p: &Path) -> PathBuf {
     if p.is_absolute() {
         return p.to_path_buf();
@@ -64,7 +64,7 @@ pub fn normalize_path(p: &Path) -> PathBuf {
 }
 
 impl Store {
-    /// 打开数据库：建目录、设 WAL/busy_timeout/外键、跑迁移。
+    /// Open the database: create directories, set WAL/busy_timeout/foreign keys, run migrations.
     pub fn open(path: &Path) -> Result<Store, String> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -76,12 +76,12 @@ impl Store {
             .map_err(|e| format!("cannot open database at {}: {}", path.display(), e))?;
         conn.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))
             .map_err(|e| format!("cannot set busy timeout: {e}"))?;
-        // WAL：读写不互斥，写者之间靠 SQLite 自己的锁 + busy_timeout 排队。
-        // 最后一个连接正常关闭时 SQLite 会自动 checkpoint，此时 .db 单文件即可带走。
+        // WAL: reads and writers do not exclude each other; writers queue via SQLite's own locking + busy_timeout.
+        // When the last connection closes cleanly, SQLite checkpoints automatically, leaving a single portable .db file.
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| format!("cannot enable WAL mode: {e}"))?;
-        // WAL 下的推荐档位：应用崩溃不丢数据，仅断电可能丢最近事务（不会损坏库），
-        // 换取每次提交不再强制 fsync——对本服务"每请求一写"的模式收益明显。
+        // The recommended WAL level: an application crash loses nothing, only a power cut may lose the latest transaction (never corrupts the database),
+        // in exchange for no forced fsync on every commit — a clear win for this service's one-write-per-request pattern.
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(|e| format!("cannot set synchronous mode: {e}"))?;
         conn.pragma_update(None, "foreign_keys", "ON")
@@ -94,12 +94,12 @@ impl Store {
         })
     }
 
-    /// id 整数 ↔ API 字符串（"m3"）的边界换算。
+    /// Boundary conversion between the integer id and the API string ("m3").
     pub fn format_id(id: i64) -> String {
         format!("m{id}")
     }
 
-    /// 仅接受 "m{n}" 格式（n 为正整数）；省略 m 前缀的写法不受容忍，返回 None。
+    /// Accepts only the "m{n}" format (n a positive integer); the m-prefix-less form is not tolerated and returns None.
     pub fn parse_id(raw: &str) -> Option<i64> {
         raw.strip_prefix('m')?
             .parse::<i64>()
@@ -112,8 +112,8 @@ fn is_unique_violation(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(ee, _) if ee.code == rusqlite::ErrorCode::ConstraintViolation)
 }
 
-/// 期望 schema：从嵌入的迁移文本解析（表名小写 → 列名小写列表），
-/// 进程内缓存一份——迁移文本编译期固定，解析结果不会变。
+/// Expected schema: parsed from the embedded migration texts (lowercased table name → list of lowercased column names),
+/// cached for the process lifetime — the migration texts are fixed at compile time, so the parse result never changes.
 fn expected_schema() -> &'static HashMap<String, Vec<String>> {
     static EXPECTED: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
     EXPECTED.get_or_init(|| {
@@ -125,9 +125,9 @@ fn expected_schema() -> &'static HashMap<String, Vec<String>> {
     })
 }
 
-/// 从一段 SQL 里解析 CREATE TABLE（含 IF NOT EXISTS 形式）的表名与列名。
-/// 只需覆盖本项目迁移的写法：先去掉 `--` 行注释；表名取到 `(` 为止；
-/// 列定义取每个顶层逗号段的首个标识符，约束段（PRIMARY KEY 等）跳过。
+/// Parse the table and column names of a CREATE TABLE (including the IF NOT EXISTS form) from a SQL snippet.
+/// Only needs to cover the style used by this project's migrations: strip `--` line comments first; take the table name up to `(`;
+/// take the first identifier of each top-level comma segment as a column definition, skipping constraint sections (PRIMARY KEY etc.).
 fn parse_create_tables(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
     let mut cleaned = String::with_capacity(sql_text.len());
     for line in sql_text.lines() {
@@ -153,7 +153,7 @@ fn parse_create_tables(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
             .trim()
             .trim_matches('"')
             .to_ascii_lowercase();
-        // 列定义体：括号配对到收口的 ')'
+        // Column definition body: match parentheses until the closing ')'
         let bytes = cleaned.as_bytes();
         let mut depth = 1usize;
         let mut end = paren + 1;
@@ -186,7 +186,7 @@ fn parse_create_tables(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
     }
 }
 
-/// 按括号深度 0 的逗号切分（列定义里不含嵌套括号时退化为普通切分）。
+/// Split on commas at bracket depth 0 (degenerates to plain splitting when column definitions contain no nested brackets).
 fn split_top_level(body: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -211,10 +211,10 @@ fn split_top_level(body: &str) -> Vec<String> {
     parts
 }
 
-/// schema 指纹校验：user_version 只记录"应用了几个迁移"，不证明表真的存在
-/// （就地改写过迁移的库两数值都对，表却可能缺失或形状陈旧）。打开时把迁移
-/// 文本声明的表与列和实测比对，不符即拒绝打开——把"操作深处才爆的
-/// no such table"提前变成指名道姓的启动失败，并给出恢复路径。
+/// Schema fingerprint check: user_version only records "how many migrations were applied" — it does not prove the tables actually exist
+/// (a database whose migrations were rewritten in place has both numbers right, yet tables may be missing or stale). On open, the tables and columns
+/// declared by the migration texts are compared against what is actually there, and any mismatch refuses to open — turning the
+/// "no such table" that would otherwise blow up deep in operation into a named startup failure, with a recovery path.
 fn verify_schema(conn: &Connection) -> Result<(), String> {
     const GUIDANCE: &str = "the file was created by an incompatible version; export your data with the matching older build, then import into a fresh database";
     let expected = expected_schema();
@@ -305,8 +305,8 @@ mod tests {
         assert_eq!(Store::format_id(12), "m12");
     }
 
-    /// 指纹校验：user_version 对但表缺失的库必须拒绝打开，且错误指名道姓
-    /// （把"操作深处才爆的 no such table"提前成打开失败）。
+    /// Fingerprint check: a database whose user_version is right but tables are missing must refuse to open, with an error that names names
+    /// (turning the "no such table" that would blow up deep in operation into an open-time failure).
     #[test]
     fn schema_fingerprint_rejects_missing_table() {
         let path = temp_db("fingerprint");
@@ -327,8 +327,8 @@ mod tests {
         cleanup(&path);
     }
 
-    /// 指纹校验：形状陈旧的表（旧 schema 按名关联、无 id 列）同样拒绝，
-    /// 错误列出缺失与多余的列名。
+    /// Fingerprint check: stale-shaped tables (an old schema linking by name, without an id column) are refused too,
+    /// with the error listing the missing and extra column names.
     #[test]
     fn schema_fingerprint_rejects_stale_table_shape() {
         let path = temp_db("fingerprint-stale");

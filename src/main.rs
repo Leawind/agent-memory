@@ -1,9 +1,9 @@
-//! agent-memory：自托管 MCP 记忆服务器（HTTP），供多个 agent 长期共享记忆，
-//! 并内嵌 Vue3 管理界面。
+//! agent-memory: a self-hosted MCP memory server (HTTP) that lets multiple agents share a long-lived memory,
+//! with an embedded Vue3 management UI.
 //!
-//! 一个进程同时服务：agent 的 MCP Streamable HTTP 端点（/mcp）、
-//! 管理界面（/）与管理后端（/api/*）。数据存 SQLite 单文件，
-//! 多进程并发由 WAL + busy_timeout 保证。诊断信息只写 stderr。
+//! One process serves everything at once: the agents' MCP Streamable HTTP endpoint (/mcp),
+//! the management UI (/) and the admin backend (/api/*). Data lives in a single SQLite file;
+//! concurrent multi-process access is guaranteed by WAL + busy_timeout. Diagnostics go to stderr only.
 
 #![forbid(unsafe_code)]
 
@@ -29,10 +29,10 @@ const DEFAULT_PORT: u16 = 8899;
 #[command(
     name = "agent-memory",
     version,
-    about = "自托管 MCP 记忆服务器：多个 agent 共享一个记忆库，内嵌 Web 管理界面"
+    about = "Self-hosted MCP memory server: multiple agents sharing one memory store, with an embedded Web management UI"
 )]
 struct Cli {
-    /// 数据库文件路径（默认当前工作目录下 memory.db）
+    /// Database file path (defaults to memory.db in the current working directory)
     #[arg(long, global = true, value_name = "PATH")]
     db: Option<PathBuf>,
 
@@ -42,41 +42,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// 启动 HTTP 服务器（默认子命令）
+    /// Start the HTTP server (default subcommand)
     Serve {
-        /// 监听地址
+        /// Listen address
         #[arg(long, value_name = "ADDR", default_value = DEFAULT_HOST)]
         host: String,
-        /// 监听端口
+        /// Listen port
         #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
-        /// 详细日志：记录全部请求（含静态资源/健康检查）并附带耗时、
-        /// 请求者身份与 MCP 调用摘要。默认只记错误请求与启动/异常事件。
+        /// Verbose logging: record every request (including static assets/health checks) with
+        /// duration, caller identity and MCP call summaries. By default only failed requests and startup/error events are logged.
         #[arg(long)]
         verbose: bool,
     },
-    /// 打印数据概况
+    /// Print data statistics
     Stats,
-    /// 数据体检：孤儿引用 / 大小写冲突标签组 / 空字段（发现问题时退出码 1）
+    /// Data health check: orphan references / case-conflicting tag groups / empty fields (exits with code 1 when issues are found)
     Doctor,
-    /// 导出可读的 JSON 备份（文件已存在则拒绝覆盖）
+    /// Export a human-readable JSON backup (refuses to overwrite an existing file)
     Export {
-        /// 输出文件路径
+        /// Output file path
         path: PathBuf,
     },
-    /// 从 export 导出的 JSON 恢复数据（要求目标库为空）
+    /// Restore data from a JSON backup produced by export (the target database must be empty)
     Import {
-        /// 备份文件路径
+        /// Backup file path
         path: PathBuf,
     },
-    /// 为缺向量的记忆批量补跑 embedding（语义搜索的派生数据重建；
-    /// 导出/导入不携带向量，恢复库后跑一次即可）
+    /// Batch backfill embeddings for memories missing vectors (rebuilds the derived data
+    /// behind semantic search; export/import does not carry vectors, so run this once after restoring a database)
     EmbedBackfill {
-        /// 每批条数
+        /// Number of items per batch
         #[arg(long, default_value_t = embed::MAX_BATCH)]
         batch: usize,
     },
-    /// 管理 token（无账号体系：token 即身份，日常增删走管理界面）
+    /// Manage tokens (no account system: the token is the identity; day-to-day management happens in the Web UI)
     Token {
         #[command(subcommand)]
         command: TokenCommand,
@@ -85,10 +85,10 @@ enum Command {
 
 #[derive(Subcommand)]
 enum TokenCommand {
-    /// 重置身份的 token（旧 token 立即失效），新 token 打印到 stdout。
-    /// 省略 NAME 时重置最早创建的管理员身份——用于丢失 token 的兜底恢复。
+    /// Reset an identity's token (the old one is invalidated immediately); the new token is printed to stdout.
+    /// When NAME is omitted, the earliest-created admin identity is reset — a fallback for lost tokens.
     Reset {
-        /// 身份名（省略 = 最早创建的管理员）
+        /// Identity name (omit = the earliest-created admin)
         name: Option<String>,
     },
 }
@@ -100,8 +100,8 @@ fn main() {
 
 fn run(cli: Cli) -> i32 {
     let db_path = cli.db.unwrap_or_else(store::default_path);
-    // 所有子命令共享默认库路径；cwd 相对名下"跑错目录"会静默新建空库，
-    // 一律先在 stderr 报出解析后的实际位置（stdout 保留给命令结果）。
+    // All subcommands share the default database path; with a cwd-relative name, running from the
+    // wrong directory would silently create an empty database — always report the resolved location on stderr first (stdout is reserved for command results).
     eprintln!("database: {}", store::normalize_path(&db_path).display());
     match cli.command.unwrap_or(Command::Serve {
         host: DEFAULT_HOST.to_string(),
@@ -124,8 +124,8 @@ fn run(cli: Cli) -> i32 {
     }
 }
 
-/// `token reset`：重新生成指定身份的 token（省略名字时选最早创建的管理员）。
-/// 结果走 stdout（新 token），诊断走 stderr。
+/// `token reset`: regenerate the token for the given identity (earliest-created admin when the name is omitted).
+/// Results go to stdout (the new token), diagnostics to stderr.
 fn cmd_token_reset(db_path: &std::path::Path, name: Option<&str>) -> i32 {
     let result: Result<(String, String), String> =
         store::with_db_in(db_path, store::TxMode::Write, |st| {
@@ -156,7 +156,7 @@ fn cmd_token_reset(db_path: &std::path::Path, name: Option<&str>) -> i32 {
     }
 }
 
-/// 从 export JSON 恢复数据。要求目标库为空（导入是恢复/迁移而非合并）。
+/// Restore data from an export JSON. The target database must be empty (import is a restore/migration, not a merge).
 fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
     let text = match std::fs::read_to_string(file) {
         Ok(t) => t,
@@ -189,7 +189,7 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
     }
 }
 
-/// `embed-backfill`：循环补跑直到清零或失败。结果走 stdout，进度/诊断走 stderr。
+/// `embed-backfill`: loop until the pending queue drains or a failure occurs. Results go to stdout, progress/diagnostics to stderr.
 fn cmd_embed_backfill(db_path: &std::path::Path, batch: usize) -> i32 {
     let mut total = 0usize;
     loop {
@@ -217,8 +217,8 @@ fn cmd_embed_backfill(db_path: &std::path::Path, batch: usize) -> i32 {
     }
 }
 
-/// 只读子命令统一走只读快照事务：多条查询之间不会被并发写打断，
-/// 结果保证同一时刻的一致视图（与 /api 只读端点行为一致）。
+/// Read-only subcommands all use read-only snapshot transactions: concurrent writes cannot
+/// interleave between queries, so results reflect one consistent moment (same behavior as the /api read-only endpoints).
 fn read_db<T>(
     db_path: &std::path::Path,
     f: impl FnOnce(&store::Store) -> Result<T, String>,
@@ -293,7 +293,7 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
         Ok(d) => d,
         Err(code) => return code,
     };
-    // 导出一律紧凑 JSON：备份面向程序（import），不面向人读。
+    // Export is always compact JSON: the backup targets programs (import), not human readers.
     let mut body = match serde_json::to_string(&dump) {
         Ok(b) => b,
         Err(e) => {
@@ -302,7 +302,7 @@ fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
         }
     };
     body.push('\n');
-    // 拒绝覆盖已有文件：备份操作宁可让操作者换个名字，也不默默毁掉旧备份。
+    // Refuse to overwrite existing files: for backups, it is better to ask the operator for another name than to silently destroy the old backup.
     let file = match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

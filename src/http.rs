@@ -1,13 +1,13 @@
-//! HTTP 层：一个进程同时服务三类客户端。
+//! HTTP layer: one process serving three kinds of clients at once.
 //!
-//! - `POST /mcp`：MCP Streamable HTTP（无状态 POST/JSON 模式），供 agent 使用
-//! - `/api/*`：管理后端（实现在 `crate::api`，复用工具层 handler），供管理界面使用
-//! - `/`：rust-embed 嵌入的 Vue3 管理界面（SPA）
+//! - `POST /mcp`: MCP Streamable HTTP (stateless POST/JSON mode), for agents
+//! - `/api/*`: the admin backend (implemented in `crate::api`, reusing tool-layer handlers), for the management UI
+//! - `/`: the Vue3 management UI embedded via rust-embed (SPA)
 //!
-//! 另有 `GET /health` 探活。鉴权在传输层完成：请求携带
-//! `Authorization: Bearer <token>`，与 MCP 规范的载体一致；鉴权开关未开启
-//! 时为无鉴权开放模式（个人本地部署零配置）。仅有的其他防护是 Origin 校验
-//! （防浏览器 DNS rebinding）。诊断日志只写 stderr。
+//! There is also `GET /health` for liveness. Auth happens at the transport layer: requests carry
+//! `Authorization: Bearer <token>`, the same carrier the MCP spec uses; while the auth switch is off
+//! the server is in unauthenticated open mode (zero-config for local personal deployments). The only other protection is Origin checking
+//! (against browser DNS rebinding). Diagnostic logs go to stderr only.
 
 use crate::auth::{Cap, IdentityCtx};
 use crate::{api, protocol, store, util};
@@ -21,9 +21,9 @@ use tiny_http::{Header, Response, Server};
 
 const ENDPOINT_MCP: &str = "/mcp";
 const PREFIX_API: &str = "/api";
-/// 单请求 body 上限：远超正文 20 万字符的合法需求，只为防滥用。
+/// Per-request body cap: far above the legitimate need of 200k-character content, purely abuse protection.
 const MAX_BODY: usize = 8 * 1024 * 1024;
-/// 并发 worker 数：写由 SQLite 串行化，多 worker 只为避免读请求排队。
+/// Number of concurrent workers: writes are serialized by SQLite, so multiple workers only keep read requests from queueing.
 const WORKERS: usize = 4;
 
 #[derive(RustEmbed)]
@@ -32,12 +32,12 @@ struct UiAssets;
 
 pub fn serve_http(host: &str, port: u16, db_path: &Path, verbose: bool) -> i32 {
     if port == 0 {
-        // 端口 0 会绑定到随机端口，但调用方无从得知实际端口，等于不可用
+        // Port 0 binds to a random port, but the caller can never learn the actual port — effectively unusable
         eprintln!("--port 0 is not supported; choose a fixed port");
         return 2;
     }
     let addr = format!("{host}:{port}");
-    // 启动前先打开一遍数据库（含迁移校验）；坏库拒绝启动，绝不带病服务。
+    // Open the database once before starting (including migration checks); a broken database refuses to start — never serve while sick.
     if let Err(e) = store::Store::open(db_path) {
         eprintln!("cannot open database ({e}).");
         eprintln!("refusing to start to protect your data.");
@@ -90,7 +90,7 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, verbose: bool) -> i32 {
         handles.push(std::thread::spawn(move || loop {
             match server.recv() {
                 Ok(req) => handle_request(&db, req, verbose),
-                Err(_) => return, // server 已关闭
+                Err(_) => return, // server already shut down
             }
         }));
     }
@@ -127,8 +127,8 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
         return;
     }
 
-    // MCP 规范：POST /mcp 的 Content-Type 不是 application/json 时必须回 415
-    // （无 Content-Type 时宽容处理——部分客户端省略该头）
+    // MCP spec: POST /mcp must answer 415 when the Content-Type is not application/json
+    // (lenient when Content-Type is absent — some clients omit the header)
     if route(&method, &path) == Route::Mcp {
         if let Some(ct) = header_value(&req, "Content-Type") {
             if !ct.to_ascii_lowercase().contains("json") {
@@ -154,8 +154,8 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
         }
     }
 
-    // 鉴权：/mcp 与 /api 必须携带有效 Bearer token（鉴权开关开启时）。
-    // 静态 UI 与 /health 免鉴权（页面本身不含数据，数据全走已鉴权的 /api）。
+    // Auth: /mcp and /api must carry a valid Bearer token (when the auth switch is on).
+    // The static UI and /health need no auth (the page itself holds no data; all data flows through the already-authenticated /api).
     let ctx = if matches!(route(&method, &path), Route::Mcp | Route::Api) {
         match resolve_identity(db_path, header_value(&req, "Authorization").as_deref()) {
             Ok(ctx) => ctx,
@@ -186,7 +186,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
         IdentityCtx::open_mode()
     };
 
-    // body：除 GET/HEAD 外都读（上限内），供 /mcp 与 /api 使用
+    // body: read for everything except GET/HEAD (within the cap), for /mcp and /api to use
     let capped: Option<Vec<u8>> = if method == "GET" || method == "HEAD" {
         Some(Vec::new())
     } else {
@@ -205,7 +205,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
     } else {
         match route(&method, &path) {
             Route::Mcp => {
-                // 与请求级事务配合的 panic 隔离：单个请求不拖垮服务器
+                // Panic isolation paired with per-request transactions: a single request cannot take down the server
                 let negotiated = header_value(&req, "MCP-Protocol-Version");
                 match catch_unwind(AssertUnwindSafe(|| {
                     process_mcp(db_path, &ctx, &body, negotiated.as_deref())
@@ -233,7 +233,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
             }
             Route::Api => {
                 if path == "/api/export" && method == "GET" {
-                    // 导出是全库明文备份：与 doctor/import 同级，要求 admin 能力
+                    // Export is a full plaintext backup of the database: same tier as doctor/import, requires the admin capability
                     if let Err(e) = ctx.require(Cap::Admin) {
                         log_request(
                             verbose,
@@ -287,7 +287,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
     respond_raw(req, status, content_type, payload);
 }
 
-// ---------------------------------------------------------------- 路由
+// ---------------------------------------------------------------- Routing
 
 #[derive(Debug, PartialEq, Eq)]
 enum Route {
@@ -323,12 +323,12 @@ fn route(method: &str, path: &str) -> Route {
     Route::NotFound
 }
 
-// ---------------------------------------------------------------- MCP 端点
+// ---------------------------------------------------------------- MCP endpoint
 
-/// 把一条 JSON-RPC 消息交给协议层处理，返回 HTTP 状态码与响应体。
-/// 通知（无 id）无响应体 → 202 Accepted；其余 → 200。
-/// `negotiated` 来自 MCP-Protocol-Version 请求头（客户端声明协商版本）。
-/// 第三个返回值是给 verbose 日志的调用摘要（方法名 + tools/call 的目标工具）。
+/// Hand one JSON-RPC message to the protocol layer, returning the HTTP status code and response body.
+/// Notifications (no id) have no response body → 202 Accepted; everything else → 200.
+/// `negotiated` comes from the MCP-Protocol-Version request header (the client's declared negotiated version).
+/// The third return value is the call summary for verbose logging (method name + the target tool of tools/call).
 fn process_mcp(
     db_path: &Path,
     ctx: &IdentityCtx,
@@ -349,7 +349,7 @@ fn process_mcp(
     }
 }
 
-/// MCP 请求摘要：批量消息（数组）或畸形结构返回 None，不进日志。
+/// MCP request summary: batch messages (arrays) and malformed structures return None and are not logged.
 fn mcp_summary(msg: &Value) -> Option<String> {
     let method = msg.get("method")?.as_str()?;
     Some(match method {
@@ -363,7 +363,7 @@ fn mcp_summary(msg: &Value) -> Option<String> {
     })
 }
 
-// ---------------------------------------------------------------- 导出与静态资源
+// ---------------------------------------------------------------- Export and static assets
 
 fn respond_export(
     req: tiny_http::Request,
@@ -434,7 +434,7 @@ fn respond_static(
     } else {
         lookup
     };
-    // 精确命中用其自身扩展名决定 MIME；SPA 回退永远是 index.html
+    // An exact hit determines MIME by its own extension; the SPA fallback is always index.html
     let (served, mime) = match UiAssets::get(lookup) {
         Some(f) => (f, mime_of(lookup)),
         None => match UiAssets::get("index.html") {
@@ -490,7 +490,7 @@ fn mime_of(name: &str) -> &'static str {
     }
 }
 
-// ---------------------------------------------------------------- 工具函数
+// ---------------------------------------------------------------- Utilities
 
 fn split_url(url: &str) -> (String, String) {
     match url.split_once('?') {
@@ -499,8 +499,8 @@ fn split_url(url: &str) -> (String, String) {
     }
 }
 
-/// Origin 校验：带 Origin 头时只放行指向本机的来源（浏览器 DNS rebinding 防护）。
-/// 没有 Origin 的请求（MCP 客户端、同源 fetch、curl）一律放行。
+/// Origin check: when an Origin header is present, only loopback-targeted origins are allowed (browser DNS rebinding protection).
+/// Requests without an Origin (MCP clients, same-origin fetch, curl) are always allowed.
 fn origin_allowed(origin: Option<&str>) -> bool {
     let Some(o) = origin else {
         return true;
@@ -516,7 +516,7 @@ fn origin_allowed(origin: Option<&str>) -> bool {
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let authority = authority.trim_end_matches('.');
-    // IPv6 字面量形如 [::1]:8899，先取方括号内主机，避免与端口号混淆
+    // An IPv6 literal looks like [::1]:8899; take the host inside the brackets first to avoid confusing it with the port
     let host = if let Some(inner) = authority.strip_prefix('[') {
         inner.split(']').next().unwrap_or(inner)
     } else {
@@ -538,8 +538,8 @@ fn header_value(req: &tiny_http::Request, name: &str) -> Option<String> {
         .map(|h| h.value.as_str().to_owned())
 }
 
-/// Bearer 解析：`Authorization: Bearer <token>`，方案名大小写不敏感
-/// （RFC 7235 允许），token 本身大小写敏感。
+/// Bearer parsing: `Authorization: Bearer <token>`; the scheme name is case-insensitive
+/// (as RFC 7235 allows); the token itself is case-sensitive.
 fn parse_bearer(header: &str) -> Option<String> {
     let (scheme, rest) = header.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {
@@ -549,21 +549,21 @@ fn parse_bearer(header: &str) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-/// 鉴权失败原因：Denied 是正常拒绝（无效/缺失 token），Storage 是身份
-/// 存储不可读——两者对外统一 401（不泄露失败细节），后者额外记日志。
+/// Auth failure reason: Denied is a normal rejection (invalid/missing token), Storage means the identity
+/// store is unreadable — both surface as 401 externally (no failure details leak), the latter additionally logged.
 enum AuthFail {
     Denied,
     Storage(String),
 }
 
-/// 解析请求身份。鉴权开关（settings 的 auth_required）关闭 → 开放模式
-/// （全能力）；开启后：无 token 按 `anonymous_permissions` 解析为匿名身份
-/// （未设置或全无能力 → 拒绝），携带 token 则必须有效——无效 token 是认证
-/// 失败，不回退匿名。查库失败按"拒绝"处理（fail-closed）。
+/// Resolve the request identity. Auth switch off (settings' auth_required) → open mode
+/// (full capabilities); when on: tokenless requests resolve to the anonymous identity via `anonymous_permissions`
+/// (unset or capability-less → rejected); a presented token must be valid — an invalid token is an authentication
+/// failure, never a fallback to anonymous. Database read failures are treated as "denied" (fail-closed).
 fn resolve_identity(db_path: &Path, auth_header: Option<&str>) -> Result<IdentityCtx, AuthFail> {
     let token = auth_header.and_then(parse_bearer);
-    // 内层 Result 把"正常拒绝（Denied）"与存储错误分开：存储错误在事务层
-    // 以 String 传递，这里再包成 Storage（响应统一 401，日志区分记因）。
+    // The inner Result separates "normal denial (Denied)" from storage errors: storage errors travel as String through
+    // the transaction layer and are wrapped into Storage here (uniform 401 in responses, distinct causes in logs).
     let outcome: Result<Result<IdentityCtx, AuthFail>, String> =
         store::with_db_in(db_path, store::TxMode::ReadOnly, |st| {
             if !st.auth_required()? {
@@ -571,7 +571,7 @@ fn resolve_identity(db_path: &Path, auth_header: Option<&str>) -> Result<Identit
             }
             let Some(token) = token.clone() else {
                 return match st.anonymous_permissions()? {
-                    // 空能力集与未设置同义：匿名整体拒绝
+                    // An empty capability set means the same as unset: anonymous access rejected wholesale
                     Some(perms) if !perms.is_empty() => Ok(Ok(IdentityCtx::anonymous(perms))),
                     _ => Ok(Err(AuthFail::Denied)),
                 };
@@ -644,8 +644,8 @@ fn respond_method_not_allowed(
     let _ = req.respond(resp);
 }
 
-/// 默认只记 >=400 的请求与启动/异常事件；--verbose 时全部记录。
-/// 查询串从不入日志（搜索关键词属用户内容）。
+/// By default only requests with status >=400 and startup/error events are logged; --verbose records everything.
+/// Query strings are never logged (search keywords are user content).
 fn should_log(verbose: bool, status: u16) -> bool {
     verbose || status >= 400
 }
@@ -686,13 +686,13 @@ mod tests {
 
     #[test]
     fn request_log_defaults_to_errors_only() {
-        // 默认模式：成功与重定向静默，4xx/5xx 必现
+        // Default mode: successes and redirects are silent, 4xx/5xx always appear
         assert!(!should_log(false, 200));
         assert!(!should_log(false, 202));
         assert!(should_log(false, 400));
         assert!(should_log(false, 401));
         assert!(should_log(false, 500));
-        // verbose 全量
+        // verbose logs everything
         for s in [200u16, 202, 404, 500] {
             assert!(should_log(true, s));
         }
@@ -707,10 +707,10 @@ mod tests {
         assert_eq!(mcp_summary(&call).as_deref(), Some("tools/call add_memory"));
         let init = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
         assert_eq!(mcp_summary(&init).as_deref(), Some("initialize"));
-        // 批量消息（数组）与畸形结构不产生摘要
+        // Batch messages (arrays) and malformed structures produce no summary
         assert_eq!(mcp_summary(&serde_json::json!([])), None);
         assert_eq!(mcp_summary(&serde_json::json!({"id": 1})), None);
-        // tools/call 缺工具名时占位而非 None
+        // tools/call without a tool name yields a placeholder rather than None
         let broken = serde_json::json!({"method": "tools/call"});
         assert_eq!(mcp_summary(&broken).as_deref(), Some("tools/call ?"));
     }
@@ -728,8 +728,8 @@ mod tests {
         assert!(matches!(route("PUT", "/elsewhere"), Route::NotFound));
     }
 
-    /// rust-embed 的资产装配必须带 SPA 入口（ui/dist/index.html）。dist 未构建时
-    /// build.rs 会落一个占位页，同样满足此断言；这里守住的是嵌入机制本身。
+    /// rust-embed's asset assembly must include the SPA entry (ui/dist/index.html). When dist is not built,
+    /// build.rs drops in a placeholder page that also satisfies this assertion; what is guarded here is the embedding mechanism itself.
     #[test]
     fn embedded_ui_has_index_entry() {
         assert!(
@@ -738,7 +738,7 @@ mod tests {
         );
     }
 
-    /// 端口被占用时 serve_http 必须干净地失败（退出码 1），不能带病启动。
+    /// When the port is taken, serve_http must fail cleanly (exit code 1), never start while sick.
     #[test]
     fn serve_http_fails_cleanly_on_port_conflict() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(parse_bearer("Bearer abc"), Some("abc".to_string()));
         assert_eq!(parse_bearer("bearer abc"), Some("abc".to_string()));
         assert_eq!(parse_bearer("BEARER abc"), Some("abc".to_string()));
-        // 多空格：token 前的空白被吞掉
+        // Multiple spaces: whitespace before the token is swallowed
         assert_eq!(parse_bearer("Bearer   abc  "), Some("abc".to_string()));
         assert_eq!(parse_bearer("Basic abc"), None);
         assert_eq!(parse_bearer("Bearer"), None);
@@ -768,7 +768,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("agent-memory-http-{}.db", std::process::id()));
         let ctx = crate::auth::IdentityCtx::open_mode();
-        // 解析失败 → 400 + -32700，无调用摘要
+        // Parse failure → 400 + -32700, no call summary
         let (status, body, detail) = process_mcp(&path, &ctx, b"not json", None);
         assert_eq!(status, 400);
         assert_eq!(
@@ -777,7 +777,7 @@ mod tests {
         );
         assert_eq!(detail, None);
 
-        // 通知 → 202 空 body，摘要为方法名
+        // Notification → 202 empty body, summary is the method name
         let (status, body, detail) = process_mcp(
             &path,
             &ctx,

@@ -1,13 +1,13 @@
-//! MCP 工具层：参数解析、工具定义与业务处理的入口。
+//! MCP tool layer: the entry point for argument parsing, tool definitions and business handling.
 //!
-//! 模块划分：
-//! - `defs`    工具清单与 JSON Schema（对 agent 暴露的契约，参数校验的唯一权威来源）
-//! - `params`  参数解析与校验辅助
-//! - `tag_ops` 标签增删查改
-//! - `memory_ops` 记忆增删改查、浏览与搜索
+//! Module layout:
+//! - `defs`    tool inventory and JSON Schema (the agent-facing contract, the single source of truth for argument validation)
+//! - `params`  argument parsing and validation helpers
+//! - `tag_ops` tag create/read/update/delete
+//! - `memory_ops` memory CRUD, browsing and search
 //!
-//! 数据访问约定：`execute_with_db` 在单个 SQLite 事务内"打开 → 执行 → 提交"，
-//! panic 或错误时整个事务回滚，多进程并发由 SQLite WAL + busy_timeout 保证。
+//! Data-access convention: `execute_with_db` runs "open → execute → commit" inside a single SQLite transaction;
+//! on panic or error the whole transaction rolls back, and multi-process concurrency is guaranteed by SQLite WAL + busy_timeout.
 
 mod defs;
 mod memory_ops;
@@ -23,17 +23,17 @@ pub use defs::{tool_definitions, TOOL_NAMES};
 
 pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps (created_at / updated_at / last_used_at) are epoch seconds in UTC and recorded automatically — never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
-/// 工具层错误：按类别而非文本分类，REST 层据此映射 HTTP 状态码
-/// （NotFound → 404，Invalid → 400，Forbidden → 403），MCP 层一律以
-/// isError 结果回显消息。
+/// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
+/// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
+/// isError result.
 #[derive(Debug, Clone)]
 pub enum ToolError {
-    /// 资源不存在（REST → 404）
+    /// Resource does not exist (REST → 404)
     NotFound(String),
-    /// 参数校验失败或业务冲突（REST → 400）
+    /// Argument validation failure or business conflict (REST → 400)
     Invalid(String),
-    /// 调用方身份缺少所需能力（REST → 403；与 MCP 规范的
-    /// "403 = insufficient permissions" 语义一致）
+    /// The caller identity lacks a required capability (REST → 403; consistent with the MCP spec's
+    /// "403 = insufficient permissions" semantics)
     Forbidden(String),
 }
 
@@ -50,7 +50,7 @@ impl ToolError {
         ToolError::Forbidden(msg.into())
     }
 
-    /// 面向 agent / 管理界面的可读消息。
+    /// Readable message for agents / the management UI.
     pub fn message(&self) -> &str {
         match self {
             ToolError::NotFound(m) | ToolError::Invalid(m) | ToolError::Forbidden(m) => m,
@@ -65,17 +65,17 @@ impl std::fmt::Display for ToolError {
 }
 
 impl From<String> for ToolError {
-    /// 数据层/参数层的 String 错误默认归入 Invalid；
-    /// "不存在"类别由 handler 显式构造 NotFound。
+    /// String errors from the data/params layers default to Invalid;
+    /// handlers construct the "not found" kind explicitly via NotFound.
     fn from(message: String) -> Self {
         ToolError::Invalid(message)
     }
 }
 
-/// 在单个事务内完成"打开数据库 → 执行 → 提交"。
-/// 事务模式由工具契约决定：readOnlyHint 为真的工具走 DEFERRED 快照，
-/// 其余走 IMMEDIATE 写锁（见 store::TxMode）。
-/// 权限在 `execute` 入口集中校验（能力要求见 `defs::required_cap`）。
+/// Completes "open database → execute → commit" inside a single transaction.
+/// The transaction mode is decided by the tool contract: tools whose readOnlyHint is true take a DEFERRED snapshot,
+/// the rest take the IMMEDIATE write lock (see store::TxMode).
+/// Permissions are checked centrally at the `execute` entry point (capability requirements in `defs::required_cap`).
 pub fn execute_with_db(
     db_path: &Path,
     ctx: &IdentityCtx,
@@ -88,8 +88,8 @@ pub fn execute_with_db(
         store::TxMode::Write
     };
     let out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
-    // 向量化在事务提交之后进行（网络调用绝不进事务）：embedding 服务
-    // 不可用时静默降级，工具结果不受影响，向量留给补跑。
+    // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
+    // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     if name == "memory_create" || name == "memory_update" {
         crate::embed::after_write(db_path);
     }
@@ -125,11 +125,11 @@ pub fn execute(
     }
 }
 
-/// 拒绝未知参数：合法参数名从 inputSchema.properties 派生，与对 agent 声明的契约天然同步。
-/// 这能尽早暴露调用方的拼写错误，否则参数会被静默忽略，引发更难排查的行为。
+/// Reject unknown arguments: valid parameter names are derived from inputSchema.properties, inherently in sync with the agent-facing contract.
+/// This surfaces caller typos early; otherwise arguments would be silently ignored, causing behavior that is much harder to debug.
 fn check_known_args(name: &str, args: &Map<String, Value>) -> Result<(), String> {
     if !TOOL_NAMES.contains(&name) {
-        return Ok(()); // 未知工具的错误信息在下面的 match 兜底分支里给出
+        return Ok(()); // the unknown-tool error message is produced by the match's fallback branch below
     }
     let known = defs::known_args(name).expect("every listed tool has a definition");
     for key in args.keys() {
@@ -170,7 +170,7 @@ mod tests {
         execute_with_db(path, &crate::auth::IdentityCtx::open_mode(), name, &args)
     }
 
-    /// 以指定能力集调用（权限边界测试用）。
+    /// Call with a given capability set (for permission boundary tests).
     fn call_as(
         path: &Path,
         caps: &[crate::auth::Cap],
@@ -220,7 +220,7 @@ mod tests {
             0
         );
 
-        // 搜索命中，且不泄露正文（渐进式披露第一层）
+        // Search hits, with no content leaked (first layer of progressive disclosure)
         let found = call(&path, "memory_search", json!({"query": "borrow"})).unwrap();
         let results = found["results"].as_array().unwrap();
         assert_eq!(results.len(), 1);
@@ -228,20 +228,20 @@ mod tests {
         assert!(results[0].get("content").is_none());
         assert!(results[0]["snippet"].as_str().unwrap().contains("borrow"));
 
-        // 列表只有摘要
+        // Listing carries only titles
         let listing = call(&path, "memory_list", json!({})).unwrap();
         let items = listing["memories"].as_array().unwrap();
         assert_eq!(items.len(), 1);
         assert!(items[0].get("content").is_none());
 
-        // 取全文（第二层）
+        // Fetch full text (second layer)
         let got = call(&path, "memory_get", json!({"ids": [id]})).unwrap();
         assert_eq!(
             got["memories"][0]["content"],
             "The borrow checker forbids simultaneous aliasing and mutation."
         );
 
-        // 更新：增量增删标签（rust/notes 均由自动创建留下、描述为空）
+        // Update: incrementally add/remove tags (rust/notes were both left by auto-creation with empty descriptions)
         let upd = call(
             &path,
             "memory_update",
@@ -249,12 +249,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(upd["memory"]["tags"].as_array().unwrap().len(), 2);
-        // 三分类只描述本次 add_tags 传入的标签（rust 不在列表里，不参与分类）
+        // The three-way classification only describes tags passed to add_tags this time (rust is not in the list, so not classified)
         assert_eq!(upd["tags_autocreated"], json!(["study"]));
         assert_eq!(upd["tags_reused"], json!([]));
         assert_eq!(upd["tags_missing_description"], json!([]));
 
-        // 更新正文与摘要（回归：字段更新路径曾在嵌入表缺失时整条更新失败）
+        // Update content and title (regression: the field-update path once failed the whole update when the embeddings table was missing)
         let upd_fields = call(
             &path,
             "memory_update",
@@ -267,7 +267,7 @@ mod tests {
             "field-only update carries no tag fields"
         );
 
-        // 删除
+        // Delete
         let del = call(&path, "memory_delete", json!({"ids": [id]})).unwrap();
         assert_eq!(del["deleted"].as_array().unwrap().len(), 1);
         let after = call(&path, "memory_list", json!({})).unwrap();
@@ -276,7 +276,7 @@ mod tests {
         cleanup(&path);
     }
 
-    /// memory_create 的标签挂载三分类：新建 / 复用 / 复用但缺描述。
+    /// memory_create's three-way tag-link classification: created / reused / reused-but-missing-description.
     #[test]
     fn create_reports_tag_mount_classification() {
         let path = temp_db("tag-mount");
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(first["tags_reused"], json!(["described"]));
         assert_eq!(first["tags_missing_description"], json!([]));
 
-        // 第二次全部复用；fresh 由上次自动创建、描述为空 → 点名提示
+        // Second call reuses everything; fresh was auto-created last time with an empty description → named hint
         let second = call(
             &path,
             "memory_create",
@@ -310,8 +310,8 @@ mod tests {
         cleanup(&path);
     }
 
-    /// 裸数字 id 与"不存在"分开呈现：get/delete 进 invalid_ids，
-    /// update 按 400 报格式错误；delete 绝不把没删的东西报进 deleted。
+    /// Bare numeric ids are reported separately from "not found": get/delete put them in invalid_ids,
+    /// update reports a format error as 400; delete never reports something it did not delete as deleted.
     #[test]
     fn invalid_ids_are_reported_separately_from_missing() {
         let path = temp_db("invalid-ids");
@@ -366,7 +366,7 @@ mod tests {
         )
         .unwrap();
 
-        // 更新：改名 + 改描述一次完成，记忆引用跟随新名
+        // Update: rename + description change in one go; memory references follow the new name
         let upd = call(
             &path,
             "tag_update",
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(tags[0]["memory_count"], 1);
         assert_eq!(tags[0]["description"], "Programming languages");
 
-        // detach 只摘标签
+        // detach only removes the tag
         call(
             &path,
             "tag_delete",
@@ -430,20 +430,20 @@ mod tests {
     #[test]
     fn validation_and_missing_errors() {
         let path = temp_db("errors");
-        // 必填参数缺失
+        // Missing required argument
         assert!(call(&path, "memory_create", json!({"summary": "s"})).is_err());
-        // 空摘要
+        // Empty title
         assert!(call(
             &path,
             "memory_create",
             json!({"summary": "   ", "content": "c"})
         )
         .is_err());
-        // 不存在的记忆
+        // Nonexistent memory
         assert!(call(&path, "memory_update", json!({"id": "m99", "summary": "x"})).is_err());
-        // 不存在的标签
+        // Nonexistent tag
         assert!(call(&path, "tag_delete", json!({"name": "nope"})).is_err());
-        // memory_get 对缺失 id 返回 missing 而不是报错，并附引导提示
+        // memory_get returns missing ids as missing rather than erroring, with a guiding hint attached
         let got = call(&path, "memory_get", json!({"ids": ["m99"]})).unwrap();
         assert_eq!(got["missing"].as_array().unwrap().len(), 1);
         assert!(got["note"].as_str().unwrap().contains("memory_search"));
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn unknown_arguments_are_rejected() {
         let path = temp_db("unknown-args");
-        // 拼错的参数名立刻报错并列出合法参数，而不是被静默忽略
+        // A misspelled parameter name errors immediately and lists valid parameters, instead of being silently ignored
         let err = call(
             &path,
             "memory_create",
@@ -465,10 +465,10 @@ mod tests {
             err.to_string().contains("'summray'") && err.to_string().contains("summary"),
             "got: {err}"
         );
-        // 未知参数名报错（tag_list 现有合法参数 filter，拼错照样拒绝）
+        // Unknown parameter names error (tag_list's valid parameter is filter; a typo is still rejected)
         let err = call(&path, "tag_list", json!({"flter": "x"})).unwrap_err();
         assert!(err.to_string().contains("'flter'"), "got: {err}");
-        // 正常参数不受影响
+        // Valid parameters are unaffected
         call(
             &path,
             "memory_create",
@@ -479,8 +479,8 @@ mod tests {
         cleanup(&path);
     }
 
-    /// 标签正则过滤：tag_list 的 filter、memory_list / memory_search 的
-    /// tag_filter（非法正则报错、与精确过滤 AND、零命中 note）。
+    /// Tag regex filtering: tag_list's filter, memory_list / memory_search's
+    /// tag_filter (invalid regex errors, AND-ed with exact filtering, zero-hit note).
     #[test]
     fn regex_filters_on_tags_and_memories() {
         let path = temp_db("regex-filter");
@@ -499,25 +499,25 @@ mod tests {
         )
         .unwrap();
 
-        // tag_list filter：非锚定子串匹配，^...$ 锚定全名
+        // tag_list filter: unanchored substring matching, ^...$ anchors the full name
         let tl = call(&path, "tag_list", json!({"filter": "^proj/"})).unwrap();
         assert_eq!(tl["total_tags"], 1);
         assert_eq!(tl["tags"][0]["name"], "proj/alpha");
         let none = call(&path, "tag_list", json!({"filter": "zzz"})).unwrap();
         assert_eq!(none["total_tags"], 0);
         assert_eq!(none["tags"].as_array().unwrap().len(), 0);
-        // 非法正则 → Invalid（400 类）
+        // Invalid regex → Invalid (400 kind)
         let err = call(&path, "tag_list", json!({"filter": "("})).unwrap_err();
         assert!(
             err.to_string().contains("not a valid regular expression"),
             "got: {err}"
         );
 
-        // memory_list tag_filter：总数只算命中记忆
+        // memory_list tag_filter: the total counts only matching memories
         let ml = call(&path, "memory_list", json!({"tag_filter": "^proj/"})).unwrap();
         assert_eq!(ml["total"], 1);
         assert_eq!(ml["memories"][0]["summary"], "alpha note");
-        // 正则未命中任何标签 → note 提示
+        // Regex matched no tags → note hint
         let ml_empty = call(&path, "memory_list", json!({"tag_filter": "zzz"})).unwrap();
         assert_eq!(ml_empty["total"], 0);
         assert!(
@@ -527,7 +527,7 @@ mod tests {
                 .contains("matched no tags"),
             "got: {ml_empty}"
         );
-        // 与精确 tag 同时使用 = AND
+        // Used together with an exact tag = AND
         let ml_and = call(
             &path,
             "memory_list",
@@ -599,10 +599,10 @@ mod tests {
     fn memory_list_reports_tag_state() {
         let path = temp_db("list-note");
         call(&path, "tag_create", json!({"name": "empty-tag"})).unwrap();
-        // 标签不存在
+        // Tag does not exist
         let missing = call(&path, "memory_list", json!({"tag": "nope"})).unwrap();
         assert!(missing["note"].as_str().unwrap().contains("does not exist"));
-        // 标签存在但为空
+        // Tag exists but is empty
         let empty = call(&path, "memory_list", json!({"tag": "empty-tag"})).unwrap();
         assert!(empty["note"].as_str().unwrap().contains("no memories"));
 
@@ -616,7 +616,7 @@ mod tests {
         let second = call(&path, "tag_create", json!({"name": "Rust"})).unwrap();
         assert_eq!(second["similar_existing"], "rust");
         assert!(second["note"].as_str().unwrap().contains("tag_update"));
-        // 非阻塞：两个标签都创建成功
+        // Non-blocking: both tags created successfully
         let tl = call(&path, "tag_list", json!({})).unwrap();
         assert_eq!(tl["tags"].as_array().unwrap().len(), 2);
 
@@ -633,7 +633,7 @@ mod tests {
         )
         .unwrap();
 
-        // 仅大小写改名是 similar_existing 提示的指定修复路径，必须可用
+        // Case-only renames are the designated fix path for the similar_existing hint and must work
         let r = call(
             &path,
             "tag_update",
@@ -644,7 +644,7 @@ mod tests {
         let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
         assert_eq!(got["memories"][0]["tags"][0], "Rust");
 
-        // 只补描述：不改名时 renamed=false、description_updated=true
+        // Description-only fill-in: without a rename, renamed=false and description_updated=true
         let d = call(
             &path,
             "tag_update",
@@ -655,12 +655,12 @@ mod tests {
         assert_eq!(d["description_updated"], true);
         assert_eq!(d["tag"]["description"], "the language");
 
-        // 改名后再建任何其他大小写拼写的变体：提示都应触发（这正是防碎片化的场景）
+        // After a rename, creating any other case-spelled variant: the hint must trigger (exactly the anti-fragmentation scenario)
         let back = call(&path, "tag_create", json!({"name": "rust"})).unwrap();
         assert_eq!(back["similar_existing"], "Rust");
         let hint = call(&path, "tag_create", json!({"name": "RUST"})).unwrap();
         assert_eq!(hint["similar_existing"], "Rust");
-        // 而精确重名仍然报错
+        // While exact duplicates still error out
         assert!(call(&path, "tag_create", json!({"name": "Rust"})).is_err());
 
         cleanup(&path);
@@ -668,8 +668,8 @@ mod tests {
 
     #[test]
     fn every_listed_tool_has_a_dispatch_arm() {
-        // 同步防线：TOOL_NAMES 与 execute 的 match 分支必须一一对应。
-        // 漏掉任何一端时（加工具忘改清单/清单加了没实现），此测试都会失败。
+        // Sync guard: TOOL_NAMES and execute's match branches must correspond one-to-one.
+        // If either side is missed (a tool added without updating the inventory, or an inventory entry without an implementation), this test fails.
         let path = temp_db("dispatch");
         for name in TOOL_NAMES {
             let r = execute_with_db(
@@ -697,13 +697,13 @@ mod tests {
         cleanup(&path);
     }
 
-    /// 权限在 execute 入口集中把守：能力不足 → Forbidden，且请求不产生任何副作用。
+    /// Permissions are enforced centrally at the execute entry point: insufficient capability → Forbidden, and the request leaves no side effects.
     #[test]
     fn missing_capability_is_forbidden_before_execution() {
         use crate::auth::Cap;
         let path = temp_db("caps");
 
-        // 只读身份：读工具可用，写工具一律 Forbidden
+        // Read-only identity: read tools work, write tools are always Forbidden
         let read_caps = [Cap::Read];
         assert!(call_as(&path, &read_caps, "memory_list", json!({})).is_ok());
         let err = call_as(
@@ -716,10 +716,10 @@ mod tests {
         assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
         assert!(err.to_string().contains("'create'"), "got: {err}");
         assert!(call_as(&path, &read_caps, "tag_create", json!({"name": "t"})).is_err());
-        // Forbidden 必须发生在副作用之前：库里不应有新标签
+        // Forbidden must happen before any side effect: the database should have no new tag
         assert!(call(&path, "tag_list", json!({})).unwrap()["total_tags"] == 0);
 
-        // create 而无 delete：能写不能删
+        // create without delete: can write, cannot delete
         call_as(
             &path,
             &[Cap::Create],
@@ -736,11 +736,11 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, ToolError::Forbidden(_)));
 
-        // 逐工具能力映射：读工具对"全无能力"身份也要 Forbidden
+        // Per-tool capability mapping: read tools must also be Forbidden to a "no capabilities at all" identity
         for name in TOOL_NAMES {
             let r = call_as(&path, &[], name, json!({}));
             let Err(e) = r else {
-                continue; // 空参数恰好合法且只读的路径（当前不存在）才允许通过
+                continue; // allowed only for paths where empty arguments are valid and read-only (none currently exist)
             };
             assert!(
                 matches!(e, ToolError::Forbidden(_)),
@@ -760,7 +760,7 @@ mod tests {
             json!({"summary": "Rust notes", "content": "v1", "tags": []}),
         )
         .unwrap();
-        // 归一化（大小写不敏感）后相同摘要 → 提示已有条目
+        // Same title after normalization (case-insensitive) → hint about the existing entry
         let second = call(
             &path,
             "memory_create",
@@ -770,7 +770,7 @@ mod tests {
         let dups = second["duplicate_of"].as_array().unwrap();
         assert_eq!(dups.len(), 1);
         assert_eq!(dups[0], "m1");
-        // 不重复时为空数组
+        // Empty array when there is no duplicate
         let third = call(
             &path,
             "memory_create",
@@ -791,7 +791,7 @@ mod tests {
         )
         .unwrap();
         let id = c["memory"]["id"].as_str().unwrap().to_string();
-        // 每次调用都重新打开数据库，id 计数必须延续
+        // Every call reopens the database; the id counter must carry on
         let c2 = call(
             &path,
             "memory_create",

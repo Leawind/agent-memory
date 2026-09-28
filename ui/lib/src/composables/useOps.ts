@@ -1,5 +1,6 @@
-// 服务概况的状态：统计与版本（只读，无需 admin）。reload 由 OpsDialog 打开时调用，
-// 动作失败时抛出 Error，由调用层统一 toast。admin 专属动作（体检/导入导出）在 useAdmin。
+// Service overview state: stats and version (read-only, no admin needed). reload is called by
+// OpsDialog when it opens; failed actions throw an Error, toasted uniformly at the calling layer.
+// Admin-only actions (doctor / import & export) live in useAdmin.
 import { computed, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { getHealth, getStats } from '../api/ops'
@@ -18,7 +19,7 @@ export function useOps() {
     try {
       version.value = (await getHealth(client)).version ?? ''
     } catch {
-      /* 版本号取不到不阻塞统计 */
+      /* A missing version must not block the stats */
     }
     stats.value = await getStats(client)
     stats.value.version = version.value

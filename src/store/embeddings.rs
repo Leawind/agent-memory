@@ -1,4 +1,4 @@
-//! 语义搜索向量（派生数据）的存取：upsert / 删除 / 全量载入 / 补跑队列。
+//! Storage for semantic-search vectors (derived data): upsert / delete / full load / backfill queue.
 
 use crate::sql;
 use rusqlite::params;
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::Store;
 
 impl Store {
-    /// 写入一条向量（upsert：同记忆重嵌时覆盖旧行）。
+    /// Store one vector (upsert: re-embedding the same memory overwrites the old row).
     pub fn embedding_put(&self, id: i64, model: &str, vec: &[f32]) -> Result<(), String> {
         self.conn
             .execute(
@@ -24,7 +24,7 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 删除一条记忆的向量（更新失效用；缺失时静默）。
+    /// Delete one memory's vector (used when an update invalidates it; silent if absent).
     pub fn embedding_delete(&self, id: i64) -> Result<(), String> {
         self.conn
             .execute(sql::EMBEDDING_DELETE, [id])
@@ -32,7 +32,7 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 当前模型的全部向量，供混合搜索的内存余弦趟。
+    /// All vectors for the current model, for the in-memory cosine pass of hybrid search.
     pub fn embeddings_active(&self, model: &str) -> Result<HashMap<i64, Vec<f32>>, String> {
         let mut st = self
             .conn
@@ -51,7 +51,7 @@ impl Store {
         Ok(out)
     }
 
-    /// 待补跑的一批：缺当前模型向量的记忆，id 升序（含摘要与正文供向量化）。
+    /// One pending backfill batch: memories lacking vectors for the current model, id ascending (with title and content for embedding).
     pub fn embedding_pending_batch(
         &self,
         model: &str,

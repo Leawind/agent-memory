@@ -1,4 +1,4 @@
-//! 聚合查询与运维入口：体检（hygiene）、统计（stats）、导出导入。
+//! Aggregate queries and ops entry points: hygiene checks, statistics, export/import.
 
 use crate::sql;
 use serde_json::{json, Map, Value};
@@ -7,10 +7,10 @@ use std::collections::{HashMap, HashSet};
 use super::Store;
 
 impl Store {
-    /// 体检：报告数据中的隐患（只读）。覆盖外键被关闭时可能混入的脏数据。
+    /// Health check: reports data hazards (read-only). Covers dirty data that could slip in while foreign keys are off.
     pub fn hygiene_issues(&self) -> Result<Vec<String>, String> {
         let mut issues = Vec::new();
-        // 孤儿引用：关联行指向不存在的标签 id（外键被关闭时可能混入）
+        // Orphan references: link rows pointing at nonexistent tag ids (possible while foreign keys are off)
         let orphan_ids: Vec<i64> = self
             .conn
             .prepare(sql::HYGIENE_ORPHANS)
@@ -29,7 +29,7 @@ impl Store {
                     .join(", ")
             ));
         }
-        // 反向孤儿：关联行指向不存在的记忆（外键被关闭时可能混入）
+        // Reverse orphans: link rows pointing at nonexistent memories (possible while foreign keys are off)
         let reverse_ids: Vec<i64> = self
             .conn
             .prepare(
@@ -51,7 +51,7 @@ impl Store {
                     .join(", ")
             ));
         }
-        // 仅大小写不同的标签组
+        // Groups of tags differing only in case
         let names: Vec<String> = self
             .conn
             .prepare(sql::TAG_ALL_NAMES)
@@ -72,7 +72,7 @@ impl Store {
                 ));
             }
         }
-        // 空摘要 / 空正文
+        // Empty titles / empty content
         let rows = self
             .conn
             .prepare(sql::HYGIENE_MEMORIES)
@@ -98,8 +98,8 @@ impl Store {
                 issues.push(format!("memory {} has empty content", Self::format_id(id)));
             }
         }
-        // 语义搜索覆盖：开启且有记忆缺当前模型向量时提示补跑。
-        // 这是派生数据问题而非数据损坏，但放进来让 doctor 成为唯一的体检入口。
+        // Semantic search coverage: when enabled and memories lack vectors for the current model, suggest a backfill.
+        // This is a derived-data issue rather than corruption, but it belongs here so doctor stays the single health-check entry point.
         if let Some(cfg) = self.embedding_config()? {
             let pending = self.embedding_pending_count(&cfg.model)?;
             if pending > 0 {
@@ -113,7 +113,7 @@ impl Store {
         Ok(issues)
     }
 
-    /// 数据概况（JSON 形态，CLI 与 API 共用）。
+    /// Data statistics (JSON form, shared by the CLI and the API).
     pub fn stats(&self) -> Result<Value, String> {
         let memories: i64 = self
             .conn
@@ -123,9 +123,9 @@ impl Store {
             .conn
             .query_row(sql::STATS_TAG_COUNT, [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        // 真实的下一 id 由 AUTOINCREMENT 的 sqlite_sequence 权威记录：删除最大 id
-        // 也不会回退、不会复用。该内部表在 memories 首次插入后才由 SQLite 创建，
-        // 全空库下不存在——此时退回 MAX(id)+1（同样得到 1）。
+        // The real next id is authoritatively tracked by AUTOINCREMENT's sqlite_sequence: deleting the largest id
+        // neither rolls back nor gets reused. SQLite only creates that internal table after the first insert into memories,
+        // so a completely empty database lacks it — fall back to MAX(id)+1 then (which also yields 1).
         let has_sequence: i64 = self
             .conn
             .query_row(sql::STATS_HAS_SEQUENCE, [], |r| r.get(0))
@@ -183,13 +183,13 @@ impl Store {
         }))
     }
 
-    /// 导出内容：完整记忆 + 标签表，独立于存储内部模式（跨平台迁移也可走这里）。
+    /// Export content: full memories + the tag table, independent of the storage's internal schema (cross-platform migration can go through here too).
     ///
-    /// 形状：`tags` / `memories` 都是以 id 为键的对象——tag 键是内部自增 id 的
-    /// 十进制字符串，记忆键是 `m<N>`（与 `format_id` 一致）；记忆的 `tags` 数组
-    /// 按 tag id 字符串引用。只含主数据（名称/描述/正文/时间戳），不含
-    /// memory_count、last_used_at、条目总数等派生信息（均可由本文件推出）。
-    /// 导入会重新编号，id 键只在文件内充当引用记号。
+    /// Shape: `tags` / `memories` are both objects keyed by id — tag keys are the decimal string of the internal
+    /// auto-increment id, memory keys are `m<N>` (consistent with `format_id`); a memory's `tags` array
+    /// references tags by id string. Only primary data is included (names/descriptions/content/timestamps), not
+    /// derived info such as memory_count, last_used_at or total counts (all derivable from the file itself).
+    /// Import renumbers ids; the id keys act only as reference tokens within the file.
     pub fn export_dump(&self) -> Result<Value, String> {
         let mut tags = Map::new();
         let mut st = self
@@ -218,7 +218,7 @@ impl Store {
             );
         }
 
-        // 记忆 ↔ 标签关联按内部 id 取对（memory_id 升序、tag_id 升序）。
+        // Memory ↔ tag links are taken as id pairs (memory_id ascending, tag_id ascending).
         let mut refs: HashMap<i64, Vec<String>> = HashMap::new();
         let mut pairs = self
             .conn
@@ -269,12 +269,12 @@ impl Store {
         }))
     }
 
-    /// 从 `export_dump` 产生的 JSON 恢复数据。要求目标库为空——导入是"恢复/
-    /// 迁移"而非合并，避免与既有数据的 id、标签描述产生歧义。
-    /// 记忆的 created_at / updated_at 按导出值保留；id 不保留（重新编号），
-    /// 导出文件里的 id 键只用来表达记忆对标签的引用——引用了导出中不存在的
-    /// tag id 直接报错。旧版数组形状的导出一律拒绝，不写兼容。
-    /// 返回 (导入的记忆数, 导入的标签数)。
+    /// Restore data from JSON produced by `export_dump`. The target database must be empty — import is a "restore/
+    /// migration", not a merge, to avoid ambiguity with existing data's ids and tag descriptions.
+    /// Memories keep their exported created_at / updated_at; ids are not preserved (renumbered),
+    /// and the id keys in the export file exist only to express memory→tag references — referencing a tag id
+    /// absent from the export errors out outright. Legacy array-shaped exports are always rejected; no compatibility shims.
+    /// Returns (memories imported, tags imported).
     pub fn import_dump(&self, dump: &Value) -> Result<(usize, usize), String> {
         let empty = self.stats()?;
         if empty["memories"].as_u64().unwrap_or(0) != 0 || empty["tags"].as_u64().unwrap_or(0) != 0
@@ -292,8 +292,8 @@ impl Store {
             .and_then(Value::as_object)
             .ok_or("invalid export: 'memories' must be an object keyed by memory id")?;
 
-        // id 键导入后重新编号，但仍是引用记号，先按导出格式从严校验：
-        // tag 键为正整数十进制串，记忆键为 "m<N>"。
+        // Id keys are renumbered on import but still act as reference tokens, so first validate strictly against the export format:
+        // tag keys are positive-integer decimal strings, memory keys are "m<N>".
         for key in tags.keys() {
             let valid = key.parse::<u64>().map(|n| n > 0).unwrap_or(false);
             if !valid {
@@ -310,8 +310,8 @@ impl Store {
             }
         }
 
-        // 建标签（导出文件内重名同样拒绝——库里 name 唯一），
-        // 导出 tag id → 库内新 id 的映射供记忆引用换算。
+        // Create tags (duplicates within the export file are rejected too — name is unique in the database),
+        // with a export tag id → new database id mapping for translating memory references.
         let mut tag_id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
         let mut seen_names = HashSet::with_capacity(tags.len());
         for (key, t) in tags {
@@ -377,7 +377,7 @@ impl Store {
     }
 }
 
-/// 非空 + 长度校验（导入侧的兜底；正常 API 路径由 tools::params 校验）。
+/// Non-empty + length validation (a backstop on the import side; the normal API path is validated by tools::params).
 fn validate_nonempty_len(s: &str, what: &str, max: usize) -> Result<String, String> {
     let t = s.trim();
     if t.is_empty() {
@@ -406,7 +406,7 @@ mod tests {
         cleanup(&path);
         {
             let st = Store::open(&path).unwrap();
-            // 全空库：sqlite_sequence 尚不存在，走 MAX+1 回退路径，下一 id 为 m1
+            // Fully empty database: sqlite_sequence does not exist yet, so the MAX+1 fallback applies and the next id is m1
             assert_eq!(st.stats().unwrap()["next_id"], "m1");
 
             let a = st.insert_memory("a", "ca", &[], 1, 1).unwrap();
@@ -414,16 +414,16 @@ mod tests {
             let c = st.insert_memory("c", "cc", &[], 3, 3).unwrap();
             assert_eq!(st.stats().unwrap()["next_id"], "m4");
 
-            // 删除当前最大 id：下一 id 不得回退（AUTOINCREMENT 序列只前进）
+            // Delete the current largest id: the next id must not roll back (the AUTOINCREMENT sequence only moves forward)
             st.delete_memories(&[c]).unwrap();
             assert_eq!(st.stats().unwrap()["next_id"], "m4");
             assert_eq!(st.insert_memory("d", "cd", &[], 4, 4).unwrap(), 4);
 
-            // 删光所有记忆后同样不复用
+            // After deleting every memory, ids are still not reused
             st.delete_memories(&[a, b]).unwrap();
             assert_eq!(st.stats().unwrap()["next_id"], "m5");
         }
-        // 序列跨连接持久：重开库后仍不回退
+        // The sequence persists across connections: reopening the database still does not roll back
         {
             let st = Store::open(&path).unwrap();
             assert_eq!(st.stats().unwrap()["next_id"], "m5");
@@ -439,17 +439,17 @@ mod tests {
         let st = Store::open(&path).unwrap();
         assert!(st.hygiene_issues().unwrap().is_empty());
 
-        // 关闭外键注入孤儿引用、反向孤儿、大小写冲突、空摘要
+        // With foreign keys off, inject orphan references, reverse orphans, case conflicts and an empty title
         st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
         let rust_id = st.link_tags(&["rust".into()]).unwrap().ids[0];
-        // 孤儿引用：关联行指向不存在的标签 id 999
+        // Orphan reference: a link row pointing at nonexistent tag id 999
         st.conn
             .execute(
                 "INSERT INTO memory_tags(memory_id, tag_id) VALUES (1, 999)",
                 [],
             )
             .unwrap();
-        // 反向孤儿：关联行指向不存在的记忆 m42（rust 标签本身存在）
+        // Reverse orphan: a link row pointing at nonexistent memory m42 (the rust tag itself exists)
         st.conn
             .execute(
                 "INSERT INTO memory_tags(memory_id, tag_id) VALUES (42, ?1)",
@@ -490,17 +490,17 @@ mod tests {
         st.insert_memory("s", "body", &ids, 1, 1).unwrap();
         let dump = st.export_dump().unwrap();
 
-        // 派生信息一律不进导出（都可由导出文件本身推出）
+        // Derived info never enters the export (all of it is derivable from the export file itself)
         assert!(dump.get("total_memories").is_none());
         assert!(dump.get("total_tags").is_none());
-        // tags 以内部自增 id 为键，只含主数据
+        // tags keyed by internal auto-increment id, primary data only
         let tag_key = ids[0].to_string();
         let tag = &dump["tags"][&tag_key];
         assert_eq!(tag["name"], "t");
         assert_eq!(tag["description"], "desc");
         assert!(tag.get("memory_count").is_none());
         assert!(tag.get("last_used_at").is_none());
-        // memories 以 "m<N>" 为键，标签引用按 tag id 字符串
+        // memories keyed by "m<N>", tag references by tag id string
         let memory = &dump["memories"]["m1"];
         assert_eq!(memory["summary"], "s");
         assert_eq!(memory["content"], "body");
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(memory["created_at"], 1);
         assert_eq!(memory["updated_at"], 1);
         assert!(dump["exported_at"].as_u64().is_some());
-        // 无标签记忆导出为空数组
+        // A memory without tags exports as an empty array
         st.insert_memory("s2", "body2", &[], 2, 2).unwrap();
         let dump = st.export_dump().unwrap();
         assert_eq!(dump["memories"]["m2"]["tags"], json!([]));
@@ -530,7 +530,7 @@ mod tests {
             st.export_dump().unwrap()
         };
 
-        // 恢复到空库：计数与时间戳都保留；tag id 重新编号后引用自动换算
+        // Restore into an empty database: counts and timestamps preserved; references translate automatically after tag ids are renumbered
         let (memories, tags) = Store::open(&dst).unwrap().import_dump(&dump).unwrap();
         assert_eq!(memories, 2);
         assert_eq!(tags, 1);
@@ -542,11 +542,11 @@ mod tests {
         assert_eq!(all[0].tags, vec!["t".to_string()]);
         assert_eq!(st.tag_view("t").unwrap()["description"], "带描述的标签");
 
-        // 目标库非空 → 拒绝
+        // Non-empty target database → rejected
         let err = Store::open(&dst).unwrap().import_dump(&dump).unwrap_err();
         assert!(err.contains("not empty"), "got: {err}");
 
-        // 结构损坏的导出文件 → 报错
+        // Structurally corrupt export file → error
         let broken = Store::open(&temp_db("import-broken-dst"));
         drop(broken);
         let dst2 = temp_db("import-broken");
@@ -559,7 +559,7 @@ mod tests {
         cleanup(&dst2);
     }
 
-    /// 旧版数组形状的导出一律拒绝（无版本兼容），错误要说清期望的形状。
+    /// Legacy array-shaped exports are always rejected (no version compatibility); the error must state the expected shape.
     #[test]
     fn import_dump_rejects_legacy_array_format() {
         let dst = temp_db("import-legacy");
@@ -574,7 +574,7 @@ mod tests {
         });
         let err = st.import_dump(&legacy).unwrap_err();
         assert!(err.contains("must be an object"), "got: {err}");
-        // 两个方向都各自点名
+        // Each direction names its own case
         let err = st
             .import_dump(&json!({"tags": {}, "memories": []}))
             .unwrap_err();
@@ -583,37 +583,37 @@ mod tests {
         cleanup(&dst);
     }
 
-    /// 导入与 API 契约一致：空白摘要、超长标签名、非字符串/未知 tag 引用、
-    /// 非法 id 键、文件内重名标签都要被拒。每个用例独立空库（生产路径里
-    /// import 在单写事务内执行，失败整体回滚——回滚本身由下面的专项测试把守）。
+    /// Import honors the same contract as the API: blank titles, overlong tag names, non-string/unknown tag references,
+    /// invalid id keys and duplicate tag names within the file are all rejected. Each case gets its own empty database (in the production
+    /// path import runs in a single write transaction and rolls back wholesale on failure — the rollback itself is covered by the dedicated test below).
     #[test]
     fn import_dump_rejects_contract_violations() {
         let cases: Vec<(&str, Value, &str)> = vec![
-            // 空白摘要
+            // Blank title
             (
                 "blank-summary",
                 json!({"tags": {}, "memories": {"m1": {"summary": "   ", "content": "c"}}}),
                 "must not be empty",
             ),
-            // 超长标签名（>100 字符）
+            // Overlong tag name (>100 characters)
             (
                 "oversized-tag",
                 json!({"tags": {"1": {"name": "x".repeat(101)}}, "memories": {}}),
                 "too long",
             ),
-            // 记忆的标签引用不是字符串（tag id 是字符串记号）
+            // A memory's tag reference is not a string (tag ids are string tokens)
             (
                 "non-string-ref",
                 json!({"tags": {}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [42]}}}),
                 "must be tag id strings",
             ),
-            // 引用了导出中不存在的 tag id → 报错（值从严错报）
+            // References a tag id absent from the export → error (strict about values)
             (
                 "unknown-ref",
                 json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": ["2"]}}}),
                 "unknown tag id '2'",
             ),
-            // 非法 id 键：tag 键非正整数、记忆键缺 m 前缀
+            // Invalid id keys: a tag key that is not a positive integer, a memory key missing the m prefix
             (
                 "bad-tag-key",
                 json!({"tags": {"t1": {"name": "t", "description": ""}}, "memories": {}}),
@@ -624,7 +624,7 @@ mod tests {
                 json!({"tags": {}, "memories": {"1": {"summary": "s", "content": "c"}}}),
                 "memory key '1' does not follow",
             ),
-            // 导出文件内标签重名 → 报错（库里 name 唯一）
+            // Duplicate tag names within the export file → error (name is unique in the database)
             (
                 "duplicate-tag",
                 json!({"tags": {"1": {"name": "t", "description": ""}, "2": {"name": "t", "description": "other"}}, "memories": {}}),
@@ -637,14 +637,14 @@ mod tests {
             let st = Store::open(&path).unwrap();
             let err = st.import_dump(dump).unwrap_err();
             assert!(err.contains(expect), "{slug}: got: {err}");
-            // 拒绝不得落库任何记忆
+            // A rejection must leave no memories in the database
             assert_eq!(st.stats().unwrap()["memories"], 0, "{slug}");
             cleanup(&path);
         }
     }
 
-    /// 生产路径中 import 在单个写事务内执行：中途失败时已建出的标签也随
-    /// 事务整体回滚，不残留半份数据。
+    /// In the production path import runs in a single write transaction: a mid-way failure rolls back the tags already
+    /// created along with everything else — no half-imported data remains.
     #[test]
     fn import_dump_failure_rolls_back_whole_transaction() {
         let path = temp_db("import-rollback");

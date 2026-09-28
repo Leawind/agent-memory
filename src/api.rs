@@ -1,14 +1,18 @@
-//! 管理后端（`/api/*`）：内嵌管理界面的数据通道。
+//! Admin backend (`/api/*`): the data channel for the embedded management UI.
 //!
-//! 记忆/标签端点全部复用工具层 handler（`tools::execute`），保证与 MCP 端点
-//! 完全一致的校验与提示语义；错误按 `ToolError` 类别映射 HTTP 状态码
-//! （NotFound → 404，Invalid → 400，Forbidden → 403），不做文本匹配。
-//! 身份与设置管理（identities / settings）是刻意例外：它们不属于 agent 的
-//! 工具面（agent 不管理权限），走专用 handler，但校验逻辑同样单一来源
-//! （`auth::Permissions` 登记表 + store 层）。
-//! URL 段与查询串值在此层做百分号解码（tiny_http 不解码，且其请求行不接受
-//! 原始非 ASCII 字节）。事务模式按 HTTP 方法划分：GET 为只读快照（DEFERRED，
-//! 不抢写锁），其余为写锁（IMMEDIATE）。调用方身份由 HTTP 层解析后传入。
+//! Memory/tag endpoints all reuse the tool-layer handlers (`tools::execute`) so
+//! that validation and error semantics match the MCP endpoints exactly; errors
+//! are mapped to HTTP status codes by `ToolError` kind (NotFound → 404, Invalid → 400,
+//! Forbidden → 403), never by text matching.
+//! Identity and settings management (identities / settings) is a deliberate exception:
+//! they are not part of the agent tool surface (agents do not manage permissions)
+//! and use dedicated handlers, but validation still has a single source of truth
+//! (the `auth::Permissions` registry + the store layer). URL segments and query
+//! string values are percent-decoded in this layer (tiny_http does not decode, and
+//! its request line does not accept raw non-ASCII bytes). Transaction mode follows
+//! the HTTP method: GET takes a read-only snapshot (DEFERRED, no write lock),
+//! everything else takes the write lock (IMMEDIATE). Caller identity is resolved
+//! by the HTTP layer and passed in.
 
 use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
@@ -17,7 +21,7 @@ use crate::tools::{self, ToolError};
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-/// 处理 `/api/*`（`/api/export` 由 http 层先行拦截为附件下载）。
+/// Handles `/api/*` (`/api/export` is intercepted upstream by the http layer as an attachment download).
 pub fn handle(
     db_path: &Path,
     ctx: &IdentityCtx,
@@ -51,8 +55,8 @@ pub fn handle(
         }
     };
 
-    // match 臂内多处用 `?`（能力守卫、参数解析）：闭包承载，短路时整个
-    // 请求以对应错误类别返回。
+    // Several match arms use `?` (capability guards, argument parsing): a closure
+    // carries them so a short-circuit returns the whole request as that error kind.
     let result: Result<(u16, Value), ToolError> = (|| -> Result<(u16, Value), ToolError> {
         match (method, segments.as_slice()) {
             ("GET", ["whoami"]) => Ok((200, ctx.summary())),
@@ -116,7 +120,7 @@ pub fn handle(
                     st.identity_create(&name, &perms)
                         .map_err(ToolError::from)
                         .map(|(token, mut view)| {
-                            // token 明文仅随创建响应出现一次，库内只存哈希
+                            // token plaintext appears only in the create response; the DB stores a hash
                             view["token"] = json!(token);
                             (200, view)
                         })
@@ -164,7 +168,7 @@ pub fn handle(
             ("GET", ["settings"]) => {
                 ctx.require(Cap::Admin)?;
                 db_tx(db_path, tx_mode, |st| {
-                    // 空字符串归一为 null：语义是"未设置（走默认）"，UI 显示占位符
+                    // Empty strings normalize to null: means "unset (use default)", the UI shows a placeholder
                     let instructions = st
                         .settings_get("instructions")
                         .map_err(ToolError::from)?
@@ -173,8 +177,8 @@ pub fn handle(
                         .settings_get("conventions")
                         .map_err(ToolError::from)?
                         .filter(|s| !s.is_empty());
-                    // 语义搜索配置原样返回：端点本就 Admin-only，api_key 与
-                    // instructions 同属"服务端秘密"，不做二次遮蔽
+                    // Semantic search config is returned as-is: the endpoint is Admin-only and
+                    // api_key and instructions are both "server secrets", no extra masking
                     let embed = &store::Store::SETTING_EMBEDDING_BASE_URL;
                     let base_url = st.settings_get(embed).map_err(ToolError::from)?;
                     let model = st
@@ -188,10 +192,10 @@ pub fn handle(
                         json!({
                             "instructions": instructions,
                             "conventions": conventions,
-                            // 鉴权开关：鉴权边界由显式开关决定，与身份是否存在无关
+                                                        // Auth switch: the auth boundary is decided by this explicit switch,
                             "auth_required": st.auth_required()?,
-                            // 匿名身份能力集：鉴权开启后无 token 请求按它解析；
-                            // null = 未设置（匿名被拒绝）
+                                                        // Anonymous identity capability set: tokenless requests are resolved
+                                                        // against it once auth is enabled; null = unset (anonymous rejected)
                             "anonymous_permissions": st
                                 .anonymous_permissions()?
                                 .map(|p| p.to_json()),
@@ -199,7 +203,7 @@ pub fn handle(
                             "embedding_base_url": base_url,
                             "embedding_model": model,
                             "embedding_api_key": api_key,
-                            // 内置默认提示词：UI 展示"恢复默认"的目标
+                                                        // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
                     ))
@@ -229,16 +233,16 @@ pub fn handle(
                         ))));
                     }
                 }
-                // 布尔键：auth_required 与 embedding_enabled；文本项走 String 分支；
-                // anonymous_permissions 是对象/null 特例，单独收集
+                // Boolean keys: auth_required and embedding_enabled; text items go through the String branch;
+                // anonymous_permissions is an object/null special case, collected separately
                 const BOOL_KEYS: &[&str] =
                     &["auth_required", store::Store::SETTING_EMBEDDING_ENABLED];
                 let mut updates: Vec<(&str, String)> = Vec::new();
-                // 外层 Some = 请求带了该键；内层 None = 清除（匿名被拒绝）
+                // Outer Some = the request carried this key; inner None = clear (anonymous rejected)
                 let mut anon_perms: Option<Option<Permissions>> = None;
                 for key in VALID_KEYS {
                     match args.get(*key) {
-                        None => continue, // 省略 = 不改动该项
+                        None => continue, // omitted = leave this item unchanged
                         Some(v) if *key == store::Store::SETTING_ANONYMOUS_PERMISSIONS => {
                             let parsed = match v {
                                 Value::Null => None,
@@ -284,8 +288,8 @@ pub fn handle(
                     )));
                 }
                 db_tx(db_path, TxMode::Write, |st| {
-                    // 开启鉴权前必须已有 admin 身份，否则开启后所有请求 401 且无人能再管理
-                    // （token 明文只在创建响应出现过一次）。同事务检查避免并发绕过。
+                    // An admin identity must exist before enabling auth, otherwise every request
+                    // would 401 with no one able to manage (token plaintext appears only once at creation). Checking in the same transaction avoids concurrent bypass.
                     let enabling = updates
                         .iter()
                         .any(|(k, v)| *k == store::Store::SETTING_AUTH_REQUIRED && v == "true");
@@ -311,8 +315,8 @@ pub fn handle(
             }
             ("POST", ["embeddings", "backfill"]) => {
                 ctx.require(Cap::Admin)?;
-                // 有界批量：每次请求只处理一小批并返回剩余数，UI 循环调用。
-                // 绕开了"长时任务 vs 每请求一事务"的模型冲突。
+                // Bounded batch: each request processes a small batch and returns the remaining
+                // count, which the UI calls in a loop. Sidesteps the long-running task vs. one-transaction-per-request model conflict.
                 let batch = query_get(query, "batch")
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(crate::embed::MAX_BATCH);
@@ -413,7 +417,7 @@ pub fn handle(
                     tools::execute(st, ctx, "memory_create", &Value::Object(args.clone()))
                         .map(|v| (200, v))
                 })?;
-                // 向量化在事务提交之后（与 MCP 路径同一挂接语义）
+                // Embedding runs after the transaction commits (same hook semantics as the MCP path)
                 crate::embed::after_write(db_path);
                 Ok(out)
             }
@@ -466,7 +470,7 @@ pub fn handle(
         }
     })();
 
-    // 错误分类是结构化的：NotFound → 404，Forbidden → 403，其余业务错误 → 400
+    // Error classification is structural: NotFound → 404, Forbidden → 403, all other business errors → 400
     match result {
         Ok((status, v)) => (status, v),
         Err(e) => {
@@ -480,8 +484,8 @@ pub fn handle(
     }
 }
 
-/// 导出备份的字节流（附件下载的内容，独立于 JSON 响应通道）。
-/// 调用方的 admin 能力由 http 层在拦截时校验。紧凑 JSON，与 CLI 导出一致。
+/// Byte stream of the export backup (the attachment download payload, separate from the JSON response channel).
+/// The caller's admin capability is verified by the http layer at interception time. Compact JSON, same as the CLI export.
 pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
     store::with_db_in(db_path, TxMode::ReadOnly, |st| st.export_dump()).map(|dump| {
         let mut bytes = serde_json::to_vec(&dump).unwrap_or_default();
@@ -490,7 +494,7 @@ pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
     })
 }
 
-/// 在单事务里执行一个工具并附带 200 状态码（状态码由各路由按需覆盖）。
+/// Executes one tool in a single transaction with a 200 status code (routes override the status as needed).
 fn db_tx(
     db_path: &Path,
     mode: TxMode,
@@ -503,7 +507,7 @@ fn bad_request(e: ToolError) -> (u16, Value) {
     (400, json!({ "error": e.message() }))
 }
 
-/// GET /api/memories 的查询串 → memory_list / memory_search 参数。
+/// Query string of GET /api/memories → memory_list / memory_search parameters.
 fn list_or_search_args(query: &str) -> Value {
     let mut args = Map::new();
     for key in [
@@ -519,7 +523,7 @@ fn list_or_search_args(query: &str) -> Value {
     ] {
         if let Some(v) = query_get(query, key) {
             let value = if key == "tags" {
-                // 逗号分隔的多标签过滤
+                // Comma-separated multi-tag filter
                 Value::Array(v.split(',').map(|s| json!(s)).collect())
             } else if key == "offset" || key == "limit" {
                 match v.parse::<u64>() {
@@ -545,7 +549,7 @@ fn query_get(query: &str, key: &str) -> Option<String> {
     None
 }
 
-/// 百分号解码（含非法序列的宽容处理）。
+/// Percent-decoding (lenient handling of invalid sequences).
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -581,7 +585,7 @@ mod tests {
         IdentityCtx::open_mode()
     }
 
-    /// 指定能力集的身份（权限边界测试用）。
+    /// Identity with a given capability set (for permission boundary tests).
     fn ctx_with(caps: &[Cap]) -> IdentityCtx {
         let mut obj = serde_json::Map::new();
         for c in caps {
@@ -596,7 +600,7 @@ mod tests {
         assert_eq!(percent_decode("%E9%A1%B9%E7%9B%AE"), "项目");
         assert_eq!(percent_decode("plain"), "plain");
         assert_eq!(percent_decode("a%2Fb"), "a/b");
-        // 非法序列原样保留
+        // Invalid sequences are kept as-is
         assert_eq!(percent_decode("a%ZZb"), "a%ZZb");
         assert_eq!(percent_decode("a%2"), "a%2");
     }
@@ -633,8 +637,8 @@ mod tests {
         let _ = std::fs::remove_file(&db);
     }
 
-    /// 404/403/400 映射约定：NotFound → 404、Forbidden → 403、
-    /// 其余业务错误一律 400。锁住这条约定，防止错误文案改动悄悄改变状态码。
+    /// 404/403/400 mapping convention: NotFound → 404, Forbidden → 403,
+    /// all other business errors → 400. Pinning this convention so error-message edits cannot silently change status codes.
     #[test]
     fn error_classes_map_to_distinct_status_codes() {
         let db =
@@ -646,7 +650,7 @@ mod tests {
         };
         cleanup();
 
-        // 不存在的标签删除 → 404
+        // Deleting a nonexistent tag → 404
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -656,7 +660,7 @@ mod tests {
             &[],
         );
         assert_eq!(status, 404);
-        // 不存在的记忆更新 → 404
+        // Updating a nonexistent memory → 404
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -666,7 +670,7 @@ mod tests {
             br#"{"summary": "x"}"#,
         );
         assert_eq!(status, 404);
-        // 校验失败（缺必填参数）→ 400
+        // Validation failure (missing required argument) → 400
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -676,14 +680,14 @@ mod tests {
             br#"{"summary": "only"}"#,
         );
         assert_eq!(status, 400);
-        // 非 JSON body → 400
+        // Non-JSON body → 400
         let (status, _) = handle(&db, &open_ctx(), "POST", "/api/tags", "", b"not json");
         assert_eq!(status, 400);
 
         cleanup();
     }
 
-    /// 能力不足 → 403：写端点对只读身份、管理端点对非 admin 身份。
+    /// Insufficient capabilities → 403: write endpoints against a read-only identity,
     #[test]
     fn forbidden_maps_to_403() {
         let db =
@@ -696,7 +700,7 @@ mod tests {
         cleanup();
 
         let reader = ctx_with(&[Cap::Read]);
-        // 只读身份写记忆 → 403
+        // Read-only identity writing a memory → 403
         let (status, v) = handle(
             &db,
             &reader,
@@ -706,15 +710,15 @@ mod tests {
             br#"{"summary": "s", "content": "c"}"#,
         );
         assert_eq!(status, 403, "{v}");
-        // 只读身份管身份 → 403
+        // Read-only identity managing identities → 403
         let (status, _) = handle(&db, &reader, "GET", "/api/identities", "", &[]);
         assert_eq!(status, 403);
 
         cleanup();
     }
 
-    /// 身份与设置端点：admin 创建 → 列表可见 → 改权限 → 删除；
-    /// whoami 对任何身份可用。
+    /// Identity and settings endpoints: admin creates → visible in list → permissions changed → deleted;
+    /// whoami works for any identity.
     #[test]
     fn identity_admin_lifecycle() {
         let db =
@@ -726,12 +730,12 @@ mod tests {
         };
         cleanup();
 
-        // whoami：开放模式
+        // whoami: open mode
         let (status, v) = handle(&db, &open_ctx(), "GET", "/api/whoami", "", &[]);
         assert_eq!(status, 200);
         assert_eq!(v["mode"], "open");
 
-        // 创建（未知能力名 → 400；合法 → 200 且带 token）
+        // Create (unknown capability name → 400; valid → 200 with token)
         let (status, v) = handle(
             &db,
             &open_ctx(),
@@ -758,7 +762,7 @@ mod tests {
         assert_eq!(v["permissions"]["read"], true);
         assert_eq!(v["permissions"]["delete"], false);
 
-        // 重名 → 400
+        // Duplicate name → 400
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -769,14 +773,14 @@ mod tests {
         );
         assert_eq!(status, 400);
 
-        // 列表只含尾缀提示，不含 token 明文
+        // List contains only the suffix hint, not the token plaintext
         let (status, v) = handle(&db, &open_ctx(), "GET", "/api/identities", "", &[]);
         assert_eq!(status, 200);
         assert_eq!(v["identities"].as_array().unwrap().len(), 1);
         assert!(v["identities"][0]["token"].is_null());
         assert_eq!(v["identities"][0]["token_hint"].as_str().unwrap().len(), 4);
 
-        // 重置 token：返回新明文一次，旧明文立即失效
+        // Reset token: returns the new plaintext once; the old one is invalidated immediately
         let (status, v) = handle(
             &db,
             &open_ctx(),
@@ -801,7 +805,7 @@ mod tests {
         );
         assert_eq!(status, 404);
 
-        // 改权限：全能力
+        // Change permissions: full capabilities
         let (status, v) = handle(
             &db,
             &open_ctx(),
@@ -812,7 +816,7 @@ mod tests {
         );
         assert_eq!(status, 200, "{v}");
         assert_eq!(v["permissions"]["admin"], true);
-        // 不存在的身份 → 404
+        // Nonexistent identity → 404
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -823,7 +827,7 @@ mod tests {
         );
         assert_eq!(status, 404);
 
-        // 设置：写入（基础 + 附加规范）→ 读回；未知键拒绝；空值也合法（回退默认）
+        // Settings: write (base + additional conventions) → read back; unknown keys rejected; empty values are also valid (falls back to default)
         let settings_body = serde_json::to_vec(
             &json!({ "instructions": "团队共享库规范", "conventions": "标签小写" }),
         )
@@ -838,7 +842,7 @@ mod tests {
             v["default_instructions"].as_str().unwrap().len() > 50,
             "GET must carry the built-in default for the UI's restore action"
         );
-        // 未知键拒绝
+        // Unknown keys rejected
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -848,7 +852,7 @@ mod tests {
             br#"{"nope": "x"}"#,
         );
         assert_eq!(status, 400);
-        // 鉴权开关：布尔往返（此时 alice 已是 admin，守卫放行）；非布尔拒绝
+        // Auth switch: boolean round-trip (alice is admin by now, guard passes); non-boolean rejected
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -870,7 +874,7 @@ mod tests {
             br#"{"auth_required": "yes"}"#,
         );
         assert_eq!(status, 400);
-        // 恢复默认 = 写空字符串
+        // Restore default = write an empty string
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -885,7 +889,7 @@ mod tests {
         assert_eq!(v["instructions"], json!(null));
         assert_eq!(v["conventions"], "标签小写");
 
-        // 删除 → 再删 404
+        // Delete → deleting again gives 404
         let (status, _) = handle(&db, &open_ctx(), "DELETE", "/api/identities/alice", "", &[]);
         assert_eq!(status, 200);
         let (status, _) = handle(&db, &open_ctx(), "DELETE", "/api/identities/alice", "", &[]);
@@ -894,8 +898,8 @@ mod tests {
         cleanup();
     }
 
-    /// 开启鉴权开关的守卫：库里没有 admin 能力身份时拒绝（空表、只有只读身份
-    /// 都不行），创建 admin 后放行。防止开关翻上后无人持有 token、管理面锁死。
+    /// Guard for enabling the auth switch: rejected when no identity with admin
+    /// capabilities exists (empty table or read-only-only both fail), allowed once an admin is created. Prevents locking the admin surface with no token holder after the switch is flipped.
     #[test]
     fn settings_enable_auth_requires_admin_identity() {
         let db =
@@ -918,14 +922,14 @@ mod tests {
             )
         };
 
-        // 空表 → 400 且开关保持关闭
+        // Empty table → 400 and the switch stays off
         let (status, v) = enable(&db);
         assert_eq!(status, 400, "{v}");
         assert!(v.to_string().contains("no admin identity exists"));
         let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
         assert_eq!(v["auth_required"], false, "guard must leave the switch off");
 
-        // 只有非 admin 身份 → 仍 400
+        // Only non-admin identities → still 400
         let (status, v) = handle(
             &db,
             &open_ctx(),
@@ -938,7 +942,7 @@ mod tests {
         let (status, v) = enable(&db);
         assert_eq!(status, 400, "{v}");
 
-        // 创建 admin → 放行，开关生效
+        // Create admin → allowed, the switch takes effect
         let (status, v) = handle(
             &db,
             &open_ctx(),
@@ -956,9 +960,9 @@ mod tests {
         cleanup();
     }
 
-    /// 匿名能力集的设置端点往返：部分键对象写入 → GET 读回全键对象；
-    /// null 清除（GET 回 null）；未知能力名 / 非布尔值 / 非对象类型拒绝；
-    /// 只写该键也是有效更新。
+    /// Settings endpoint round-trip for the anonymous capability set: partial-key object write → GET returns the full-key object;
+    /// null clears (GET returns null); unknown capability names / non-boolean values / non-object types rejected;
+    /// writing only this key is also a valid update.
     #[test]
     fn settings_anonymous_permissions_roundtrip() {
         let db =
@@ -970,11 +974,11 @@ mod tests {
         };
         cleanup();
 
-        // 未设置 → null
+        // Unset → null
         let (_, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
         assert_eq!(v["anonymous_permissions"], json!(null));
 
-        // 部分键对象写入 → 读回全键对象（缺省键 = false）
+        // Partial-key object write → read back full-key object (missing keys = false)
         let (status, v) = handle(
             &db,
             &open_ctx(),
@@ -989,7 +993,7 @@ mod tests {
         assert_eq!(v["anonymous_permissions"]["create"], false);
         assert_eq!(v["anonymous_permissions"]["admin"], false);
 
-        // 未知能力名 → 400
+        // Unknown capability name → 400
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -999,7 +1003,7 @@ mod tests {
             br#"{"anonymous_permissions": {"riter": true}}"#,
         );
         assert_eq!(status, 400);
-        // 非布尔值 → 400
+        // Non-boolean value → 400
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -1009,7 +1013,7 @@ mod tests {
             br#"{"anonymous_permissions": {"read": "yes"}}"#,
         );
         assert_eq!(status, 400);
-        // 既非对象也非 null → 400
+        // Neither object nor null → 400
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -1020,7 +1024,7 @@ mod tests {
         );
         assert_eq!(status, 400);
 
-        // null 清除 → GET 回 null
+        // null clears → GET returns null
         let (status, _) = handle(
             &db,
             &open_ctx(),

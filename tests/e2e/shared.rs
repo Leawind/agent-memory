@@ -1,4 +1,4 @@
-//! 多进程共享同一数据库的并发正确性。
+//! Concurrency correctness with multiple processes sharing one database.
 
 use serde_json::json;
 
@@ -11,7 +11,7 @@ fn two_server_processes_share_one_db() {
     let a = HttpProc::start(&db, "share-a");
     let b = HttpProc::start(&db, "share-b");
 
-    // A 写入，B 立即可见（WAL 读写并发）
+    // A writes, B sees it immediately (WAL read/write concurrency)
     let (status, _, _) = request(
         a.port,
         "POST",
@@ -23,7 +23,7 @@ fn two_server_processes_share_one_db() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total_matches"], 1);
 
-    // B 改名标签，A 端数据同步
+    // B renames the tag, A's data stays in sync
     let (status, _, _) = request(
         b.port,
         "PUT",
@@ -35,8 +35,8 @@ fn two_server_processes_share_one_db() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total"], 1);
 
-    // 4 线程并发经 REST 写入（两个进程各自承接一半），零丢失；
-    // 同时一个读者线程持续搜索——只读事务（DEFERRED 快照）不与写者互斥
+    // 4 threads write concurrently via REST (each process taking half), zero loss;
+    // meanwhile a reader thread keeps searching -- read-only transactions (DEFERRED snapshot) never block writers
     let ports = [a.port, b.port, a.port, b.port];
     let reader_port = a.port;
     let reader = std::thread::spawn(move || {

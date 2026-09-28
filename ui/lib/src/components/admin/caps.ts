@@ -1,5 +1,6 @@
-// AdminPanel 家族的共享登记表与纯函数：能力清单、预设、展示辅助、错误包装。
-// CAPS 的 key 与服务端 auth::Cap 的 JSON 键一致（唯一登记表）。
+// Shared registries and pure functions for the AdminPanel family: capability list, presets,
+// display helpers, error wrapping.
+// CAPS keys match the JSON keys of the server's auth::Cap (the single source of truth).
 import { t } from '../../i18n'
 import { toastError, toastSuccess } from '../../toast'
 
@@ -25,7 +26,7 @@ export function emptyCaps(): Record<string, boolean> {
   return Object.fromEntries(CAPS.map((c) => [c.key, false]))
 }
 
-/** 一个能力都没有（匿名能力集为空 = 匿名访问被整体拒绝）。 */
+/** Not a single capability (an empty anonymous capability set = anonymous access denied entirely). */
 export function isEmptyCaps(p?: Record<string, boolean> | null): boolean {
   return !p || CAPS.every((c) => p[c.key] !== true)
 }
@@ -45,12 +46,12 @@ export function enabledCaps(row: IdentityRow): string[] {
   return CAPS.map((c) => c.key).filter((k) => row.permissions?.[k] === true)
 }
 
-// token 只存哈希，列表只有尾缀提示
+// Tokens are stored hashed only; the list shows just the suffix hint
 export function maskToken(hint: string): string {
   return hint ? `…${hint}` : '—'
 }
 
-/** 面板层统一的错误包装：动作失败 toast 并返回 undefined，成功可选 toast。 */
+/** Unified error wrapper at the panel layer: on failure toast and return undefined, optionally toast on success. */
 export async function run<T>(action: () => Promise<T>, successMsg?: string): Promise<T | undefined> {
   try {
     const out = await action()

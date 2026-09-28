@@ -1,4 +1,4 @@
-// i18n：zh/en 字典 key 一一对应、插值与语言切换
+// i18n: one-to-one zh/en dictionary keys, interpolation and language switching
 import { describe, expect, it } from 'vitest'
 import { memoryUIi18n, setMemoryUILocale, currentMemoryUILocale, t } from './index'
 import zh from './zh'
@@ -40,7 +40,7 @@ describe('locale switching', () => {
   })
 
   it('the shared composer exposes t for use outside component setup', () => {
-    // format.ts / client.ts 等纯 TS 模块依赖这一形态
+    // pure TS modules such as format.ts / client.ts depend on this shape
     expect(typeof memoryUIi18n.global.t).toBe('function')
   })
 })

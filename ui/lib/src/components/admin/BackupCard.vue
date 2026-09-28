@@ -1,5 +1,5 @@
 <template>
-  <!-- 备份导入导出：admin 专属端点（/api/export 由 http 层拦截为附件下载） -->
+  <!-- Backup export/import: admin-only endpoints (/api/export is intercepted by the http layer as an attachment download) -->
   <el-card shadow="never">
     <template #header>{{ t('access.backupCard') }}</template>
     <div class="actions">

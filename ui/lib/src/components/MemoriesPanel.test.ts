@@ -1,5 +1,5 @@
-// MemoriesPanel 挂载冒烟测试：验证列表/搜索两种模式的数据接线
-// （fetch 按路由 mock，Element Plus 组件经 unplugin-vue-components 注入真实渲染）
+// MemoriesPanel mount smoke test: verifies data wiring in both list/search modes
+// (fetch is mocked per route, Element Plus components render for real via unplugin-vue-components)
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MemoriesPanel from './MemoriesPanel.vue'
@@ -76,7 +76,8 @@ describe('MemoriesPanel', () => {
     await flushPromises()
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
     const listCall = urls.filter((u) => u.includes('/api/memories?')).at(-1)
-    // 排序必须真正下发到请求参数（回归：onSortChange 曾因参数遮蔽抛错，reload 不执行）
+    // Sorting must actually reach the request parameters (regression: onSortChange once threw
+    // due to parameter shadowing, so reload never ran)
     expect(listCall).toContain('sort=created_at')
     expect(listCall).toContain('order=asc')
     wrapper.unmount()

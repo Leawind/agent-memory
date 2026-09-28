@@ -1,5 +1,6 @@
-//! 语义搜索端到端：hybrid 召回、服务不可用的回退承诺、写入回退 + 补跑闭环。
-//! embedding 服务用单线程 mock（确定性单热向量），测试完全可控。
+//! Semantic search end-to-end: hybrid recall, the fallback promise when the service is down,
+//! and the write-fallback + backfill loop. The embedding service is a single-threaded mock
+//! (deterministic one-hot vectors), keeping the tests fully controllable.
 
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -7,27 +8,27 @@ use std::net::TcpListener;
 
 use crate::common::{cleanup, encodeURIComponent, json_body, request, run_cli, temp_db, HttpProc};
 
-/// mock 向量维度：embedding = 按文本字节和对 16 取模的单热向量。
-/// 同桶 = 余弦 1（语义相近），异桶 = 0（不召回），测试完全可控。
+/// Mock vector dimensions: the embedding is a one-hot vector indexed by the text's byte sum modulo 16.
+/// Same bucket = cosine 1 (semantically close), different bucket = 0 (not recalled), keeping tests fully controllable.
 const MOCK_DIM: usize = 16;
 
 fn mock_bucket(text: &str) -> usize {
     text.bytes().map(|b| b as usize).sum::<usize>() % MOCK_DIM
 }
 
-/// 与 embed::embed_memory_text 相同的拼装（summary + "\n\n" + content）。
+/// Same assembly as embed::embed_memory_text (summary + "\n\n" + content).
 fn mock_memory_text(summary: &str, content: &str) -> String {
     format!("{}\n\n{}", summary.trim(), content.trim())
 }
 
-/// 单线程 mock embedding 服务：OpenAI 兼容 /embeddings，确定性单热向量。
+/// Single-threaded mock embedding service: OpenAI-compatible /embeddings, deterministic one-hot vectors.
 fn spawn_mock_embedding() -> u16 {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("mock bind");
     let port = listener.local_addr().expect("mock addr").port();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            // 读到头部结束分隔符
+            // Read until the header-terminating delimiter
             let mut buf = Vec::new();
             let mut byte = [0u8; 1];
             while let Ok(1) = stream.read(&mut byte) {
@@ -88,8 +89,8 @@ fn put_settings(port: u16, body: Value) {
     );
 }
 
-/// 服务可用：hybrid 召回关键词零命中但语义同桶的记忆；
-/// 服务不可用：回退关键词并打 semantic_fallback 标记。
+/// Service available: hybrid recalls memories with zero keyword hits that are semantically in the same bucket;
+/// service unavailable: falls back to keywords and flags semantic_fallback.
 #[test]
 fn semantic_search_hybrid_and_fallback() {
     let db = temp_db("semantic");
@@ -98,7 +99,7 @@ fn semantic_search_hybrid_and_fallback() {
     let server = HttpProc::start(&db, "semantic");
     let port = server.port;
 
-    // 未配置时 hybrid 显式请求 → 400（配置是显式要求而非静默直通）
+    // Explicit hybrid request while unconfigured -> 400 (configuration is required explicitly, no silent pass-through)
     let (status, body, _) = request(
         port,
         "GET",
@@ -114,7 +115,7 @@ fn semantic_search_hybrid_and_fallback() {
         "{body:?}"
     );
 
-    // 配置（指向 mock）
+    // Configure (pointing at the mock)
     put_settings(
         port,
         json!({
@@ -131,13 +132,13 @@ fn semantic_search_hybrid_and_fallback() {
     assert_eq!(settings["embedding_model"], "mock-embed");
     assert_eq!(settings["embedding_api_key"], "sk-test");
 
-    // 测试连接端点
+    // Test-connection endpoint
     let (status, body, _) = request(port, "POST", "/api/embeddings/test", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["ok"], true);
     assert_eq!(json_body(&body)["dim"], MOCK_DIM);
 
-    // 两条记忆：m1 双词都命中（"zigzag" + "marker"），m2 关键词零命中但与查询同桶
+    // Two memories: m1 hits both words ("zigzag" + "marker"), m2 has zero keyword hits but shares a bucket with the query
     let query = "zigzag marker";
     let bucket_q = mock_bucket(query);
     let m1_summary = "kw marker";
@@ -166,7 +167,7 @@ fn semantic_search_hybrid_and_fallback() {
         assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
     }
 
-    // auto（已配置）→ hybrid：两条都被召回（m1 走关键词，m2 仅向量路）
+    // auto (configured) -> hybrid: both recalled (m1 via keywords, m2 via the vector path only)
     let (status, body, _) = request(
         port,
         "GET",
@@ -193,7 +194,7 @@ fn semantic_search_hybrid_and_fallback() {
         "语义召回同样不得泄露正文"
     );
 
-    // keyword 模式强制纯关键词：只有 m1
+    // keyword mode forces pure keywords: only m1
     let (status, body, _) = request(
         port,
         "GET",
@@ -208,7 +209,7 @@ fn semantic_search_hybrid_and_fallback() {
     assert_eq!(out["mode"], "keyword");
     assert_eq!(out["results"].as_array().unwrap().len(), 1);
 
-    // 服务不可用（指向已关闭端口）：auto 与 hybrid 都回退关键词，不打断搜索
+    // Service down (pointing at a closed port): both auto and hybrid fall back to keywords without interrupting the search
     let dead = {
         let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.local_addr().unwrap().port()
@@ -231,7 +232,7 @@ fn semantic_search_hybrid_and_fallback() {
         assert_eq!(out["results"].as_array().unwrap().len(), 1, "mode={mode:?}");
     }
 
-    // 非法 mode → 400
+    // Invalid mode -> 400
     let (status, _, _) = request(port, "GET", "/api/memories?query=zz&mode=quantum", None);
     assert_eq!(status, 400);
 
@@ -239,8 +240,9 @@ fn semantic_search_hybrid_and_fallback() {
     cleanup(&db);
 }
 
-/// 写入回退 + 补跑闭环：服务不可用时创建成功且记忆可见（向量留待补跑），
-/// 服务恢复后 backfill 补齐，语义召回随即生效；doctor/stats 反映全程。
+/// Write-fallback + backfill loop: when the service is down, creation succeeds and the memory is visible
+/// (vectors left pending for backfill); once the service recovers, backfill fills them in and semantic
+/// recall takes effect; doctor/stats reflect the whole journey.
 #[test]
 fn embedding_write_fallback_then_backfill() {
     let db = temp_db("backfill");
@@ -248,7 +250,7 @@ fn embedding_write_fallback_then_backfill() {
     let server = HttpProc::start(&db, "backfill");
     let port = server.port;
 
-    // 指向一个已关闭的端口（连接立刻被拒，不会拖慢测试）
+    // Point at a closed port (connection refused immediately, does not slow the test)
     let dead = {
         let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.local_addr().unwrap().port()
@@ -262,7 +264,7 @@ fn embedding_write_fallback_then_backfill() {
         }),
     );
 
-    // 写入必须成功（回退承诺），记忆立即可搜（关键词）
+    // The write must succeed (fallback promise), the memory immediately searchable via keywords
     let (status, resp, _) = request(
         port,
         "POST",
@@ -276,7 +278,7 @@ fn embedding_write_fallback_then_backfill() {
         String::from_utf8_lossy(&resp)
     );
 
-    // stats 反映 pending；doctor 把它列为待办
+    // stats reflects pending; doctor lists it as a to-do
     let (status, body, _) = request(port, "GET", "/api/stats", None);
     assert_eq!(status, 200);
     let stats = json_body(&body);
@@ -296,11 +298,11 @@ fn embedding_write_fallback_then_backfill() {
         "doctor 应报告待补跑: {issues}"
     );
 
-    // CLI 补跑在服务不可用时失败（退出码 1），但不损坏数据
+    // CLI backfill fails while the service is down (exit code 1) but does not corrupt data
     let out = run_cli(&["embed-backfill", "--db", &db.display().to_string()]);
     assert!(!out.status.success(), "服务不可用时补跑应报错退出");
 
-    // 服务恢复：backfill 端点补齐（?batch 控制每批条数）
+    // Service recovered: the backfill endpoint fills in (?batch controls items per batch)
     let mock_port = spawn_mock_embedding();
     put_settings(
         port,
@@ -313,20 +315,20 @@ fn embedding_write_fallback_then_backfill() {
     assert_eq!(out["processed"], 1);
     assert_eq!(out["remaining"], 0);
 
-    // 再跑一次：零工作量直通
+    // Run again: zero work pass-through
     let (status, body, _) = request(port, "POST", "/api/embeddings/backfill", None);
     assert_eq!(status, 200);
     let out = json_body(&body);
     assert_eq!(out["processed"], 0);
     assert_eq!(out["remaining"], 0);
 
-    // stats 归零，doctor 干净
+    // stats back to zero, doctor clean
     let (_, body, _) = request(port, "GET", "/api/stats", None);
     assert_eq!(json_body(&body)["embedding"]["pending"], 0);
     let (_, body, _) = request(port, "GET", "/api/doctor", None);
     assert_eq!(json_body(&body)["ok"], true);
 
-    // 找一条与记忆文本同桶的查询词，验证补跑后语义召回生效
+    // Find a query sharing a bucket with the memory text to verify semantic recall works after backfill
     let target = mock_bucket("recall probe\n\nsemantic target body");
     let query = (0..10000)
         .map(|i| format!("q{i}"))
@@ -350,14 +352,14 @@ fn embedding_write_fallback_then_backfill() {
         "补跑后应可语义召回: {out}"
     );
 
-    // 未配置的库：backfill 端点报告 configured=false（UI 引导配置）
+    // Unconfigured db: the backfill endpoint reports configured=false (the UI guides configuration)
     let db2 = temp_db("backfill-unconfigured");
     cleanup(&db2);
     let server2 = HttpProc::start(&db2, "backfill-unconfigured");
     let (status, body, _) = request(server2.port, "POST", "/api/embeddings/backfill", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["configured"], false);
-    // CLI 在未配置库上退出码 1
+    // CLI exits with code 1 on an unconfigured db
     let out = run_cli(&["embed-backfill", "--db", &db2.display().to_string()]);
     assert!(!out.status.success());
     drop(server2);

@@ -1,4 +1,4 @@
-// 多身份令牌存储：localStorage 里的身份表与当前身份指针
+// Multi-identity token store: the identity table and current-identity pointer in localStorage
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   addIdentity,
@@ -20,7 +20,7 @@ describe('multi-identity token store', () => {
     addIdentity('admin', 'tok-a')
     addIdentity('viewer', 'tok-v')
     expect(listIdentityNames()).toEqual(['admin', 'viewer'])
-    // addIdentity 切换当前身份
+    // addIdentity switches the current identity
     expect(currentIdentityName()).toBe('viewer')
     expect(readStoredToken()).toBe('tok-v')
 
@@ -69,11 +69,11 @@ describe('multi-identity token store', () => {
   })
 
   it('adopts a legacy single token under its identity name after first whoami success', async () => {
-    // 模拟旧版升级：只有单 token 键
+    // Simulate the legacy upgrade path: only the single-token key exists
     localStorage.setItem('agent-memory-token', 'tok-legacy')
     expect(readStoredToken()).toBe('tok-legacy')
 
-    // fetchWhoAmI 成功返回身份名后收编（stub 全局 fetch）
+    // Folded in after fetchWhoAmI successfully returns the identity name (stub global fetch)
     const fetchMock = vi.fn(() =>
       Promise.resolve({
         ok: true,

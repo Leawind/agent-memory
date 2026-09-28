@@ -1,4 +1,4 @@
-// TagsPanel 挂载冒烟测试：标签表格从 API 渲染
+// TagsPanel mount smoke test: tag table renders from the API
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import TagsPanel from './TagsPanel.vue'
@@ -43,7 +43,7 @@ describe('TagsPanel', () => {
     const input = wrapper.find('.am-tag-filter input')
     expect(input.exists()).toBe(true)
     await input.setValue('^proj/')
-    // 防抖 300ms 后应带 filter 参数重新请求
+    // After the 300ms debounce the request should be re-issued with the filter parameter
     await new Promise((r) => setTimeout(r, 350))
     await flushPromises()
     const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]))

@@ -1,4 +1,4 @@
-//! 标签管理：增删查改（数据操作下沉到 store 的 SQL）。
+//! Tag management: create/read/update/delete (data operations are delegated to the store's SQL).
 
 use crate::model::normalize_tag_name;
 use crate::store::Store;
@@ -13,8 +13,8 @@ pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
         None => String::new(),
     };
     st.tag_create(&name, &description)?;
-    // 非阻塞提示：已存在仅大小写不同的标签时提醒 agent，避免分类体系碎片化
-    // （如 "rust" 与 "Rust" 并存）。是否合并由 agent 通过 tag_update 自行决定。
+    // Non-blocking hint: when a tag differing only in case already exists, remind the agent to keep the taxonomy
+    // from fragmenting (e.g. "rust" and "Rust" coexisting). Whether to merge is the agent's call, via tag_update.
     let mut out = json!({"created": true, "tag": st.tag_view(&name)?});
     if let Some(existing) = st.find_tag_case_insensitive(&name)? {
         out["similar_existing"] = json!(existing);
@@ -55,7 +55,7 @@ pub fn tag_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
             "nothing to change: provide new_name and/or description",
         ));
     }
-    // 存在性预检：错误类别（404/400）在 handler 层显式确定
+    // Existence pre-check: the error kind (404/400) is decided explicitly at the handler layer
     if !st.tag_exists(&name)? {
         return Err(ToolError::not_found(format!(
             "tag '{name}' not found (see tag_list)"

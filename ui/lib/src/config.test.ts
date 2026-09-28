@@ -1,11 +1,12 @@
-// 配置注入测试：provide 覆盖默认值、未 provide 回退默认值、baseUrl 规范化
+// Config injection tests: provide overrides defaults, missing provide falls back to defaults,
+// baseUrl normalization
 import { describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { provideMemoryUI, useMemoryConfig } from './config'
 import type { ResolvedMemoryUIConfig } from './config'
 
-// 在组件 setup 中捕获 useMemoryConfig 的返回值供断言
+// Capture useMemoryConfig's return value inside a component setup for assertions
 let captured: ResolvedMemoryUIConfig | null = null
 const Probe = defineComponent({
   setup() {

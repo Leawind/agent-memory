@@ -1,6 +1,6 @@
 <template>
-  <!-- 鉴权卡：鉴权开关（标题行右侧）+ 匿名访问 + 身份表合并为一张卡。
-       鉴权边界由显式开关决定，与是否已创建身份无关。 -->
+  <!-- Auth card: toggle (right of the title row) + anonymous access + identity table merged into one card.
+       The auth boundary is determined by the explicit switch, regardless of whether identities exist yet. -->
   <el-card shadow="never">
     <template #header>
       <div class="card-header">
@@ -43,15 +43,15 @@
 
     <el-divider />
 
-    <!-- 身份：新建入口紧贴身份表（小节行右侧） -->
+    <!-- Identities: the create entry sits right next to the table (right of the section row) -->
     <div class="card-header id-header">
       <span class="section-title">{{ t('access.identityCard') }}</span>
       <el-button type="primary" :icon="Plus" @click="emit('create')">
         {{ t('access.create') }}
       </el-button>
     </div>
-    <!-- 空身份时不占正文空间（新建入口在小节行）；窄容器：卡片列表替代表格——
-         el-table 的固定操作列在手机宽度会把能力标签挤碎 -->
+    <!-- Takes no body space when empty (create entry lives in the section row); narrow containers: card list replaces the table -
+         el-table's fixed action column crushes the capability tags at phone widths -->
     <div v-if="compact && identities.length > 0" class="id-cards">
       <div v-for="row in identities" :key="row.name" class="id-card">
         <div class="id-card-head">
@@ -171,21 +171,21 @@ import {
 import CapsEditor from './CapsEditor.vue'
 
 const props = defineProps<{
-  /** 服务器当前的鉴权开关状态（随父层 load 刷新） */
+  /** The server's current auth toggle state (refreshed by the parent's load) */
   authRequired: boolean
-  /** 库里是否存在 admin 身份（开启的前置条件） */
+  /** Whether an admin identity exists in the database (precondition for enabling) */
   hasAdminIdentity: boolean
-  /** 服务器当前配置的匿名能力集（全键对象）；null = 未设置（匿名被拒绝） */
+  /** The server's current anonymous capability set (all-keys object); null = unset (anonymous denied) */
   anonymousPermissions: Record<string, boolean> | null
   identities: IdentityRow[]
-  /** compact（<960px）时以卡片列表替代表格（创建时间/token 列随之收起） */
+  /** In compact mode (<960px) a card list replaces the table (created-at/token columns are dropped) */
   compact: boolean
 }>()
 
 const emit = defineEmits<{
-  /** 开关状态实际改变（父层据此刷新 settings，匿名访问的可用性随之联动） */
+  /** The toggle state actually changed (the parent refreshes settings accordingly, and anonymous access availability follows) */
   changed: [enabled: boolean]
-  /** 匿名能力集保存成功（父层刷新设置） */
+  /** The anonymous capability set was saved (the parent refreshes settings) */
   saved: []
   create: []
   edit: [row: IdentityRow]
@@ -193,8 +193,9 @@ const emit = defineEmits<{
   'reset-token': [row: IdentityRow]
 }>()
 
-// ---- 鉴权开关：先确认再变更（el-switch before-change）。
-// 无 admin 身份时开关禁用（disabled + tooltip 说明），这里的预检只作兜底。
+// ---- Auth toggle: confirm before changing (el-switch before-change).
+// The switch is disabled without an admin identity (disabled + tooltip); the precheck here is
+// just a backstop.
 const authOn = ref(props.authRequired)
 watch(
   () => props.authRequired,
@@ -209,8 +210,8 @@ const config = useMemoryConfig()
 
 async function confirmAuthToggle(): Promise<boolean> {
   const target = !authOn.value
-  // 预检兜底：开启要求库里已有 admin 身份（服务端守卫同规则）。
-  // token 拿到手之前别翻开关。
+  // Backstop precheck: enabling requires an admin identity to exist in the database (same rule
+  // as the server-side guard). Don't flip the switch before you have the token in hand.
   if (target && !props.hasAdminIdentity) {
     toastError(t('access.enableBlocked'))
     return false
@@ -241,7 +242,8 @@ async function confirmAuthToggle(): Promise<boolean> {
   }
 }
 
-// ---- 匿名访问：服务器数据到达/刷新后重建本地草稿（保存成功后的 load 也会走回这里）
+// ---- Anonymous access: rebuild the local draft once server data arrives/refreshes (the load
+// after a successful save also flows back through here)
 const caps = reactive<Record<string, boolean>>(emptyCaps())
 const preset = ref<PresetKey>('custom')
 const anonOn = ref(false)
@@ -259,8 +261,8 @@ watch(
 
 const hasAnyCap = computed(() => !isEmptyCaps(caps))
 
-// 关闭态：与服务器不一致（服务器有配置）才需要保存；
-// 开启态：服务器无配置，或勾选与服务器不同
+// Disabled state: a save is only needed when it differs from the server (the server has a config);
+// enabled state: the server has no config, or the checked boxes differ from the server
 const dirty = computed(() =>
   anonOn.value
     ? props.anonymousPermissions === null ||
@@ -271,7 +273,7 @@ const dirty = computed(() =>
 async function save(): Promise<void> {
   saving.value = true
   try {
-    // 关闭 = 清除配置（匿名被整体拒绝）；开启 = 保存勾选的全键对象
+    // Disabled = clear the config (anonymous access denied entirely); enabled = save the checked all-keys object
     const body = anonOn.value ? { anonymous_permissions: { ...caps } } : { anonymous_permissions: null }
     const ok = await run(() => api.put('/api/settings', body), t('access.anonSaved'))
     if (ok === undefined) return
@@ -331,7 +333,7 @@ async function save(): Promise<void> {
 .muted {
   color: var(--el-text-color-secondary);
 }
-/* 窄容器的身份卡片列表 */
+/* Identity card list for narrow containers */
 .id-cards {
   display: flex;
   flex-direction: column;

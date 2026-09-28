@@ -1,4 +1,4 @@
-// 展示格式化工具（纯函数）。时间格式跟随库内当前语言。
+// Presentation formatting helpers (pure functions). Time format follows the library's current language.
 import { memoryUIi18n } from './i18n'
 
 export function formatTime(ts: number | null | undefined): string {

@@ -1,6 +1,6 @@
 <template>
-  <!-- 语义搜索配置：OpenAI 兼容 /embeddings（云端或本地 Ollama）；服务不可用时自动回退关键词。
-       向量覆盖率与补跑并入本卡（原底部独立卡已删）：配置与覆盖率同屏，启用后即可见 -->
+  <!-- Semantic search config: OpenAI-compatible /embeddings (cloud or local Ollama); falls back to keyword search automatically when the service is unavailable.
+       Vector coverage and backfill live in this card too (the former standalone card at the bottom was removed): config and coverage on one screen, visible once enabled -->
   <el-card shadow="never">
     <template #header>{{ t('access.embeddingTitle') }}</template>
     <el-alert :title="t('access.embeddingHint')" type="info" show-icon :closable="false" class="settings-hint" />
@@ -42,7 +42,7 @@
       class="settings-hint"
     />
 
-    <!-- 向量覆盖率与补跑（admin 端点，按钮内循环直到清零）：统计随父层 load 拉取，未启用时不渲染 -->
+    <!-- Vector coverage and backfill (admin endpoints; the button loops until nothing is pending): stats fetched with the parent's load, not rendered while disabled -->
     <template v-if="coverage">
       <el-divider class="coverage-divider" />
       <div class="coverage-header">
@@ -86,15 +86,15 @@ const props = defineProps<{
   embeddingBaseUrl: string
   embeddingModel: string
   embeddingApiKey: string
-  /** 向量覆盖率统计（随父层 load 拉取）；未启用或未加载时不展示覆盖率小节 */
+  /** Vector coverage stats (fetched by the parent's load); the coverage section is hidden when not enabled or not loaded */
   stats: import('../../types').StatsInfo | null
-  /** compact（<960px）时覆盖率描述列表单列 */
+  /** In compact mode (<960px) the coverage descriptions list renders in a single column */
   compact: boolean
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
 
-// 本地编辑态，随父层 load 刷新
+// Local editing state, refreshed when the parent loads
 const enabled = ref(props.embeddingEnabled)
 const baseUrl = ref(props.embeddingBaseUrl)
 const model = ref(props.embeddingModel)
@@ -109,20 +109,23 @@ watch(
   },
 )
 
-// 服务启用才展示覆盖率小节（stats 未加载时也不渲染，避免闪现「未启用」）
+// Only show the coverage section when the service is enabled (also not rendered while stats are
+// unloaded, avoiding a flash of "not enabled")
 const coverage = computed<EmbeddingCoverage | undefined>(() =>
   props.stats?.embedding?.enabled ? props.stats.embedding : undefined,
 )
-// 覆盖率分母 = 已向量化 + 待补跑
+// Coverage denominator = embedded + pending backfill
 const coverageTotal = computed(() => (coverage.value?.embedded ?? 0) + (coverage.value?.pending ?? 0))
 
 const api = useApiClient()
 const { backfilling, backfill } = useAdmin()
 const saving = ref(false)
-// run 失败时返回 undefined（已 toast），test 需容纳三种态：null=未测、undefined=测试失败、对象=结果
+// run returns undefined on failure (already toasted); test must accommodate three states:
+// null = not tested, undefined = test failed, object = result
 const test = ref<null | undefined | { ok: boolean; dim?: number; elapsed_ms?: number; error?: string }>(null)
 
-// 保存配置后立刻用服务端配置做连通性测试；changed 让父层重拉统计，覆盖率小节随即更新
+// After saving, immediately run a connectivity test with the server-side config; `changed` makes
+// the parent refetch the stats so the coverage section updates right away
 async function saveAndTest(): Promise<void> {
   saving.value = true
   test.value = null
@@ -135,17 +138,17 @@ async function saveAndTest(): Promise<void> {
         embedding_api_key: apiKey.value,
       }),
     )
-    if (saved === undefined) return // 保存失败已 toast
+    if (saved === undefined) return // save failure already toasted
     toastSuccess(t('access.saved'))
     emit('changed')
-    if (!enabled.value) return // 关闭状态无需测试
+    if (!enabled.value) return // no test needed when disabled
     test.value = await run(() => api.post('/api/embeddings/test', {}))
   } finally {
     saving.value = false
   }
 }
 
-/** 补跑完成后给结果反馈（成功条数为 0 也算成功——本就无待办），并触发父层刷新覆盖率 */
+/** Give result feedback after the backfill finishes (0 processed still counts as success — there was nothing pending) and trigger the parent to refresh coverage */
 async function runBackfill(): Promise<void> {
   const total = await run(backfill)
   if (total === undefined) return

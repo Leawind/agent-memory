@@ -1,5 +1,5 @@
 <template>
-  <!-- 新建 / 编辑能力 -->
+  <!-- Create / edit capabilities -->
   <el-dialog
     v-model="visible"
     :title="editing ? t('access.editTitle', { name: editing.name }) : t('access.createTitle')"
@@ -31,14 +31,14 @@ import { CAPS, emptyCaps, run, type IdentityRow, type PresetKey } from './caps'
 import CapsEditor from './CapsEditor.vue'
 
 defineProps<{
-  /** compact（<960px）时对话框加宽到 96% */
+  /** In compact mode (<960px) the dialog widens to 96% */
   compact: boolean
 }>()
 
 const emit = defineEmits<{
-  /** 编辑保存成功（父层刷新列表） */
+  /** Edit saved successfully (the parent refreshes the list) */
   saved: []
-  /** 新建成功，附一次性 token 明文（父层弹 token 一次性展示并刷新列表） */
+  /** Creation succeeded, carrying the one-time token in plaintext (the parent shows the one-time token dialog and refreshes the list) */
   created: [payload: { name: string; token: string }]
 }>()
 

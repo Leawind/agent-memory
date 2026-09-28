@@ -1,4 +1,4 @@
-// 面板可复用性 props：show-header / title / subtitle
+// Panel reusability props: show-header / title / subtitle
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MemoriesPanel from './MemoriesPanel.vue'
@@ -39,7 +39,7 @@ describe('MemoriesPanel reusable props', () => {
     const wrapper = mount(MemoriesPanel, { props: { showHeader: false } })
     await flushPromises()
     expect(wrapper.find('.am-panel-header').exists()).toBe(false)
-    // 工具栏与表格不受影响
+    // The toolbar and table are unaffected
     expect(wrapper.find('.am-toolbar').exists()).toBe(true)
     expect(wrapper.html()).toContain('列表模式的记忆')
     wrapper.unmount()
@@ -51,7 +51,7 @@ describe('MemoriesPanel reusable props', () => {
     })
     await flushPromises()
     expect(wrapper.find('.am-panel-title').text()).toBe('自定义标题')
-    // 副标题不再平铺展示，作为标题旁 ⓘ 图标的悬停提示
+    // The subtitle is no longer rendered flat; it is the hover tooltip of the info icon next to the title
     const tooltip = wrapper.findComponent({ name: 'ElTooltip' })
     expect(tooltip.exists()).toBe(true)
     expect(tooltip.props('content')).toBe('自定义副标题')

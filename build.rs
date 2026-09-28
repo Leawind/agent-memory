@@ -78,8 +78,8 @@ fn main() {
         .expect("failed to write the generated migrations module");
 
     println!("cargo:rerun-if-changed=migrations");
-    // 目录级跟踪：pnpm build 重写 ui/dist 后，下次 cargo build 会重跑本脚本并
-    // 重编译（rust-embed 随之重新嵌入），无需 cargo clean。
+    // Directory-level tracking: after pnpm build rewrites ui/dist, the next cargo build reruns this script and
+    // recompiles (rust-embed re-embeds along with it), no cargo clean needed.
     println!("cargo:rerun-if-changed=ui/dist");
 }
 

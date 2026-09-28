@@ -1,5 +1,5 @@
-//! 身份数据操作：token 生成与哈希、身份 CRUD、token → 请求身份。
-//! token 明文只在创建/重置返回值出现一次，库内仅存哈希与尾缀提示。
+//! Identity data operations: token generation and hashing, identity CRUD, token → request identity.
+//! Token plaintext appears only once, in the create/reset return value; the database stores just a hash and a suffix hint.
 
 use crate::sql;
 use rusqlite::params;
@@ -8,17 +8,17 @@ use serde_json::{json, Value};
 use super::{is_unique_violation, Store};
 
 impl Store {
-    /// 生成随机 token：`sk_` 前缀 + 62 位小写十六进制（共 65 字符）。
-    /// 随机性全部来自 SQLite randomblob（PRNG 由系统熵播种）；
-    /// SQLite 的 hex() 输出大写，lower() 收敛为小写。
+    /// Generate a random token: `sk_` prefix + 62 lowercase hex characters (65 characters in total).
+    /// All randomness comes from SQLite randomblob (its PRNG is seeded from system entropy);
+    /// SQLite's hex() outputs uppercase, so lower() normalizes to lowercase.
     pub fn generate_token(&self) -> Result<String, String> {
         self.conn
             .query_row(sql::TOKEN_GENERATE, [], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())
     }
 
-    /// 是否存在具备 admin 能力的身份（permissions JSON 恒为全键紧凑对象，
-    /// LIKE '%"admin":true%' 精确命中）。开启鉴权开关的前置条件。
+    /// Whether any identity holds the admin capability (the permissions JSON is always a full-key compact object,
+    /// so LIKE '%"admin":true%' matches precisely). Precondition for enabling the auth switch.
     pub fn has_admin_identity(&self) -> Result<bool, String> {
         self.conn
             .query_row(sql::IDENTITY_ANY_ADMIN, [], |r| r.get::<_, i64>(0))
@@ -26,8 +26,8 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 新建身份：生成随机 token，返回 (token, 管理视图)。重名由唯一约束显式化。
-    /// token 明文只在本返回值出现一次，库内仅存哈希与尾缀提示。
+    /// Create a new identity: generate a random token and return (token, admin view). Duplicate names surface via the unique constraint.
+    /// Token plaintext appears only once, in this return value; the database stores just a hash and a suffix hint.
     pub fn identity_create(
         &self,
         name: &str,
@@ -55,8 +55,8 @@ impl Store {
         Ok((token, view))
     }
 
-    /// Bearer token → 请求身份；未知 token 返回 None（调用方决定 401）。
-    /// 入参哈希后与库存哈希比对，库内无明文。
+    /// Bearer token → request identity; unknown tokens return None (the caller decides on 401).
+    /// The input is hashed and compared against the stored hash; no plaintext exists in the database.
     pub fn identity_ctx_by_token(
         &self,
         token: &str,
@@ -79,7 +79,7 @@ impl Store {
         }
     }
 
-    /// 管理视图列表。token 只存哈希，这里只给尾缀提示（供辨认，不可复原）。
+    /// List of admin views. Tokens are stored only as hashes, so this offers just the suffix hint (for recognition, not recovery).
     pub fn identity_list(&self) -> Result<Vec<Value>, String> {
         let mut st = self
             .conn
@@ -108,7 +108,7 @@ impl Store {
         .collect()
     }
 
-    /// 单个身份的管理视图（含 token）。
+    /// Admin view of a single identity (including the token).
     pub fn identity_view(&self, name: &str) -> Result<Option<Value>, String> {
         self.identity_list()
             .map(|all| all.into_iter().find(|v| v["name"].as_str() == Some(name)))
@@ -127,8 +127,8 @@ impl Store {
         Ok(n > 0)
     }
 
-    /// 重置 token（旧 token 立即失效），返回新 token 明文（仅此一次）；
-    /// 身份不存在返回 None。
+    /// Reset the token (the old one is invalidated immediately) and return the new token plaintext (this one time only);
+    /// returns None when the identity does not exist.
     pub fn identity_reset_token(&self, name: &str) -> Result<Option<String>, String> {
         let token = self.generate_token()?;
         let (hash, hint) = token_hash_and_hint(&token);
@@ -151,7 +151,7 @@ impl Store {
     }
 }
 
-/// token → (存储哈希, 尾缀提示)。token 形如 `sk_<62 位小写 hex>`，提示取末 4 字符。
+/// Token → (stored hash, suffix hint). A token looks like `sk_<62 lowercase hex>`; the hint is its last 4 characters.
 fn token_hash_and_hint(token: &str) -> (String, String) {
     let hint: String = token
         .chars()
@@ -160,15 +160,15 @@ fn token_hash_and_hint(token: &str) -> (String, String) {
     (crate::util::sha256_hex(token.as_bytes()), hint)
 }
 
-/// 解析 identities.permissions 列。写入路径已严格校验，这里再防线一次：
-/// 损坏的行会让读取报错（身份解析 fail-closed），而不是静默放大权限。
+/// Parse the identities.permissions column. The write path already validates strictly; this is one more line of defense:
+/// corrupt rows make reads error out (identity resolution is fail-closed) instead of silently widening permissions.
 fn parse_stored_permissions(json_text: &str) -> Result<crate::auth::Permissions, String> {
     let v: Value =
         serde_json::from_str(json_text).map_err(|e| format!("corrupt permissions JSON: {e}"))?;
     crate::auth::Permissions::from_json(&v)
 }
 
-/// token 契约：`sk_` 前缀 + 62 位小写十六进制（共 65 字符）。
+/// Token contract: `sk_` prefix + 62 lowercase hex characters (65 characters in total).
 #[cfg(test)]
 fn assert_token_format(token: &str) {
     assert!(
@@ -203,45 +203,45 @@ mod tests {
         assert_token_format(&token);
         assert_eq!(view["name"], "alice");
         assert_eq!(view["permissions"]["admin"], true);
-        // 库内无明文：视图只带尾缀提示，且哈希不可逆推出 token
+        // No plaintext in the database: the view carries only the suffix hint, and the hash cannot be reversed into the token
         assert_eq!(view["token_hint"], &token[token.len() - 4..]);
         assert!(serde_json::to_string(&view).unwrap().find(&token).is_none());
-        // 重名报错
+        // Duplicate names error out
         assert!(st
             .identity_create("alice", &crate::auth::Permissions::default())
             .is_err());
 
-        // token → 身份上下文
+        // token → identity context
         let ctx = st.identity_ctx_by_token(&token).unwrap().unwrap();
         assert_eq!(ctx.name, "alice");
         assert!(ctx.can(crate::auth::Cap::Admin));
         assert_eq!(ctx.mode, crate::auth::Mode::Token);
-        // 未知 token → None
+        // Unknown token → None
         assert!(st.identity_ctx_by_token("nope").unwrap().is_none());
 
-        // 收窄权限后，同一 token 的能力同步收窄
+        // After narrowing permissions, the same token's capabilities narrow in step
         st.identity_set_permissions("alice", &crate::auth::Permissions::default())
             .unwrap();
         let ctx = st.identity_ctx_by_token(&token).unwrap().unwrap();
         assert!(!ctx.can(crate::auth::Cap::Read));
 
-        // 重置 token：旧 token 立即失效
+        // Reset token: the old one is invalidated immediately
         let new_token = st.identity_reset_token("alice").unwrap().unwrap();
         assert_token_format(&new_token);
         assert_ne!(new_token, token);
         assert!(st.identity_ctx_by_token(&token).unwrap().is_none());
         assert!(st.identity_ctx_by_token(&new_token).unwrap().is_some());
-        // 不存在的身份重置 → None
+        // Resetting a nonexistent identity → None
         assert!(st.identity_reset_token("nope").unwrap().is_none());
 
-        // 删除后计数归零；再删返回 false
+        // After deletion the count drops to zero; deleting again returns false
         assert!(st.identity_delete("alice").unwrap());
         assert!(!st.identity_delete("alice").unwrap());
         assert!(st.identity_list().unwrap().is_empty());
         cleanup(&path);
     }
 
-    /// token 格式契约：多次抽样都满足 sk_ 前缀 + 62 位小写 hex，且互不相同。
+    /// Token format contract: repeated samples all satisfy the sk_ prefix + 62 lowercase hex, and are all distinct.
     #[test]
     fn generated_tokens_are_sk_prefixed_lowercase_hex() {
         let path = temp_db("token-format");

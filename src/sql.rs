@@ -1,9 +1,9 @@
-//! SQL 语句集中登记：全部业务 SQL 存放在仓库根的 `sql/` 目录（每条语句一个
-//! 文件，文件名与常量一一对应），构建期 `include_str!` 嵌入——Rust 代码里
-//! 不出现 SQL 文本。参数一律用绑定占位符（?N），杜绝字符串拼接。
+//! Central registry of SQL statements: all business SQL lives in the repo-root `sql/` directory (one
+//! file per statement, file names matching constants one-to-one) and is embedded at build time via `include_str!` —
+//! no SQL text ever appears in Rust code. Parameters always use bound placeholders (?N); string concatenation is off-limits.
 //!
-//! 新增/修改语句：改 `sql/` 下的文件并同步本模块的常量；文件与常量的
-//! 一一对应由 `sql_files_are_all_registered` 测试把守。
+//! To add or change a statement: edit the file under `sql/` and update this module's constants in step; the
+//! one-to-one correspondence is guarded by the `sql_files_are_all_registered` test.
 
 pub const TAG_EXISTS: &str = include_str!("../sql/tag_exists.sql");
 pub const TAG_CREATE: &str = include_str!("../sql/tag_create.sql");
@@ -70,9 +70,9 @@ pub const STATS_NEWEST: &str = include_str!("../sql/stats_newest.sql");
 mod tests {
     use super::*;
 
-    /// sql/ 目录与本模块常量的同步防线：目录里每个 .sql 文件都必须按命名
-    /// 约定（tag_exists.sql ↔ TAG_EXISTS）恰好对应一个已登记常量，
-    /// 多登记、漏登记或文件名拼错都会让此测试失败。
+    /// Sync guard between the sql/ directory and this module's constants: every .sql file in the directory must map,
+    /// by naming convention (tag_exists.sql ↔ TAG_EXISTS), to exactly one registered constant;
+    /// extra registrations, missing ones, or misspelled file names all fail this test.
     #[test]
     fn sql_files_are_all_registered() {
         let sql_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sql");
@@ -88,9 +88,9 @@ mod tests {
             .collect();
         on_disk.sort();
 
-        // 约定：常量名（小写）+ ".sql" 即文件名，且内容确来自该文件。
-        // 注意排序比较必须两侧用同一推导（大写化会因 '_' 的 ASCII 位置
-        // 改变相对顺序），所以把常量推导成文件名后与磁盘列表排序比较。
+        // Convention: constant name (lowercased) + ".sql" is the file name, and the content really comes from that file.
+        // Note: the sorted comparison must derive both sides the same way (uppercasing changes relative order
+        // because of where '_' sits in ASCII), so constants are derived into file names before sorting against the disk listing.
         let mut expected_files: Vec<String> = vec![
             ("TAG_EXISTS", TAG_EXISTS),
             ("TAG_CREATE", TAG_CREATE),
@@ -151,8 +151,11 @@ mod tests {
         .map(|(name, content)| {
             let file = format!("{}.sql", name.to_ascii_lowercase());
             let expected = std::fs::read_to_string(sql_dir.join(&file))
-                .unwrap_or_else(|e| panic!("sql/{file} 应存在且可读: {e}"));
-            assert_eq!(*content, expected, "常量 {name} 与 sql/{file} 内容不一致");
+                .unwrap_or_else(|e| panic!("sql/{file} should exist and be readable: {e}"));
+            assert_eq!(
+                *content, expected,
+                "constant {name} does not match sql/{file} content"
+            );
             file
         })
         .collect();
@@ -160,7 +163,7 @@ mod tests {
 
         assert_eq!(
             expected_files, on_disk,
-            "sql/ 目录文件与 src/sql.rs 常量不同步"
+            "sql/ directory files and src/sql.rs constants are out of sync"
         );
     }
 }

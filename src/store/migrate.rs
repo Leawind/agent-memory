@@ -1,13 +1,13 @@
-//! schema 迁移运行器：`migrations/` 目录经 build.rs 生成 `MIGRATIONS`，
-//! 这里按 `PRAGMA user_version` 恰好应用一次。
+//! Schema migration runner: the `migrations/` directory is compiled into `MIGRATIONS` by build.rs,
+//! and each migration is applied exactly once based on `PRAGMA user_version`.
 
 use rusqlite::Connection;
 
 use super::MIGRATIONS;
 
-/// 迁移运行器：`PRAGMA user_version` 记录已应用的迁移数量，每个待应用迁移
-/// 在独立事务中执行并推进 user_version，保证恰好应用一次。数据库比已知
-/// 迁移更新（来自更新版本的程序）时拒绝打开，绝不带着未知的 schema 写数据。
+/// Migration runner: `PRAGMA user_version` records how many migrations have been applied; each pending migration
+/// runs in its own transaction and advances user_version, so each is applied exactly once. When the database
+/// is newer than the known migrations (written by a newer program), opening is refused — never write with an unknown schema.
 pub(super) fn run_migrations(conn: &Connection) -> Result<(), String> {
     let applied: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))

@@ -1,4 +1,4 @@
-// 标签面板的状态：列表与 CRUD。动作失败时抛出 Error，由面板层统一 toast。
+// Tag panel state: list and CRUD. Failed actions throw an Error; the panel layer shows the toast uniformly.
 import { onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { createTag, deleteTag, listTags, updateTag } from '../api/tags'
@@ -9,7 +9,7 @@ export function useTags() {
   const client = useApiClient()
   const rows = ref<TagView[]>([])
   const loading = ref(false)
-  /** 标签名正则过滤（服务端执行）；空串 = 不过滤 */
+  /** Tag-name regex filter (executed server-side); empty string = no filter */
   const filter = ref('')
 
   async function reload() {
@@ -38,7 +38,7 @@ export function useTags() {
   }
 
   onMounted(() => {
-    void reload().catch(() => {}) // 首屏错误由调用方 toast（面板层包装）
+    void reload().catch(() => {}) // first-load errors are toasted by the caller (wrapped at the panel layer)
   })
 
   return { rows, loading, filter, reload, create, rename, remove }

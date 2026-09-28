@@ -1,4 +1,4 @@
-//! 测试基建：临时数据库、服务器进程管理、手写最小 HTTP 客户端与 CLI 运行器。
+//! Test infrastructure: temporary databases, server process management, a hand-written minimal HTTP client, and a CLI runner.
 
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -37,8 +37,8 @@ pub(crate) struct HttpProc {
     pub(crate) port: u16,
 }
 
-/// cargo test 默认多线程并行：端口分配到子进程绑定之间存在竞争窗口，
-/// 用全局锁把"取空闲端口 → 子进程绑定成功"串行化。
+/// cargo test runs multi-threaded by default: there is a race window between port allocation
+/// and the child process binding it; serialize "pick a free port -> child binds successfully" with a global lock.
 static START_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl HttpProc {
@@ -70,7 +70,7 @@ impl HttpProc {
         proc
     }
 
-    /// 轮询 /health 直到就绪；子进程提前退出视为启动失败。
+    /// Poll /health until ready; an early child exit counts as a startup failure.
     fn wait_ready(&mut self, tag: &str) {
         for _ in 0..100 {
             if try_request(self.port, "GET", "/health", None, &[]).is_ok() {
@@ -92,7 +92,7 @@ impl Drop for HttpProc {
     }
 }
 
-/// 发一条 HTTP/1.1 请求并读完整响应（Connection: close）。
+/// Send an HTTP/1.1 request and read the full response (Connection: close).
 pub(crate) fn try_request(
     port: u16,
     method: &str,
@@ -160,7 +160,7 @@ pub(crate) fn run_cli(args: &[&str]) -> Output {
         .expect("run agent-memory CLI")
 }
 
-#[allow(non_snake_case)] // 与 JS encodeURIComponent 同名，便于对照
+#[allow(non_snake_case)] // same name as JS encodeURIComponent for easy cross-referencing
 pub(crate) fn encodeURIComponent(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {

@@ -14,7 +14,7 @@
     <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
     <template v-if="who && isAdmin">
-      <!-- 鉴权：开关（标题行右侧）+ 匿名访问 + 身份表同卡 -->
+      <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
       <AuthCard
         :auth-required="authRequired"
         :has-admin-identity="hasAdminIdentity"
@@ -29,7 +29,7 @@
         @reset-token="askResetToken"
       />
 
-      <!-- 语义搜索配置 + 向量覆盖率同卡（原底部独立覆盖率卡已并入） -->
+      <!-- Semantic search config and vector coverage share a card (the former standalone coverage card at the bottom was merged in) -->
       <EmbeddingSettingsCard
         :embedding-enabled="embeddingEnabled"
         :embedding-base-url="embeddingBaseUrl"
@@ -51,10 +51,10 @@
       <DoctorCard />
     </template>
 
-    <!-- 新建 / 编辑身份；成功后的列表刷新在父层 -->
+    <!-- Create / edit identity; the parent refreshes the list on success -->
     <IdentityFormDialog ref="formDialog" :compact="compact" @saved="load" @created="onIdentityCreated" />
 
-    <!-- 新建 / 重置成功：token 明文仅此一次展示 -->
+    <!-- After create / reset: the token is shown in plaintext only once -->
     <TokenOnceDialog ref="tokenDialog" :compact="compact" />
   </div>
 </template>
@@ -79,13 +79,13 @@ import DoctorCard from './admin/DoctorCard.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** 调用者身份摘要：决定面板是否可用（admin 能力）与开放模式提示；嵌入宿主未接入时传 null */
+    /** Caller identity summary: determines whether the panel is usable (admin capability) and the open-mode notice; pass null when the host has no identity wiring */
     who?: WhoAmI | null
-    /** 隐藏标题/副标题区（嵌入宿主已有页面标题时只要内容卡） */
+    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the content cards are wanted) */
     showHeader?: boolean
-    /** 覆盖默认标题 */
+    /** Override the default title */
     title?: string
-    /** 覆盖默认副标题 */
+    /** Override the default subtitle */
     subtitle?: string
   }>(),
   { who: null, showHeader: true },
@@ -106,11 +106,12 @@ const embeddingApiKey = ref('')
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
-// 语义搜索覆盖率：统计随 load 一并拉取（/api/stats 只需 read，但补跑按钮仅 admin 可用）
+// Semantic search coverage: stats are fetched together with load (/api/stats only needs read,
+// but the backfill button is admin-only)
 const stats = ref<import('../types').StatsInfo | null>(null)
 
 const rootRef = ref<HTMLElement | null>(null)
-// compact（<960px）时创建时间列收起、对话框加宽到 96%
+// In compact mode (<960px) the created-at column is hidden and dialogs widen to 96%
 const { compact } = useContainerWidth(rootRef)
 
 async function load(): Promise<void> {
@@ -131,7 +132,7 @@ async function load(): Promise<void> {
       api.get<import('../types').StatsInfo>('/api/stats'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
-    // 未设置时直接预填内置默认（所见即生效），由卡片按内容推导淡色态
+    // When unset, prefill the built-in default directly (what you see is what applies); the card derives its faded state from the content
     instructions.value = settings?.instructions ?? settings?.default_instructions ?? ''
     conventions.value = settings?.conventions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
@@ -146,29 +147,29 @@ async function load(): Promise<void> {
 }
 
 onMounted(() => {
-  // 无 admin 权限时服务端会 403，静默跳过加载（页面提示已足够）
+  // The server responds 403 without admin permission; skip loading silently (the page notice is enough)
   if (isAdmin.value) void load()
 })
 
-// 挂载通常早于 whoami 返回（who 初始为 null）：admin 能力就绪后补一次加载
+// Mounting usually happens before whoami returns (who starts as null): load once more once the admin capability is ready
 watch(isAdmin, (granted) => {
   if (granted) void load()
 })
 
-// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+// A permanently mounted panel cannot sense visibility itself: the host calls refresh when switching back to this panel to pull the latest data
 defineExpose({
   refresh: () => {
     if (isAdmin.value) void run(load)
   },
 })
 
-// ---- 身份行操作 ----
+// ---- Identity row actions ----
 const formDialog = ref<InstanceType<typeof IdentityFormDialog> | null>(null)
 const tokenDialog = ref<InstanceType<typeof TokenOnceDialog> | null>(null)
 
 const hasAdminIdentity = computed(() => identities.value.some((row) => row.permissions?.admin === true))
 
-// 新建成功：弹一次性 token 展示并刷新列表
+// Creation succeeded: show the one-time token dialog and refresh the list
 function onIdentityCreated(payload: { name: string; token: string }): void {
   tokenDialog.value?.show(t('access.createTitle'), payload.name, payload.token)
   void load()

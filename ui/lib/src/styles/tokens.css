@@ -1,7 +1,8 @@
 /*
- * 组件库设计令牌与公共面板样式。
- * 颜色一律引用 Element Plus 的 --el-* 变量：宿主切换主题/暗色时自动跟随，
- * 库自身不定义任何颜色常量。命名空间 .memory-ui 防止污染宿主样式。
+ * Design tokens and shared panel styles for the component library.
+ * Colors always reference Element Plus --el-* variables, so they follow the host's
+ * theme/dark-mode automatically; the library defines no color constants itself.
+ * The .memory-ui namespace prevents polluting host styles.
  */
 .memory-ui {
   --am-gap: 14px;
@@ -13,7 +14,7 @@
   color: var(--el-text-color-primary);
 }
 
-/* 面板骨架：自包含的面板头 + 工具栏 + 内容区 */
+/* Panel skeleton: self-contained panel header + toolbar + content area */
 .memory-ui .am-panel {
   display: flex;
   flex-direction: column;
@@ -36,7 +37,7 @@
   min-width: 0;
 }
 
-/* ⓘ 帮助图标：悬停出提示，平时弱化存在感 */
+/* Info help icon: tooltip on hover, deliberately understated otherwise */
 .memory-ui .am-info {
   color: var(--el-text-color-placeholder);
   cursor: help;
@@ -90,14 +91,14 @@
   font-weight: 500;
 }
 
-/* 标签：胶囊形，软底色无边框（Modrinth 版本徽章风格） */
+/* Tags: pill-shaped, soft fill without border (Modrinth version-badge style) */
 .memory-ui .el-tag {
   border-radius: var(--el-border-radius-round);
   border-color: transparent;
   padding: 0 10px;
 }
 
-/* 表格：圆角卡片化，去斑马纹，悬浮行高亮 */
+/* Tables: rounded card look, no zebra stripes, row highlight on hover */
 .memory-ui .el-table {
   --el-table-border-color: var(--el-border-color-lighter);
   border: 1px solid var(--el-border-color-lighter);
@@ -113,7 +114,7 @@
   font-weight: 600;
 }
 
-/* 表头是排序点击热区：阻止连点/拖选时选中列头文本 */
+/* Headers are sort-click targets: prevent text selection from double clicks / drags */
 .memory-ui .el-table th.el-table__cell .cell {
   user-select: none;
 }
@@ -122,7 +123,7 @@
   padding: 10px 0;
 }
 
-/* 卡片：大圆角 + 悬浮投影，标题栏弱化分隔 */
+/* Cards: large radius + hover shadow, subdued header divider */
 .memory-ui .el-card {
   border-radius: var(--am-radius-lg);
   border-color: var(--el-border-color-lighter);
@@ -133,7 +134,7 @@
   border-bottom-color: var(--el-border-color-lighter);
 }
 
-/* 统计卡片：小标题 + 大数字 */
+/* Stat cards: small label + large number */
 .memory-ui .el-statistic__head {
   font-size: 12px;
   color: var(--el-text-color-secondary);

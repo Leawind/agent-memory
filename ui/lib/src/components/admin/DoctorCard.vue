@@ -21,7 +21,7 @@
         <li v-for="(issue, i) in doctor.issues" :key="i">{{ issue }}</li>
       </ul>
     </template>
-    <!-- 未运行只留一行说明，不占大块空间 -->
+    <!-- Before the first run, just one line of hint - no big placeholder block -->
     <div v-else class="pending">{{ t('access.doctorEmpty') }}</div>
   </el-card>
 </template>

@@ -1,10 +1,10 @@
 <template>
-  <!-- 新建 / 重置成功：token 明文仅此一次展示 -->
+  <!-- After create / reset: the token is shown in plaintext only once -->
   <el-dialog v-model="visible" :title="title" :width="compact ? '96%' : '560px'">
     <p>{{ t('access.created') }}</p>
     <code class="new-token">{{ token }}</code>
     <template #footer>
-      <!-- 宿主注入 onIdentityToken 时提供一键保存（独立站点壳存入多身份令牌表并切换） -->
+      <!-- One-click save when the host injects onIdentityToken (the standalone shell stores it in its multi-identity token table and switches) -->
       <el-button v-if="config.onIdentityToken" type="primary" @click="saveToBrowser">
         {{ t('access.saveToBrowser') }}
       </el-button>
@@ -30,7 +30,7 @@ import { useMemoryConfig } from '../../config'
 import { toastError, toastSuccess } from '../../toast'
 
 defineProps<{
-  /** compact（<960px）时对话框加宽到 96% */
+  /** In compact mode (<960px) the dialog widens to 96% */
   compact: boolean
 }>()
 
@@ -41,7 +41,7 @@ const title = ref('')
 const identityName = ref('')
 const token = ref('')
 
-/** 展示一次性 token（供父层在创建/重置成功后调用）。 */
+/** Show the one-time token (called by the parent after a successful create/reset). */
 function show(newTitle: string, name: string, newToken: string): void {
   title.value = newTitle
   identityName.value = name
@@ -51,8 +51,9 @@ function show(newTitle: string, name: string, newToken: string): void {
 
 defineExpose({ show })
 
-// 「保存到本浏览器」：把一次性 token 交给宿主的令牌表（独立站点壳会记住并切换）。
-// 按钮仅在宿主注入 onIdentityToken 时渲染，这里非空调用。
+// "Save to this browser": hand the one-time token to the host's token table (the standalone
+// site shell remembers it and switches). The button only renders when the host injects
+// onIdentityToken, so this is a non-null call.
 async function saveToBrowser(): Promise<void> {
   if (!identityName.value) return
   try {

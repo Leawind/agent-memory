@@ -1,4 +1,4 @@
-//! CLI 运维子命令（stats / doctor / export / import）与 REST 导入端点。
+//! CLI ops subcommands (stats / doctor / export / import) and the REST import endpoint.
 
 use serde_json::Value;
 
@@ -10,7 +10,7 @@ fn cli_subcommands_work() {
     cleanup(&db);
     let db_s = db.display().to_string();
 
-    // 准备数据：起一个临时 server 经 REST 写入
+    // Prepare data: start a temporary server and write via REST
     {
         let server = HttpProc::start(&db, "cli-writer");
         let (status, _, _) = request(
@@ -30,19 +30,19 @@ fn cli_subcommands_work() {
     assert!(stdout.contains("memories: 1"), "stats output: {stdout}");
     assert!(stdout.contains("tags: 1"), "stats output: {stdout}");
 
-    // doctor：干净库 → 退出码 0
+    // doctor: clean db -> exit code 0
     let out = run_cli(&["doctor", "--db", &db_s]);
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("no issues found"));
 
-    // export：导出成功 → 再次导出拒绝覆盖
+    // export: first export succeeds -> a second export refuses to overwrite
     let export_path = temp_db("export-out");
     let out = run_cli(&["export", export_path.to_str().unwrap(), "--db", &db_s]);
     assert!(out.status.success(), "export failed");
     assert!(export_path.exists());
     let dump_text = std::fs::read_to_string(&export_path).unwrap();
     let dump: Value = serde_json::from_str(&dump_text).unwrap();
-    // 紧凑 JSON（单行）且以 id 为键，无派生字段
+    // Compact JSON (single line) keyed by id, no derived fields
     assert_eq!(dump_text.trim_end().lines().count(), 1, "must be compact");
     assert!(dump.get("total_memories").is_none());
     assert_eq!(dump["memories"].as_object().unwrap().len(), 1);
@@ -65,7 +65,7 @@ fn export_import_roundtrip_via_cli() {
     let src_s = src.display().to_string();
     let dst_s = dst.display().to_string();
 
-    // 源库准备数据
+    // Prepare data in the source db
     {
         let server = HttpProc::start(&src, "roundtrip-src");
         let (status, _, _) = request(
@@ -85,7 +85,7 @@ fn export_import_roundtrip_via_cli() {
         drop(server);
     }
 
-    // CLI 导出 → CLI 导入到全新库
+    // CLI export -> CLI import into a fresh db
     let export_path = temp_db("rt-export");
     let out = run_cli(&["export", export_path.to_str().unwrap(), "--db", &src_s]);
     assert!(out.status.success(), "export failed");
@@ -98,7 +98,7 @@ fn export_import_roundtrip_via_cli() {
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("imported 2 memories"));
 
-    // 导入的库数据完整可用（内容 + 标签 + 时间戳保留）
+    // Imported db is fully usable (content + tags + timestamps preserved)
     let server = HttpProc::start(&dst, "roundtrip-verify");
     let (status, body, _) = request(
         server.port,
@@ -114,7 +114,7 @@ fn export_import_roundtrip_via_cli() {
     assert_eq!(json_body(&body)["tags"], 2);
     drop(server);
 
-    // 目标库非空 → 再次导入被拒绝
+    // Non-empty target db -> a second import is rejected
     let out = run_cli(&["import", export_path.to_str().unwrap(), "--db", &dst_s]);
     assert!(!out.status.success(), "import into non-empty db must fail");
     assert!(
@@ -123,7 +123,7 @@ fn export_import_roundtrip_via_cli() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // REST 导入端点（UI 的导入走这条路径）：恢复到全新库并验证
+    // REST import endpoint (the UI's import goes through this path): restore into a fresh db and verify
     let rest_db = temp_db("roundtrip-rest");
     cleanup(&rest_db);
     {
@@ -141,7 +141,7 @@ fn export_import_roundtrip_via_cli() {
         let (status, body, _) = request(server.port, "GET", "/api/stats", None);
         assert_eq!(status, 200);
         assert_eq!(json_body(&body)["memories"], 2);
-        // 非空库再次导入 → 400
+        // Importing again into a non-empty db -> 400
         let (status, _, _) = try_request(
             server.port,
             "POST",

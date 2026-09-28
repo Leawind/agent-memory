@@ -1,5 +1,7 @@
-// API 访问层：路径 = baseUrl + path，传输通道可被宿主替换（注入带鉴权的 fetch）。
-// 统一错误处理约定：服务端业务错误以 {"error": "..."} 回报，非 2xx 时取出抛出。
+// API access layer: path = baseUrl + path; the transport channel can be replaced by the host
+// (inject a fetch with auth).
+// Unified error handling convention: server-side business errors are reported as {"error": "..."},
+// extracted and thrown on non-2xx.
 import { useMemoryConfig } from '../config'
 import type { ResolvedMemoryUIConfig } from '../config'
 import { t } from '../i18n'
@@ -9,7 +11,7 @@ export interface ApiClient {
   post: <T = void>(path: string, body?: unknown) => Promise<T>
   put: <T = void>(path: string, body?: unknown) => Promise<T>
   del: <T = void>(path: string) => Promise<T>
-  /** 二进制下载（如导出备份）；非 2xx 抛错，消息取服务端 error 字段 */
+  /** Binary download (e.g. backup export); throws on non-2xx with the message taken from the server's error field */
   getBlob: (path: string) => Promise<Blob>
 }
 
@@ -41,7 +43,7 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
       try {
         msg = (JSON.parse(text) as { error?: string })?.error ?? msg
       } catch {
-        /* 非 JSON 响应体，用兜底文案 */
+        /* Non-JSON response body, fall back to the default message */
       }
       throw new Error(msg)
     }
@@ -58,7 +60,7 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
   }
 }
 
-/** 在组件 setup 中取配置并创建 API 客户端（同一组件内多次调用各自新建，成本可忽略）。 */
+/** Grab the config inside a component setup and create an API client (each call creates a fresh one; the cost is negligible). */
 export function useApiClient(): ApiClient {
   return createApiClient(useMemoryConfig())
 }

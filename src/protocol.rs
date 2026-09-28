@@ -1,8 +1,8 @@
-//! MCP 协议层：JSON-RPC 2.0 消息解析与响应（HTTP 传输专用）。
+//! MCP protocol layer: JSON-RPC 2.0 message parsing and responses (specific to the HTTP transport).
 //!
-//! 实现为 MCP Streamable HTTP 的无状态模式：initialize / ping / tools/list / tools/call，
-//! 通知（无 id）不产生响应。工具执行错误以 isError 结果返回，
-//! 协议级错误（未知方法、未知工具、解析失败）以 JSON-RPC error 返回。
+//! Implemented as MCP Streamable HTTP's stateless mode: initialize / ping / tools/list / tools/call;
+//! notifications (no id) produce no response. Tool execution errors come back as isError results,
+//! while protocol-level errors (unknown method, unknown tool, parse failure) come back as JSON-RPC errors.
 
 use crate::auth::IdentityCtx;
 use crate::store;
@@ -13,9 +13,9 @@ use std::path::Path;
 const LATEST_PROTOCOL: &str = "2025-06-18";
 const KNOWN_PROTOCOLS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
 
-/// structuredContent 自 2025-06-18 才进入规范；更早的协商版本不附带，
-/// 避免旧客户端把双份数据都注入上下文。请求头缺失或无法识别时按最新
-/// 版本处理（2025-06-18 起客户端必须在后续请求携带 MCP-Protocol-Version）。
+/// structuredContent only entered the spec in 2025-06-18; earlier negotiated versions do not include it,
+/// so old clients never inject the same data twice into context. A missing or unrecognized request header is treated as the latest
+/// version (from 2025-06-18 on, clients must carry MCP-Protocol-Version in subsequent requests).
 fn supports_structured_content(negotiated: Option<&str>) -> bool {
     !matches!(negotiated, Some("2024-11-05" | "2025-03-26"))
 }
@@ -28,9 +28,9 @@ fn ok_value(id: &Value, result: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-/// 处理一条入站消息；需要回应时返回响应。支持批量消息（数组）。
-/// `negotiated` 是客户端经 MCP-Protocol-Version 头声明的协议版本。
-/// `ctx` 是 HTTP 层已解析的调用方身份（开放模式 = 全能力）。
+/// Handle one inbound message; returns a response when one is warranted. Batch messages (arrays) are supported.
+/// `negotiated` is the protocol version the client declared via the MCP-Protocol-Version header.
+/// `ctx` is the caller identity already resolved by the HTTP layer (open mode = full capabilities).
 pub fn handle_message(
     store_path: &Path,
     ctx: &IdentityCtx,
@@ -45,7 +45,7 @@ pub fn handle_message(
                     responses.push(r);
                 }
             } else {
-                // 批量成员不是对象：按 JSON-RPC 规范逐个回无效请求（id 无从得知，用 null）。
+                // A batch member that is not an object: answer each one with an invalid request per the JSON-RPC spec (the id is unknowable; use null).
                 responses.push(error_value(
                     &Value::Null,
                     -32600,
@@ -71,7 +71,7 @@ fn handle_single(
 ) -> Option<Value> {
     let has_id = msg.get("id").is_some();
     let id = msg.get("id").cloned().unwrap_or(Value::Null);
-    // params 缺失或为 null 都按空对象处理（JSON-RPC 允许省略 params）。
+    // Missing or null params are both treated as an empty object (JSON-RPC allows omitting params).
     let params = match msg.get("params") {
         Some(v) if !v.is_null() => v.clone(),
         _ => json!({}),
@@ -90,9 +90,9 @@ fn handle_single(
         }
         Some("tools/call") if has_id => Some(tools_call(store_path, ctx, negotiated, &id, &params)),
         Some(m) if m.starts_with("notifications/") => None,
-        // 未知方法（字符串）：协议级错误
+        // Unknown method (a string): protocol-level error
         Some(m) if has_id => Some(error_value(&id, -32601, &format!("method '{m}' not found"))),
-        // method 缺失或不是字符串但带了 id：无效请求；无 id 则无从应答，只能丢弃
+        // Missing/non-string method with an id: invalid request; without an id there is nothing to answer, so it is dropped
         None if has_id => Some(error_value(
             &id,
             -32600,
@@ -102,9 +102,9 @@ fn handle_single(
     }
 }
 
-/// 生效的 initialize 提示词：`instructions` 非空时覆盖内置默认，`conventions`
-/// 非空时追加为第二段（提交规范等运营者约定）。读取失败或值损坏一律回退，
-/// 绝不阻塞 initialize。
+/// The effective initialize prompt: a non-empty `instructions` overrides the built-in default, and a non-empty
+/// `conventions` is appended as a second section (operator conventions such as submission rules). Read failures or corrupt values always fall back,
+/// never blocking initialize.
 fn effective_instructions(store_path: &Path) -> String {
     let (base, extra) = store::with_db_in(
         store_path,
@@ -171,8 +171,8 @@ fn tools_call(
 
     match tools::execute_with_db(store_path, ctx, name, &args) {
         Ok(v) => {
-            // 文本承载与 structuredContent 相同的数据；紧凑序列化——pretty 的
-            // 缩进空白每次工具调用都要由客户端的模型上下文买单
+            // The text carries the same data as structuredContent; serialized compactly — a pretty-printed
+            // layout's indentation whitespace would be paid for out of the client model's context on every tool call
             let text = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
             let mut result = json!({ "content": [{"type": "text", "text": text}] });
             if supports_structured_content(negotiated) {
@@ -209,13 +209,13 @@ mod tests {
         }
     }
 
-    /// 进程内执行一条 JSON-RPC 消息（开放模式身份 = 全能力）。
+    /// Execute one JSON-RPC message in-process (open-mode identity = full capabilities).
     fn roundtrip(store_path: &Path, negotiated: Option<&str>, line: &str) -> Option<Value> {
         let msg: Value = serde_json::from_str(line).unwrap();
         handle_message(store_path, &IdentityCtx::open_mode(), negotiated, &msg)
     }
 
-    // token 明文只在创建返回值出现一次：闭包间传递用 thread_local 中转
+    // Token plaintext appears only once, in the create return value: a thread_local relays it between closures
     thread_local! {
         static ALICE_TOKEN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     }
@@ -247,8 +247,8 @@ mod tests {
     fn initialize_carries_custom_instructions_and_identity_line() {
         let store = temp_db("instructions");
 
-        // 写入自定义提示词（基础覆盖 + 附加规范）+ 一个身份，然后用该身份的
-        // token 上下文 initialize
+        // Write a custom prompt (base override + additional conventions) plus one identity, then initialize
+        // with that identity's token context
         store::with_db_in(&store, store::TxMode::Write, |st| -> Result<(), String> {
             st.settings_put("instructions", "这是团队共享记忆库，提交前先检索。")?;
             st.settings_put("conventions", "提交规范：摘要一行，标签用小写。")?;
@@ -281,10 +281,10 @@ mod tests {
             instructions.contains("团队共享记忆库"),
             "got: {instructions}"
         );
-        // 附加规范紧跟基础提示词之后（中间恰好一个空行），身份行在最后
+        // The additional conventions follow right after the base prompt (exactly one blank line between), with the identity line last
         assert!(
             instructions.contains(
-                "这是团队共享记忆库，提交前先检索。\n\n提交规范：摘要一行，标签用小写。\n\nCaller identity: alice"
+                                "这是团队共享记忆库，提交前先检索。\n\n提交规范：摘要一行，标签用小写。\n\nCaller identity: alice"
             ),
             "sections must compose in order: {instructions}"
         );
@@ -293,7 +293,7 @@ mod tests {
             "permissions listed: {instructions}"
         );
 
-        // 仅写附加规范：基础回退内置默认，附加段仍追加
+        // Conventions-only write: the base falls back to the built-in default, the additional section still appended
         let extra_only = temp_db("instructions-extra");
         store::with_db_in(
             &extra_only,
@@ -321,7 +321,7 @@ mod tests {
             "default base + extra: {instructions}"
         );
 
-        // 未自定义时回退内置默认；开放模式带 open-mode 身份行
+        // Falls back to the built-in default when not customized; open mode carries the open-mode identity line
         let fresh = temp_db("instructions-default");
         let resp = handle_message(
             &fresh,
@@ -352,7 +352,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
         )
         .is_none());
-        // 未知的 notifications/* 同样静默（MCP 客户端会发各种通知，如 cancelled）
+        // Unknown notifications/* are silenced the same way (MCP clients send all kinds of notifications, e.g. cancelled)
         assert!(roundtrip(
             &store,
             None,
@@ -376,15 +376,15 @@ mod tests {
         .unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
 
-        // 带 id 但缺 method：必须回 -32600，否则客户端会挂起等待
+        // Id present but method missing: must answer -32600, otherwise the client hangs waiting
         let invalid = roundtrip(&store, None, r#"{"jsonrpc":"2.0","id":3}"#).unwrap();
         assert_eq!(invalid["error"]["code"], -32600);
 
-        // method 不是字符串：同样 -32600
+        // Non-string method: also -32600
         let bad_type = roundtrip(&store, None, r#"{"jsonrpc":"2.0","id":4,"method":42}"#).unwrap();
         assert_eq!(bad_type["error"]["code"], -32600);
 
-        // 无 id 也无 method：无从应答，静默
+        // Neither id nor method: nothing to answer, silenced
         assert!(roundtrip(&store, None, r#"{"jsonrpc":"2.0"}"#).is_none());
         cleanup(&store);
     }
@@ -399,13 +399,13 @@ mod tests {
         )
         .unwrap();
         let arr = batch.as_array().unwrap();
-        // ping 的结果 + 非对象成员的 -32600；通知不产生响应
+        // ping's result + -32600 for the non-object member; notifications produce no response
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["result"], json!({}));
         assert_eq!(arr[0]["id"], 1);
         assert_eq!(arr[1]["error"]["code"], -32600);
 
-        // 只有通知的批量：不返回任何内容（规范禁止空响应数组）
+        // A batch of notifications only: return nothing (the spec forbids an empty response array)
         assert!(roundtrip(
             &store,
             None,
@@ -425,7 +425,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(created["result"]["structuredContent"]["memory"]["id"], "m1");
-        // 文本内容与结构化内容承载同一数据，且为紧凑 JSON（无换行缩进）
+        // Text content and structured content carry the same data, as compact JSON (no newlines or indentation)
         let text = created["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("\"id\""));
         assert!(
@@ -449,7 +449,7 @@ mod tests {
         .unwrap();
         assert_eq!(bad_args["result"]["isError"], true);
 
-        // arguments 缺省视为空对象 → 缺必填参数的 isError，而不是协议错误
+        // Missing arguments count as an empty object → an isError for missing required parameters, not a protocol error
         let no_args = roundtrip(
             &store,
             None,
@@ -465,11 +465,11 @@ mod tests {
         let store = temp_db("sc");
         let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#;
 
-        // 2025-06-18：带 structuredContent
+        // 2025-06-18: includes structuredContent
         let latest = roundtrip(&store, Some("2025-06-18"), call).unwrap();
         assert!(latest["result"]["structuredContent"].is_object());
 
-        // 旧版本（2025-03-26 / 2024-11-05）：只回文本，避免双份注入上下文
+        // Older versions (2025-03-26 / 2024-11-05): text only, avoiding double injection into context
         for ver in ["2025-03-26", "2024-11-05"] {
             let old = roundtrip(&store, Some(ver), call).unwrap();
             assert!(
@@ -479,7 +479,7 @@ mod tests {
             assert!(old["result"]["content"][0]["text"].is_string());
         }
 
-        // 头缺失：按最新版本处理
+        // Missing header: treated as the latest version
         let unspecified = roundtrip(&store, None, call).unwrap();
         assert!(unspecified["result"]["structuredContent"].is_object());
         cleanup(&store);

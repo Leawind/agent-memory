@@ -1,8 +1,9 @@
 /*
- * 独立站主题：参考 Modrinth 设计系统（packages/assets/styles/variables.scss）的
- * 分层表面色 + 品牌绿，映射到 Element Plus 的 --el-* 变量。
- * 组件库（@agent-memory/ui）只引用 --el-* 变量，因此改这里即可整体换肤；
- * 嵌入宿主时由宿主自行提供变量值，本文件不随库分发。
+ * Standalone-site theme: layered surface colors + brand green modeled on the Modrinth
+ * design system (packages/assets/styles/variables.scss), mapped onto Element Plus
+ * --el-* variables. The component library (@agent-memory/ui) only references --el-*
+ * variables, so restyling here re-skins everything; when embedded, the host supplies
+ * its own values - this file is not shipped with the library.
  */
 
 :root {
@@ -19,7 +20,7 @@
   --md-border-strong: rgba(161, 161, 161, 0.35);
   --md-scrollbar: #c4c4c4;
 
-  /* 主色：品牌绿（EP 的 light-N 为混白浅阶，dark-2 为混黑深阶） */
+  /* Primary: brand green (EP's light-N steps are mixed with white, dark-2 with black) */
   --el-color-primary: var(--md-brand);
   --el-color-primary-dark-2: #04914f;
   --el-color-primary-light-3: #4cc388;
@@ -28,14 +29,14 @@
   --el-color-primary-light-8: #ccf5e0;
   --el-color-primary-light-9: #e5faf0;
 
-  /* 语义色对齐 Modrinth 色阶 */
+  /* Semantic colors aligned with Modrinth's palette */
   --el-color-success: #00af5c;
   --el-color-warning: #e08325;
   --el-color-danger: #cb2245;
   --el-color-error: #cb2245;
   --el-color-info: #686a72;
 
-  /* 表面与文字 */
+  /* Surfaces and text */
   --el-bg-color: var(--md-surface-4);
   --el-bg-color-page: var(--md-surface-1);
   --el-bg-color-overlay: var(--md-surface-4);
@@ -45,7 +46,7 @@
   --el-text-color-placeholder: #83868d;
   --el-text-color-disabled: #adb0b3;
 
-  /* 边框与填充 */
+  /* Borders and fills */
   --el-border-color: var(--md-surface-5);
   --el-border-color-light: #e5e5e8;
   --el-border-color-lighter: #ebebeb;
@@ -57,7 +58,7 @@
   --el-fill-color-dark: #e5e5e8;
   --el-fill-color-darker: #dddddd;
 
-  /* 圆角：Modrinth 用 0.5rem~1rem 的大圆角卡片 */
+  /* Radii: Modrinth uses large 0.5rem-1rem card corners */
   --el-border-radius-base: 10px;
   --el-border-radius-small: 8px;
   --el-border-radius-round: 999px;
@@ -84,7 +85,7 @@ html.dark {
   --md-border-strong: rgba(193, 190, 209, 0.12);
   --md-scrollbar: #42444a;
 
-  /* 暗色下 light-N 变为向暗底收拢的深阶（hover 加深），dark-2 提亮 */
+  /* In dark mode the light-N steps become darker shades collapsing toward the dark base (hover darkens), dark-2 brightens */
   --el-color-primary: var(--md-brand);
   --el-color-primary-dark-2: #48e088;
   --el-color-primary-light-3: #1a9f51;
@@ -122,12 +123,13 @@ html.dark {
   --el-box-shadow-light: 0 2px 12px rgba(0, 0, 0, 0.35);
   --el-box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
 
-  /* 品牌绿在暗色下亮度高，实心主色元素（按钮/分页/开关等）上的
-     "白色"文字与图标改为深色，对齐 Modrinth 的 accent-contrast */
+  /* Brand green is bright in dark mode, so "white" text and icons on solid primary
+     elements (buttons/pagination/switches etc.) switch to a dark color, matching
+     Modrinth's accent-contrast */
   --el-color-white: #0b0d10;
 }
 
-/* 细滚动条，颜色随主题（Modrinth 的 --color-scrollbar） */
+/* Slim scrollbar themed with the palette (Modrinth's --color-scrollbar) */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -146,9 +148,10 @@ html.dark {
 }
 
 /*
- * 控件惯例修正（主题层职责：上面的 8/10px 大圆角是给卡片/胶囊的）：
- * 多选框必须是方形——14px 的勾选框套 8px 小圆角会近乎圆形；
- * 按钮文本在水平/垂直方向都显式居中，不依赖组件库默认值。
+ * Control-convention fixes (theme-layer responsibility: the 8/10px large radii above
+ * are for cards/pills): checkboxes must stay square - a 14px checkbox with an 8px
+ * radius is nearly circular; button text is centered explicitly on both axes rather
+ * than relying on library defaults.
  */
 .el-checkbox__inner {
   border-radius: 2px;

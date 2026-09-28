@@ -3,11 +3,11 @@
     <template #header>
       <div class="card-header">
         <span>{{ t('access.settingsTitle') }}</span>
-        <!-- 与记忆编辑器同款：编辑/预览单图标切换 -->
+        <!-- Same control as the memory editor: single-icon edit/preview toggle -->
         <MarkdownModeToggle v-model="mode" />
       </div>
     </template>
-    <!-- 淡色即内置默认：透明度纯由内容推导，所见即生效；用法说明收进标签旁的 ⓘ -->
+    <!-- Dimmed text means the built-in default: opacity derives purely from content, so what you see is what applies; usage notes live in the info icon next to the label -->
     <el-form label-position="top" @submit.prevent>
       <el-form-item>
         <template #label>
@@ -71,11 +71,11 @@ import { run } from './caps'
 const props = defineProps<{
   instructions: string
   conventions: string
-  /** 服务端当前生效的内置默认提示词（保存归一化与恢复默认的基准） */
+  /** The server's currently effective built-in default prompt (baseline for save normalization and restore-to-default) */
   defaultInstructions: string
 }>()
 
-// 本地编辑态，随父层 load 刷新
+// Local editing state, refreshed when the parent loads
 const instructions = ref(props.instructions)
 const conventions = ref(props.conventions)
 watch(
@@ -86,7 +86,7 @@ watch(
   },
 )
 
-// 内容与内置默认一致即视为"未自定义"（淡色显示，保存归一为空串）
+// Content identical to the built-in default counts as "not customized" (shown faded, saved as an empty string)
 const isDefault = computed(() => instructions.value.trim() === props.defaultInstructions.trim())
 
 const mode = ref<'edit' | 'preview'>('edit')
@@ -95,7 +95,8 @@ const api = useApiClient()
 const saving = ref(false)
 const resetting = ref(false)
 
-// 与默认一致的值提交空串：服务端归一为未设置，继续跟随内置默认而非冻结快照
+// A value identical to the default is submitted as an empty string: the server normalizes it to
+// unset so it keeps following the built-in default instead of freezing a snapshot
 function normalizedInstructions(): string {
   return isDefault.value ? '' : instructions.value
 }
@@ -115,7 +116,7 @@ async function save(): Promise<void> {
   }
 }
 
-// 恢复默认：只动 instructions，不整卡重拉（避免丢未保存的 conventions 草稿）
+// Restore default: only touch instructions, do not refetch the whole card (keeps an unsaved conventions draft)
 async function resetToDefault(): Promise<void> {
   resetting.value = true
   try {
@@ -139,7 +140,7 @@ async function resetToDefault(): Promise<void> {
   align-items: center;
   gap: 4px;
 }
-/* 预览态镜像文本框轮廓，切换时边框不跳 */
+/* Preview mirrors the textarea outline so the border doesn't jump when switching */
 .prompt-preview {
   width: 100%;
   box-sizing: border-box;

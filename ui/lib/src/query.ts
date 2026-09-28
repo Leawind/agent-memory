@@ -1,11 +1,12 @@
-// 记忆列表/搜索的查询串组装（纯函数，独立于组件便于测试）。
-// 与服务端约定：有 query 走 memory_search（tags 多选过滤），
-// 否则走 memory_list（tag 单选 + 排序）。
+// Query string assembly for memory list/search (pure functions, kept separate from
+// components for easier testing).
+// Agreement with the server: a query goes to memory_search (multi-select tag filter),
+// otherwise it goes to memory_list (single tag + sorting).
 
 export interface MemoriesQueryState {
   query: string
   tagFilter: string
-  /** 搜索模式：auto（服务端按配置决定）/ keyword / hybrid；auto 不传参数 */
+  /** Search mode: auto (server decides per its config) / keyword / hybrid; auto sends no parameter */
   mode: string
   sort: string
   order: string

@@ -4,15 +4,15 @@
       <header class="topbar">
         <div class="topbar-inner">
           <div class="brand">
-            <!-- 点击标题弹出服务概况弹窗（OpsDialog） -->
+            <!-- Click the title to open the server overview dialog (OpsDialog) -->
             <button type="button" class="brand-btn" @click="opsDialogVisible = true">
               <span class="brand-mark">
                 <el-icon :size="16"><Collection /></el-icon>
               </span>
               <span class="brand-name">Agent Memory</span>
             </button>
-            <!-- 身份切换在标题处：Agent Memory / 身份名。只在确认开放模式（who.mode === 'open'）时
-                 隐藏；当前身份失效（who 为空）时下拉照常渲染，仍可切换/添加身份 -->
+            <!-- Identity switcher sits in the title: Agent Memory / identity name. Hidden only when open mode is confirmed
+                 (who.mode === 'open'); when the current identity is invalid (who empty) the dropdown still renders so you can switch or add -->
             <template v-if="showIdentities">
               <span class="brand-sep">/</span>
               <el-dropdown trigger="click" @command="onIdentityCommand">
@@ -41,7 +41,7 @@
                         <Delete />
                       </el-icon>
                     </el-dropdown-item>
-                    <!-- 添加身份：整行只有一个加号图标，点击弹令牌输入框 -->
+                    <!-- Add identity: a single plus icon fills the row; clicking opens the token input -->
                     <el-dropdown-item divided command="add" class="id-add" :aria-label="t('shell.addIdentity')">
                       <el-icon :size="14"><Plus /></el-icon>
                     </el-dropdown-item>
@@ -51,8 +51,8 @@
             </template>
           </div>
 
-          <!-- 顶部导航：面板常驻挂载，切换不销毁；切回时经 refresh 拉最新数据。
-               管理标签页仅对具备 admin 能力的身份显示 -->
+          <!-- Top navigation: panels stay mounted, switching keeps state; a refresh pulls the latest data on return.
+               The admin tab only shows for identities with the admin capability -->
           <nav class="nav">
             <button
               v-for="item in navItems"
@@ -68,7 +68,7 @@
           </nav>
 
           <div class="actions">
-            <!-- 主题：三态图标分段（浅色/深色/跟随系统） -->
+            <!-- Theme: three-state segmented icon control (light / dark / follow system) -->
             <div class="seg" role="group" :aria-label="t('shell.theme')">
               <button
                 v-for="opt in themeOptions"
@@ -84,7 +84,7 @@
               </button>
             </div>
 
-            <!-- 语言：下拉菜单（nativeName 不随界面语言变；新增语言 = 新字典 + 一项菜单） -->
+            <!-- Language: dropdown (nativeName never follows the UI language; adding a language = a new dictionary + one menu item) -->
             <el-dropdown trigger="click" @command="setLang">
               <button type="button" class="lang-btn" :aria-label="t('shell.language')">
                 <span>{{ currentLanguage.nativeName }}</span>
@@ -109,21 +109,21 @@
       </header>
 
       <main class="content">
-        <!-- .memory-ui 命名空间：组件库令牌样式（tokens.css）的选择器前缀 -->
+        <!-- .memory-ui namespace: selector prefix for the library's token styles (tokens.css) -->
         <div class="memory-ui">
           <MemoriesPanel ref="memoriesPanel" v-show="active === 'memories'" />
           <TagsPanel ref="tagsPanel" v-show="active === 'tags'" />
-          <!-- 管理面板：只对 admin 身份挂载（v-if），非 admin 身份不产生任何管理请求 -->
+          <!-- Admin panel: mounted only for admin identities (v-if); non-admin identities make no admin requests -->
           <AdminPanel v-if="isAdmin" ref="adminPanel" v-show="active === 'admin'" :who="who" />
         </div>
       </main>
 
-      <!-- 服务概况：点击顶栏标题弹出；每次打开由 OpsDialog 自行重拉 -->
+      <!-- Server overview: opened by clicking the header title; OpsDialog refetches each time it opens -->
       <OpsDialog :visible="opsDialogVisible" @update:visible="opsDialogVisible = $event" />
 
-      <!-- 令牌输入：401 或「添加身份」时弹出；保存前先验证再入库。
-           非模态 + 可穿透：401 提示不锁页面，顶栏身份下拉始终可操作（切到其他已存身份即可恢复）。
-           仅 modal=false 不够——EP 的全屏滚动容器仍拦截点击，penetrable 把它变成 pointer-events:none -->
+      <!-- Token input: shown on 401 or on "add identity"; validated before it is stored.
+           Non-modal + click-through: the 401 prompt doesn't lock the page, and the header identity dropdown stays usable (switching to another saved identity recovers).
+           modal=false alone isn't enough - EP's fullscreen scroll container still blocks clicks; penetrable turns it into pointer-events:none -->
       <el-dialog
         v-model="tokenDialog"
         :modal="false"
@@ -192,9 +192,11 @@ import {
   type WhoAmI,
 } from './auth'
 
-// 同源部署：API 经带鉴权头的 fetch（token 缺省时与原生 fetch 等价）。
-// onIdentityToken：管理面板创建/重置身份后「保存到本浏览器」的落点——
-// 记入多身份令牌表并立即切换到该身份，避免 token 只展示一次而错失保存。
+// Same-origin deployment: API goes through a fetch carrying the auth header (identical to native
+// fetch when no token is set).
+// onIdentityToken: where the admin panel's "save to this browser" lands after creating/resetting
+// an identity — record it in the multi-identity token table and switch to that identity
+// immediately, so a token shown only once is not lost.
 provideMemoryUI({
   fetch: authFetch,
   onIdentityToken: async (name, token) => {
@@ -203,40 +205,47 @@ provideMemoryUI({
     await resolveIdentity()
     refreshActivePanel()
   },
-  // 鉴权开关切换后重新解析身份：开放 ↔ token 模式切换时标题处身份区即时反映
+  // Re-resolve the identity after the auth toggle flips: the top-bar identity area reflects the open <-> token mode switch immediately
   onAuthChanged: () => resolveIdentity(),
 })
 
 type AdminTab = 'memories' | 'tags' | 'admin'
 const active = ref<AdminTab>('memories')
-// 服务概况弹窗：点击顶栏标题打开
+// Service overview dialog: opened by clicking the top-bar title
 const opsDialogVisible = ref(false)
 
-// ---- 身份与令牌：本浏览器可保存多个身份，标题处下拉切换/删除/添加 ----
+// ---- Identities and tokens: this browser can store multiple identities, switched/removed/added
+// from the dropdown at the title ----
 const who = ref<WhoAmI | null>(null)
 const identities = ref<{ name: string; hint: string }[]>([])
-// 本地当前身份指针（localStorage），与 who（服务端验证结果）解耦：
-// who 只反映「最近一次 whoami」，失效时下拉的可用性不能跟着丢
+// Local current-identity pointer (localStorage), decoupled from who (the server-verified result):
+// who only reflects "the most recent whoami"; the dropdown must stay usable even when that
+// verification fails
 const currentName = ref<string | null>(null)
-// 最近一次 whoami 明确返回 401（服务端开着 token 鉴权）——此时即使 who 为空也属于 token 模式
+// The most recent whoami explicitly returned 401 (the server has token auth on) — even with an
+// empty who this counts as token mode
 const needToken = ref(false)
 
 const isAdmin = computed(() => can(who.value, 'admin'))
 
-// 身份区可见性：只在确认开放模式（who.mode === 'open'）时隐藏；当前身份是否有效不影响——
-// 401 失效（who 为空）时只要有已存身份或服务端明确要求 token，下拉就必须可用，否则无法自救；
-// 匿名模式（有匿名能力但本浏览器没存 token）同样要能打开下拉添加身份升级
+// Identity area visibility: hidden only in confirmed open mode (who.mode === 'open'); whether the
+// current identity is valid does not matter — after a 401 failure (empty who), as long as there
+// are stored identities or the server explicitly requires a token, the dropdown must stay
+// usable or there is no way to recover;
+// anonymous mode (anonymous capabilities but no token stored in this browser) must also open the
+// dropdown to add an identity and upgrade
 const showIdentities = computed(
   () =>
     who.value?.mode !== 'open' && (identities.value.length > 0 || needToken.value || who.value?.mode === 'anonymous'),
 )
-// 触发器标签：优先已验证身份名，其次本地当前指针，都没有即未连接；匿名身份显示专属标签
+// Trigger label: prefer the verified identity name, then the local current pointer, otherwise
+// not connected; the anonymous identity gets its own label
 const identityLabel = computed(() => {
   if (who.value?.mode === 'anonymous') return t('shell.anonymous')
   return who.value?.name ?? currentName.value ?? t('shell.identityNone')
 })
 
-// 管理标签页仅 admin 可见；当前页失去可见性时（如切到低权限身份）退回记忆管理
+// The admin tab is visible to admins only; when the current tab loses visibility (e.g. switching to a lower-privileged identity), fall back to memories
 const navItems = computed(() => {
   const items: { key: AdminTab; label: string; icon: typeof Notebook }[] = [
     { key: 'memories', label: t('nav.memories'), icon: Notebook },
@@ -250,7 +259,8 @@ watch(navItems, (items) => {
   if (!items.some((item) => item.key === active.value)) active.value = 'memories'
 })
 
-// 面板常驻挂载（v-show）不会重新挂载，切回时数据可能陈旧：切换时刷新目标面板
+// Permanently mounted panels (v-show) are not remounted, so data may be stale when switching
+// back: refresh the target panel on switch
 interface RefreshablePanel {
   refresh: () => void
 }
@@ -269,7 +279,7 @@ function refreshActivePanel(): void {
 
 watch(active, () => refreshActivePanel())
 
-// ---- 身份下拉与令牌弹窗状态 ----
+// ---- Identity dropdown and token dialog state ----
 function refreshIdentities(): void {
   identities.value = listIdentities()
   currentName.value = currentIdentityName()
@@ -281,19 +291,21 @@ const tokenInput = ref('')
 const tokenError = ref(false)
 const checkingToken = ref(false)
 
-/** 解析当前身份，返回是否得到有效身份。401 时只移除失效的那一个身份并弹令牌框，
- * 绝不清空身份表——其余身份留在下拉里供切换自救。 */
+/** Resolve the current identity, returning whether a valid identity was obtained. On 401, only
+ * the one invalid identity is removed and the token dialog pops — never clear the whole identity
+ * table; the remaining identities stay in the dropdown for self-recovery. */
 async function resolveIdentity(): Promise<boolean> {
   const r = await fetchWhoAmI()
   if (r.ok) {
     needToken.value = false
     who.value = r.who
-    // fetchWhoAmI 可能把旧版单 token 收编进身份表，同步本地列表
+    // fetchWhoAmI may have folded a legacy single token into the identity table; sync the local list
     refreshIdentities()
     return true
   }
   if (r.needToken) {
-    // 当前 token 已被服务端拒绝（重置/删除）：移除这个失效身份（若有效 token 在请求中，服务端不会 401）
+    // The current token was rejected by the server (reset/deleted): remove this invalid identity
+    // (with a valid token in the request, the server would not 401)
     needToken.value = true
     const name = currentIdentityName()
     if (name) removeIdentity(name)
@@ -310,7 +322,7 @@ async function switchTo(name: string): Promise<void> {
   refreshIdentities()
   who.value = null
   if (await resolveIdentity()) {
-    // 切换成功即页面恢复：收起令牌框（无论它是 401 提示还是未完成的添加）
+    // A successful switch restores the page: collapse the token dialog (whether it is a 401 notice or an unfinished add)
     tokenDialog.value = false
     tokenInput.value = ''
     tokenError.value = false
@@ -323,7 +335,7 @@ async function saveToken(): Promise<void> {
   if (!token) return
   checkingToken.value = true
   tokenError.value = false
-  // 先验证候选 token 再入库，无效时不污染已保存的身份表
+  // Validate the candidate token before storing it, so an invalid token never pollutes the saved identity table
   const r = await fetchWhoAmI(token)
   checkingToken.value = false
   if (r.ok) {
@@ -357,7 +369,7 @@ async function removeIdentityClick(name: string): Promise<void> {
   removeIdentity(name)
   refreshIdentities()
   if (!wasCurrent) return
-  // 删除的是当前身份：自动切到剩余的第一个；一个不剩时回到未连接状态
+  // The current identity was deleted: automatically switch to the first remaining one; when none remain, return to the not-connected state
   who.value = null
   const next = listIdentityNames()[0]
   if (next) {
@@ -369,7 +381,7 @@ async function removeIdentityClick(name: string): Promise<void> {
 }
 
 function onUnauthorized(): void {
-  // 401 说明当前 token 已被服务端拒绝（重置/删除）：移除并要求重新输入
+  // A 401 means the current token was rejected by the server (reset/deleted): remove it and ask for re-entry
   void resolveIdentity()
 }
 
@@ -380,11 +392,12 @@ onMounted(() => {
 })
 onUnmounted(() => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized))
 
-// ---- 语言（界面文案 + Element Plus 内置文案同步切换）----
-// 新增语言两步走：lib 里加字典文件并在 messages 注册 + 在 languages 列表加一项
+// ---- Language (UI copy and Element Plus built-in copy switch together) ----
+// Adding a language takes two steps: add a dictionary file in the lib and register it in messages
+// + add one entry to the languages list
 type LangChoice = 'zh' | 'en'
 const LANG_KEY = 'agent-memory-locale'
-// nativeName 用语言本名显示，不随界面语言翻译
+// nativeName is shown in the language's own name and is not translated with the UI language
 const languages = [
   { value: 'zh' as LangChoice, nativeName: '中文' },
   { value: 'en' as LangChoice, nativeName: 'English' },
@@ -392,14 +405,14 @@ const languages = [
 const lang = ref<LangChoice>(readStoredLang())
 const epLocale = computed(() => (lang.value === 'zh' ? zhCn : en))
 const currentLanguage = computed(() => languages.find((l) => l.value === lang.value) ?? languages[0])
-// 初始偏好（持久化值或浏览器语言）同步进库内 i18n 实例
+// Sync the initial preference (persisted value or browser language) into the library's i18n instance
 setMemoryUILocale(lang.value)
 
 function setLang(value: LangChoice) {
   lang.value = value
 }
 
-// 无持久化偏好时按浏览器语言选择（与 lib 的 auto 探测同规则）
+// With no persisted preference, choose by browser language (same rule as the lib's auto detection)
 function detectLang(): LangChoice {
   return navigator.language?.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 }
@@ -409,7 +422,7 @@ function readStoredLang(): LangChoice {
     const v = localStorage.getItem(LANG_KEY)
     if (v === 'zh' || v === 'en') return v
   } catch {
-    /* 隐私模式等场景读不了就算了 */
+    /* If storage is unreadable (e.g. private mode), fall through */
   }
   return detectLang()
 }
@@ -418,12 +431,12 @@ watch(lang, (value) => {
   try {
     localStorage.setItem(LANG_KEY, value)
   } catch {
-    /* 隐私模式等场景存不了就算了 */
+    /* If storage is unavailable (e.g. private mode), just give up */
   }
   setMemoryUILocale(value)
 })
 
-// ---- 主题：浅色 / 深色 / 跟随系统 ----
+// ---- Theme: light / dark / follow system ----
 type ThemeChoice = 'light' | 'dark' | 'system'
 const themeOptions = computed(() => [
   { label: t('shell.themeLight'), value: 'light' as const, icon: Sunny },
@@ -453,14 +466,14 @@ watch(theme, () => {
   try {
     localStorage.setItem(STORAGE_KEY, theme.value)
   } catch {
-    /* 隐私模式等场景存不了就算了 */
+    /* If storage is unavailable (e.g. private mode), just give up */
   }
   applyTheme()
 })
 
 onMounted(() => {
   applyTheme()
-  // 跟随系统时监听系统主题变化
+  // In follow-system mode, listen for system theme changes
   prefersDark.addEventListener?.('change', () => {
     if (theme.value === 'system') applyTheme()
   })
@@ -477,7 +490,7 @@ body,
 body {
   background: var(--el-bg-color-page);
 }
-/* 弹层宽度钳制：固定像素宽度（令牌框 440px 等）在手机上不超出视口 */
+/* Clamp overlay widths: fixed pixel widths (the 440px token dialog etc.) must not overflow the viewport on phones */
 @media (max-width: 720px) {
   .el-dialog {
     max-width: calc(100vw - 24px);
@@ -495,7 +508,7 @@ body {
   flex-direction: column;
 }
 
-/* 顶栏：品牌 + 导航 + 偏好控件。与页面主体同色（不划出独立区域），无边框 */
+/* Header: brand + navigation + preference controls. Same color as the page body (no separate band), no border */
 .topbar {
   position: sticky;
   top: 0;
@@ -521,7 +534,7 @@ body {
   color: var(--el-text-color-primary);
   flex-shrink: 0;
 }
-/* 标题按钮：点击弹出服务概况；负 margin 抵消按钮内边距，保持与导航基线对齐 */
+/* Title button: opens the server overview; negative margin cancels button padding to keep the nav baseline aligned */
 .brand-btn {
   display: flex;
   align-items: center;
@@ -539,7 +552,7 @@ body {
 .brand-btn:hover {
   background: var(--el-fill-color);
 }
-/* 品牌图标：品牌绿渐变圆角块（Modrinth 的 --brand-gradient-bg） */
+/* Brand icon: rounded block with the brand-green gradient (Modrinth's --brand-gradient-bg) */
 .brand-mark {
   display: flex;
   align-items: center;
@@ -550,7 +563,7 @@ body {
   color: var(--el-color-primary);
   background: linear-gradient(135deg, rgba(68, 182, 138, 0.25) 0%, rgba(58, 250, 112, 0.18) 100%);
 }
-/* 导航：分段药丸（与右侧主题切换同款）——容器沉一块填充色，选中项浮起 */
+/* Navigation: segmented pill (same as the theme switch on the right) - the container gets a recessed fill, the active item floats */
 .nav {
   display: flex;
   align-items: center;
@@ -592,7 +605,7 @@ body {
   margin-left: auto;
 }
 
-/* 主题分段：iOS 风格胶囊，激活项浮起 */
+/* Theme segment: iOS-style capsule, active item floats */
 .seg {
   display: flex;
   align-items: center;
@@ -622,7 +635,7 @@ body {
   box-shadow: var(--el-box-shadow-light);
 }
 
-/* 语言下拉触发器：与主题分段同风格的胶囊 */
+/* Language dropdown trigger: capsule styled like the theme segment */
 .lang-btn {
   display: flex;
   align-items: center;
@@ -649,7 +662,7 @@ body {
   color: var(--el-color-primary);
 }
 
-/* 身份切换：品牌行内的可点击身份名（Agent Memory / 身份名） */
+/* Identity switcher: clickable identity name inside the brand row (Agent Memory / identity name) */
 .brand-sep {
   color: var(--el-text-color-secondary);
   font-weight: 400;
@@ -683,7 +696,7 @@ body {
   flex-shrink: 0;
   color: var(--el-text-color-secondary);
 }
-/* 下拉行：身份名 + token 尾缀提示靠左，勾选与删除靠右 */
+/* Dropdown rows: identity name + token suffix hint on the left, checkmark and delete on the right */
 .id-option {
   display: flex;
   align-items: baseline;
@@ -716,12 +729,12 @@ body {
 .id-remove:hover {
   color: var(--el-color-danger);
 }
-/* 添加身份：整行居中一个加号 */
+/* Add identity: one centered plus sign fills the row */
 .id-add {
   justify-content: center;
 }
 
-/* 令牌弹窗文案 */
+/* Token dialog copy */
 .token-desc {
   margin: 0 0 12px;
   font-size: 13px;
@@ -734,7 +747,7 @@ body {
   color: var(--el-color-danger);
 }
 
-/* 内容区：通栏留白 + 居中容器 */
+/* Content area: full-width padding with a centered container */
 .content {
   flex: 1;
   width: 100%;
@@ -744,9 +757,9 @@ body {
   box-sizing: border-box;
 }
 
-/* ---- 移动端适配 ---- */
-/* ≤720px：顶栏折两行——首行「品牌行 + 偏好控件」，次行「导航」（放不下时横滑）。
-   单行布局在手机宽度必然溢出（导航项被挤出视口、与主题控件重叠） */
+/* ---- Mobile adaptation ---- */
+/* <=720px: header wraps to two rows - first the brand row + preference controls, then navigation (horizontal scroll if it doesn't fit).
+   A single-row layout inevitably overflows at phone widths (nav items pushed off-viewport, overlapping the theme controls) */
 @media (max-width: 720px) {
   .topbar-inner {
     height: auto;
@@ -784,7 +797,7 @@ body {
     padding: 12px;
   }
 }
-/* ≤560px：品牌名收起只留图标（点击仍弹服务概况），身份名限宽防挤压 */
+/* <=560px: collapse the brand name to just the icon (still opens the server overview on click); cap the identity name width so it isn't squeezed */
 @media (max-width: 560px) {
   .brand-name,
   .brand-sep {

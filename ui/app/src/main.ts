@@ -1,5 +1,5 @@
-// 独立站入口：Element Plus 全量注册 + 亮/暗主题变量 + 组件库样式。
-// 业务组件全部来自 @agent-memory/ui，本包只做宿主装配。
+// Standalone site entry: full Element Plus registration + light/dark theme variables + component library styles.
+// All business components come from @agent-memory/ui; this package only does host assembly.
 import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'

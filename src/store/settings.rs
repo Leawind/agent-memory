@@ -1,5 +1,5 @@
-//! 服务器设置（settings 键值表）与语义搜索的配置读取。
-//! 向量的存取在 `embeddings`，这里只管配置键与生效判定。
+//! Server settings (the settings key-value table) and semantic-search configuration reads.
+//! Vector storage lives in `embeddings`; this module only handles config keys and enablement checks.
 
 use crate::sql;
 use rusqlite::params;
@@ -7,7 +7,7 @@ use rusqlite::params;
 use super::Store;
 
 impl Store {
-    /// 读取服务器设置；键不存在返回 None。
+    /// Read a server setting; returns None when the key does not exist.
     pub fn settings_get(&self, key: &str) -> Result<Option<String>, String> {
         match self
             .conn
@@ -26,10 +26,10 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// token 鉴权开关（settings 键，显式且持久化）：运行时强制与否只看这个值，
-    /// 缺省视为关闭（全新库 = 开放模式零配置）。**开启**有前置条件——至少存在
-    /// 一个 admin 身份（api 层把守，见 `has_admin_identity`），防止开关翻上后
-    /// 无人持有 token、管理面整体锁死。
+    /// Token auth switch (a settings key, explicit and persisted): whether enforcement happens at runtime depends solely on this value,
+    /// defaulting to off (a fresh database = open mode with zero configuration). **Enabling** has a precondition — at least one
+    /// admin identity must exist (guarded at the api layer, see `has_admin_identity`) — so the admin surface cannot
+    /// end up locked with no one holding a token after the switch is flipped.
     pub const SETTING_AUTH_REQUIRED: &'static str = "auth_required";
 
     pub fn auth_required(&self) -> Result<bool, String> {
@@ -43,13 +43,13 @@ impl Store {
         )
     }
 
-    /// 匿名身份的能力集（settings 键，存全键布尔 JSON，与 identities.permissions
-    /// 同形态）：鉴权开启后无 token 请求按它解析为匿名身份；未设置或全无能力 =
-    /// 匿名被整体拒绝。鉴权关闭时不生效（开放模式恒全能力）。
+    /// The anonymous identity's capability set (a settings key holding full-key boolean JSON, same shape as identities.permissions):
+    /// once auth is enabled, tokenless requests resolve to the anonymous identity through it; unset or capability-less =
+    /// anonymous access rejected wholesale. Ineffective while auth is off (open mode always has full capabilities).
     pub const SETTING_ANONYMOUS_PERMISSIONS: &'static str = "anonymous_permissions";
 
-    /// 读取匿名能力集；None = 未设置（匿名被拒绝）。库中 JSON 损坏时报错而非
-    /// 静默放大权限——HTTP 层的解析随之 fail-closed（表现为 401）。
+    /// Read the anonymous capability set; None = unset (anonymous rejected). Corrupt JSON in the database errors out rather
+    /// than silently widening permissions — the HTTP layer's parsing is fail-closed accordingly (surfacing as 401).
     pub fn anonymous_permissions(&self) -> Result<Option<crate::auth::Permissions>, String> {
         let Some(raw) = self.settings_get(Self::SETTING_ANONYMOUS_PERMISSIONS)? else {
             return Ok(None);
@@ -59,7 +59,7 @@ impl Store {
         crate::auth::Permissions::from_json(&v).map(Some)
     }
 
-    /// 写入/清除匿名能力集。Some 存全键紧凑 JSON；None = 删除键（匿名被拒绝）。
+    /// Write/clear the anonymous capability set. Some stores full-key compact JSON; None = delete the key (anonymous rejected).
     pub fn set_anonymous_permissions(
         &self,
         value: Option<&crate::auth::Permissions>,
@@ -81,7 +81,7 @@ impl Store {
     pub const SETTING_EMBEDDING_MODEL: &'static str = "embedding_model";
     pub const SETTING_EMBEDDING_API_KEY: &'static str = "embedding_api_key";
 
-    /// 语义搜索开关（与 auth_required 同型的显式布尔键）。
+    /// Semantic search switch (an explicit boolean key of the same kind as auth_required).
     pub fn embedding_enabled(&self) -> Result<bool, String> {
         Ok(self
             .settings_get(Self::SETTING_EMBEDDING_ENABLED)?
@@ -89,8 +89,8 @@ impl Store {
             == Some("true"))
     }
 
-    /// 生效的 embedding 配置：开关开启且 base_url / model 均非空才可用——
-    /// 配置不完整视为"未配置"，所有调用方按不可用降级，不报错。
+    /// The effective embedding configuration: usable only when the switch is on and base_url / model are both non-empty —
+    /// an incomplete configuration counts as "not configured", and every caller degrades as unavailable instead of erroring.
     pub fn embedding_config(&self) -> Result<Option<crate::embed::EmbedConfig>, String> {
         if !self.embedding_enabled()? {
             return Ok(None);
@@ -132,7 +132,7 @@ mod tests {
             st.settings_get("instructions").unwrap().as_deref(),
             Some("v2")
         );
-        // 其他键互不影响
+        // Other keys do not affect each other
         st.settings_put("other", "x").unwrap();
         assert_eq!(
             st.settings_get("instructions").unwrap().as_deref(),
@@ -146,7 +146,7 @@ mod tests {
         let path = temp_db("anon-perms");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        // 未设置 = None（匿名被拒绝）
+        // Unset = None (anonymous rejected)
         assert_eq!(st.anonymous_permissions().unwrap(), None);
 
         let read_only =
@@ -156,7 +156,7 @@ mod tests {
         assert!(got.has(crate::auth::Cap::Read));
         assert!(!got.has(crate::auth::Cap::Admin));
 
-        // 覆盖写入与清除
+        // Overwrite and clear
         st.set_anonymous_permissions(Some(&crate::auth::Permissions::all()))
             .unwrap();
         assert!(st

@@ -3,7 +3,7 @@
     <el-container class="layout">
       <el-aside v-if="layout === 'sidebar'" width="200px" class="aside">
         <div class="brand">
-          <!-- 点击标题弹出服务概况（OpsDialog） -->
+          <!-- Click the title to open the server overview (OpsDialog) -->
           <button type="button" class="brand-btn" @click="opsVisible = true">
             <span class="brand-mark">
               <el-icon :size="16"><Collection /></el-icon>
@@ -32,7 +32,7 @@
           <el-tab-pane :label="t('nav.tags')" name="tags" />
         </el-tabs>
 
-        <!-- 面板常驻挂载：切换导航不销毁、不重新请求 -->
+        <!-- Panels stay mounted: switching tabs keeps state and avoids refetching -->
         <MemoriesPanel v-show="active === 'memories'" />
         <TagsPanel v-show="active === 'tags'" />
       </el-main>
@@ -50,9 +50,9 @@ import TagsPanel from './TagsPanel.vue'
 import OpsDialog from './OpsDialog.vue'
 
 /**
- * 管理台根组件。layout:
- * - 'sidebar'：左侧固定导航，适合独立全屏站点（默认）
- * - 'tabs'：顶部页签导航，适合嵌入宿主系统页面
+ * Root admin console component. layout:
+ * - 'sidebar': fixed left-side navigation, suited to a standalone full-screen site (default)
+ * - 'tabs': top tab navigation, suited to embedding in host system pages
  */
 withDefaults(defineProps<{ layout?: 'sidebar' | 'tabs'; title?: string }>(), {
   layout: 'sidebar',
@@ -61,12 +61,13 @@ withDefaults(defineProps<{ layout?: 'sidebar' | 'tabs'; title?: string }>(), {
 
 type AdminTab = 'memories' | 'tags'
 const active = ref<AdminTab>('memories')
-// 服务概况弹窗：sidebar 布局点击侧栏标题打开；tabs 布局无标题区，宿主自行挂 OpsDialog
+// Service overview dialog: in sidebar layout it opens by clicking the sidebar title; in tabs
+// layout there is no title area, so the host mounts OpsDialog itself
 const opsVisible = ref(false)
 </script>
 
 <style scoped>
-/* 独立站撑满视口；嵌入宿主时可用 --memory-admin-height 覆盖（如 480px / auto） */
+/* Fill the viewport on the standalone site; when embedded, override with --memory-admin-height (e.g. 480px / auto) */
 .memory-ui {
   height: var(--memory-admin-height, 100%);
 }
@@ -88,7 +89,7 @@ const opsVisible = ref(false)
   padding: 20px 20px 14px;
   color: var(--el-text-color-primary);
 }
-/* 标题按钮：点击弹出服务概况；还原纯文字外观（负 margin 抵消按钮内边距），悬浮换表面色 */
+/* Title button: opens the server overview; restore plain-text look (negative margin cancels button padding), surface color on hover */
 .brand-btn {
   display: flex;
   align-items: center;
@@ -106,7 +107,7 @@ const opsVisible = ref(false)
 .brand-btn:hover {
   background: var(--el-fill-color);
 }
-/* 品牌图标：品牌绿渐变圆角块（Modrinth 的 --brand-gradient-bg） */
+/* Brand icon: rounded block with the brand-green gradient (Modrinth's --brand-gradient-bg) */
 .brand-mark {
   display: flex;
   align-items: center;
@@ -123,7 +124,7 @@ const opsVisible = ref(false)
   padding: 4px 12px;
   background: transparent;
 }
-/* 导航项：胶囊形，悬浮换表面色，选中铺品牌绿软底 */
+/* Nav items: pill-shaped, surface color on hover, soft brand-green fill when active */
 .menu :deep(.el-menu-item) {
   height: 40px;
   line-height: 40px;

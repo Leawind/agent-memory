@@ -1,11 +1,11 @@
-//! 语义搜索：embedding 服务调用、向量编解码与混合排序。
+//! Semantic search: embedding service calls, vector encoding/decoding and hybrid ranking.
 //!
-//! 回退是本模块的硬性原则——embedding 服务不可用只允许造成"降级"，不允许
-//! 造成"失败"：搜索路径超时/报错即回退纯关键词；写入路径只留待补跑，
-//! 记忆本体已保存；配置缺失时所有入口都是零开销直通。
+//! Fallback is this module's hard rule — an unavailable embedding service may only cause "degradation", never
+//! "failure": the search path falls back to pure keywords on timeout/error; the write path just leaves vectors pending backfill,
+//! since the memory itself is already saved; with no configuration, every entry point is a zero-cost pass-through.
 //!
-//! 网络调用一律在数据库事务之外（调用方保证）：写事务持 IMMEDIATE 锁跨
-//! 网络 I/O 是禁止的死锁形态，只读快照拉长事务也无必要。
+//! Network calls always happen outside database transactions (guaranteed by callers): holding an IMMEDIATE lock across
+//! network I/O in a write transaction is a forbidden deadlock shape, and stretching a read-only snapshot serves no purpose either.
 
 use crate::search::{self, Hit};
 use crate::store::{Store, TxMode};
@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-/// embedding 服务配置（OpenAI 兼容 `/embeddings` 端点：云 API 与
-/// Ollama/LM Studio 等本地服务共用同一形态）。
+/// Embedding service configuration (an OpenAI-compatible `/embeddings` endpoint: cloud APIs and
+/// local services such as Ollama/LM Studio share the same shape).
 #[derive(Clone, Debug)]
 pub struct EmbedConfig {
     pub base_url: String,
@@ -30,20 +30,20 @@ impl EmbedConfig {
     }
 }
 
-/// 查询向量化（搜索路径）超时：到点即放弃，回退关键词搜索。
+/// Timeout for query embedding (the search path): give up when it expires and fall back to keyword search.
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
-/// 批量向量化（写入挂接 / 补跑）超时。
+/// Timeout for batch embedding (the write hook / backfill).
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(30);
-/// 单次请求携带的文本条数上限（对供应商批量限额的保守取值）。
+/// Maximum number of texts per request (a conservative value against provider batch limits).
 pub const MAX_BATCH: usize = 16;
-/// 单条文本送入 embedding 服务前的字符截断长度。bge-m3 的 8K token 窗口
-/// 约合 8K 中文字符；512 token 的小模型由服务端自行截断，这里只防极端
-/// 长文撑爆请求体。
+/// Character truncation length applied to each text before it goes to the embedding service. bge-m3's 8K token window
+/// is roughly 8K Chinese characters; smaller 512-token models truncate server-side — this only guards against extremely
+/// long texts blowing up the request body.
 const MAX_INPUT_CHARS: usize = 8_000;
-/// RRF（倒数排名融合）常数：名次越靠前贡献越大，K 抹平头部权重差。
+/// The RRF (Reciprocal Rank Fusion) constant: earlier ranks contribute more, and K smooths out head-of-list weight differences.
 const RRF_K: f64 = 60.0;
 
-/// 送入 embedding 服务的记忆文本：摘要 + 空行 + 正文（截断）。
+/// The memory text sent to the embedding service: title + blank line + content (truncated).
 pub fn embed_memory_text(summary: &str, content: &str) -> String {
     let mut text = String::new();
     text.push_str(summary.trim());
@@ -57,7 +57,7 @@ pub fn embed_memory_text(summary: &str, content: &str) -> String {
     text
 }
 
-/// 批量向量化。任何网络/解析失败都以 Err 返回，由调用方决定降级方式。
+/// Embed a batch. Any network/parsing failure returns Err; the caller decides how to degrade.
 pub fn embed_texts(
     cfg: &EmbedConfig,
     texts: &[String],
@@ -112,7 +112,7 @@ pub fn embed_texts(
         .collect()
 }
 
-/// f32 向量 → BLOB（小端字节序；SQLite 无向量类型，跨平台字节序由绑定保证）。
+/// f32 vector → BLOB (little-endian; SQLite has no vector type, and cross-platform byte order is guaranteed by the binding).
 pub fn vec_to_blob(vec: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(vec.len() * 4);
     for v in vec {
@@ -121,14 +121,14 @@ pub fn vec_to_blob(vec: &[f32]) -> Vec<u8> {
     out
 }
 
-/// BLOB → f32 向量；长度非 4 的倍数时丢弃尾部残字节（损坏行按无向量处理）。
+/// BLOB → f32 vector; trailing partial bytes are dropped when the length is not a multiple of 4 (corrupt rows count as vector-less).
 pub fn blob_to_vec(blob: &[u8]) -> Vec<f32> {
     blob.chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
 }
 
-/// 余弦相似度；长度不等或零向量返回 0（即不会进入向量召回）。
+/// Cosine similarity; returns 0 for unequal lengths or zero vectors (meaning it never enters vector recall).
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -145,8 +145,8 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
-/// 补跑一批的结果。NotConfigured 与 Failed 的区别决定调用方行为：
-/// 写入路径对两者都静默（Failed 记 stderr），管理端点把细节带给 UI。
+/// Result of one backfill batch. The distinction between NotConfigured and Failed shapes caller behavior:
+/// the write path stays silent for both (Failed logs to stderr), while the admin endpoint surfaces details to the UI.
 pub enum EmbedOutcome {
     NotConfigured,
     Processed { processed: usize, remaining: usize },
@@ -170,8 +170,8 @@ impl EmbedOutcome {
     }
 }
 
-/// 为缺向量（或向量模型过期）的记忆补跑一批：读配置与待补清单（只读事务）
-/// → 调 embedding 服务（事务外）→ 写向量（独立写事务）。
+/// Backfill one batch for memories missing vectors (or whose vector model is stale): read config and the pending list (read-only transaction)
+/// → call the embedding service (outside transactions) → write vectors (a separate write transaction).
 pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     let batch = batch.clamp(1, MAX_BATCH);
     let (cfg, pending) = match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
@@ -221,8 +221,8 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     }
 }
 
-/// 写入路径的挂接点（memory_create / memory_update 事务提交后调用）。
-/// embedding 服务不可用时只记 stderr：记忆已保存，向量留给补跑。
+/// The write path's hook point (called after the memory_create / memory_update transaction commits).
+/// When the embedding service is unavailable, only log to stderr: the memory is saved, and vectors are left for backfill.
 pub fn after_write(db_path: &Path) {
     if let EmbedOutcome::Failed(e) = process_pending(db_path, 4) {
         eprintln!(
@@ -231,11 +231,11 @@ pub fn after_write(db_path: &Path) {
     }
 }
 
-/// 关键词 + 向量两路召回的 RRF 融合排序。
+/// RRF fusion ranking over keyword + vector recall.
 ///
-/// 两路各自按名次贡献 `1/(K+rank)`，天然回避"关键词 TF 分"与"余弦值"
-/// 的量纲不可比问题。向量独有命中（关键词零命中、但语义相近）由本函数
-/// 引入——这正是语义搜索存在的意义；其片段走正文开头的兜底路径。
+/// Each channel contributes `1/(K+rank)` by rank, which naturally sidesteps the incomparable units of "keyword TF scores"
+/// versus "cosine values". Vector-only hits (zero keyword hits but semantically close) are introduced by this function
+/// — exactly the point of semantic search; their snippets take the fallback path from the start of the content.
 pub fn hybrid_hits(
     memories: &[crate::model::Memory],
     keyword_hits: Vec<Hit>,
@@ -244,7 +244,7 @@ pub fn hybrid_hits(
     tag_filter: &[String],
     tag_regex: Option<&Regex>,
 ) -> Vec<Hit> {
-    // 向量趟：过同一套标签过滤（与关键词趟的召回语义一致），按余弦降序排名
+    // Vector pass: through the same tag filtering (matching the keyword pass's recall semantics), ranked by cosine descending
     let mut vector_ranked: Vec<(usize, f32)> = memories
         .iter()
         .enumerate()
@@ -268,7 +268,7 @@ pub fn hybrid_hits(
     }
 
     let mut items: Vec<(usize, f64)> = fused.into_iter().collect();
-    // 与关键词趟同一tie-break：分数 → updated_at 降序 → id 升序
+    // Same tie-break as the keyword pass: score → updated_at descending → id ascending
     items.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -279,8 +279,8 @@ pub fn hybrid_hits(
     items
         .into_iter()
         .map(|(idx, score)| {
-            // RRF 值微小（<0.033），放大 1e6 转整型只保序不保真——score 字段
-            // 本来就是排 audio 序的内部值，不承诺可解释
+            // RRF values are tiny (<0.033); scaling by 1e6 into integers preserves order, not precision — the score field
+            // is an internal value for ordering only and promises no interpretability
             let score = (score * 1_000_000.0).round() as i64;
             let snippet = match keyword_snippets.get(&idx) {
                 Some(s) => (*s).to_string(),
@@ -320,7 +320,7 @@ mod tests {
         let v = vec![0.25f32, -1.5, 3.0e-7, f32::MIN];
         let back = blob_to_vec(&vec_to_blob(&v));
         assert_eq!(v, back);
-        // 损坏行：残字节被丢弃而不是 panic
+        // Corrupt row: partial bytes are dropped instead of panicking
         let mut blob = vec_to_blob(&v);
         blob.push(0xAA);
         assert_eq!(blob_to_vec(&blob).len(), 4);
@@ -331,7 +331,11 @@ mod tests {
         let a = unit(3, 0);
         assert!((cosine(&a, &a) - 1.0).abs() < 1e-6);
         assert!(cosine(&a, &unit(3, 1)).abs() < 1e-6);
-        assert_eq!(cosine(&a, &unit(4, 0)), 0.0, "维度不等 = 0，不得 panic");
+        assert_eq!(
+            cosine(&a, &unit(4, 0)),
+            0.0,
+            "unequal dimensions = 0, must not panic"
+        );
         assert_eq!(cosine(&[0.0, 0.0], &[0.0, 0.0]), 0.0);
     }
 
@@ -343,8 +347,8 @@ mod tests {
         assert!(text.starts_with("s\n\nx"));
     }
 
-    /// 换说法召回：关键词趟只命中 m1，向量趟把语义相近的 m2 也带进来，
-    /// 且 m1（两路双命中）排在 m2（仅向量）前面。
+    /// Paraphrased recall: the keyword pass only hits m1, while the vector pass also brings in the semantically close m2,
+    /// and m1 (hit by both channels) ranks ahead of m2 (vector only).
     #[test]
     fn hybrid_brings_in_vector_only_hits() {
         let memories = vec![
@@ -355,27 +359,30 @@ mod tests {
         assert_eq!(keyword_hits.len(), 1);
 
         let mut table = HashMap::new();
-        table.insert(1i64, unit(4, 0)); // 与查询同向
-        table.insert(2i64, unit(4, 1)); // 与查询正交（相似度 0，不会进入）
+        table.insert(1i64, unit(4, 0)); // same direction as the query
+        table.insert(2i64, unit(4, 1)); // orthogonal to the query (similarity 0, never enters)
 
         let hits = hybrid_hits(&memories, keyword_hits, &table, &unit(4, 0), &[], None);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
 
-        // m2 与查询有 0.87 的相似度（非正交）时进入结果
+        // m2 enters the results when its similarity to the query is 0.87 (non-orthogonal)
         let tilted: Vec<f32> = vec![0.9, 0.1, 0.0, 0.0];
         let mut table2 = table.clone();
         table2.insert(2i64, tilted);
         let keyword_hits = search::run(&memories, "hashing", &[], None);
         let hits = hybrid_hits(&memories, keyword_hits, &table2, &unit(4, 0), &[], None);
         assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].idx, 0, "双命中必须排在仅向量命中前面");
+        assert_eq!(
+            hits[0].idx, 0,
+            "a double hit must rank ahead of a vector-only hit"
+        );
         assert_eq!(hits[1].idx, 1);
-        // 向量独有命中走兜底片段（正文开头），且做 HTML 转义
+        // Vector-only hits take the fallback snippet (start of content), HTML-escaped
         assert!(hits[1].snippet.contains("哈希存储"));
     }
 
-    /// 向量趟遵守与关键词趟相同的标签过滤。
+    /// The vector pass honors the same tag filtering as the keyword pass.
     #[test]
     fn hybrid_respects_tag_filters() {
         let mut a = mem(1, "alpha", "a");
@@ -397,14 +404,14 @@ mod tests {
         assert_eq!(hits[0].idx, 0);
     }
 
-    /// 关键词与向量排名冲突时的融合：两路都靠前的条目必须胜过单路第一。
+    /// Fusion when keyword and vector rankings conflict: an item ranking high on both channels must beat either channel's top single-channel item.
     #[test]
     fn hybrid_fuses_both_ranks() {
         let a = mem(1, "aa", "a");
         let b = mem(2, "bb", "b");
         let c = mem(3, "cc", "c");
-        // 关键词名次：a 第一、b 第二；向量名次：b 第一、c 第二、a 第三
-        // （向量取与查询不同夹角的方向，余弦可分辨）
+        // Keyword ranks: a first, b second; vector ranks: b first, c second, a third
+        // (vectors take directions at distinct angles from the query, distinguishable by cosine)
         let k1 = Hit {
             idx: 0,
             score: 100,
@@ -421,6 +428,10 @@ mod tests {
         table.insert(1i64, vec![0.5, 0.87]);
         let hits = hybrid_hits(&[a, b, c], vec![k1, k2], &table, &[1.0, 0.0], &[], None);
         let order: Vec<usize> = hits.iter().map(|h| h.idx).collect();
-        assert_eq!(order, vec![1, 0, 2], "b 双路上榜应胜过仅关键词第一的 a");
+        assert_eq!(
+            order,
+            vec![1, 0, 2],
+            "b, ranked on both channels, should beat a, the keyword-only leader"
+        );
     }
 }

@@ -1,23 +1,26 @@
-// 组件库配置：宿主在任意祖先组件调用 provideMemoryUI 注入；未注入时回退默认值
-// （同源根路径部署），保证组件开箱即用。
+// Component library config: the host injects it from any ancestor component via
+// provideMemoryUI; falls back to defaults when not injected (same-origin root-path
+// deployment), so the components work out of the box.
 import { inject, provide } from 'vue'
 import type { InjectionKey } from 'vue'
 import { applyMemoryUILocalePreference } from './i18n'
 import type { MemoryUILocaleOption } from './i18n'
 
 export interface MemoryUIConfig {
-  /** API 前缀。默认 ''（与服务器同源部署）；跨系统集成时填服务器地址，如 'http://127.0.0.1:8899' */
+  /** API prefix. Defaults to '' (same-origin deployment with the server); fill in the server address for cross-system integrations, e.g. 'http://127.0.0.1:8899' */
   baseUrl?: string
-  /** 自定义 fetch（注入鉴权头、错误拦截等）。默认 globalThis.fetch */
+  /** Custom fetch (inject auth headers, error interception, etc.). Defaults to globalThis.fetch */
   fetch?: typeof fetch
-  /** 列表默认分页大小。默认 20 */
+  /** Default page size for lists. Defaults to 20 */
   defaultPageSize?: number
-  /** 界面语言。'auto' 跟随浏览器（默认）；也可固定 'zh' / 'en'，运行时可用 setMemoryUILocale 切换 */
+  /** UI language. 'auto' follows the browser (default); can also be pinned to 'zh' / 'en', switchable at runtime via setMemoryUILocale */
   locale?: MemoryUILocaleOption
-  /** 管理面板创建/重置身份后的 token 一次性展示弹窗里，「保存到本浏览器」按钮的落点。
-   *  注入后按钮才渲染；独立站点壳用它把 token 存入自己的多身份令牌表。 */
+  /** Where the "save to this browser" button lands in the one-time token display dialog
+   *  shown after creating/resetting an identity in the admin panel.
+   *  The button only renders when this is injected; the standalone site shell uses it
+   *  to store the token in its own multi-identity token table. */
   onIdentityToken?: (name: string, token: string) => void
-  /** 鉴权开关切换成功后回调（独立站点壳借此重新解析 whoami，顶栏身份区即时反映 token 模式）。 */
+  /** Callback after the auth toggle is switched successfully (the standalone site shell uses it to re-resolve whoami so the top-bar identity area reflects the token mode immediately). */
   onAuthChanged?: (enabled: boolean) => void
 }
 
@@ -33,13 +36,13 @@ const defaults: ResolvedMemoryUIConfig = {
   locale: 'auto',
 }
 
-/** 在组件 setup 中注入配置（也可直接用 app.provide(MemoryUIConfigKey, config)）。 */
+/** Inject the config inside a component setup (or use app.provide(MemoryUIConfigKey, config) directly). */
 export function provideMemoryUI(config: MemoryUIConfig): void {
   if (config.locale) applyMemoryUILocalePreference(config.locale)
   provide(MemoryUIConfigKey, config)
 }
 
-/** 读取解析后的完整配置；必须在组件 setup 中调用。 */
+/** Read the fully resolved config; must be called inside a component setup. */
 export function useMemoryConfig(): ResolvedMemoryUIConfig {
   const raw = inject(MemoryUIConfigKey)
   return {

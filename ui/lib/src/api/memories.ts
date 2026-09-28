@@ -1,15 +1,15 @@
-// 记忆端点（路径与服务端 /api/memories 一一对应）
+// Memory endpoints (paths map 1:1 to the server's /api/memories)
 import type { ApiClient } from './client'
 import type { MemoryFull, MemoryListResp, MemorySearchResp } from '../types'
 
-/** 新建记忆的输入（标签为目标集合） */
+/** Input for creating a memory (tags are the target set) */
 export interface MemoryCreateInput {
   summary: string
   content: string
   tags: string[]
 }
 
-/** 编辑记忆的输入：标签以增删集合表达（服务端约定 add_tags / remove_tags） */
+/** Input for editing a memory: tags are expressed as add/remove sets (server convention add_tags / remove_tags) */
 export interface MemoryUpdateInput {
   summary?: string
   content?: string

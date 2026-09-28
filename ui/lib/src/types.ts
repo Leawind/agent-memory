@@ -1,4 +1,4 @@
-// 服务端响应与实体的类型定义（字段与 /api 实际返回一一对应）
+// Type definitions for server responses and entities (fields map 1:1 to what /api actually returns)
 
 export interface MemorySummary {
   id: string
@@ -47,16 +47,16 @@ export interface MemorySearchResp {
   total_matches: number
   offset: number
   returned: number
-  /** 实际使用的搜索方式：hybrid（关键词+语义）或 keyword */
+  /** The search mode actually used: hybrid (keyword + semantic) or keyword */
   mode?: 'hybrid' | 'keyword'
-  /** hybrid 请求因 embedding 服务不可用而回退关键词时为 true */
+  /** True when a hybrid request fell back to keyword search because the embedding service was unavailable */
   semantic_fallback?: boolean
   hint?: string
   note?: string
   results: SearchResult[]
 }
 
-/** stats.embedding：语义搜索向量覆盖率（enabled=false 表示未启用） */
+/** stats.embedding: semantic search vector coverage (enabled=false means not enabled) */
 export interface EmbeddingCoverage {
   enabled: boolean
   model?: string
@@ -103,7 +103,7 @@ export interface ImportResp {
   imported_tags: number
 }
 
-/** /api/whoami 返回的调用者身份摘要（mode=open 时 permissions 为全能力；mode=anonymous 时为匿名身份的配置能力集） */
+/** Caller identity summary returned by /api/whoami (mode=open means full capabilities in permissions; mode=anonymous means the configured capability set of the anonymous identity) */
 export interface WhoAmI {
   name: string
   mode: 'open' | 'anonymous' | 'token'

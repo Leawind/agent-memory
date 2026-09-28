@@ -1,5 +1,6 @@
-// 记忆面板的状态机：列表/搜索双模式、竞态防护、翻页回退、标签 diff。
-// 动作失败时抛出 Error，由面板层统一 toast。
+// Memory panel state machine: dual list/search modes, race protection, page-range fallback,
+// tag diffing.
+// Failed actions throw an Error; the panel layer shows the toast uniformly.
 import { computed, onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { buildMemoriesQuery, isSearchMode } from '../query'
@@ -10,7 +11,7 @@ import { listTags } from '../api/tags'
 import { t } from '../i18n'
 import type { MemoryFull, MemoryListResp, MemorySearchResp, MemorySummary, SearchResult, TagListResp } from '../types'
 
-/** 编辑器表单的形状：id 为 null 表示新建 */
+/** Shape of the editor form: id of null means creating new */
 export interface MemoryDraft {
   id: string | null
   summary: string
@@ -24,7 +25,7 @@ export function useMemories() {
 
   const query = ref('')
   const tagFilter = ref('')
-  /** 搜索模式：auto（服务端按配置决定 hybrid/keyword）/ keyword / hybrid */
+  /** Search mode: auto (server decides hybrid/keyword per its config) / keyword / hybrid */
   const mode = ref<'auto' | 'keyword' | 'hybrid'>('auto')
   const sort = ref<'updated_at' | 'created_at' | 'id'>('updated_at')
   const order = ref<'asc' | 'desc'>('desc')
@@ -32,7 +33,7 @@ export function useMemories() {
   const pageSize = ref(defaultPageSize)
   const rows = ref<MemorySummary[]>([])
   const searchResults = ref<SearchResult[]>([])
-  /** 语义回退提示：hybrid 请求因 embedding 服务不可用回退关键词时非空（明确告知，不静默） */
+  /** Semantic fallback notice: non-empty when a hybrid request fell back to keyword search because the embedding service was unavailable (told explicitly, never silently) */
   const note = ref('')
   const total = ref(0)
   const loading = ref(false)
@@ -40,7 +41,7 @@ export function useMemories() {
 
   const searching = computed(() => isSearchMode(query.value))
 
-  // 搜索词/过滤标签变化属于新的查询意图：从第一页重新开始
+  // A change to the search term / tag filter is a new query intent: restart from page 1
   function onSearch() {
     page.value = 1
     return reload()
@@ -58,8 +59,9 @@ export function useMemories() {
     })
   }
 
-  // 请求序号：连续触发查询时（输入回车/清空/翻页）丢弃迟到的过期响应，
-  // 避免慢的旧结果覆盖新结果
+  // Request sequence number: when queries fire in quick succession (Enter in the input /
+  // clearing / paging), late stale responses are discarded so a slow old result never
+  // overwrites a newer one
   let requestSeq = 0
 
   async function reload() {
@@ -70,15 +72,17 @@ export function useMemories() {
       if (isSearchMode(query.value)) {
         const data = (await client.get<MemorySearchResp>(`/api/memories?${qs}`)) as MemorySearchResp
         if (seq !== requestSeq) return
-        // 服务端片段是 HTML（<mark> 高亮），经 DOMPurify 消毒后再进 v-html
+        // Server snippets are HTML (<mark> highlight); sanitize with DOMPurify before v-html
         searchResults.value = (data.results ?? []).map((r) => ({ ...r, snippet: sanitizeHtml(r.snippet) }))
         total.value = data.total_matches ?? 0
-        // hybrid 请求因 embedding 服务不可用回退关键词时，明确告知（不静默）
+        // When a hybrid request fell back to keyword search because the embedding service was
+        // unavailable, say so explicitly (never silently)
         note.value = data.semantic_fallback ? t('memories.semanticFallback') : ''
       } else {
         const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`)) as MemoryListResp
         if (seq !== requestSeq) return
-        // 删除/过滤后当前页可能超出范围：回退到最后一页重新拉取
+        // After deletion/filtering the current page may fall out of range: fall back to the
+        // last page and refetch
         const totalPages = Math.max(1, Math.ceil(data.total / pageSize.value))
         if (data.memories?.length === 0 && data.total > 0 && page.value > totalPages) {
           page.value = totalPages
@@ -99,11 +103,11 @@ export function useMemories() {
       const data = (await listTags(client)) as TagListResp
       tagOptions.value = (data.tags ?? []).map((t) => t.name)
     } catch {
-      /* 静默：标签下拉失败不阻塞主列表 */
+      /* Silent: a failed tag dropdown must not block the main list */
     }
   }
 
-  /** 新建或编辑（标签为目标集合，内部换算成 add_tags / remove_tags）。成功后刷新列表。 */
+  /** Create or edit (tags are the target set, internally converted to add_tags / remove_tags). Refreshes the list on success. */
   async function saveMemory(draft: MemoryDraft) {
     if (draft.id) {
       const current: MemoryFull = await getMemory(client, draft.id)
@@ -127,7 +131,7 @@ export function useMemories() {
   }
 
   onMounted(() => {
-    void reload().catch(() => {}) // 首屏错误由调用方 toast（面板层包装）
+    void reload().catch(() => {}) // first-load errors are toasted by the caller (wrapped at the panel layer)
     loadTagOptions()
   })
 

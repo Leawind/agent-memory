@@ -10,7 +10,7 @@
       <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('tags.create') }}</el-button>
     </div>
 
-    <!-- 标签名正则过滤（服务端执行；非法正则由服务端报错并 toast） -->
+    <!-- Regex filter on tag names (applied server-side; invalid regexes are reported by the server and toasted) -->
     <el-input
       v-model="filter"
       class="am-tag-filter"
@@ -67,7 +67,7 @@
       :width="narrow ? '96%' : '480px'"
     >
       <el-form label-position="top">
-        <!-- 编辑时预填当前名：微小修改直接改，不再要求重输全名；与服务端约定同名提交 = 不改名 -->
+        <!-- Prefill the current name when editing: small tweaks are direct edits, no need to retype the full name; the server treats an unchanged-name submit as a no-rename -->
         <el-form-item :label="t('tags.nameLabel')">
           <el-input v-model="form.name" maxlength="100" show-word-limit :placeholder="t('tags.namePlaceholder')" />
         </el-form-item>
@@ -88,7 +88,7 @@
       </template>
     </el-dialog>
 
-    <!-- 删除方式选择：富文本结构（标签名/计数）无法整句插值，拆为三段固定语序 -->
+    <!-- Delete-mode choice: the rich structure (tag name / count) can't be interpolated as one sentence, so it's split into three fixed-order segments -->
     <el-dialog v-model="deleteVisible" :title="t('tags.deleteTitle')" :width="narrow ? '96%' : '480px'">
       <p class="delete-body">
         {{ t('tags.deleteBefore') }}
@@ -122,11 +122,11 @@ import type { TagView } from '../types'
 
 const props = withDefaults(
   defineProps<{
-    /** 隐藏标题/副标题区（嵌入宿主已有页面标题时只要表格） */
+    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the table is wanted) */
     showHeader?: boolean
-    /** 覆盖默认标题 */
+    /** Override the default title */
     title?: string
-    /** 覆盖默认副标题 */
+    /** Override the default subtitle */
     subtitle?: string
   }>(),
   { showHeader: true },
@@ -134,7 +134,7 @@ const props = withDefaults(
 
 const { rows, loading, filter, reload, create, rename, remove } = useTags()
 
-// 正则过滤输入 → 防抖后重新拉取；非法正则的错误由 reload 的异常路径 toast
+// Regex filter input -> debounced refetch; invalid-regex errors are toasted via reload's exception path
 let filterTimer: ReturnType<typeof setTimeout> | null = null
 function applyFilterDebounced() {
   if (filterTimer) clearTimeout(filterTimer)
@@ -145,7 +145,7 @@ function applyFilterDebounced() {
 }
 
 const rootRef = ref<HTMLElement | null>(null)
-// narrow（<720px）时弹层收窄；表格列均为可伸缩宽度，窄容器不丢列
+// In narrow mode (<720px) dialogs narrow; all table columns are flexible-width so no columns are lost in narrow containers
 const { narrow } = useContainerWidth(rootRef)
 
 const saving = ref(false)
@@ -155,7 +155,7 @@ const deleteVisible = ref(false)
 const deleteMode = ref<'detach' | 'purge'>('detach')
 const target = ref<TagView | null>(null)
 
-/** 时间列排序（last_used_at 可为 null，按 0 参与；纯数字比较避免默认字典序） */
+/** Time column sorting (last_used_at may be null, treated as 0; plain numeric comparison avoids the default lexicographic order) */
 function byTimeField(field: 'last_used_at' | 'created_at') {
   return (a: TagView, b: TagView) => (a[field] ?? 0) - (b[field] ?? 0)
 }
@@ -174,7 +174,7 @@ async function save() {
   saving.value = true
   try {
     if (form.oldName) {
-      // 名称与原名相同（或空白）时 api 层不下发 new_name，即只更新描述
+      // When the name equals the original (or is blank) the api layer omits new_name, i.e. only the description is updated
       await rename(form.oldName, form.name, form.description)
       toastSuccess(t('tags.saved'))
     } else {
@@ -220,7 +220,7 @@ async function doDelete() {
   }
 }
 
-// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+// A permanently mounted panel cannot sense visibility itself: the host calls refresh when switching back to this panel to pull the latest data
 defineExpose({
   refresh: () => reload().catch((e: unknown) => toastError(e instanceof Error ? e.message : String(e))),
 })

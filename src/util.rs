@@ -1,9 +1,9 @@
-//! 小型工具函数（std-only，不引入时间库）。
+//! Small utility functions (std-only, no time library).
 
-/// 把 Unix 秒时间戳格式化为 UTC ISO 8601（如 `2026-09-25T21:41:50Z`）。
+/// Format a Unix-seconds timestamp as UTC ISO 8601 (e.g. `2026-09-25T21:41:50Z`).
 ///
-/// 日期换算采用 Howard Hinnant 的 civil_from_days 算法（公历历法，
-/// 含闰年/世纪规则），仅依赖整数运算；单元测试锚定若干已知时间点。
+/// Date conversion uses Howard Hinnant's civil_from_days algorithm (proleptic Gregorian calendar,
+/// including leap-year/century rules), relying on integer arithmetic only; unit tests anchor a few known points in time.
 pub fn format_utc_iso(epoch_secs: u64) -> String {
     let secs = epoch_secs as i64;
     let days = secs.div_euclid(86_400);
@@ -13,14 +13,14 @@ pub fn format_utc_iso(epoch_secs: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
-/// SHA-256 摘要（hex 小写）。std 手写实现，避免引哈希依赖——用法只有
-/// token 哈希（token 是 256 位随机数，熵足够，无需慢哈希防爆破）。
+/// SHA-256 digest (lowercase hex). Hand-written on std to avoid a hashing dependency — the only use is
+/// token hashing (tokens are 256-bit random values with plenty of entropy; no slow hash needed against brute force).
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut h: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
     ];
-    // 消息填充：补 0x80、补 0 至 ≡56 (mod 64)，再附 64 位大端比特长度
+    // Message padding: append 0x80, pad with zeros to ≡56 (mod 64), then append the 64-bit big-endian bit length
     let mut msg = data.to_vec();
     let bit_len = (data.len() as u64) * 8;
     msg.push(0x80);
@@ -84,7 +84,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
     h.iter().map(|v| format!("{v:08x}")).collect()
 }
 
-/// 天数（自 1970-01-01）→ (年, 月, 日)。Hinnant, "chrono-Compatible Low-Level Date Algorithms"。
+/// Days since 1970-01-01 → (year, month, day). Hinnant, "chrono-Compatible Low-Level Date Algorithms".
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -105,14 +105,14 @@ mod tests {
     #[test]
     fn epoch_formats() {
         assert_eq!(format_utc_iso(0), "1970-01-01T00:00:00Z");
-        // 两个广为人知的时间锚点
+        // Two widely known time anchors
         assert_eq!(format_utc_iso(1_000_000_000), "2001-09-09T01:46:40Z");
         assert_eq!(format_utc_iso(2_000_000_000), "2033-05-18T03:33:20Z");
     }
 
     #[test]
     fn sha256_known_vectors() {
-        // FIPS 180-4 标准测试向量
+        // FIPS 180-4 standard test vectors
         assert_eq!(
             sha256_hex(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -125,7 +125,7 @@ mod tests {
             sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
-        // 跨块（>64 字节）与长度对齐边界
+        // Multi-block (>64 bytes) and length-alignment boundaries
         assert_eq!(
             sha256_hex(&[b'a'; 1000]),
             "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
@@ -134,9 +134,9 @@ mod tests {
 
     #[test]
     fn leap_year_and_rollover() {
-        // 闰日：2024-02-29T00:00:00Z = 1709164800
+        // Leap day: 2024-02-29T00:00:00Z = 1709164800
         assert_eq!(format_utc_iso(1_709_164_800), "2024-02-29T00:00:00Z");
-        // 年末跨日：2023-12-31T23:59:59Z = 1704067199
+        // Year-end day boundary: 2023-12-31T23:59:59Z = 1704067199
         assert_eq!(format_utc_iso(1_704_067_199), "2023-12-31T23:59:59Z");
         assert_eq!(format_utc_iso(1_704_067_200), "2024-01-01T00:00:00Z");
     }

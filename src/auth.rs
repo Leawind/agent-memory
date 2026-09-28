@@ -1,20 +1,20 @@
-//! 身份与能力模型：token 鉴权的数据层（无账号——token 即身份，无注册/登录）。
+//! Identity and capability model: the data layer behind token auth (no accounts — the token is the identity; no registration/login).
 //!
-//! [`Cap`] 是权限的唯一登记表：`identities.permissions` 列存 JSON（键 = 能力
-//! 名），写入与读取都经过本模块的严格校验，未知键拒绝。工具对能力的要求见
-//! `tools::defs::required_cap`，执行点在 `tools::execute` 统一把守；REST 侧
-//! 的非工具端点（身份/设置/运维）在 `api` 层各自要求能力。
+//! [`Cap`] is the single registry of capabilities: the `identities.permissions` column stores JSON (keys = capability
+//! names), and both writes and reads pass through this module's strict validation, which rejects unknown keys. Tool capability
+//! requirements live in `tools::defs::required_cap` and are enforced centrally at `tools::execute`; on the REST side,
+//! the non-tool endpoints (identities/settings/ops) each require capabilities at the `api` layer.
 //!
-//! 开放模式（库中无任何身份）下请求免鉴权，[`IdentityCtx::open_mode`] 视为
-//! 全能力——这也是"启用鉴权"的入口：开放模式下即可创建第一个身份。鉴权开启
-//! 后，无 token 请求按服务器设置 `anonymous_permissions` 解析为匿名身份
-//! （[`IdentityCtx::anonymous`]，能力可配置；未配置则拒绝）。
+//! In open mode (no identities in the database) requests skip auth, and [`IdentityCtx::open_mode`] counts as
+//! fully capable — which is also the gateway for enabling auth: the first identity is created while still in open mode. Once auth is
+//! enabled, tokenless requests resolve to the anonymous identity according to the server setting `anonymous_permissions`
+//! ([`IdentityCtx::anonymous`], capabilities configurable; rejected when unconfigured).
 
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
-/// 能力集合；`as_str` 同时是 permissions JSON 的键名。
+/// Capability set; `as_str` doubles as the permissions JSON key name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Cap {
     Read,
@@ -51,15 +51,15 @@ impl Cap {
     }
 }
 
-/// 一份身份的能力集合。JSON 形态恒为全键对象（如 {"read":true,"create":false,…}），
-/// 便于 UI 渲染成复选框、也避免"缺键"与"显式 false"的歧义。
+/// An identity's capability set. The JSON form is always a full-key object (e.g. {"read":true,"create":false,…}),
+/// which makes checkbox rendering easy in the UI and removes the ambiguity between a missing key and an explicit false.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Permissions {
     caps: BTreeSet<Cap>,
 }
 
 impl Permissions {
-    /// 从 JSON 解析：必须是对象、键必须都在登记表内、值必须是布尔。
+    /// Parse from JSON: must be an object, every key must be in the registry, and every value must be a boolean.
     pub fn from_json(v: &Value) -> Result<Permissions, String> {
         let obj = v
             .as_object()
@@ -88,7 +88,7 @@ impl Permissions {
         self.caps.contains(&cap)
     }
 
-    /// UI 复选框 / initialize 摘要用的全键对象。
+    /// Full-key object used by UI checkboxes / the initialize summary.
     pub fn to_json(&self) -> Value {
         let mut obj = Map::new();
         for cap in Cap::ALL {
@@ -97,7 +97,7 @@ impl Permissions {
         Value::Object(obj)
     }
 
-    /// 入库形态（serde_json 默认按键排序，序列化稳定）。
+    /// Storage form (serde_json sorts keys by default, so serialization is stable).
     pub fn to_stored_string(&self) -> String {
         serde_json::to_string(&self.to_json()).unwrap_or_default()
     }
@@ -110,7 +110,7 @@ impl Permissions {
             .collect()
     }
 
-    /// 是否一个能力都没有（匿名能力集为空 = 匿名访问被整体拒绝）。
+    /// Whether there is not a single capability (an empty anonymous capability set = anonymous access is rejected wholesale).
     pub fn is_empty(&self) -> bool {
         self.caps.is_empty()
     }
@@ -124,8 +124,8 @@ fn valid_cap_list() -> String {
         .join(", ")
 }
 
-/// 请求的鉴权形态：开放模式（免鉴权、全能力）、匿名身份（配置的能力集）、
-/// token 身份（ identities 表中登记的身份）。
+/// A request's auth shape: open mode (no auth, full capabilities), anonymous identity (configured capability set),
+/// or token identity (an identity registered in the identities table).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Open,
@@ -133,7 +133,7 @@ pub enum Mode {
     Token,
 }
 
-/// 请求级身份上下文：HTTP 层解析 Bearer token / 匿名设置后构造，贯穿工具与 API 处理器。
+/// Request-scoped identity context: built by the HTTP layer after resolving the Bearer token / anonymous settings, and threaded through tool and API handlers.
 #[derive(Debug, Clone)]
 pub struct IdentityCtx {
     pub name: String,
@@ -142,8 +142,8 @@ pub struct IdentityCtx {
 }
 
 impl IdentityCtx {
-    /// 开放模式上下文：视为全能力（开放模式本身就信任全部访问者，
-    /// 由此 UI 才能在开放模式下创建第一个身份以启用鉴权）。
+    /// Open-mode context: counts as fully capable (open mode inherently trusts all callers,
+    /// which is how the UI can create the first identity and enable auth).
     pub fn open_mode() -> Self {
         IdentityCtx {
             name: "local".into(),
@@ -152,8 +152,8 @@ impl IdentityCtx {
         }
     }
 
-    /// 匿名身份上下文：鉴权开启后无 token 请求按 settings 的
-    /// `anonymous_permissions` 解析而来，能力集由操作者配置。
+    /// Anonymous identity context: what tokenless requests resolve to once auth is enabled,
+    /// based on the settings' `anonymous_permissions`; the capability set is configured by the operator.
     pub fn anonymous(permissions: Permissions) -> Self {
         IdentityCtx {
             name: "anonymous".into(),
@@ -186,7 +186,7 @@ impl IdentityCtx {
         }
     }
 
-    /// initialize 回传给 agent 的自我认知摘要。
+    /// The self-description summary returned to the agent in initialize.
     pub fn summary(&self) -> Value {
         json!({
             "name": self.name,
@@ -195,7 +195,7 @@ impl IdentityCtx {
         })
     }
 
-    /// 附加到 initialize instructions 的人类可读一行。
+    /// A human-readable line appended to the initialize instructions.
     pub fn describe_line(&self) -> String {
         let perms = self.permissions.names();
         let list = if perms.is_empty() {
@@ -239,20 +239,20 @@ mod tests {
 
     #[test]
     fn permissions_json_is_strict() {
-        // 未知键拒绝（打错能力名不允许静默生效）
+        // Unknown keys rejected (a mistyped capability name must not silently take effect)
         let err = Permissions::from_json(&json!({"read": true, "riter": false})).unwrap_err();
         assert!(err.contains("unknown permission 'riter'"), "got: {err}");
-        // 非布尔值拒绝
+        // Non-boolean values rejected
         let err = Permissions::from_json(&json!({"read": "yes"})).unwrap_err();
         assert!(err.contains("must be a boolean"), "got: {err}");
-        // 非对象拒绝
+        // Non-objects rejected
         assert!(Permissions::from_json(&json!(["read"])).is_err());
-        // 空对象 = 全无能力
+        // Empty object = no capabilities at all
         let none = Permissions::from_json(&json!({})).unwrap();
         for cap in Cap::ALL {
             assert!(!none.has(cap));
         }
-        // 往返：to_json 输出恒为全键对象
+        // Round-trip: to_json output is always a full-key object
         let p = Permissions::from_json(&json!({ "read": true, "admin": true })).unwrap();
         let parsed = Permissions::from_json(&p.to_json()).unwrap();
         assert_eq!(p, parsed);
@@ -275,7 +275,7 @@ mod tests {
             }
             other => panic!("expected Forbidden, got {other:?}"),
         }
-        // 开放模式全能力
+        // Open mode = full capabilities
         let open = IdentityCtx::open_mode();
         for cap in Cap::ALL {
             assert!(open.can(cap));
@@ -292,25 +292,25 @@ mod tests {
         assert!(anon.can(Cap::Read));
         assert!(!anon.can(Cap::Create));
 
-        // whoami 摘要带匿名 mode 与全键能力对象
+        // whoami summary carries the anonymous mode and the full-key capability object
         let summary = anon.summary();
         assert_eq!(summary["name"], "anonymous");
         assert_eq!(summary["mode"], "anonymous");
         assert_eq!(summary["permissions"]["read"], true);
         assert_eq!(summary["permissions"]["admin"], false);
 
-        // initialize 身份行
+        // initialize identity line
         let line = anon.describe_line();
         assert!(line.contains("anonymous"), "got: {line}");
         assert!(line.contains("read"), "got: {line}");
 
-        // 空能力集可被 is_empty 识别（HTTP 层据此整体拒绝匿名）；
-        // 显式 false 同样不授予能力
+        // An empty capability set is detected by is_empty (the HTTP layer rejects anonymous access wholesale on that basis);
+        // an explicit false grants no capability either
         assert!(Permissions::default().is_empty());
         assert!(Permissions::from_json(&json!({ "read": false }))
             .map(|p| p.is_empty())
             .unwrap());
-        // 能力全无时 describe_line 显示 (none)
+        // describe_line shows (none) when there are no capabilities at all
         let none = IdentityCtx::anonymous(Permissions::default());
         assert!(none.describe_line().contains("(none)"));
     }

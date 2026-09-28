@@ -43,7 +43,7 @@
     <el-alert v-if="note" :title="note" type="warning" show-icon :closable="false" />
     <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
 
-    <!-- 搜索模式：显示匹配片段与评分 -->
+    <!-- Search mode: show matched snippets and scores -->
     <el-table v-if="searching" :data="searchResults" v-loading="loading">
       <el-table-column prop="id" :label="t('memories.colId')" width="80" />
       <el-table-column :label="t('memories.colSummary')">
@@ -73,7 +73,7 @@
       </el-table-column>
     </el-table>
 
-    <!-- 列表模式：创建/更新时间列点击表头排序（惯例：当前序列头右侧显示方向，点击切换） -->
+    <!-- List mode: click the created/updated column headers to sort (convention: direction shown on the right of the active header, click to toggle) -->
     <el-table
       v-else
       :data="rows"
@@ -135,7 +135,7 @@
       />
     </div>
 
-    <!-- 新建 / 编辑 -->
+    <!-- Create / edit -->
     <MemoryEditorDialog
       v-model:visible="editorVisible"
       :memory-id="editingId"
@@ -160,11 +160,11 @@ import MemoryEditorDialog from './MemoryEditorDialog.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** 隐藏标题/副标题区（嵌入宿主已有页面标题时只要工具栏+表格） */
+    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the toolbar + table are wanted) */
     showHeader?: boolean
-    /** 覆盖默认标题 */
+    /** Override the default title */
     title?: string
-    /** 覆盖默认副标题 */
+    /** Override the default subtitle */
     subtitle?: string
   }>(),
   { showHeader: true },
@@ -191,8 +191,9 @@ const {
   removeMemory,
 } = useMemories()
 
-// 空结果提示本地生成（服务端 note 面向 agent，是英文契约文本，不在界面透传）：
-// 列表模式 = 标签无关联记忆；搜索模式 = 无命中
+// The empty-result notice is generated locally (the server's note targets agents and is English
+// contract text, not passed through to the UI):
+// list mode = the tag has no linked memories; search mode = no hits
 const emptyNote = computed(() => {
   if (loading.value || total.value !== 0) return ''
   if (searching.value) return t('memories.searchEmpty')
@@ -201,14 +202,15 @@ const emptyNote = computed(() => {
 })
 
 const rootRef = ref<HTMLElement | null>(null)
-// 容器 <960px 切 compact（隐藏创建时间列，保证更新时间/操作列不被挤出视口）；
-// <720px 切 narrow（弹层收窄）
+// Container <960px switches to compact (hides the created-at column so the updated-at/actions
+// columns are not pushed out of the viewport);
+// <720px switches to narrow (dialogs narrow)
 const { compact, narrow } = useContainerWidth(rootRef)
 
 const editorVisible = ref(false)
 const editingId = ref<string | null>(null)
 
-// 动作统一包装：失败 toast（错误语义在数据层，展示在这里）
+// Unified action wrapper: toast on failure (error semantics live in the data layer, presentation here)
 function run(action: () => Promise<unknown>) {
   return action().catch((e: unknown) => toastError(e instanceof Error ? e.message : String(e)))
 }
@@ -228,9 +230,10 @@ function onSaved() {
   loadTagOptions()
 }
 
-/** 表头排序：点击列头切换升降序，第三次点击取消并回到默认（最近更新在前）。 */
+/** Header sorting: clicking a column head toggles asc/desc, a third click cancels and returns to the default (most recently updated first). */
 function onSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
-  // 参数名不可叫 order——会遮蔽外部的 order ref，赋值落回参数上（严格模式直接抛 TypeError）
+  // The parameter must not be named order — it would shadow the outer order ref and the
+  // assignment would land on the parameter (strict mode throws a TypeError outright)
   const { prop, order: nextOrder } = payload
   if (nextOrder && (prop === 'updated_at' || prop === 'created_at' || prop === 'id')) {
     sort.value = prop
@@ -258,12 +261,12 @@ async function remove(row: MemorySummary) {
   }
 }
 
-// 面板常驻挂载时无法自行感知可见性：宿主切回此面板时调 refresh 拉最新数据
+// A permanently mounted panel cannot sense visibility itself: the host calls refresh when switching back to this panel to pull the latest data
 defineExpose({ refresh: () => run(reload) })
 </script>
 
 <style scoped>
-/* 搜索框独占一行（flex-basis 100%），标签过滤自然换行到下一行 */
+/* Search box takes a full row (flex-basis 100%), tag filter wraps to the next line */
 .search {
   flex: 1 1 100%;
 }

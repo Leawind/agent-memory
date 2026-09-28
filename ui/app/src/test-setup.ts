@@ -1,4 +1,4 @@
-// happy-dom 没有 ResizeObserver，Element Plus 的 el-table 等组件依赖它
+// happy-dom has no ResizeObserver, which Element Plus components such as el-table rely on
 class ResizeObserverStub {
   observe(): void {}
   unobserve(): void {}

@@ -1,4 +1,4 @@
-// happy-dom 没有 ResizeObserver，Element Plus 的 el-table 等组件依赖它
+// happy-dom has no ResizeObserver, which Element Plus components such as el-table rely on
 class ResizeObserverStub {
   observe(): void {}
   unobserve(): void {}
@@ -6,6 +6,7 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver = ResizeObserverStub
 
-// 测试断言以中文文案为准：固定库语言，避免宿主环境 navigator.language 影响探测结果
+// Test assertions rely on Chinese UI copy: pin the library language so the host
+// environment's navigator.language does not affect language detection
 import { setMemoryUILocale } from './i18n'
 setMemoryUILocale('zh')

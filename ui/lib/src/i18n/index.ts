@@ -1,14 +1,17 @@
-// 组件库 i18n：独立作用域的 vue-i18n 实例。
-// 不通过 app.use 注册全局 scope，避免与宿主自己的 vue-i18n 实例冲突；
-// 组件直接引用 memoryUIi18n.global 的 composer（t 是响应式的，切语言即全库生效）。
-// 新增语言两步走：① 新建字典文件（如 ja.ts，key 与 zh.ts 一一对应）并在下方 messages 注册；
-// ② 扩展 MemoryUILocale 类型。站点壳的语言菜单再补一项即可，组件本身零改动。
+// Component library i18n: a standalone-scoped vue-i18n instance.
+// It is not registered as a global scope via app.use, avoiding conflicts with the host's own
+// vue-i18n instance; components reference the composer from memoryUIi18n.global directly
+// (t is reactive, so switching the language takes effect across the whole library).
+// Adding a language takes two steps: (1) create a dictionary file (e.g. ja.ts, keys matching
+// zh.ts one-to-one) and register it in messages below;
+// (2) extend the MemoryUILocale type. Then add one entry to the site shell's language menu —
+// the components themselves need zero changes.
 import { createI18n } from 'vue-i18n'
 import zh from './zh'
 import en from './en'
 
 export type MemoryUILocale = 'zh' | 'en'
-/** locale 配置取值：固定语言或跟随浏览器 */
+/** Values for the locale config: a fixed language or follow the browser */
 export type MemoryUILocaleOption = MemoryUILocale | 'auto'
 
 function detectLocale(): MemoryUILocale {
@@ -21,13 +24,13 @@ export const memoryUIi18n = createI18n({
   locale: detectLocale(),
   fallbackLocale: 'zh',
   messages: { zh, en },
-  // 面向宿主组件库，缺 key 时静默回退即可，不刷控制台
+  // Built for a hostable component library: missing keys silently fall back, no console spam
   missingWarn: false,
   fallbackWarn: false,
 })
 
-/** 库内组件统一从这里取 t（composer.t 为响应式）。
- * 显式标注：pnpm 隔离布局下 TS 无法可移植地命名推断类型（TS2742），d.ts 产物需要具名引用。 */
+/** Components in this library all take t from here (composer.t is reactive).
+ * Explicit annotation: under pnpm's isolated layout TS cannot portably name the inferred type (TS2742), and the d.ts output needs a named reference. */
 type MemoryUIComposer = typeof memoryUIi18n.global
 export const t: MemoryUIComposer['t'] = memoryUIi18n.global.t
 
@@ -35,7 +38,7 @@ export function setMemoryUILocale(locale: MemoryUILocale): void {
   memoryUIi18n.global.locale.value = locale
 }
 
-/** 应用 locale 偏好；'auto' 表示跟随浏览器语言 */
+/** Apply the locale preference; 'auto' means follow the browser language */
 export function applyMemoryUILocalePreference(preference: MemoryUILocaleOption): void {
   setMemoryUILocale(preference === 'auto' ? detectLocale() : preference)
 }

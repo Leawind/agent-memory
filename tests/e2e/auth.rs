@@ -1,5 +1,5 @@
-//! token 鉴权全流程：开放模式 → 创建管理员身份 → 显式打开鉴权开关 →
-//! 401/403/能力边界 → token reset 兜底 → 关闭开关回到开放模式。
+//! Full token auth flow: open mode -> create admin identity -> explicitly flip the auth switch ->
+//! 401/403/capability boundaries -> token reset fallback -> flip the switch back to open mode.
 
 use serde_json::json;
 
@@ -9,11 +9,11 @@ use crate::common::{cleanup, json_body, request, run_cli, temp_db, try_request, 
 fn token_auth_end_to_end() {
     let db = temp_db("auth");
     cleanup(&db);
-    // 开放模式启动（个人部署零配置形态）
+    // Start in open mode (zero-config form of a personal deployment)
     let server = HttpProc::start(&db, "auth");
     let port = server.port;
 
-    // 开放模式：免 token 可用，whoami 报告 open
+    // Open mode: usable without a token, whoami reports open
     let (status, body, _) = request(port, "GET", "/api/whoami", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["mode"], "open");
@@ -25,7 +25,7 @@ fn token_auth_end_to_end() {
     );
     assert_eq!(status, 200);
 
-    // 守卫：无 admin 身份时开启鉴权被拒绝（否则开启后无人能再访问管理面）
+    // Guard: enabling auth is rejected when no admin identity exists (otherwise nothing could reach the admin surface afterwards)
     let (status, body, _) = request(
         port,
         "PUT",
@@ -39,7 +39,7 @@ fn token_auth_end_to_end() {
         "guard error must explain the precondition: {guard_msg}"
     );
 
-    // 只有非 admin 身份同样拒绝（admin 缺失时 token reset 也无从恢复）
+    // Also rejected with only a non-admin identity (without an admin, token reset could not recover either)
     let (status, _, _) = request(
         port,
         "POST",
@@ -55,7 +55,7 @@ fn token_auth_end_to_end() {
     );
     assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
 
-    // 开放模式下创建身份不改变鉴权状态（开关才是唯一事实源）
+    // Creating an identity in open mode does not change auth state (the switch is the single source of truth)
     let (status, body, _) = request(
         port,
         "POST",
@@ -78,7 +78,7 @@ fn token_auth_end_to_end() {
         "identity alone must not enable auth"
     );
 
-    // 显式打开鉴权开关（open 上下文具备 admin 能力）→ 鉴权即刻生效
+    // Explicitly turn on the auth switch (open context holds admin capability) -> auth takes effect immediately
     let (status, _, _) = request(
         port,
         "PUT",
@@ -93,7 +93,7 @@ fn token_auth_end_to_end() {
     let (status, _, _) = request(port, "GET", "/api/whoami", None);
     assert_eq!(status, 401);
 
-    // 其余身份由管理员凭 token 创建。
+    // Remaining identities are created by the admin with its token.
     let (status, body, _) = try_request(
         port,
         "POST",
@@ -105,7 +105,7 @@ fn token_auth_end_to_end() {
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let viewer_token = json_body(&body)["token"].as_str().unwrap().to_string();
 
-    // 鉴权立即生效：无 token / 错 token / 非 Bearer 方案 → 401
+    // Auth takes effect immediately: no token / wrong token / non-Bearer scheme -> 401
     let (status, _, _) = request(port, "GET", "/api/memories", None);
     assert_eq!(status, 401);
     let (status, _, _) = request(
@@ -134,13 +134,13 @@ fn token_auth_end_to_end() {
     .unwrap();
     assert_eq!(status, 401);
 
-    // 静态 UI 与 /health 始终免鉴权
+    // Static UI and /health are always exempt from auth
     let (status, _, _) = request(port, "GET", "/", None);
     assert_eq!(status, 200);
     let (status, _, _) = request(port, "GET", "/health", None);
     assert_eq!(status, 200);
 
-    // 只读身份：读 OK；写/管理 403；MCP 写以 isError 回显权限错误
+    // Read-only identity: reads OK; writes/admin 403; MCP writes report the permission error via isError
     let viewer_auth = format!("Bearer {viewer_token}");
     let viewer_headers = [("Authorization", viewer_auth.as_str())];
     let (status, _, _) = try_request(port, "GET", "/api/memories", None, &viewer_headers).unwrap();
@@ -184,7 +184,7 @@ fn token_auth_end_to_end() {
         "permission error text: {resp}"
     );
 
-    // 管理员身份：全通
+    // Admin identity: everything passes
     let (status, _, _) = try_request(
         port,
         "POST",
@@ -197,7 +197,7 @@ fn token_auth_end_to_end() {
     let (status, body, _) =
         try_request(port, "GET", "/api/identities", None, &admin_headers).unwrap();
     assert_eq!(status, 200);
-    // admin、lone-viewer（守卫用例所建）、viewer 共三个
+    // three in total: admin, lone-viewer (created by the guard case), viewer
     assert_eq!(json_body(&body)["identities"].as_array().unwrap().len(), 3);
     let (status, _, _) = try_request(
         port,
@@ -214,7 +214,7 @@ fn token_auth_end_to_end() {
     assert_eq!(json_body(&body)["instructions"], "team rules");
     let (status, _, _) = try_request(port, "GET", "/api/export", None, &admin_headers).unwrap();
     assert_eq!(status, 200);
-    // initialize 的 instructions 携带自定义文案与身份行
+    // initialize's instructions carry the custom prompt and the identity line
     let (status, body, _) = try_request(
         port,
         "POST",
@@ -237,13 +237,13 @@ fn token_auth_end_to_end() {
         instructions.contains("Caller identity: admin"),
         "{instructions}"
     );
-    // whoami 报告 token 模式与身份名
+    // whoami reports token mode and identity name
     let (status, body, _) = try_request(port, "GET", "/api/whoami", None, &admin_headers).unwrap();
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["mode"], "token");
     assert_eq!(json_body(&body)["name"], "admin");
 
-    // token reset 兜底：CLI 重置 admin，旧 token 立即失效
+    // token reset fallback: CLI resets admin, old token becomes invalid immediately
     let out = run_cli(&["token", "reset", "--db", &db.display().to_string(), "admin"]);
     assert!(out.status.success(), "token reset failed");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -270,7 +270,7 @@ fn token_auth_end_to_end() {
     .unwrap();
     assert_eq!(status, 200);
 
-    // 关闭鉴权开关（而非删除身份）→ 回到开放模式；身份仍在库里
+    // Turn the auth switch off (rather than deleting identities) -> back to open mode; identities remain in the db
     let (status, _, _) = try_request(
         port,
         "PUT",
@@ -290,9 +290,9 @@ fn token_auth_end_to_end() {
     cleanup(&db);
 }
 
-/// 匿名身份：鉴权开启后，无 token 请求按 settings 的 anonymous_permissions
-/// 解析为匿名身份（能力可配置）；未设置/全无能力 → 401；带无效 token 不回退
-/// 匿名；能力不足 → 403（与其他身份同一套语义）。
+/// Anonymous identity: once auth is on, token-less requests resolve to the anonymous identity
+/// per the settings' anonymous_permissions (capabilities configurable); unset or empty -> 401;
+/// an invalid token does not fall back to anonymous; insufficient capability -> 403 (same semantics as other identities).
 #[test]
 fn anonymous_permissions_end_to_end() {
     let db = temp_db("anon-auth");
@@ -300,7 +300,7 @@ fn anonymous_permissions_end_to_end() {
     let server = HttpProc::start(&db, "anon-auth");
     let port = server.port;
 
-    // 准备：admin 身份 + 打开鉴权（此后匿名配置只能由 admin 修改）
+    // Setup: admin identity + auth on (afterwards only the admin can change anonymous config)
     let (status, body, _) = request(
         port,
         "POST",
@@ -321,13 +321,13 @@ fn anonymous_permissions_end_to_end() {
     );
     assert_eq!(status, 200);
 
-    // 基线：未配置匿名能力集 → 无 token 一律 401（原有行为）
+    // Baseline: anonymous capability set not configured -> token-less requests always 401 (original behavior)
     let (status, _, _) = request(port, "GET", "/api/whoami", None);
     assert_eq!(status, 401);
     let (status, _, _) = request(port, "GET", "/api/memories", None);
     assert_eq!(status, 401);
 
-    // 配置匿名 = 只读
+    // Configure anonymous = read-only
     let (status, _, _) = try_request(
         port,
         "PUT",
@@ -338,7 +338,7 @@ fn anonymous_permissions_end_to_end() {
     .unwrap();
     assert_eq!(status, 200);
 
-    // 无 token whoami → 匿名身份摘要
+    // Token-less whoami -> anonymous identity summary
     let (status, body, _) = request(port, "GET", "/api/whoami", None);
     assert_eq!(status, 200);
     let who = json_body(&body);
@@ -347,7 +347,7 @@ fn anonymous_permissions_end_to_end() {
     assert_eq!(who["permissions"]["read"], true);
     assert_eq!(who["permissions"]["create"], false);
 
-    // 只读放行；写/管理 → 403（错误信息带匿名身份名）
+    // Reads pass; writes/admin -> 403 (error message names the anonymous identity)
     let (status, _, _) = request(port, "GET", "/api/memories", None);
     assert_eq!(status, 200);
     let (status, body, _) = request(
@@ -366,7 +366,7 @@ fn anonymous_permissions_end_to_end() {
     let (status, _, _) = request(port, "GET", "/api/export", None);
     assert_eq!(status, 403);
 
-    // MCP 同语义：initialize 自述匿名；list 放行；create 以 isError 回显权限错误
+    // MCP has the same semantics: initialize self-reports anonymous; list passes; create reports the permission error via isError
     let (status, body, _) = request(
         port,
         "POST",
@@ -423,7 +423,7 @@ fn anonymous_permissions_end_to_end() {
         "{resp}"
     );
 
-    // 带无效 token 是认证失败，不回退匿名
+    // An invalid token is an authentication failure, no anonymous fallback
     let (status, _, _) = try_request(
         port,
         "GET",
@@ -434,7 +434,7 @@ fn anonymous_permissions_end_to_end() {
     .unwrap();
     assert_eq!(status, 401);
 
-    // 全无能力 = 匿名被整体拒绝（与未设置同义）
+    // Empty capability set = anonymous rejected wholesale (same as unset)
     let (status, _, _) = try_request(
         port,
         "PUT",
@@ -447,7 +447,7 @@ fn anonymous_permissions_end_to_end() {
     let (status, _, _) = request(port, "GET", "/api/memories", None);
     assert_eq!(status, 401);
 
-    // null 清除 → 回到基线 401；admin 自身不受影响
+    // null clears the setting -> back to baseline 401; admin itself is unaffected
     let (status, _, _) = try_request(
         port,
         "PUT",

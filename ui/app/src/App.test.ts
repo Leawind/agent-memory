@@ -1,4 +1,5 @@
-// App 壳挂载冒烟测试：顶栏导航渲染、主题应用、身份下拉与管理标签页权限
+// App shell mount smoke test: top-bar navigation rendering, theme application, identity dropdown
+// and admin tab permissions
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
@@ -9,7 +10,7 @@ function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) }
 }
 
-// whoami 走 res.json() 解析，需要带 json() 的响应
+// whoami parses via res.json(), so the response needs a json() method
 function jsonWithJson(body: unknown) {
   return {
     ok: true,
@@ -22,13 +23,14 @@ function jsonWithJson(body: unknown) {
 const adminCaps = { read: true, create: true, update: true, delete: true, tag_manage: true, admin: true }
 const viewerCaps = { read: true, create: false, update: false, delete: false, tag_manage: false, admin: false }
 
-/** 断言 nav 按钮的标签集合 */
+/** Assert the label set of the nav buttons */
 function navLabels(wrapper: ReturnType<typeof mount>): string[] {
   return wrapper.findAll('nav button').map((b) => b.text())
 }
 
-/** 令牌弹窗的开关状态（App.vue 的 tokenDialog）。el-dialog 的关闭过渡在 happy-dom
- * 里不会真正走完，DOM 断言收起状态不可靠，只能看驱动它的组件状态 */
+/** The token dialog's open state (App.vue's tokenDialog). el-dialog's close transition never
+ * truly finishes in happy-dom, so DOM assertions of the collapsed state are unreliable; read the
+ * component state driving it instead */
 function dialogOpen(wrapper: ReturnType<typeof mount>): boolean {
   return (wrapper.vm.$ as unknown as { setupState: { tokenDialog: boolean } }).setupState.tokenDialog
 }
@@ -37,10 +39,10 @@ describe('App shell', () => {
   beforeEach(() => {
     setMemoryUILocale('zh')
     localStorage.clear()
-    // el-dropdown 菜单 teleport 到 body，上一个用例的弹层可能残留并截走 querySelector：
-    // 清空 body，保证每个用例从干净 DOM 开始
+    // el-dropdown menus teleport to body; leftovers from the previous case may intercept querySelector:
+    // clear body so each case starts from a clean DOM
     document.body.innerHTML = ''
-    // 模拟持久化的中文语言偏好（happy-dom 的 navigator.language 是 en-US）
+    // Simulate a persisted Chinese language preference (happy-dom's navigator.language is en-US)
     localStorage.setItem('agent-memory-locale', 'zh')
     document.documentElement.classList.remove('dark')
     vi.stubGlobal(
@@ -70,7 +72,7 @@ describe('App shell', () => {
     expect(html).toContain('记忆')
     expect(html).toContain('新建记忆')
     expect(html).toContain('标签')
-    // 运维标签页已取消：概况改为点击顶栏标题弹窗展示
+    // The ops tab was removed: the overview now opens as a dialog by clicking the top-bar title
     expect(html).not.toContain('运维')
     wrapper.unmount()
   })
@@ -81,7 +83,7 @@ describe('App shell', () => {
     await flushPromises()
     const countStatsCalls = () =>
       vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).includes('/api/stats')).length
-    // 未点开不产生 stats 请求
+    // No stats requests while the dialog is unopened
     expect(countStatsCalls()).toBe(0)
 
     await wrapper.find('.brand-btn').trigger('click')
@@ -131,8 +133,9 @@ describe('App shell', () => {
   })
 
   it('works as the anonymous identity when the server grants anonymous capabilities', async () => {
-    // 鉴权开启但配置了匿名只读：无 token 也能浏览，不弹令牌框，
-    // 身份区显示匿名标签且下拉可用（便于添加身份升级）
+    // Auth is on but anonymous read-only is configured: browsing works without a token, no token
+    // dialog pops, the identity area shows the anonymous label and the dropdown stays usable
+    // (making it easy to add an identity and upgrade)
     const anonWho = { name: 'anonymous', mode: 'anonymous' as const, permissions: viewerCaps }
     vi.stubGlobal(
       'fetch',
@@ -147,7 +150,7 @@ describe('App shell', () => {
     expect(dialogOpen(wrapper)).toBe(false)
     expect(wrapper.find('.identity-btn').exists()).toBe(true)
     expect(wrapper.find('.identity-btn').text()).toContain('匿名访问')
-    // 只读匿名：内容面板照常渲染，管理标签页隐藏（无 admin 能力）
+    // Read-only anonymous: content panels render as usual, the admin tab is hidden (no admin capability)
     expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
     expect(wrapper.html()).toContain('新建记忆')
     wrapper.unmount()
@@ -177,12 +180,12 @@ describe('App shell', () => {
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
-    // admin 身份：三个标签页齐全，管理面板已挂载（身份表可见）
+    // Admin identity: all three tabs present, the admin panel is mounted (identity table visible)
     expect(navLabels(wrapper)).toEqual(['记忆', '标签', '管理'])
     expect(wrapper.html()).toContain('Token 鉴权')
     wrapper.unmount()
 
-    // 只读身份：管理标签页隐藏，管理面板不挂载（连 DOM 都没有）
+    // Read-only identity: the admin tab is hidden and the admin panel is not mounted (not even in the DOM)
     const viewerWho = { name: 'viewer', mode: 'token' as const, permissions: viewerCaps }
     vi.stubGlobal(
       'fetch',
@@ -225,14 +228,14 @@ describe('App shell', () => {
     await flushPromises()
     expect(navLabels(wrapper)).toContain('管理')
 
-    // 打开身份下拉，切到 viewer：管理标签页随之消失（下拉菜单 teleport 到 body）
+    // Open the identity dropdown and switch to viewer: the admin tab disappears with it (dropdown menus teleport to body)
     await wrapper.find('.identity-btn').trigger('click')
     await flushPromises()
     const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
       el.textContent?.includes('viewer'),
     )
     expect(viewerItem).toBeTruthy()
-    // 每个身份行带 token 尾缀提示（与管理界面同风格：省略号 + 末 4 位）
+    // Each identity row carries a token suffix hint (same style as the admin UI: ellipsis + last 4 chars)
     expect(viewerItem!.textContent).toContain('…ewer')
     viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
@@ -243,7 +246,7 @@ describe('App shell', () => {
   })
 
   it('keeps the identity dropdown usable when the current token turns invalid', async () => {
-    // broken 的 token 已被服务端拒绝；viewer 仍有效，切换后必须能恢复页面
+    // broken's token has been rejected by the server; viewer is still valid, and switching must restore the page
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string | URL, init?: RequestInit) => {
@@ -265,16 +268,19 @@ describe('App shell', () => {
     await flushPromises()
     await flushPromises()
 
-    // 回归：当前身份失效只移除它自己并弹令牌框，下拉必须仍在（此前随 who 一起消失，无法切换自救）
+    // Regression: when the current identity fails, only it is removed and the token dialog pops;
+    // the dropdown must remain (it previously vanished along with who, leaving no way to switch and recover)
     expect(wrapper.find('.identity-btn').exists()).toBe(true)
     expect(wrapper.find('.identity-btn').text()).toContain('未连接')
     expect(wrapper.find('.el-dialog').isVisible()).toBe(true)
-    // happy-dom 做不了真实命中检测：断言弹窗渲染容器带 penetrable 类（容器 pointer-events:none，
-    // 弹窗本体 auto），保证真实浏览器里弹窗开着时顶栏下拉不被全屏容器挡住（此前 modal=false 仍被拦）
+    // happy-dom cannot do real hit-testing: assert that the dialog render container has the
+    // penetrable class (container pointer-events:none, dialog body auto), guaranteeing that in a
+    // real browser the top-bar dropdown is not blocked by the full-screen container while the
+    // dialog is open (previously blocked even with modal=false)
     expect(wrapper.find('.el-modal-dialog.is-penetrable').exists()).toBe(true)
     expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
 
-    // 下拉仍列出其余身份，切换成功后令牌框收起、页面以新身份恢复
+    // The dropdown still lists the other identities; after a successful switch the token dialog collapses and the page recovers under the new identity
     await wrapper.find('.identity-btn').trigger('click')
     await flushPromises()
     const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
@@ -286,15 +292,15 @@ describe('App shell', () => {
     await flushPromises()
 
     expect(wrapper.find('.identity-btn').text()).toContain('viewer')
-    // el-dialog 的关闭过渡在 happy-dom 里不会真正走完（display:none 不落地），
-    // 改断言驱动弹窗的组件状态本身
+    // el-dialog's close transition never truly finishes in happy-dom (display:none never lands),
+    // so assert the component state driving the dialog instead
     expect(dialogOpen(wrapper)).toBe(false)
     expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
     wrapper.unmount()
   })
 
   it('recovers through the unauthorized event when the active token is revoked mid-session', async () => {
-    // 挂载时 admin 有效；中途被服务端重置：此后带 tok-admin 的请求一律 401
+    // admin is valid at mount; revoked by the server mid-session: from then on requests carrying tok-admin always 401
     let revoked = false
     vi.stubGlobal(
       'fetch',
@@ -323,7 +329,7 @@ describe('App shell', () => {
     await flushPromises()
     expect(wrapper.find('.identity-btn').text()).toContain('admin')
 
-    // 面板请求收到 401 → authFetch 广播 UNAUTHORIZED_EVENT → 移除失效身份并弹令牌框
+    // A panel request gets 401 -> authFetch broadcasts UNAUTHORIZED_EVENT -> the invalid identity is removed and the token dialog pops
     revoked = true
     await wrapper.findAll('nav button')[1].trigger('click')
     await flushPromises()
@@ -333,7 +339,7 @@ describe('App shell', () => {
     expect(wrapper.find('.identity-btn').exists()).toBe(true)
     expect(dialogOpen(wrapper)).toBe(true)
 
-    // 非模态弹窗不锁顶栏：身份下拉仍可操作，切到 viewer 即恢复
+    // The non-modal dialog does not lock the top bar: the identity dropdown stays operable, switching to viewer recovers
     await wrapper.find('.identity-btn').trigger('click')
     await flushPromises()
     const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
@@ -370,7 +376,7 @@ describe('App shell', () => {
     await flushPromises()
     await flushPromises()
 
-    // 打开下拉，删除当前身份 admin：自动切到剩余的 viewer，身份表只剩它
+    // Open the dropdown and delete the current identity admin: auto-switch to the remaining viewer, which is then the only identity left
     await wrapper.find('.identity-btn').trigger('click')
     await flushPromises()
     const adminRemove = [...document.querySelectorAll('.el-dropdown-menu__item .id-remove')][0]
@@ -386,7 +392,7 @@ describe('App shell', () => {
   })
 
   it('loads identity data once the admin identity resolves after mount', async () => {
-    // whoami 挂起，模拟真实时序：挂载早于身份解析完成
+    // whoami hangs, simulating real timing: mounting happens before identity resolution completes
     let resolveWhoAmI!: (res: unknown) => void
     const identityCalls: string[] = []
     vi.stubGlobal(
@@ -420,12 +426,12 @@ describe('App shell', () => {
     )
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
-    // 身份未就绪时不应预取管理数据
+    // No prefetching of admin data while the identity is not ready
     expect(identityCalls.length).toBe(0)
     resolveWhoAmI(jsonWithJson({ name: 'admin', mode: 'token', permissions: adminCaps }))
     await flushPromises()
     await flushPromises()
-    // 回归：admin 就绪后必须补加载（此前 onMounted 只判断一次，面板永远停在空态）
+    // Regression: loading must happen once admin is ready (onMounted previously checked only once, leaving the panel stuck empty forever)
     expect(identityCalls.length).toBeGreaterThan(0)
     wrapper.unmount()
   })
@@ -442,7 +448,8 @@ describe('App shell', () => {
     await navButtons[1].trigger('click')
     await flushPromises()
     await flushPromises()
-    // 回归：面板 v-show 常驻不会重新挂载，切回标签必须显式刷新（此前一直显示陈旧数据）
+    // Regression: v-show panels stay mounted and are never remounted, so switching back to a tab
+    // must refresh explicitly (previously stale data was shown indefinitely)
     expect(countTagsCalls()).toBeGreaterThan(before)
     wrapper.unmount()
   })

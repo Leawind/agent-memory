@@ -1,4 +1,4 @@
-// API 客户端测试：baseUrl 前缀、自定义 fetch 注入、错误处理与 JSON 解析约定
+// API client tests: baseUrl prefix, custom fetch injection, error handling and JSON parsing conventions
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApiClient } from './client'
 import type { ResolvedMemoryUIConfig } from '../config'

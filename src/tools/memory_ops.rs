@@ -1,4 +1,4 @@
-//! 记忆管理：增删改查、浏览与搜索（渐进式披露的载体）。
+//! Memory management: CRUD, browsing and search (the carrier of progressive disclosure).
 
 use crate::model::{normalize_id, normalize_tag_name, now};
 use crate::search;
@@ -18,14 +18,14 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     let linkage = st.link_tags(&tags)?;
 
-    // 重复检测（确定性规则：摘要归一化后完全相等）。在插入前计算，避免匹配到自己。
-    // 目的不是阻止存储，而是提醒 agent：已有同摘要记忆时应改用 memory_update。
+    // Duplicate detection (deterministic rule: titles exactly equal after normalization). Computed before insertion so the memory cannot match itself.
+    // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
     let duplicate_of = st.find_duplicates_by_summary(&summary)?;
 
     let id = st.insert_memory(&summary, &content, &linkage.ids, now(), now())?;
     let view = memory_view(st, id)?;
-    // 标签挂载三分类始终回传：新建 / 复用 / 复用但缺描述（提示用 tag_update
-    // 补写），让 agent 不必事后 tag_list 核对挂载是否齐全
+    // The three-way tag-link classification is always returned: created / reused / reused-but-missing-description (hinting to fill
+    // the description in with tag_update), sparing the agent a follow-up tag_list to check whether links are complete
     Ok(json!({
         "memory": view,
         "tags_autocreated": linkage.autocreated,
@@ -63,8 +63,8 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     let limit = opt_u64(args, "limit")?.unwrap_or(20).clamp(1, 200);
 
-    // 正则先在标签全集上解析成标签名集合，再换算成内部 id 集合
-    // （SQL 无正则能力；json_each 展开保持 SQL 静态）
+    // The regex is first resolved over the full tag set into a set of tag names, then translated into internal id sets
+    // (SQL has no regex capability; expanding with json_each keeps the SQL static)
     let tag_names = match &tag_re {
         Some(re) => Some(st.tag_names_matching(re)?),
         None => None,
@@ -128,9 +128,9 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let memories = st.all_memories()?;
     let keyword_hits = search::run(&memories, &query, &tag_filter, tag_re.as_ref());
 
-    // 语义路：auto 按配置直通，hybrid 显式要求配置，keyword 永不走。
-    // embedding 服务不可用（超时/报错/读库失败）→ 回退关键词趟并打标，
-    // 回退是承诺而不是报错路径。
+    // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
+    // Embedding service unavailable (timeout/error/database read failure) → fall back to the keyword pass and flag it,
+    // the fallback being a promise, not an error path.
     let config = st.embedding_config().map_err(ToolError::invalid)?;
     let mut used_hybrid = false;
     let mut semantic_fallback = false;
@@ -202,7 +202,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     if semantic_fallback {
         out["semantic_fallback"] = json!(true);
     }
-    // 渐进式披露引导只在第一页携带；翻页时客户端已读过，省掉重复上下文开销
+    // Progressive-disclosure guidance is carried only on the first page; by paging, the client has already read it, saving repeated context overhead
     if offset == 0 {
         out["hint"] = json!(
             "Summaries + snippets only (progressive disclosure). Call memory_get with the ids worth reading to reveal full content."
@@ -229,8 +229,8 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     Ok(out)
 }
 
-/// 拆分 id 列表：可解析的数字与格式非法的原始串（缺 m 前缀等）。
-/// 两者分开呈现——"格式写错"和"不存在"对 agent 是不同的错误。
+/// Split the id list: parseable numbers versus format-invalid raw strings (missing m prefix etc.).
+/// The two are reported separately — "malformed format" and "does not exist" are different errors to an agent.
 fn split_ids(ids: &[String]) -> (Vec<i64>, Vec<String>) {
     let mut numeric = Vec::new();
     let mut invalid = Vec::new();
@@ -244,7 +244,7 @@ fn split_ids(ids: &[String]) -> (Vec<i64>, Vec<String>) {
     (numeric, invalid)
 }
 
-/// 给含 id 的结果附上引导 note：missing 与 invalid 的提示各自独立、可并存。
+/// Attach guiding notes to results carrying ids: the missing and invalid hints are independent and can coexist.
 fn attach_id_note(out: &mut Value, has_missing: bool, invalid: &[String]) {
     let mut notes: Vec<&str> = Vec::new();
     if has_missing {
@@ -264,7 +264,7 @@ fn attach_id_note(out: &mut Value, has_missing: bool, invalid: &[String]) {
 
 pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let raw_id = normalize_id(&req_str(args, "id")?);
-    // 裸数字等非法格式按 400 报出并写明格式要求，而不是混进"不存在"（404）
+    // Invalid formats such as bare numbers are reported as 400 with the format requirement spelled out, not lumped into "not found" (404)
     let Some(id) = Store::parse_id(&raw_id) else {
         return Err(ToolError::invalid(format!(
             "malformed memory id '{raw_id}': ids look like 'm123' (a leading 'm' is required)"
@@ -292,7 +292,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         ));
     }
 
-    // 先解析标签（改的是 tags 表），再改记忆，顺序与错误信息一致。
+    // Resolve tags first (the tags table is what changes), then update the memory — the order matches the error messages.
     let mut linkage_opt = None;
     let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(add) = &add_tags {
@@ -321,7 +321,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     )?;
 
     let mut out = json!({"updated": changed, "memory": memory_view(st, id)?});
-    // 与 memory_create 同款三分类；仅在本次确实新增了标签时携带
+    // Same three-way classification as memory_create; carried only when this call actually created new tags
     if let Some(linkage) = linkage_opt {
         out["tags_autocreated"] = json!(linkage.autocreated);
         out["tags_reused"] = json!(linkage.reused);
@@ -342,9 +342,9 @@ pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     Ok(out)
 }
 
-/// 语义趟：查询向量化 + 与库存向量的余弦排名，与关键词趟 RRF 融合。
-/// 任何一步失败（读向量、embedding 服务超时/报错）都回退纯关键词趟，
-/// 返回 `(hits, 是否真正走了混合)`——回退是正常路径而非错误。
+/// Semantic pass: query embedding + cosine ranking against stored vectors, RRF-fused with the keyword pass.
+/// Any step failing (reading vectors, embedding service timeout/error) falls back to the pure keyword pass,
+/// returning `(hits, whether hybrid really ran)` — the fallback is a normal path, not an error.
 fn semantic_pass(
     st: &Store,
     cfg: &crate::embed::EmbedConfig,
@@ -388,7 +388,7 @@ fn semantic_pass(
     )
 }
 
-/// 取一条记忆的摘要视图（确保存在，不存在时给统一错误）。
+/// Fetch one memory's summary view (existence ensured; a uniform error when missing).
 fn memory_view(st: &Store, id: i64) -> Result<Value, ToolError> {
     let (mut found, _) = st.get_memories(&[id])?;
     found

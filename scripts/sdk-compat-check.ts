@@ -1,11 +1,13 @@
-// 官方 TypeScript SDK 兼容性联调：真实 MCP 客户端 ↔ agent-memory HTTP 服务器
+// Official TypeScript SDK compatibility check: a real MCP client against the
+// agent-memory HTTP server
 //
-// 用法（需先启动服务器，如 agent-memory serve --port 8899）：
-//   pnpm install（仓库根目录）
-//   node sdk-compat-check.ts            # 默认 http://127.0.0.1:8899/mcp
+// Usage (start the server first, e.g. agent-memory serve --port 8899):
+//   pnpm install (repo root)
+//   node sdk-compat-check.ts            # defaults to http://127.0.0.1:8899/mcp
 //   MCP_URL=http://127.0.0.1:8899/mcp node sdk-compat-check.ts
-// 服务器启用 token 鉴权时：MCP_TOKEN=xxx node sdk-compat-check.ts
-// 全部通过时退出码为 0，可用于发布前手工回归；无论成败都尝试清理测试数据。
+// When the server has token auth enabled: MCP_TOKEN=xxx node sdk-compat-check.ts
+// Exits 0 when all checks pass; suitable for a manual pre-release regression.
+// Test data is cleaned up regardless of the outcome.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -17,7 +19,8 @@ function check(name: string, cond: boolean, extra = ""): void {
   if (!cond) failures.push(name);
 }
 
-// 鉴权服务器：所有 transport 统一携带 Bearer 头（MCP 规范的 token 载体）
+// Authenticated servers: every transport carries the Bearer header
+// (the MCP-standard token carrier)
 const transportOptions = TOKEN
   ? { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } as Record<string, string> } }
   : undefined;
@@ -104,7 +107,7 @@ try {
   const pong = await client.ping();
   check("ping roundtrip", pong !== undefined);
 
-  // 无状态服务器：重连（新会话）后数据仍可见
+  // Stateless server: data is still visible after reconnecting (new session)
   const client2 = new Client({ name: "sdk-compat-check-2", version: "0.0.1" });
   await client2.connect(makeTransport());
   const again = await client2.callTool({
@@ -119,7 +122,7 @@ try {
 
   done = true;
 } finally {
-  // 无论成败都清理联调数据并关闭连接
+  // Clean up test data and close connections regardless of outcome
   try {
     if (createdId) {
       const cleanup = new Client({ name: "sdk-compat-cleanup", version: "0.0.1" });

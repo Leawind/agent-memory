@@ -1,10 +1,10 @@
-//! agent 的 MCP 端点（POST /mcp，Streamable HTTP 无状态模式）全流程。
+//! Full flow of the agent's MCP endpoint (POST /mcp, stateless Streamable HTTP mode).
 
 use serde_json::{json, Value};
 
 use crate::common::{cleanup, json_body, request, temp_db, try_request, HttpProc};
 
-/// 对 /mcp 发一条 JSON-RPC 请求，断言 HTTP 200 并返回解析后的响应。
+/// Send a JSON-RPC request to /mcp, assert HTTP 200, and return the parsed response.
 fn mcp_rpc(port: u16, body: Value) -> Value {
     let (status, bytes, _) = request(
         port,
@@ -23,12 +23,12 @@ fn mcp_endpoint_end_to_end() {
     let server = HttpProc::start(&db, "mcp");
     let port = server.port;
 
-    // 探活
+    // Liveness check
     let (status, body, _) = request(port, "GET", "/health", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["status"], "ok");
 
-    // initialize：协议版本回显
+    // initialize: protocol version echoed back
     let init = mcp_rpc(
         port,
         json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -39,7 +39,7 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(init["result"]["serverInfo"]["name"], "agent-memory");
 
-    // 通知：无响应体 → 202
+    // Notification: no response body -> 202
     let (status, body, _) = request(
         port,
         "POST",
@@ -49,7 +49,7 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(status, 202);
     assert!(body.is_empty());
 
-    // 完整 agent 流程：创建 → 搜索（渐进式披露，不泄露正文）→ 取全文
+    // Full agent flow: create -> search (progressive disclosure, no content leak) -> fetch full text
     let created = mcp_rpc(
         port,
         json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
@@ -81,7 +81,7 @@ fn mcp_endpoint_end_to_end() {
         results[0].get("content").is_none(),
         "search must not leak content"
     );
-    // 响应瘦身：不回显 query；hint 只在首页；零结果才带 note
+    // Response slimming: query is not echoed; hint only on the first page; note only when there are no results
     let sc = &searched["result"]["structuredContent"];
     assert!(sc.get("query").is_none(), "query echo must be dropped");
     assert!(sc.get("hint").is_some(), "first page carries the hint");
@@ -100,14 +100,14 @@ fn mcp_endpoint_end_to_end() {
         "zero results guide the caller"
     );
 
-    // 文本通道为紧凑 JSON（缩进空白会白占模型上下文）
+    // Text channel is compact JSON (indentation whitespace would waste model context)
     let text = searched["result"]["content"][0]["text"].as_str().unwrap();
     assert!(
         !text.contains('\n'),
         "tool result text must be compact JSON"
     );
 
-    // MCP-Protocol-Version 头声明旧版本时不带 structuredContent（避免双份注入）
+    // No structuredContent when the MCP-Protocol-Version header declares an older version (avoids injecting it twice)
     let (status, body, _) = try_request(
         port,
         "POST",
@@ -143,7 +143,7 @@ fn mcp_endpoint_end_to_end() {
             .contains("SQLite")
     );
 
-    // 更新正文与摘要（回归：字段更新路径曾在嵌入表缺失时整条更新失败）
+    // Update content and summary (regression: the field-update path once failed entirely when the embeddings table was absent)
     let updated = mcp_rpc(
         port,
         json!({"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {
@@ -156,12 +156,12 @@ fn mcp_endpoint_end_to_end() {
     );
     assert!(updated.get("error").is_none(), "update failed: {updated}");
     assert_eq!(updated["result"]["structuredContent"]["updated"], true);
-    // 仅改字段的更新不携带标签字段
+    // A field-only update carries no tag fields
     assert!(updated["result"]["structuredContent"]
         .get("tags_autocreated")
         .is_none());
 
-    // 错误路径：未知工具 → -32602；未知方法 → -32601；参数错误 → isError
+    // Error paths: unknown tool -> -32602; unknown method -> -32601; bad params -> isError
     let unknown_tool = mcp_rpc(
         port,
         json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "nope"}}),
@@ -177,12 +177,12 @@ fn mcp_endpoint_end_to_end() {
     );
     assert_eq!(bad_args["result"]["isError"], true);
 
-    // 非 JSON body → 400 + -32700
+    // Non-JSON body -> 400 + -32700
     let (status, body, _) = request(port, "POST", "/mcp", Some("not json"));
     assert_eq!(status, 400);
     assert_eq!(json_body(&body)["error"]["code"], -32700);
 
-    // Content-Type 非 JSON → 415（MCP 规范要求）
+    // Non-JSON Content-Type -> 415 (required by the MCP spec)
     let (status, _, _) = try_request(
         port,
         "POST",
@@ -193,7 +193,7 @@ fn mcp_endpoint_end_to_end() {
     .unwrap();
     assert_eq!(status, 415);
 
-    // 批量消息经 HTTP：ping 的响应 + 通知不产生响应 → 单元素数组
+    // Batch over HTTP: the ping response + notification producing no response -> single-element array
     let (status, body, _) = request(
         port,
         "POST",
@@ -209,7 +209,7 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(batch[0]["id"], 20);
     assert_eq!(batch[0]["result"], json!({}));
 
-    // GET /mcp → 405；未知路径：GET 走 SPA 回退，非 GET 404
+    // GET /mcp -> 405; unknown paths: GET falls back to the SPA, non-GET 404
     let (status, _, _) = request(port, "GET", "/mcp", None);
     assert_eq!(status, 405);
     let (status, _, _) = request(port, "GET", "/nope", None);
@@ -217,7 +217,7 @@ fn mcp_endpoint_end_to_end() {
     let (status, _, _) = request(port, "PUT", "/nope", Some("{}"));
     assert_eq!(status, 404);
 
-    // Origin 防护：非本机来源 403；本机来源放行
+    // Origin guard: non-local origins 403; local origins pass
     let (status, _, _) = try_request(
         port,
         "POST",
@@ -237,7 +237,7 @@ fn mcp_endpoint_end_to_end() {
     .unwrap();
     assert_eq!(status, 200);
 
-    // 风暴后仍可用
+    // Still usable after the storm
     let pong = mcp_rpc(port, json!({"jsonrpc": "2.0", "id": 10, "method": "ping"}));
     assert_eq!(pong["result"], json!({}));
 

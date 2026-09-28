@@ -1,4 +1,4 @@
-// 中文文案（key 按组件分组；en.ts 必须与本题 key 一一对应，i18n.test.ts 把守）
+// Chinese UI copy (keys grouped by component; en.ts must match these keys one-to-one, guarded by i18n.test.ts)
 export default {
   nav: {
     memories: '记忆',

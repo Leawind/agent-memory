@@ -1,12 +1,15 @@
-// 混合负载浸泡脚本：写者 + 读者 + 标签操作并发打两个服务器进程（共享同一库），
-// 验证读写事务分离下长时间竞争的稳定性（零丢失、零服务端错误）。
+// Mixed-load soak script: writers + readers + tag operations hitting two server
+// processes concurrently (sharing one database), verifying long-run stability of the
+// read/write transaction split (zero data loss, zero server-side errors).
 //
-// 用法（先起两个共享同一 --db 的服务器；Node ≥24 可直接运行 .ts）：
-//   node soak.ts <port1> <port2>      # 默认时长 60 秒
-// 服务器启用了 token 鉴权时用 SOAK_TOKEN 注入（所有请求自动带 Bearer 头）：
+// Usage (start two servers sharing the same --db first; Node >= 24 can run .ts directly):
+//   node soak.ts <port1> <port2>      # 60 seconds by default
+// When the servers have token auth enabled, inject the token via SOAK_TOKEN
+// (all requests automatically carry the Bearer header):
 //   SOAK_TOKEN=xxx node soak.ts <port1> <port2>
-// 失败分类：ECONNREFUSED 风暴 = 客户端并发超出 accept 队列（测试工具过载，
-// 非服务缺陷）；HTTP 5xx / SQLITE_BUSY 字样 = 服务端真实问题。
+// Failure classification: an ECONNREFUSED storm = client concurrency exceeds the accept
+// backlog (tool overload, not a server defect); HTTP 5xx / SQLITE_BUSY strings = real
+// server-side problems.
 import http from "node:http";
 
 const PORTS = [Number(process.argv[2]), Number(process.argv[3])];
@@ -30,7 +33,7 @@ function req(method: string, port: number, path: string, body?: unknown): Promis
     const headers: Record<string, number | string> = data
       ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }
       : {};
-    // 鉴权服务器：所有请求统一携带 Bearer token
+    // Authenticated servers: every request carries the Bearer token
     if (process.env.SOAK_TOKEN) headers.Authorization = `Bearer ${process.env.SOAK_TOKEN}`;
     const r = http.request(
       {

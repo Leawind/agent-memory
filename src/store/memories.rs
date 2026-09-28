@@ -1,4 +1,4 @@
-//! 记忆数据操作：插入 / 查询 / 分页浏览 / 更新 / 删除。
+//! Memory data operations: insert / query / paged browsing / update / delete.
 
 use crate::model::Memory;
 use crate::sql;
@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::Store;
 
 impl Store {
-    /// 摘要与既有记忆归一化相同的条目 id（Rust 侧比较，Unicode 语义一致）。
+    /// Summarize entry ids that normalize to the same value as an existing memory (compared on the Rust side with consistent Unicode semantics).
     pub fn find_duplicates_by_summary(&self, summary: &str) -> Result<Vec<String>, String> {
         let mut st = self
             .conn
@@ -28,7 +28,7 @@ impl Store {
         Ok(out)
     }
 
-    /// 插入记忆并按内部标签 id 关联（id 由 handler 先经 `link_tags` 解析）。
+    /// Insert a memory and link it by internal tag ids (the handler resolves ids via `link_tags` first).
     pub fn insert_memory(
         &self,
         summary: &str,
@@ -86,7 +86,7 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 全量记忆（含标签，id 升序），供内存搜索器使用。
+    /// All memories (with tags, id ascending), for the in-memory searcher.
     pub fn all_memories(&self) -> Result<Vec<Memory>, String> {
         let mut st = self
             .conn
@@ -130,15 +130,15 @@ impl Store {
         Ok(out)
     }
 
-    /// 分页浏览（可选标签过滤：`tag` 精确单标签；`tag_set` 为标签内部 id
-    /// 集合的 JSON 数组文本，命中任一即可——名字 → id 的解析与正则过滤
-    /// 由调用方先在标签全集上完成），
-    /// 返回 (总数, 当前页)。
+    /// Paged browsing (optional tag filtering: `tag` is one exact tag; `tag_set` is a JSON array text of internal tag ids,
+    /// matching any of them — name → id resolution and regex filtering
+    /// are done by the caller over the full tag set beforehand),
+    /// returns (total count, current page).
     ///
-    /// 全静态 SQL（见 sql/memory_list_page.sql）：`?1`/`?2` 为 NULL 时不过滤；
-    /// 集合过滤用 json_each 展开（SQLite 内建 JSON1）；排序列用 CASE 在
-    /// `?3` 间选择；`?4` 传 ±1 实现正/倒序（列均为整数）。
-    /// `sort` 只接受 handler 白名单化后的取值。
+    /// Fully static SQL (see sql/memory_list_page.sql): no filtering while `?1`/`?2` are NULL;
+    /// set filtering is expanded with json_each (SQLite's built-in JSON1); the sort column is chosen among `?3` via CASE;
+    /// `?4` carries ±1 for ascending/descending (all columns are integers).
+    /// `sort` only accepts values whitelisted by the handler.
     pub fn list_memories(
         &self,
         tag: Option<&str>,
@@ -187,7 +187,7 @@ impl Store {
         Ok((total, page))
     }
 
-    /// 按 id 批量取完整记忆，返回 (找到的, 缺失的)。
+    /// Fetch full memories by id in bulk, returning (found, missing).
     pub fn get_memories(&self, ids: &[i64]) -> Result<(Vec<Memory>, Vec<String>), String> {
         let mut found = Vec::new();
         let mut missing = Vec::new();
@@ -200,9 +200,9 @@ impl Store {
         Ok((found, missing))
     }
 
-    /// 更新记忆字段与标签；返回是否发生变更（决定是否刷新 updated_at）。
-    /// 标签以内部 id 增删（add 由 handler 先 `link_tags` 解析，remove 由
-    /// `tag_ids_for_names` 解析——不存在的名字静默跳过）。
+    /// Update memory fields and tags; returns whether anything changed (deciding whether updated_at is refreshed).
+    /// Tags are added/removed by internal id (add is resolved by the handler via `link_tags` first, remove via
+    /// `tag_ids_for_names` — nonexistent names are skipped silently).
     pub fn update_memory(
         &self,
         id: i64,
@@ -225,13 +225,13 @@ impl Store {
                     params![summary, content, crate::model::now() as i64, id],
                 )
                 .map_err(|e| e.to_string())?;
-            // 字段变了向量即过期：删掉让它落回补跑队列（写入挂接会立刻重嵌；
-            // embedding 服务不可用时就地留空，不阻塞更新本身）
+            // Changed fields invalidate the vector: delete it so it falls back into the backfill queue (the write hook re-embeds
+            // right away; when the embedding service is unavailable it simply stays empty and the update itself is not blocked)
             self.embedding_delete(id)?;
             changed = true;
         }
-        // 契约（defs.rs）：add_tags 先于 remove_tags 执行，两个列表都含同一
-        // 标签时最终结果是移除（显式 remove 的意图优先）。
+        // Contract (defs.rs): add_tags runs before remove_tags; when both lists contain the same
+        // tag the final result is removal (the explicit remove intent wins).
         for tag_id in add_tag_ids {
             let n = self
                 .conn
@@ -262,7 +262,7 @@ impl Store {
         }
     }
 
-    /// 删除记忆，返回 (已删 id, 缺失 id)。
+    /// Delete memories, returning (deleted ids, missing ids).
     pub fn delete_memories(&self, ids: &[i64]) -> Result<(Vec<String>, Vec<String>), String> {
         let mut deleted = Vec::new();
         let mut missing = Vec::new();
@@ -287,7 +287,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// 测试辅助：按标签名建链并插入记忆（生产路径由 handler 解析 id）。
+    /// Test helper: link tags by name and insert a memory (the production path resolves ids in the handler).
     fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
         let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
         let ids = st.link_tags(&names).unwrap().ids;
@@ -305,16 +305,16 @@ mod tests {
         let id = insert_with_tags(&st, "Rust notes", "borrow checker", &["rust", "notes"], 10);
         assert_eq!(Store::format_id(id), "m1");
 
-        // 重复检测（大小写不敏感）
+        // Duplicate detection (case-insensitive)
         let dup = st.find_duplicates_by_summary("rust NOTES").unwrap();
         assert_eq!(dup, vec!["m1".to_string()]);
 
-        // 全量读取带标签
+        // Full read with tags
         let all = st.all_memories().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].tags, vec!["notes".to_string(), "rust".to_string()]);
 
-        // 更新：改字段 + 增删标签（名字 → id 的解析走与 handler 相同的路径）
+        // Update: change fields + add/remove tags (name → id resolution goes through the same path as the handler)
         let add = st.link_tags(&["study".into()]).unwrap();
         let remove = st.tag_ids_for_names(&["notes".into()]).unwrap();
         let changed = st
@@ -326,10 +326,10 @@ mod tests {
         assert_eq!(found[0].summary, "new summary");
         assert_eq!(found[0].tags, vec!["rust".to_string(), "study".to_string()]);
 
-        // 不存在的记忆报错
+        // Nonexistent memory errors out
         assert!(st.update_memory(999, Some("x"), None, &[], &[]).is_err());
 
-        // 删除
+        // Delete
         let (deleted, missing) = st.delete_memories(&[id, 999]).unwrap();
         assert_eq!(deleted, vec!["m1".to_string()]);
         assert_eq!(missing, vec!["m999".to_string()]);
@@ -365,7 +365,7 @@ mod tests {
             .list_memories(Some("t1"), None, "created_at", false, 0, 200)
             .unwrap();
         assert_eq!(total4, 5);
-        // 标签集合过滤（tag_set 为 id JSON 数组文本，json_each 展开；空集 = 无结果）
+        // Tag set filtering (tag_set is JSON array text of ids, expanded with json_each; empty set = no results)
         insert_with_tags(&st, "s-other", "c", &["t2"], 9);
         let id_set = |names: &[&str]| {
             let owned: Vec<String> = names.iter().map(|t| t.to_string()).collect();
@@ -391,7 +391,7 @@ mod tests {
             .list_memories(None, Some("[]"), "updated_at", false, 0, 200)
             .unwrap();
         assert_eq!(total7, 0);
-        // 精确 tag 与集合同时使用 = AND
+        // Exact tag and set used together = AND
         let (total8, _) = st
             .list_memories(
                 Some("t2"),
@@ -406,8 +406,8 @@ mod tests {
         cleanup(&path);
     }
 
-    /// 契约（defs.rs）：add_tags 先于 remove_tags 执行，
-    /// 同一标签同时出现在两个列表时最终结果是移除。
+    /// Contract (defs.rs): add_tags runs before remove_tags;
+    /// when the same tag appears in both lists the final result is removal.
     #[test]
     fn update_memory_add_before_remove_ends_removed() {
         let path = temp_db("add-remove");

@@ -1,14 +1,14 @@
-//! 端到端集成测试：真实启动 HTTP 服务器二进制与 CLI 子命令。
+//! End-to-end integration tests: actually spawn the HTTP server binary and CLI subcommands.
 //!
-//! - agent 的 MCP 端点（POST /mcp，Streamable HTTP 无状态模式）
-//! - 管理后端 /api/*（供内嵌管理界面使用）
-//! - 静态托管的管理界面（/）
-//! - token 鉴权全流程与能力边界
-//! - 多进程共享同一数据库的并发正确性
-//! - CLI 运维子命令（stats / doctor / export / import / token reset）
-//! - 语义搜索：hybrid 召回、服务不可用的回退与补跑闭环
+//! - the agent's MCP endpoint (POST /mcp, stateless Streamable HTTP mode)
+//! - the admin backend /api/* (used by the embedded admin UI)
+//! - the statically served admin UI (/)
+//! - the full token auth flow and capability boundaries
+//! - concurrency correctness with multiple processes sharing one database
+//! - CLI ops subcommands (stats / doctor / export / import / token reset)
+//! - semantic search: hybrid recall, fallback when the service is down, and the backfill loop
 //!
-//! HTTP 客户端用 std::net 手写最小实现，不引入 dev 依赖（见 `common`）。
+//! The HTTP client is a minimal hand-written implementation on std::net, no dev dependencies (see `common`).
 
 mod auth;
 mod cli;

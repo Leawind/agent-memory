@@ -1,7 +1,8 @@
-// AdminPanel 挂载测试：stub fetch + 真实渲染 Element Plus 组件
-// （el-* 导入由 unplugin-vue-components 在构建期注入，测试无需全局注册）
-// 覆盖：身份表/鉴权开关/自定义提示词渲染、非 admin 提示、备份与体检区、
-// token 一次性弹窗的「保存到本浏览器」钩子、开启鉴权的无 admin 预检
+// AdminPanel mount tests: stub fetch + real Element Plus rendering
+// (el-* imports are injected at build time by unplugin-vue-components; tests need no global registration)
+// Covers: identity table / auth toggle / custom prompt rendering, non-admin notices, the backup
+// and doctor sections, the token-once dialog's "save to this browser" hook, and the precheck
+// when enabling auth without an admin identity
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
@@ -64,53 +65,55 @@ describe('AdminPanel', () => {
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('bob')
-    // 列表只有尾缀提示（服务端只存哈希），并带重置入口
+    // The list only shows the suffix hint (the server stores hashes only), with a reset entry
     expect(html).toContain('…a1b2')
     expect(html).toContain('重置 Token')
-    // 鉴权开关与身份列表同屏可见
+    // The auth toggle and identity list are visible on the same screen
     expect(html).toContain('Token 鉴权')
-    // textarea 的值是 DOM property，不在 innerHTML 里
+    // A textarea's value is a DOM property, not present in innerHTML
     const textareas = wrapper.findAll('textarea')
     expect(textareas.length).toBe(2)
     expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
     expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
-    // 用法说明收进标签旁的 ⓘ（面板标题 + 两个字段 = 至少 3 个）；编辑/预览是卡片头部的单图标切换
+    // Usage notes are tucked into the info icon next to labels (panel title + two fields = at
+    // least 3); edit/preview is the single-icon toggle in the card header
     expect(wrapper.findAll('.am-info').length).toBeGreaterThanOrEqual(3)
     expect(wrapper.findAll('.md-mode-toggle').length).toBe(1)
-    // 点击切到预览：两个 textarea 换成 Markdown 渲染
+    // Click to switch to preview: both textareas are replaced by the Markdown rendering
     await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('textarea').length).toBe(0)
     expect(wrapper.find('.md-body').exists()).toBe(true)
-    // 再点切回编辑
+    // Click again to switch back to edit
     await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('textarea').length).toBe(2)
     const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')
     expect(resetBtn).toBeTruthy()
     expect(resetBtn!.attributes('disabled')).toBeUndefined()
-    // 备份与体检集中在管理面板
+    // Backup and doctor are centralized in the admin panel
     expect(html).toContain('备份导入导出')
     expect(html).toContain('导出备份')
     expect(html).toContain('数据体检')
     expect(html).toContain('新建身份')
-    // 新建身份入口在鉴权卡内身份小节行的右侧，紧贴身份表（三卡已合并为一张鉴权卡）
+    // The create-identity entry sits at the right of the identity section row inside the auth
+    // card, next to the identity table (three cards merged into one auth card)
     const createBtn = wrapper.findAll('button').find((b) => b.text() === '新建身份')
     expect(createBtn).toBeTruthy()
     expect(createBtn!.element.closest('.el-card__header')).toBeNull()
     expect(createBtn!.element.closest('.el-card__body')).toBeTruthy()
-    // 语义搜索只有一张卡：配置 + 向量覆盖率小节同卡，不再出现第二张同名卡
+    // Semantic search is a single card: config + vector coverage section share it; no second card with the same name
     expect(html.match(/语义搜索（embedding）/g)).toHaveLength(1)
     expect(html).toContain('向量覆盖率')
     expect(html).toContain('补跑向量化')
     expect(html).toContain('1 条记忆缺最新向量')
-    // 缺键回退不再出现（vue-i18n 缺键时会把键名原样回显）
+    // Missing-key fallback no longer appears (vue-i18n echoes the key itself when missing)
     expect(html).not.toContain('access.embedding')
     expect(html).not.toContain('access.identityCard')
     wrapper.unmount()
   })
 
-  // 保存行里「保存」与弹窗内同名按钮共存，这里只找卡片里的那个
+  // The save row's "save" coexists with the identically named dialog button; find the card's one only
   function promptCardSave(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll('button').filter((b) => b.text() === '保存' && !b.element.closest('.el-dialog'))[0]
   }
@@ -138,18 +141,18 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // 未设置时编辑框直接预填内置默认（所见即生效）
+    // When unset, the editor prefills the built-in default directly (what you see is what applies)
     const textarea = wrapper.findAll('textarea')[0]
     expect((textarea.element as HTMLTextAreaElement).value).toBe('BUILT-IN DEFAULT PROMPT')
-    // 内容等于默认 → 「恢复默认」无可做之事，禁用
+    // Content equals the default -> "reset to default" has nothing to do, disabled
     const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')!
     expect(resetBtn.attributes('disabled')).toBeDefined()
-    // 未修改直接保存：与默认一致归一为空串（继续跟随默认而非冻结快照）
+    // Save without modification: content identical to the default normalizes to an empty string (keeps following the default instead of freezing a snapshot)
     await promptCardSave(wrapper)!.trigger('click')
     await flushPromises()
     expect(settingsPuts).toEqual([JSON.stringify({ instructions: '', conventions: '' })])
     wrapper.unmount()
-    // 清掉本用例触发的 toast，避免残留干扰后续按内容挑 toast 的断言
+    // Remove toasts triggered by this case so leftovers don't interfere with later content-based toast assertions
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
@@ -181,9 +184,9 @@ describe('AdminPanel', () => {
       .find((b) => b.text() === '恢复默认')!
       .trigger('click')
     await flushPromises()
-    // 只清 instructions；conventions 键省略 = 服务端不改动
+    // Only clears instructions; omitting the conventions key = the server leaves it unchanged
     expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
-    // 编辑框填回内置默认，进入淡色默认态
+    // The editor is filled back with the built-in default, entering the faded default state
     const textarea = wrapper.findAll('textarea')[0]
     expect((textarea.element as HTMLTextAreaElement).value).toBe('BUILT-IN')
     wrapper.unmount()
@@ -201,7 +204,7 @@ describe('AdminPanel', () => {
     })
     await flushPromises()
     expect(wrapper.html()).toContain('需要 admin 权限')
-    // 隐藏的 el-dialog 标题仍在 DOM 里，这里断言的是操作入口：头部无「新建身份」按钮
+    // Hidden el-dialog titles remain in the DOM; what is asserted here is the action entry: no create-identity button in the header
     expect(wrapper.find('.am-panel-header button').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -237,11 +240,11 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // 身份未就绪不预取管理数据（无 who 时服务端会 403）
+    // No prefetch of admin data while the identity is not ready (the server responds 403 without who)
     expect(identityCalls.length).toBe(0)
     await wrapper.setProps({ who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } })
     await flushPromises()
-    // 回归：admin 能力就绪后必须补加载
+    // Regression: loading must happen once the admin capability is ready
     expect(identityCalls.length).toBeGreaterThan(0)
     wrapper.unmount()
   })
@@ -273,7 +276,7 @@ describe('AdminPanel', () => {
     wrapper.unmount()
   })
 
-  // 走完「新建身份 → token 一次性弹窗」流程的辅助：返回弹窗包装
+  // Helper that walks the "create identity -> token-once dialog" flow: returns the wrapper
   async function createIdentityAndOpenTokenDialog(config?: { onIdentityToken: (name: string, token: string) => void }) {
     vi.stubGlobal(
       'fetch',
@@ -314,7 +317,7 @@ describe('AdminPanel', () => {
       .trigger('click')
     await flushPromises()
     await wrapper.find('.el-dialog input').setValue('bob')
-    // 限定在创建弹窗内找「保存」，避免命中自定义提示词卡片的同名按钮
+    // Look for "save" inside the create dialog only, avoiding the prompt card's identically named button
     await wrapper
       .find('.el-dialog')
       .findAll('button')
@@ -325,7 +328,7 @@ describe('AdminPanel', () => {
     return wrapper
   }
 
-  // token 一次性弹窗（DOM 里同时存在隐藏的创建弹窗，按内容挑第二个）
+  // The token-once dialog (a hidden create dialog also exists in the DOM; pick by content)
   function tokenDialog(wrapper: ReturnType<typeof mount>) {
     const dialogs = wrapper.findAll('.el-dialog')
     const found = dialogs.find((d) => d.text().includes('复制 Token'))
@@ -354,7 +357,7 @@ describe('AdminPanel', () => {
       .trigger('click')
     await flushPromises()
     expect(saved).toEqual([{ name: 'bob', token: 'tok-bob-123' }])
-    // 保存成功有反馈 toast（弹窗经过渡关闭，happy-dom 里 DOM 状态不可靠）
+    // A success toast confirms the save (the dialog closes with a transition; DOM state is unreliable in happy-dom)
     const toast = document.querySelector('.el-message')
     expect(toast?.textContent).toContain('已保存身份')
     wrapper.unmount()
@@ -388,12 +391,12 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // 找到鉴权开关并触发切换（before-change 应拦下）
+    // Find the auth toggle and trigger a flip (before-change should block it)
     const switchEl = wrapper.find('.el-switch')
     expect(switchEl.exists()).toBe(true)
     await switchEl.trigger('click')
     await flushPromises()
-    // 预检拦截：不发 PUT，开关保持关
+    // The precheck blocks: no PUT is sent and the switch stays off
     expect(settingsPuts).toEqual([])
     expect(wrapper.html()).not.toContain('el-switch.is-checked')
     wrapper.unmount()

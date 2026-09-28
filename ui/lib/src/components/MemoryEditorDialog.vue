@@ -65,16 +65,16 @@ import { t } from '../i18n'
 
 const props = defineProps<{
   visible: boolean
-  /** 编辑目标的记忆 id；null 表示新建 */
+  /** The memory id being edited; null means creating new */
   memoryId: string | null
   tagOptions: string[]
-  /** 弹层宽度；窄容器由面板传入收窄值 */
+  /** Dialog width; the panel passes a narrower value in narrow containers */
   width?: string
 }>()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
-  /** 保存成功（新建或更新完成） */
+  /** Saved successfully (create or update finished) */
   saved: []
 }>()
 
@@ -82,9 +82,9 @@ const client = useApiClient()
 
 const saving = ref(false)
 const contentTab = ref<'edit' | 'preview'>('edit')
-// 正文编辑器的视图：编辑源码或预览 Markdown 渲染结果
+// Content editor view: edit the source or preview the rendered Markdown
 const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
-// 编辑时的原始标签集，保存时换算成 add/remove
+// Original tag set while editing, converted to add/remove on save
 let originalTags: string[] = []
 
 watch(
@@ -112,7 +112,7 @@ async function save() {
   saving.value = true
   try {
     if (form.value.id) {
-      // 编辑：以原始标签为基线换算 add_tags / remove_tags
+      // Editing: compute add_tags / remove_tags against the original tag set as baseline
       const before = new Set(originalTags)
       const after = new Set(form.value.tags)
       await updateMemory(client, form.value.id, {

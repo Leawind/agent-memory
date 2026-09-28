@@ -1,10 +1,10 @@
-// 标签端点
+// Tag endpoints
 import type { ApiClient } from './client'
 import type { TagListResp } from '../types'
 
 export type TagDeleteMode = 'detach' | 'purge'
 
-/** filter 为标签名正则（服务端过滤）；非法正则由服务端 400 */
+/** filter is a tag-name regex (filtered server-side); the server responds 400 to invalid regexes */
 export function listTags(client: ApiClient, filter?: string): Promise<TagListResp> {
   const suffix = filter ? `?filter=${encodeURIComponent(filter)}` : ''
   return client.get<TagListResp>(`/api/tags${suffix}`)
@@ -14,7 +14,7 @@ export function createTag(client: ApiClient, name: string, description: string):
   return client.post('/api/tags', { name, description })
 }
 
-/** 编辑标签：newName 为空或与原名相同表示不改名 */
+/** Edit a tag: an empty newName or one equal to the original name means no rename */
 export function updateTag(client: ApiClient, name: string, newName: string, description: string): Promise<void> {
   const body: { description: string; new_name?: string } = { description }
   const trimmed = newName.trim()

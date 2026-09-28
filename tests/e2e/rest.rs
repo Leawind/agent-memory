@@ -1,4 +1,4 @@
-//! 管理后端 /api/* 全流程与静态托管的管理界面。
+//! Full flow of the admin backend /api/* and the statically served admin UI.
 
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ fn rest_api_end_to_end() {
     let server = HttpProc::start(&db, "rest");
     let port = server.port;
 
-    // 标签：创建（含中文路径转义）→ 列表 → 精确重名报错 → 改名
+    // Tags: create (including non-ASCII path escaping) -> list -> exact duplicate name error -> rename
     let (status, body, _) = request(
         port,
         "POST",
@@ -32,7 +32,7 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["tags"].as_array().unwrap().len(), 2);
 
-    // 标签正则过滤：命中 / 不命中 / 非法正则 → 400
+    // Tag regex filter: match / no match / invalid regex -> 400
     let (status, body, _) = request(port, "GET", "/api/tags?filter=%5E%E9%A1%B9", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["tags"].as_array().unwrap().len(), 1);
@@ -57,7 +57,7 @@ fn rest_api_end_to_end() {
     assert_eq!(json_body(&body)["renamed"], true);
     assert_eq!(json_body(&body)["description_updated"], true);
 
-    // 记忆：创建 → 列表/过滤 → 取全文 → 更新 → 搜索 → 删除
+    // Memories: create -> list/filter -> fetch full text -> update -> search -> delete
     let (status, body, _) = request(
         port,
         "POST",
@@ -85,7 +85,7 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total"], 1);
 
-    // 记忆标签正则过滤：命中 / 与精确 tag AND 后为空
+    // Memory tag regex filter: match / ANDed with an exact tag yields empty
     let (status, body, _) = request(
         port,
         "GET",
@@ -140,7 +140,7 @@ fn rest_api_end_to_end() {
         "search must not leak content"
     );
 
-    // 不存在的记忆 → 404
+    // Nonexistent memory -> 404
     let (status, _, _) = request(port, "GET", "/api/memories/m999", None);
     assert_eq!(status, 404);
 
@@ -152,20 +152,20 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["ok"], true);
 
-    // export：作为附件下载
+    // export: downloaded as an attachment
     let (status, body, ctype) = request(port, "GET", "/api/export", None);
     assert_eq!(status, 200);
     assert!(ctype.contains("application/json"));
     let dump: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(dump["memories"].as_object().unwrap().len(), 1);
 
-    // 删除记忆 → 再查 404
+    // Delete memory -> subsequent fetch 404
     let (status, _, _) = request(port, "DELETE", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 200);
     let (status, _, _) = request(port, "GET", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 404);
 
-    // purge 标签连带删记忆
+    // purging a tag also deletes its memories
     let (status, _, _) = request(
         port,
         "POST",
@@ -201,7 +201,7 @@ fn static_ui_is_served() {
     let server = HttpProc::start(&db, "ui");
     let port = server.port;
 
-    // 根路径返回 HTML（内嵌资产；构建前为占位页，构建后为 Vue 应用）
+    // Root path returns HTML (embedded assets; a placeholder page before build, the Vue app after)
     let (status, body, ctype) = request(port, "GET", "/", None);
     assert_eq!(status, 200);
     assert!(ctype.contains("text/html"), "content-type: {ctype}");
@@ -211,12 +211,12 @@ fn static_ui_is_served() {
         "not html"
     );
 
-    // SPA 回退：未知的非 API 路径也回 index
+    // SPA fallback: unknown non-API paths also serve index
     let (status, _, ctype2) = request(port, "GET", "/some/spa/route", None);
     assert_eq!(status, 200);
     assert!(ctype2.contains("text/html"));
 
-    // /health 是 JSON 而不是 SPA 回退
+    // /health is JSON rather than the SPA fallback
     let (status, body, ctype3) = request(port, "GET", "/health", None);
     assert_eq!(status, 200);
     assert!(ctype3.contains("application/json"));

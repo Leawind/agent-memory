@@ -1,29 +1,29 @@
-//! 关键词搜索：空格分词（引号短语整体成词）、全部词命中（AND）、加权评分、
-//! 生成片段。
+//! Keyword search: whitespace tokenization (quoted phrases become single terms), all-terms matching (AND), weighted scoring,
+//! and snippet generation.
 //!
-//! 匹配基于大小写折叠后的子串查找，因此中文按子串直接命中，无需分词。
-//! 权重见下方常量：标签精确 > 标签子串 > 摘要 > 正文；摘要/正文按命中
-//! 次数计分（封顶 3 次），纯 ASCII 词在词边界命中额外加分，引号短语
-//! 整体命中再加分。片段窗口在多个候选位置中选取覆盖不同词最多的一个。
+//! Matching is substring lookup over case-folded text, so Chinese hits directly by substring with no word segmentation.
+//! Weights are the constants below: exact tag > tag substring > title > content; title/content score per hit
+//! (capped at 3 hits), pure-ASCII words get a bonus for word-boundary hits, and quoted phrases
+//! get a further bonus for whole-phrase hits. Among candidate positions, the snippet window chosen is the one covering the most distinct terms.
 
 use crate::model::Memory;
 
-/// 权重：标签名精确命中（每个命中的标签累计）。
+/// Weight: exact tag-name hit (accumulated per matching tag).
 const W_TAG_EXACT: i64 = 40;
-/// 权重：标签名子串命中（每个命中的标签累计）。
+/// Weight: tag-name substring hit (accumulated per matching tag).
 const W_TAG_SUBSTR: i64 = 25;
-/// 权重：摘要命中（每次；封顶 MAX_TF_HITS 次）。
+/// Weight: title hit (each one; capped at MAX_TF_HITS).
 const W_SUMMARY: i64 = 10;
-/// 权重：正文命中（每次；封顶 MAX_TF_HITS 次）。
+/// Weight: content hit (each one; capped at MAX_TF_HITS).
 const W_CONTENT: i64 = 3;
-/// 权重：纯 ASCII 词在词边界命中（摘要/正文各一次）。
-/// 子串匹配对中文是特性（"记忆"命中"记忆库"），对 ASCII 会误伤
-/// （查 "age" 命中 "message"）；词边界加分让整词命中排前而不收窄召回。
+/// Weight: pure-ASCII word hit at a word boundary (once each for title/content).
+/// Substring matching is a feature for Chinese ("记忆" hits "记忆库") but a hazard for ASCII
+/// (searching "age" hits "message"); the word-boundary bonus ranks whole-word hits first without narrowing recall.
 const W_WORD_SUMMARY: i64 = 5;
 const W_WORD_CONTENT: i64 = 2;
-/// 权重：引号短语整体命中（摘要或正文）。
+/// Weight: whole quoted-phrase hit (title or content).
 const W_PHRASE: i64 = 8;
-/// 命中次数计分封顶：超过后不再加分，避免长文碾压字段权重。
+/// Hit-count scoring cap: no further points beyond it, so long documents cannot steamroll field weights.
 const MAX_TF_HITS: usize = 3;
 
 pub struct Hit {
@@ -35,8 +35,8 @@ pub struct Hit {
 const SNIPPET_BEFORE: usize = 40;
 const SNIPPET_AFTER: usize = 120;
 
-/// 拆分查询：空白分词；双引号内的空白不切分（短语整体成词）。
-/// 所有词统一小写化。
+/// Split the query: whitespace tokenization; whitespace inside double quotes does not split (the phrase becomes one term).
+/// All terms are lowercased.
 fn parse_query(query: &str) -> Vec<String> {
     let mut terms = Vec::new();
     let mut current = String::new();
@@ -58,9 +58,9 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
-/// 标签过滤（`tag_filter` 精确标签 OR + `tag_regex` 正则 OR，二者 AND，
-/// 都省略 = 不过滤）。关键词趟与语义向量趟共用，保证两路召回遵守
-/// 同一过滤语义——语义召回不得绕过调用方的过滤条件。
+/// Tag filtering (`tag_filter` exact-tag OR + `tag_regex` regex OR, the two combined by AND;
+/// both omitted = no filtering). Shared by the keyword pass and the semantic vector pass so both recall channels honor
+/// the same filter semantics — semantic recall must not bypass the caller's filters.
 pub fn passes_tag_filters(
     m: &Memory,
     tag_filter: &[String],
@@ -77,8 +77,8 @@ pub fn passes_tag_filters(
     true
 }
 
-/// `tag_filter`：精确标签 OR 语义；`tag_regex`：任一标签名命中正则即通过
-/// （与 tag_filter 为 AND 关系，二者都省略 = 不过滤）。
+/// `tag_filter`: OR semantics over exact tags; `tag_regex`: passes when any tag name matches the regex
+/// (AND-ed with tag_filter; both omitted = no filtering).
 pub fn run(
     memories: &[Memory],
     query: &str,
@@ -96,12 +96,12 @@ pub fn run(
         }
         let lc_summary = m.summary.to_lowercase();
         let lc_tags: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
-        // 正文折叠一次，所有词共享（见 find_all_in_folded）
+        // Content is folded once and shared by all terms (see find_all_in_folded)
         let (folded, map) = fold_with_map(&m.content);
 
         let mut score = 0i64;
         let mut all_matched = true;
-        // 每个词的正文命中位置（原文字节偏移），供片段窗口优选
+        // Content hit positions per term (original byte offsets), for snippet window selection
         let mut content_hits: Vec<Vec<usize>> = Vec::new();
 
         for term in &terms {
@@ -123,13 +123,13 @@ pub fn run(
             let positions = find_all_in_folded(&folded, &map, term);
             if !positions.is_empty() {
                 term_score += positions.len().min(MAX_TF_HITS) as i64 * W_CONTENT;
-                // 词边界判断在折叠文本上做即可：ASCII 大小写折叠是 1:1 且
-                // 不改变 ASCII 字母数字属性；非 ASCII 字符两种形态都不是
+                // Word-boundary checks can run on the folded text: ASCII case folding is 1:1 and
+                // preserves ASCII alphanumerics; for non-ASCII characters, neither form is
                 if term.is_ascii() && has_word_bounded(&folded, term) {
                     term_score += W_WORD_CONTENT;
                 }
             }
-            // 引号短语（词内含空白即视为短语）整体命中额外加分
+            // Quoted phrases (any term containing whitespace counts as a phrase) get a bonus for whole-phrase hits
             if term.contains(' ') && (summary_hits > 0 || !positions.is_empty()) {
                 term_score += W_PHRASE;
             }
@@ -162,8 +162,8 @@ pub fn run(
     hits
 }
 
-/// 在候选锚点中选片段窗口：优先覆盖不同词数最多的窗口，平局取最靠前的。
-/// 锚点候选取每个词的前几个正文命中位置。
+/// Pick the snippet window among candidate anchors: prefer the window covering the most distinct terms, ties broken by the earliest.
+/// Anchor candidates are the first few content hit positions of each term.
 fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
     let mut candidates: Vec<usize> = Vec::new();
     for positions in content_hits {
@@ -171,7 +171,7 @@ fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
     }
     candidates.sort_unstable();
     candidates.dedup();
-    let mut best: Option<(usize, usize)> = None; // (覆盖词数, 锚点)
+    let mut best: Option<(usize, usize)> = None; // (distinct terms covered, anchor)
     for &p in &candidates {
         let lo = p.saturating_sub(SNIPPET_BEFORE);
         let hi = p + SNIPPET_AFTER;
@@ -186,7 +186,7 @@ fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
     best.map(|(_, p)| p)
 }
 
-/// 非重叠子串计数（调用方保证已小写化对齐）。
+/// Non-overlapping substring count (the caller guarantees lowercase alignment).
 fn count_non_overlapping(haystack: &str, term: &str) -> usize {
     if term.is_empty() {
         return 0;
@@ -203,7 +203,7 @@ fn count_non_overlapping(haystack: &str, term: &str) -> usize {
     count
 }
 
-/// 命中是否处于"词边界"：前后相邻字符都不是 ASCII 字母数字。
+/// Whether a hit sits at a "word boundary": neither neighboring character is an ASCII alphanumeric.
 fn has_word_bounded(haystack: &str, term: &str) -> bool {
     let mut from = 0;
     while let Some(rel) = haystack[from..].find(term) {
@@ -230,15 +230,15 @@ fn has_word_bounded(haystack: &str, term: &str) -> bool {
     false
 }
 
-/// 逐字符折叠出小写文本，并记录折叠文本每个字节对应的原文字节偏移。
+/// Fold text to lowercase character by character, recording the original byte offset behind each byte of the folded text.
 ///
-/// 不能直接在 `to_lowercase()` 结果上 find 再把偏移用于原文：个别字符
-/// 小写化会改变字节长度（如 U+0130 "İ" → "i̇"），导致偏移错位。折叠
-/// 时逐字节记录原文偏移，位置换算永远精确。
+/// You cannot find on `to_lowercase()` output and reuse the offsets on the original: for a few characters
+/// lowercasing changes the byte length (e.g. U+0130 "İ" → "i̇"), misaligning offsets. Folding
+/// records original offsets byte by byte, so position mapping is always exact.
 fn fold_with_map(haystack: &str) -> (String, Vec<usize>) {
     let mut folded = String::with_capacity(haystack.len());
-    // folded 的每个字节位置 → 原文字节偏移（一个输出字符可能占多个字节，
-    // 每个字节都要各记一条，索引才能与 folded 对齐）
+    // Every byte position of folded → original byte offset (one output character may span several bytes,
+    // and each byte needs its own entry so indexes stay aligned with folded)
     let mut map: Vec<usize> = Vec::with_capacity(haystack.len() + 1);
     for (orig_off, ch) in haystack.char_indices() {
         for l in ch.to_lowercase() {
@@ -252,7 +252,7 @@ fn fold_with_map(haystack: &str) -> (String, Vec<usize>) {
     (folded, map)
 }
 
-/// 在折叠文本上找出 term 的全部非重叠命中，返回原文字节偏移。
+/// Find all non-overlapping hits of term in the folded text, returning original byte offsets.
 fn find_all_in_folded(folded: &str, map: &[usize], term: &str) -> Vec<usize> {
     if term.is_empty() {
         return Vec::new();
@@ -284,18 +284,18 @@ fn ceil_boundary(s: &str, mut i: usize) -> usize {
     i
 }
 
-/// 无正文命中位置时的兜底片段（正文开头，同样转义）。语义向量独有命中
-/// 没有词锚点，走这条路径。
+/// Fallback snippet when there are no content hit positions (start of the content, escaped the same way). Vector-only semantic hits
+/// have no term anchors and take this path.
 pub fn fallback_snippet(content: &str) -> String {
     make_snippet(content, None)
 }
 
-/// 生成匹配位置附近的单行片段；没有正文命中时回退为正文开头。
-/// 匹配位置来自折叠查找，恒为原文字节偏移；窗口边界
-/// 兜底对齐字符边界，保证不切在字符中间。
+/// Generate a single-line snippet around the match positions; falls back to the start of the content when there are no content hits.
+/// Match positions come from folded lookup and are always original byte offsets; window edges
+/// fall back to character-boundary alignment so nothing is cut mid-character.
 ///
-/// 结果做 HTML 转义：正文是多 agent 共写的外部输入，片段会被管理界面
-/// 以 v-html 渲染，不转义等于开放注入。
+/// Results are HTML-escaped: content is external input co-written by multiple agents, and snippets are rendered
+/// by the management UI via v-html — leaving them unescaped is open injection.
 fn make_snippet(content: &str, pos: Option<usize>) -> String {
     let (start, end) = match pos {
         None => (0, SNIPPET_AFTER.min(content.len())),
@@ -361,7 +361,7 @@ mod tests {
         );
         let b = mem("m2", &[], "unrelated", "the borrow checker is strict", 9);
         let hits = run(&[a, b], "borrow rust", &[], None);
-        // 只有两词都命中的才返回；m1 标签+摘要双命中应排在 m2（仅正文命中）前面。
+        // Only memories hit by both terms are returned; m1 (tag + title double hit) should rank ahead of m2 (content hit only).
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
     }
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(hits[0].idx, 0);
     }
 
-    /// tag_regex：任一标签名命中正则即通过；与精确 tag_filter 为 AND。
+    /// tag_regex: passes when any tag name matches the regex; AND-ed with the exact tag_filter.
     #[test]
     fn tag_regex_restricts() {
         let a = mem("m1", &["proj/alpha"], "has keyword here", "x", 1);
@@ -384,17 +384,17 @@ mod tests {
         let hits = run(&[a.clone(), b], "keyword", &[], Some(&re));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
-        // 与精确过滤叠加时 AND 语义
+        // AND semantics when stacked with exact filtering
         let b2 = mem("m2", &["other"], "has keyword here", "x", 2);
         let hits = run(&[a, b2], "keyword", &["misc".to_string()], Some(&re));
         assert!(hits.is_empty());
     }
 
-    /// 小写化会变长度的字符（U+0130 "İ" → "i̇"）不得使片段窗口错位：
-    /// 片段必须以省略号开头且完整包含目标词，且精确落在原文匹配点附近。
+    /// Characters whose lowercase form changes length (U+0130 "İ" → "i̇") must not misalign the snippet window:
+    /// the snippet must start with an ellipsis, fully contain the target term, and land precisely near the original match point.
     #[test]
     fn snippet_stays_aligned_when_case_folding_changes_length() {
-        // "İ" 小写化从 2 字节变 3 字节：旧实现对偏移的换算会偏差 1 字节
+        // "İ" grows from 2 to 3 bytes when lowercased: the old implementation's offset mapping was off by 1 byte
         let content = format!("İ{}TARGET{}", "前".repeat(60), "后".repeat(60));
         let a = mem("m1", &[], "s", &content, 1);
         let hits = run(&[a], "target", &[], None);
@@ -422,7 +422,7 @@ mod tests {
         assert_eq!(first("abc", ""), None);
         assert_eq!(first("中文内容", "内容"), Some(6));
 
-        // 非重叠多次命中全部返回
+        // All non-overlapping multiple hits are returned
         let (folded, map) = fold_with_map("aXbXc");
         assert_eq!(find_all_in_folded(&folded, &map, "x"), vec![1, 3]);
     }
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("借用检查器"));
 
-        // AND 语义：不存在的词导致无结果
+        // AND semantics: a nonexistent term yields no results
         let hits = run(&[a], "借用检查器 完全不存在的词", &[], None);
         assert_eq!(hits.len(), 0);
     }
@@ -462,7 +462,7 @@ mod tests {
         assert!(sn.starts_with('…') && sn.ends_with('…'));
         assert!(sn.contains("TARGET"));
 
-        // 无正文命中时回退到开头
+        // Falls back to the start when there are no content hits
         let b = mem("m2", &[], "TARGET in summary", "short", 1);
         let hits = run(&[b], "target", &[], None);
         assert_eq!(hits[0].snippet, "short");
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn repeated_hits_rank_higher() {
-        // 两条都命中 "rust"：正文出现 3 次的应排在只出现 1 次的前面
+        // Both hit "rust": the one with 3 content occurrences should rank ahead of the one with just 1
         let a = mem("m1", &[], "s", "rust rust rust and more rust mentions", 1);
         let b = mem("m2", &[], "s", "rust once", 1);
         let hits = run(&[b, a], "rust", &[], None);
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn ascii_word_boundary_ranks_above_substring() {
-        // 查 "age"：整词命中的 m1 应排在子串误伤（"message"）的 m2 前面
+        // Searching "age": whole-word hit m1 should rank ahead of substring collateral ("message") m2
         let a = mem("m1", &[], "s", "storage age limits apply here", 1);
         let b = mem("m2", &[], "message summary here", "s", 1);
         let hits = run(&[b, a], "age", &[], None);
@@ -499,7 +499,7 @@ mod tests {
         let adjacent = mem("m1", &[], "s", "the borrow checker is strict", 1);
         let separated = mem("m2", &[], "s", "borrow the checker later", 1);
 
-        // 引号短语："borrow checker" 只命中相邻出现的 m1
+        // Quoted phrase: "borrow checker" only hits m1, where the words are adjacent
         let hits = run(
             &[adjacent.clone(), separated.clone()],
             "\"borrow checker\"",
@@ -509,15 +509,15 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
 
-        // 不加引号退回 AND 语义：两个词各自命中即可，两条都返回
+        // Without quotes it reverts to AND semantics: each term hitting anywhere is enough, so both are returned
         let hits = run(&[adjacent, separated], "borrow checker", &[], None);
         assert_eq!(hits.len(), 2);
     }
 
     #[test]
     fn snippet_window_prefers_multi_term_coverage() {
-        // 旧实现取第一个命中位置（只看得到 alpha）；
-        // 新实现应选覆盖 alpha 与 beta 两个词的窗口（alpha 的第二次出现处）
+        // The old implementation took the first hit position (seeing only alpha);
+        // the new implementation should pick the window covering both alpha and beta (at alpha's second occurrence)
         let content = format!(
             "alpha{}beta{}alpha{}",
             "x".repeat(120),
@@ -556,7 +556,7 @@ mod tests {
             parse_query("  rust   \"borrow checker\"  "),
             vec!["rust".to_string(), "borrow checker".to_string()]
         );
-        // 未闭合引号：吞到结尾
+        // Unclosed quote: swallows to the end
         assert_eq!(
             parse_query("rust \"borrow checker"),
             vec!["rust".to_string(), "borrow checker".to_string()]

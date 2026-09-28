@@ -11,4 +11,4 @@ const props = defineProps<{ source: string }>()
 const html = computed(() => renderMarkdown(props.source))
 </script>
 
-<!-- 排版样式在 src/styles/markdown.css（全局 .md-body 命名空间，随库出口分发） -->
+<!-- Typography styles live in src/styles/markdown.css (global .md-body namespace, shipped with the library entry) -->

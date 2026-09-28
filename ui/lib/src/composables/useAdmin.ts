@@ -1,4 +1,5 @@
-// 管理面板的状态：数据体检、备份导入导出、语义搜索补跑（admin 专属端点）。动作失败时抛出 Error，由面板层统一 toast。
+// Admin panel state: data doctor, backup import/export, semantic search backfill (admin-only
+// endpoints). Failed actions throw an Error; the panel layer shows the toast uniformly.
 import { ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { backfillEmbeddings, exportBackup, importBackup, runDoctorRemote } from '../api/ops'
@@ -25,7 +26,7 @@ export function useAdmin() {
     }
   }
 
-  /** 导出备份 JSON 并触发浏览器下载 */
+  /** Export the backup JSON and trigger a browser download */
   async function exportData() {
     exporting.value = true
     try {
@@ -41,7 +42,7 @@ export function useAdmin() {
     }
   }
 
-  /** 解析备份文件并导入（仅空库可用，服务端把关）。返回导入计数。 */
+  /** Parse a backup file and import it (only allowed on an empty database, enforced server-side). Returns the import counts. */
   async function importFile(file: File): Promise<ImportResp> {
     importing.value = true
     try {
@@ -59,8 +60,10 @@ export function useAdmin() {
   }
 
   /**
-   * 循环补跑语义搜索向量直到清零（每次请求一小批，服务端有界、前端串行）。
-   * 返回补跑总条数；未配置 / 服务报错直接抛出，由面板层 toast。
+   * Loop backfilling semantic search vectors until the queue drains (a small batch per request;
+   * bounded server-side, serial on the frontend).
+   * Returns the total number backfilled; unconfigured / server errors are thrown directly,
+   * toasted at the panel layer.
    */
   async function backfill(): Promise<number> {
     backfilling.value = true

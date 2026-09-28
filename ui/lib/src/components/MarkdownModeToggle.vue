@@ -1,5 +1,5 @@
 <template>
-  <!-- 单图标切换：图标与提示都指向点击后的模式——编辑态亮眼睛进预览，预览态亮铅笔回编辑 -->
+  <!-- Single-icon toggle: icon and tooltip point at the mode you get by clicking - in edit mode the eye lights up (go to preview), in preview mode the pencil lights up (back to edit) -->
   <el-tooltip :content="label" placement="top" :enterable="false">
     <el-button class="md-mode-toggle" size="small" :aria-label="label" @click="toggle">
       <el-icon>

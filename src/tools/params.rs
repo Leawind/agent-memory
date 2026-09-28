@@ -1,9 +1,9 @@
-//! 参数解析与校验：从 JSON 对象中安全取值，输出面向 agent 的可读错误。
+//! Argument parsing and validation: safely extract values from a JSON object and produce readable, agent-facing errors.
 //!
-//! 原则：schema 是严格契约（additionalProperties: false），服务器在参数名上
-//! 从严（拼错立刻报错，避免 agent 以为参数生效了）；在值的写法上从宽
-//! （单个字符串自动当作单元素数组；id 例外——格式严格为 "m{n}"，不带
-//! m 前缀的裸数字不被接受）。
+//! Principle: the schema is a strict contract (additionalProperties: false). The server is strict about
+//! parameter names (a misspelled name errors out immediately so the agent never believes it took effect),
+//! and lenient about value forms (a single string is automatically treated as a one-element array; ids are the
+//! exception — the format is strictly "m{n}" and bare numbers without the m prefix are rejected).
 
 use crate::model::{normalize_tag_name, MAX_CONTENT_CHARS, MAX_SUMMARY_CHARS, MAX_TAG_DESC_CHARS};
 use serde_json::{Map, Value};
@@ -24,7 +24,7 @@ pub fn opt_str(args: &Map<String, Value>, key: &str) -> Result<Option<String>, S
     }
 }
 
-/// 可选正则参数：取字符串并编译（非法模式 → 可读错误，处理器映射为 400）。
+/// Optional regex argument: take the string and compile it (invalid pattern → readable error, mapped to 400 by the handler).
 pub fn opt_regex(args: &Map<String, Value>, key: &str) -> Result<Option<regex::Regex>, String> {
     match opt_str(args, key)? {
         None => Ok(None),
@@ -34,7 +34,7 @@ pub fn opt_regex(args: &Map<String, Value>, key: &str) -> Result<Option<regex::R
     }
 }
 
-/// 字符串数组参数；容忍单个字符串写法（自动包装为单元素数组）。
+/// String array argument; tolerates the single-string form (wrapped into a one-element array automatically).
 pub fn opt_str_list(args: &Map<String, Value>, key: &str) -> Result<Option<Vec<String>>, String> {
     match args.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -53,7 +53,7 @@ pub fn opt_str_list(args: &Map<String, Value>, key: &str) -> Result<Option<Vec<S
     }
 }
 
-/// 必填的 id 列表（1..=max 条）；容忍单个字符串写法。
+/// Required id list (1..=max items); tolerates the single-string form.
 pub fn req_id_list(
     args: &Map<String, Value>,
     key: &str,
@@ -109,7 +109,7 @@ pub fn validate_description(s: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
-/// 归一化一组标签名：trim、限长、去重（保持首次出现顺序）。
+/// Normalize a set of tag names: trim, cap length, deduplicate (preserving first-occurrence order).
 pub fn normalize_tag_list(raw: &[String]) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::with_capacity(raw.len());
     for t in raw {

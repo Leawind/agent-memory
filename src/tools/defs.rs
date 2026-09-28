@@ -1,7 +1,7 @@
-//! 工具清单：名称、描述与 JSON Schema 定义。
+//! Tool inventory: names, descriptions and JSON Schema definitions.
 //!
-//! Schema 是对 agent 暴露的契约的唯一权威来源：参数校验所用的
-//! 合法参数名列表直接从 `inputSchema.properties` 派生，两者不会失同步。
+//! The schema is the single source of truth for the contract exposed to agents: the list of valid parameter
+//! names used for validation is derived directly from `inputSchema.properties`, so the two can never drift apart.
 
 use crate::auth::Cap;
 use serde_json::{json, Value};
@@ -186,7 +186,7 @@ fn def(name: &str, description: &str, schema: Value, read_only: bool, destructiv
     })
 }
 
-/// 工具名 → 合法参数名列表（从 inputSchema.properties 派生，静态缓存）。
+/// Tool name → list of valid parameter names (derived from inputSchema.properties, statically cached).
 pub fn known_args(tool: &str) -> Option<&'static Vec<String>> {
     static KNOWN: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
     KNOWN
@@ -208,8 +208,8 @@ pub fn known_args(tool: &str) -> Option<&'static Vec<String>> {
         .get(tool)
 }
 
-/// 工具名 → 是否只读（从注解 readOnlyHint 派生，与对 agent 的声明同源）。
-/// 决定该工具的事务模式：只读走 DEFERRED 快照，写走 IMMEDIATE 写锁。
+/// Tool name → whether it is read-only (derived from the readOnlyHint annotation, same source as the agent-facing declaration).
+/// Determines the tool's transaction mode: read-only takes a DEFERRED snapshot, writes take the IMMEDIATE write lock.
 pub fn is_read_only(tool: &str) -> bool {
     static READ_ONLY: OnceLock<HashMap<String, bool>> = OnceLock::new();
     READ_ONLY
@@ -230,8 +230,8 @@ pub fn is_read_only(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 工具名 → 调用方所需能力（权限的唯一登记表，执行点在 tools::execute
-/// 入口集中把守）。只对 TOOL_NAMES 内的工具查询；兜底分支仅为类型完整性。
+/// Tool name → capability required from the caller (the single registry of permissions, enforced centrally at the
+/// tools::execute entry point). Only queried for tools in TOOL_NAMES; the fallback branch exists for type completeness only.
 pub fn required_cap(tool: &str) -> Cap {
     static CAPS: OnceLock<HashMap<String, Cap>> = OnceLock::new();
     CAPS.get_or_init(|| {
@@ -260,9 +260,9 @@ pub fn required_cap(tool: &str) -> Cap {
 mod tests {
     use super::*;
 
-    /// 只读标记与契约同源：每个工具都能查到（未知工具按"非只读"处理），
-    /// 且清单里的只读/写工具数量与注解一致。这个标记驱动事务模式，
-    /// 弄反了会让读请求抢写锁或让写请求跑在无锁快照上。
+    /// The read-only flag shares its source with the contract: every tool is resolvable (unknown tools count as "not read-only"),
+    /// and the number of read-only/write tools in the inventory matches the annotations. This flag drives the transaction mode;
+    /// getting it backwards would make reads grab the write lock or run writes on a lock-free snapshot.
     #[test]
     fn read_only_flags_derive_from_annotations() {
         assert!(is_read_only("tag_list"));
@@ -275,16 +275,19 @@ mod tests {
         assert!(!is_read_only("no_such_tool"));
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
-        assert_eq!(read_only, 4, "契约里的只读工具应恰为 4 个");
+        assert_eq!(
+            read_only, 4,
+            "the contract should have exactly 4 read-only tools"
+        );
     }
 
-    /// 能力登记表与工具清单一一对应：每个工具都有映射（新增工具忘登记
-    /// 会在这里失败），且几个关键工具的能力归属符合直觉。
+    /// The capability registry maps one-to-one onto the tool inventory: every tool has an entry (a new tool added without
+    /// registering it fails here), and the capability assignments of a few key tools are sensible.
     #[test]
     fn required_cap_covers_every_tool() {
         use crate::auth::Cap;
         for name in TOOL_NAMES {
-            // 只要不 panic 即视为已登记（映射本身是静态表，覆盖即可）
+            // Registered as long as it does not panic (the mapping is a static table; coverage is enough)
             let _ = required_cap(name);
         }
         assert_eq!(required_cap("memory_get"), Cap::Read);
