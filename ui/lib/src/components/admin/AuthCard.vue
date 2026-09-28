@@ -4,7 +4,12 @@
   <el-card shadow="never">
     <template #header>
       <div class="card-header">
-        <span class="card-title">{{ t('access.authTitle') }}</span>
+        <span class="card-title">
+          {{ t('access.authTitle') }}
+          <el-tooltip :content="t('access.authHint')" placement="top">
+            <el-icon class="am-info"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </span>
         <el-tooltip :disabled="hasAdminIdentity" :content="t('access.enableBlocked')" placement="top">
           <el-switch
             v-model="authOn"
@@ -16,15 +21,13 @@
       </div>
     </template>
 
-    <p class="card-hint">{{ t('access.authHint') }}</p>
-
-    <!-- 匿名访问：鉴权开启后，无 token 请求按这里勾选的能力解析为匿名身份；
-         未设置（开关关）时匿名被整体拒绝。鉴权开关未开时配置不生效（开关禁用）。 -->
     <div class="anon-row">
-      <div class="anon-text">
-        <span class="anon-label">{{ t('access.anonTitle') }}</span>
-        <span class="anon-hint">{{ t('access.anonHint') }}</span>
-      </div>
+      <span class="anon-label">
+        {{ t('access.anonTitle') }}
+        <el-tooltip :content="t('access.anonHint')" placement="top">
+          <el-icon class="am-info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </span>
       <el-tooltip :disabled="authRequired" :content="t('access.anonDisabled')" placement="top">
         <el-switch v-model="anonOn" :disabled="!authRequired" />
       </el-tooltip>
@@ -148,7 +151,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Delete, Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Delete, Edit, InfoFilled, Plus, RefreshRight } from '@element-plus/icons-vue'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { useMemoryConfig } from '../../config'
@@ -286,6 +289,9 @@ async function save(): Promise<void> {
   align-items: center;
 }
 .card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
@@ -293,31 +299,19 @@ async function save(): Promise<void> {
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
-.card-hint {
-  margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
-}
 .anon-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
-.anon-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 .anon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 14px;
   font-weight: 500;
   color: var(--el-text-color-primary);
-}
-.anon-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 .anon-actions {
   margin-top: 12px;
