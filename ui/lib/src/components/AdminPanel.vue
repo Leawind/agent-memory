@@ -132,7 +132,8 @@ async function load(): Promise<void> {
       api.get<import('../types').StatsInfo>('/api/stats'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
-    instructions.value = settings?.instructions ?? ''
+    // 未设置时直接预填内置默认（所见即生效），由卡片按内容推导淡色态
+    instructions.value = settings?.instructions ?? settings?.default_instructions ?? ''
     conventions.value = settings?.conventions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
     authRequired.value = settings?.auth_required === true

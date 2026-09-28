@@ -40,7 +40,14 @@ describe('AdminPanel', () => {
           )
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(jsonResponse({ instructions: 'team rules', conventions: null, auth_required: true }))
+          return Promise.resolve(
+            jsonResponse({
+              instructions: 'team rules',
+              conventions: null,
+              auth_required: true,
+              default_instructions: 'BUILT-IN DEFAULT PROMPT',
+            }),
+          )
         }
         if (u.includes('/api/stats')) {
           return Promise.resolve(
@@ -67,10 +74,12 @@ describe('AdminPanel', () => {
     expect(textareas.length).toBe(2)
     expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
     expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
-    // 留空即默认：两个字段各带一条留空行为提示，不再有「恢复默认」按钮
-    expect(html).toContain('留空时使用内置默认提示词')
+    // 淡色即内置默认：两个字段各带一条行为提示；覆盖态下「恢复默认」可用
+    expect(html).toContain('淡色内容为内置默认')
     expect(html).toContain('追加在基础提示词之后')
-    expect(html).not.toContain('恢复默认')
+    const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')
+    expect(resetBtn).toBeTruthy()
+    expect(resetBtn!.attributes('disabled')).toBeUndefined()
     // 备份与体检集中在管理面板
     expect(html).toContain('备份导入导出')
     expect(html).toContain('导出备份')
@@ -89,6 +98,86 @@ describe('AdminPanel', () => {
     expect(html).not.toContain('access.embedding')
     expect(html).not.toContain('access.identityCard')
     wrapper.unmount()
+  })
+
+  // 保存行里「保存」与弹窗内同名按钮共存，这里只找卡片里的那个
+  function promptCardSave(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('button').filter((b) => b.text() === '保存' && !b.element.closest('.el-dialog'))[0]
+  }
+
+  it('prefills the built-in default when unset and normalizes it on save', async () => {
+    const settingsPuts: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/settings') && init?.method === 'PUT') {
+          settingsPuts.push(String(init.body))
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (u.includes('/api/settings')) {
+          return Promise.resolve(
+            jsonResponse({ instructions: null, conventions: null, default_instructions: 'BUILT-IN DEFAULT PROMPT' }),
+          )
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    // 未设置时编辑框直接预填内置默认（所见即生效）
+    const textarea = wrapper.findAll('textarea')[0]
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('BUILT-IN DEFAULT PROMPT')
+    // 内容等于默认 → 「恢复默认」无可做之事，禁用
+    const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')!
+    expect(resetBtn.attributes('disabled')).toBeDefined()
+    // 未修改直接保存：与默认一致归一为空串（继续跟随默认而非冻结快照）
+    await promptCardSave(wrapper)!.trigger('click')
+    await flushPromises()
+    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '', conventions: '' })])
+    wrapper.unmount()
+    // 清掉本用例触发的 toast，避免残留干扰后续按内容挑 toast 的断言
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('reset-to-default clears the override without touching conventions', async () => {
+    const settingsPuts: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/settings') && init?.method === 'PUT') {
+          settingsPuts.push(String(init.body))
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (u.includes('/api/settings')) {
+          return Promise.resolve(
+            jsonResponse({ instructions: 'team rules', conventions: null, default_instructions: 'BUILT-IN' }),
+          )
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '恢复默认')!
+      .trigger('click')
+    await flushPromises()
+    // 只清 instructions；conventions 键省略 = 服务端不改动
+    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
+    // 编辑框填回内置默认，进入淡色默认态
+    const textarea = wrapper.findAll('textarea')[0]
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('BUILT-IN')
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
   it('hides management for non-admin identities', async () => {
