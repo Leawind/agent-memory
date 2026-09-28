@@ -5,12 +5,12 @@
         <span>{{ t('access.settingsTitle') }}</span>
         <!-- 与记忆编辑器同款：编辑/预览切换，两个槽位联动 -->
         <el-radio-group v-model="mode" size="small">
-          <el-tooltip :content="t('editor.tabEdit')" placement="top">
+          <el-tooltip :content="t('editor.tabEdit')" placement="top" :enterable="false">
             <el-radio-button value="edit" :aria-label="t('editor.tabEdit')">
               <el-icon><Edit /></el-icon>
             </el-radio-button>
           </el-tooltip>
-          <el-tooltip :content="t('editor.tabPreview')" placement="top">
+          <el-tooltip :content="t('editor.tabPreview')" placement="top" :enterable="false">
             <el-radio-button value="preview" :aria-label="t('editor.tabPreview')">
               <el-icon><View /></el-icon>
             </el-radio-button>

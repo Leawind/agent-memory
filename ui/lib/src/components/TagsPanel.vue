@@ -51,10 +51,10 @@
       </el-table-column>
       <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
         <template #default="{ row }">
-          <el-tooltip :content="t('common.edit')" placement="top">
+          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
             <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row)" />
           </el-tooltip>
-          <el-tooltip :content="t('common.delete')" placement="top">
+          <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
             <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="openDelete(row)" />
           </el-tooltip>
         </template>

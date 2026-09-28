@@ -57,10 +57,10 @@
         <div class="id-card-head">
           <span class="id-card-name">{{ row.name }}</span>
           <span class="id-card-actions">
-            <el-tooltip :content="t('common.edit')" placement="top">
+            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
               <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="emit('edit', row)" />
             </el-tooltip>
-            <el-tooltip :content="t('access.resetToken')" placement="top">
+            <el-tooltip :content="t('access.resetToken')" placement="top" :enterable="false">
               <el-button
                 link
                 type="primary"
@@ -69,7 +69,7 @@
                 @click="emit('reset-token', row)"
               />
             </el-tooltip>
-            <el-tooltip :content="t('common.delete')" placement="top">
+            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
               <el-button
                 link
                 type="danger"
@@ -121,10 +121,10 @@
       </el-table-column>
       <el-table-column :label="t('access.colActions')" width="130" fixed="right">
         <template #default="{ row }">
-          <el-tooltip :content="t('common.edit')" placement="top">
+          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
             <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="emit('edit', row)" />
           </el-tooltip>
-          <el-tooltip :content="t('access.resetToken')" placement="top">
+          <el-tooltip :content="t('access.resetToken')" placement="top" :enterable="false">
             <el-button
               link
               type="primary"
@@ -133,7 +133,7 @@
               @click="emit('reset-token', row)"
             />
           </el-tooltip>
-          <el-tooltip :content="t('common.delete')" placement="top">
+          <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
             <el-button
               link
               type="danger"
