@@ -14,14 +14,15 @@
     <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
     <template v-if="who && isAdmin">
-      <AuthSwitchCard :auth-required="authRequired" :has-admin-identity="hasAdminIdentity" @changed="load" />
-
-      <!-- 匿名访问：鉴权开启后无 token 请求按配置的能力集解析 -->
-      <AnonymousAccessCard :auth-required="authRequired" :anonymous-permissions="anonymousPermissions" @saved="load" />
-
-      <IdentityTableCard
+      <!-- 鉴权：开关（标题行右侧）+ 匿名访问 + 身份表同卡 -->
+      <AuthCard
+        :auth-required="authRequired"
+        :has-admin-identity="hasAdminIdentity"
+        :anonymous-permissions="anonymousPermissions"
         :identities="identities"
         :compact="compact"
+        @changed="load"
+        @saved="load"
         @create="formDialog?.openCreate()"
         @edit="formDialog?.openEdit($event)"
         @delete="askDelete"
@@ -68,9 +69,7 @@ import { useContainerWidth } from '../composables/useContainerWidth'
 import { toastSuccess } from '../toast'
 import type { WhoAmI } from '../types'
 import { run, type IdentityRow } from './admin/caps'
-import AuthSwitchCard from './admin/AuthSwitchCard.vue'
-import AnonymousAccessCard from './admin/AnonymousAccessCard.vue'
-import IdentityTableCard from './admin/IdentityTableCard.vue'
+import AuthCard from './admin/AuthCard.vue'
 import IdentityFormDialog from './admin/IdentityFormDialog.vue'
 import TokenOnceDialog from './admin/TokenOnceDialog.vue'
 import EmbeddingSettingsCard from './admin/EmbeddingSettingsCard.vue'

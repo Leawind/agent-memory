@@ -97,10 +97,11 @@ describe('AdminPanel', () => {
     expect(html).toContain('导出备份')
     expect(html).toContain('数据体检')
     expect(html).toContain('新建身份')
-    // 新建身份入口在身份卡片头部右侧，紧贴表格（不再远隔警告行与鉴权开关）
+    // 新建身份入口在鉴权卡内身份小节行的右侧，紧贴身份表（三卡已合并为一张鉴权卡）
     const createBtn = wrapper.findAll('button').find((b) => b.text() === '新建身份')
     expect(createBtn).toBeTruthy()
-    expect(createBtn!.element.closest('.el-card__header')).toBeTruthy()
+    expect(createBtn!.element.closest('.el-card__header')).toBeNull()
+    expect(createBtn!.element.closest('.el-card__body')).toBeTruthy()
     // 语义搜索只有一张卡：配置 + 向量覆盖率小节同卡，不再出现第二张同名卡
     expect(html.match(/语义搜索（embedding）/g)).toHaveLength(1)
     expect(html).toContain('向量覆盖率')
