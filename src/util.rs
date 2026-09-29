@@ -1,5 +1,71 @@
 //! Small utility functions (std-only, no time library).
 
+/// Standard-alphabet Base64 encode (RFC 4648, with padding). Std-only, mirroring the project's
+/// minimal-dependency stance; used for the `=?base64?...?=` header sentinels and the opaque
+/// resources/list pagination cursors.
+pub fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Standard-alphabet Base64 decode; `None` on malformed input (bad length, misplaced padding,
+/// non-alphabet characters).
+pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes = input.as_bytes();
+    if bytes.is_empty() {
+        return Some(Vec::new());
+    }
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks_exact(4) {
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        if pad > 2 || chunk[..4 - pad].contains(&b'=') {
+            return None; // padding only allowed as the 1-2 final characters
+        }
+        let mut acc: u32 = 0;
+        for &c in &chunk[..4 - pad] {
+            acc = (acc << 6) | val(c)?;
+        }
+        acc <<= 6 * pad as u32;
+        let decoded = [(acc >> 16) as u8, (acc >> 8) as u8, acc as u8];
+        out.extend_from_slice(&decoded[..3 - pad]);
+    }
+    Some(out)
+}
+
 /// Format a Unix-seconds timestamp as UTC ISO 8601 (e.g. `2026-09-25T21:41:50Z`).
 ///
 /// Date conversion uses Howard Hinnant's civil_from_days algorithm (proleptic Gregorian calendar,
@@ -108,6 +174,29 @@ mod tests {
         // Two widely known time anchors
         assert_eq!(format_utc_iso(1_000_000_000), "2001-09-09T01:46:40Z");
         assert_eq!(format_utc_iso(2_000_000_000), "2033-05-18T03:33:20Z");
+    }
+
+    #[test]
+    fn base64_roundtrip_and_strictness() {
+        assert_eq!(base64_decode("bWVtb3J5X2xpc3Q=").unwrap(), b"memory_list");
+        assert_eq!(base64_encode(b"memory_list"), "bWVtb3J5X2xpc3Q=");
+        // The empty string is valid Base64 (RFC 4648)
+        assert_eq!(base64_decode("").unwrap(), Vec::<u8>::new());
+        assert_eq!(base64_decode("AAAA").unwrap(), vec![0, 0, 0]);
+        assert_eq!(base64_decode("AAA=").unwrap(), vec![0, 0]);
+        assert_eq!(base64_decode("AA==").unwrap(), vec![0]);
+        // Padding misplaced / bad characters / bad length
+        assert!(base64_decode("=AAA").is_none());
+        assert!(base64_decode("A===").is_none());
+        assert!(base64_decode("AAA").is_none());
+        assert!(base64_decode("A@A=").is_none());
+        // Round-trips across chunk boundaries (including non-ASCII UTF-8)
+        for sample in ["", "a", "ab", "abc", "abcd", "项目记忆", &"x".repeat(1000)] {
+            assert_eq!(
+                base64_decode(&base64_encode(sample.as_bytes())).unwrap(),
+                sample.as_bytes()
+            );
+        }
     }
 
     #[test]

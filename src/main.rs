@@ -13,6 +13,7 @@ mod embed;
 mod http;
 mod model;
 mod protocol;
+mod resources;
 mod search;
 mod sql;
 mod store;

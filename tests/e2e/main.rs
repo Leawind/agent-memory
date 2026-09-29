@@ -14,6 +14,7 @@ mod auth;
 mod cli;
 mod common;
 mod mcp;
+mod resources;
 mod rest;
 mod semantic;
 mod shared;

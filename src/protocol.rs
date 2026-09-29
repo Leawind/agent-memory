@@ -12,6 +12,7 @@
 //! every other JSON-RPC error rides on HTTP 200. Notifications have no response (HTTP 202).
 
 use crate::auth::IdentityCtx;
+use crate::resources;
 use crate::store;
 use crate::tools;
 use serde_json::{json, Value};
@@ -287,6 +288,26 @@ pub fn handle(
             )
         }
         "tools/call" => reply(200, tools_call(store_path, ctx, &id, &params)),
+        "resources/list" => {
+            let cursor = params.get("cursor").and_then(Value::as_str);
+            match resources::list(store_path, ctx, cursor) {
+                Ok(v) => reply(200, ok_value(&id, v)),
+                Err(e) => reply(400, error_with_data(&id, -32602, &e.message, e.data)),
+            }
+        }
+        "resources/read" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return reply(
+                    400,
+                    error_value(&id, -32602, "invalid params: params.uri must be a string"),
+                );
+            };
+            match resources::read(store_path, ctx, uri) {
+                Ok(v) => reply(200, ok_value(&id, v)),
+                Err(e) => reply(400, error_with_data(&id, -32602, &e.message, e.data)),
+            }
+        }
+        "resources/templates/list" => reply(200, ok_value(&id, resources::templates_list())),
         // Unknown method: HTTP 404 with the JSON-RPC body still naming -32601, so caches and
         // gateways can treat it as a missing endpoint.
         _ => reply(
@@ -392,41 +413,7 @@ fn decode_header_value(raw: &str) -> Option<String> {
         return Some(raw.to_string());
     };
     let encoded = rest.strip_suffix("?=")?;
-    base64_decode(encoded).and_then(|bytes| String::from_utf8(bytes).ok())
-}
-
-/// Standard-alphabet Base64 decoder (std-only, mirroring the project's minimal-dependency stance;
-/// the only use is decoding `=?base64?...?=` header sentinels).
-fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    fn val(c: u8) -> Option<u32> {
-        match c {
-            b'A'..=b'Z' => Some((c - b'A') as u32),
-            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let bytes = input.as_bytes();
-    if bytes.is_empty() || bytes.len() % 4 != 0 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for chunk in bytes.chunks_exact(4) {
-        let pad = chunk.iter().filter(|&&c| c == b'=').count();
-        if pad > 2 || chunk[..4 - pad].contains(&b'=') {
-            return None; // padding only allowed as the 1-2 final characters
-        }
-        let mut acc: u32 = 0;
-        for &c in &chunk[..4 - pad] {
-            acc = (acc << 6) | val(c)?;
-        }
-        acc <<= 6 * pad as u32;
-        let decoded = [(acc >> 16) as u8, (acc >> 8) as u8, acc as u8];
-        out.extend_from_slice(&decoded[..3 - pad]);
-    }
-    Some(out)
+    crate::util::base64_decode(encoded).and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
 #[cfg(test)]
@@ -824,20 +811,6 @@ mod tests {
         assert_eq!(status, 400);
         assert_eq!(value["error"]["code"], -32020);
         cleanup(&store);
-    }
-
-    #[test]
-    fn base64_decode_roundtrip_and_strictness() {
-        assert_eq!(base64_decode("bWVtb3J5X2xpc3Q=").unwrap(), b"memory_list");
-        assert!(base64_decode("").is_none());
-        assert_eq!(base64_decode("AAAA").unwrap(), vec![0, 0, 0]);
-        assert_eq!(base64_decode("AAA=").unwrap(), vec![0, 0]);
-        assert_eq!(base64_decode("AA==").unwrap(), vec![0]);
-        // Padding misplaced / bad characters / bad length
-        assert!(base64_decode("=AAA").is_none());
-        assert!(base64_decode("A===").is_none());
-        assert!(base64_decode("AAA").is_none());
-        assert!(base64_decode("A@A=").is_none());
     }
 
     #[test]
