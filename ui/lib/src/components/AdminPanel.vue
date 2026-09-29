@@ -41,11 +41,7 @@
           @changed="load"
         />
 
-        <PromptSettingsCard
-          :instructions="instructions"
-          :conventions="conventions"
-          :default-instructions="defaultInstructions"
-        />
+        <PromptSettingsCard :instructions="instructions" :default-instructions="defaultInstructions" />
 
         <BackupCard />
 
@@ -98,7 +94,6 @@ const api = useApiClient()
 
 const identities = ref<IdentityRow[]>([])
 const instructions = ref('')
-const conventions = ref('')
 const defaultInstructions = ref('')
 const authRequired = ref(false)
 const anonymousPermissions = ref<Record<string, boolean> | null>(null)
@@ -123,7 +118,6 @@ async function load(): Promise<void> {
       api.get<{ identities?: IdentityRow[] }>('/api/identities'),
       api.get<{
         instructions?: string | null
-        conventions?: string | null
         auth_required?: boolean
         anonymous_permissions?: Record<string, boolean> | null
         embedding_enabled?: boolean
@@ -137,7 +131,6 @@ async function load(): Promise<void> {
     identities.value = Array.isArray(list?.identities) ? list.identities : []
     // When unset, prefill the built-in default directly (what you see is what applies); the card derives its faded state from the content
     instructions.value = settings?.instructions ?? settings?.default_instructions ?? ''
-    conventions.value = settings?.conventions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
     authRequired.value = settings?.auth_required === true
     anonymousPermissions.value = settings?.anonymous_permissions ?? null

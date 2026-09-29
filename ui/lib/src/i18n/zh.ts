@@ -151,10 +151,7 @@ export default {
     settingsTitle: '自定义提示词',
     instructionsLabel: '基础提示词',
     instructionsPlaceholder: '留空使用内置默认',
-    instructionsInfo: '随 MCP initialize 返回给 agent，替代内置默认；淡色内容为内置默认，可直接修改。',
-    conventionsLabel: '附加规范',
-    conventionsPlaceholder: '如：标签命名约定、摘要书写要求',
-    conventionsInfo: '追加在基础提示词之后，随 initialize 一并返回给 agent；留空不追加。',
+    instructionsInfo: '随 server/discover 返回给 agent，替代内置默认；淡色内容为内置默认，可直接修改。',
     resetToDefault: '恢复默认',
     authTitle: 'Token 鉴权',
     authHint:

@@ -14,14 +14,15 @@ mod memory_ops;
 mod params;
 mod tag_ops;
 
-use crate::auth::IdentityCtx;
+use crate::auth::{Cap, IdentityCtx};
+use crate::model::RESERVED_TAG;
 use crate::store::{self, Store};
 use serde_json::{Map, Value};
 use std::path::Path;
 
 pub use defs::{tool_definitions, TOOL_NAMES};
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps (created_at / updated_at / last_used_at) are epoch seconds in UTC and recorded automatically — never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps (created_at / updated_at / last_used_at) are epoch seconds in UTC and recorded automatically — never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -108,6 +109,7 @@ pub fn execute(
     check_known_args(name, map)?;
     if TOOL_NAMES.contains(&name) {
         ctx.require(defs::required_cap(name))?;
+        reserved_tag_guard(ctx, name, map)?;
     }
 
     match name {
@@ -123,6 +125,67 @@ pub fn execute(
         "memory_delete" => memory_ops::memory_delete(st, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
+}
+
+/// Reserved-tag guards for 'conventions' (the resident conventions, also surfaced as resources).
+/// Checked here at the entry with the identity context at hand, so the MCP face and the REST face
+/// (which reuses tools::execute) enforce identical rules:
+/// - the tag itself can never be renamed or deleted (hard rule, admins included);
+/// - creating it and hanging it on / detaching it from memories requires the admin capability,
+///   keeping the operator-curated conventions out of agents' reach.
+fn reserved_tag_guard(
+    ctx: &IdentityCtx,
+    name: &str,
+    args: &Map<String, Value>,
+) -> Result<(), ToolError> {
+    fn raw_tag(args: &Map<String, Value>, key: &str) -> Option<String> {
+        args.get(key)
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+    }
+    fn involves_reserved(args: &Map<String, Value>, keys: &[&str]) -> bool {
+        keys.iter()
+            .filter_map(|k| args.get(*k).and_then(Value::as_array))
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|t| t.trim() == RESERVED_TAG)
+    }
+    match name {
+        "tag_create" => {
+            if raw_tag(args, "name").as_deref() == Some(RESERVED_TAG) && !ctx.can(Cap::Admin) {
+                return Err(ToolError::forbidden(format!(
+                    "'{RESERVED_TAG}' is a reserved tag; creating it requires the 'admin' permission (it anchors the operator-curated conventions)"
+                )));
+            }
+        }
+        "tag_update" | "tag_delete" => {
+            let mut targets = vec![raw_tag(args, "name")];
+            if name == "tag_update" {
+                targets.push(raw_tag(args, "new_name"));
+            }
+            if targets.into_iter().flatten().any(|t| t == RESERVED_TAG) {
+                return Err(ToolError::invalid(format!(
+                    "'{RESERVED_TAG}' is a reserved tag: it anchors the resident conventions and cannot be renamed or deleted"
+                )));
+            }
+        }
+        "memory_create" => {
+            if involves_reserved(args, &["tags"]) && !ctx.can(Cap::Admin) {
+                return Err(ToolError::forbidden(format!(
+                    "hanging the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+                )));
+            }
+        }
+        "memory_update" => {
+            if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) {
+                return Err(ToolError::forbidden(format!(
+                    "hanging or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+                )));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Reject unknown arguments: valid parameter names are derived from inputSchema.properties, inherently in sync with the agent-facing contract.
@@ -747,6 +810,97 @@ mod tests {
                 "tool '{name}' with zero permissions must be Forbidden, got: {e}"
             );
         }
+
+        cleanup(&path);
+    }
+
+    /// Reserved-tag rules for 'conventions': the tag itself can never be renamed or deleted
+    /// (admins included); creating it and hanging/detaching it on memories requires admin.
+    #[test]
+    fn reserved_conventions_tag_is_guarded() {
+        use crate::model::RESERVED_TAG;
+        let path = temp_db("reserved-tag");
+
+        // An agent without admin cannot create the reserved tag or hang it on memories
+        let writer = [Cap::Read, Cap::Create, Cap::Update, Cap::Delete, Cap::TagManage];
+        let err = call_as(&path, &writer, "tag_create", json!({"name": RESERVED_TAG}))
+            .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        let err = call_as(
+            &path,
+            &writer,
+            "memory_create",
+            json!({"summary": "s", "content": "c", "tags": [RESERVED_TAG, "ok"]}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        // Forbidden happens before any side effect: no tag, no memory
+        assert_eq!(call(&path, "tag_list", json!({})).unwrap()["total_tags"], 0);
+
+        // Renaming/deleting the reserved tag is refused outright — even to a full admin
+        let admin_caps = Cap::ALL;
+        call_as(&path, &admin_caps, "tag_create", json!({"name": RESERVED_TAG})).unwrap();
+        for tool in ["tag_update", "tag_delete"] {
+            let mut args = json!({"name": RESERVED_TAG});
+            if tool == "tag_update" {
+                args["new_name"] = json!("free");
+            }
+            let err = call_as(&path, &admin_caps, tool, args).unwrap_err();
+            assert!(matches!(err, ToolError::Invalid(_)), "got: {err:?}");
+            assert!(err.to_string().contains("reserved"), "got: {err}");
+        }
+        // Renaming another tag ONTO the reserved name is refused as well
+        call_as(&path, &admin_caps, "tag_create", json!({"name": "other"})).unwrap();
+        let err = call_as(
+            &path,
+            &admin_caps,
+            "tag_update",
+            json!({"name": "other", "new_name": RESERVED_TAG}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Invalid(_)), "got: {err:?}");
+
+        // Detaching via memory_update (remove_tags) also needs admin
+        let created = call_as(
+            &path,
+            &admin_caps,
+            "memory_create",
+            json!({"summary": "rule", "content": "c", "tags": [RESERVED_TAG]}),
+        )
+        .unwrap();
+        let id = created["memory"]["id"].as_str().unwrap().to_string();
+        let err = call_as(
+            &path,
+            &writer,
+            "memory_update",
+            json!({"id": id, "remove_tags": [RESERVED_TAG]}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        // Whitespace around the name does not slip past the guard
+        let err = call_as(
+            &path,
+            &writer,
+            "memory_update",
+            json!({"id": id, "add_tags": [format!("  {RESERVED_TAG} ")]}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+
+        // Admin CAN write conventions memories and manage other tags freely
+        let ok = call_as(
+            &path,
+            &admin_caps,
+            "memory_update",
+            json!({"id": id, "add_tags": ["notes"], "remove_tags": [RESERVED_TAG]}),
+        )
+        .unwrap();
+        assert_eq!(ok["updated"], true);
+        assert_eq!(
+            ok["memory"]["tags"],
+            json!(["notes"]),
+            "admin detach works"
+        );
 
         cleanup(&path);
     }

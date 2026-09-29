@@ -171,7 +171,7 @@ describe('App shell', () => {
           )
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(jsonResponse({ instructions: null, conventions: null, auth_required: false }))
+          return Promise.resolve(jsonResponse({ instructions: null, auth_required: false }))
         }
         if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ total_tags: 0, tags: [] }))
         return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
@@ -413,7 +413,7 @@ describe('App shell', () => {
           )
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(jsonResponse({ instructions: null, conventions: null, default_instructions: '' }))
+          return Promise.resolve(jsonResponse({ instructions: null, default_instructions: '' }))
         }
         if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ total_tags: 0, tags: [] }))
         if (u.includes('/api/stats')) {

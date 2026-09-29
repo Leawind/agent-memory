@@ -154,11 +154,7 @@ export default {
     instructionsLabel: 'Base prompt',
     instructionsPlaceholder: 'Leave empty to use the built-in default',
     instructionsInfo:
-      'Sent to agents in the MCP initialize response, replacing the built-in default; faded text is the built-in default, edit it directly.',
-    conventionsLabel: 'Conventions',
-    conventionsPlaceholder: 'e.g. tag naming rules, summary style',
-    conventionsInfo:
-      'Appended after the base prompt and sent to agents in the initialize response; leave empty for none.',
+      'Sent to agents in the server/discover response, replacing the built-in default; faded text is the built-in default, edit it directly.',
     resetToDefault: 'Reset to default',
     authTitle: 'Token auth',
     authHint:

@@ -44,7 +44,6 @@ describe('AdminPanel', () => {
           return Promise.resolve(
             jsonResponse({
               instructions: 'team rules',
-              conventions: null,
               auth_required: true,
               default_instructions: 'BUILT-IN DEFAULT PROMPT',
             }),
@@ -72,14 +71,13 @@ describe('AdminPanel', () => {
     expect(html).toContain('Token 鉴权')
     // A textarea's value is a DOM property, not present in innerHTML
     const textareas = wrapper.findAll('textarea')
-    expect(textareas.length).toBe(2)
+    expect(textareas.length).toBe(1)
     expect((textareas[0].element as HTMLTextAreaElement).value).toBe('team rules')
-    expect((textareas[1].element as HTMLTextAreaElement).value).toBe('')
-    // Usage notes are tucked into the info icon next to labels (panel title + two fields = at
-    // least 3); edit/preview is the single-icon toggle in the card header
-    expect(wrapper.findAll('.am-info').length).toBeGreaterThanOrEqual(3)
+    // Usage notes are tucked into the info icon next to labels (panel title + the prompt field = at
+    // least 2); edit/preview is the single-icon toggle in the card header
+    expect(wrapper.findAll('.am-info').length).toBeGreaterThanOrEqual(2)
     expect(wrapper.findAll('.md-mode-toggle').length).toBe(1)
-    // Click to switch to preview: both textareas are replaced by the Markdown rendering
+    // Click to switch to preview: the textarea is replaced by the Markdown rendering
     await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('textarea').length).toBe(0)
@@ -87,7 +85,7 @@ describe('AdminPanel', () => {
     // Click again to switch back to edit
     await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('textarea').length).toBe(2)
+    expect(wrapper.findAll('textarea').length).toBe(1)
     const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')
     expect(resetBtn).toBeTruthy()
     expect(resetBtn!.attributes('disabled')).toBeUndefined()
@@ -129,9 +127,7 @@ describe('AdminPanel', () => {
           return Promise.resolve(jsonResponse({ saved: true }))
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(
-            jsonResponse({ instructions: null, conventions: null, default_instructions: 'BUILT-IN DEFAULT PROMPT' }),
-          )
+          return Promise.resolve(jsonResponse({ instructions: null, default_instructions: 'BUILT-IN DEFAULT PROMPT' }))
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -150,13 +146,13 @@ describe('AdminPanel', () => {
     // Save without modification: content identical to the default normalizes to an empty string (keeps following the default instead of freezing a snapshot)
     await promptCardSave(wrapper)!.trigger('click')
     await flushPromises()
-    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '', conventions: '' })])
+    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
     wrapper.unmount()
     // Remove toasts triggered by this case so leftovers don't interfere with later content-based toast assertions
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('reset-to-default clears the override without touching conventions', async () => {
+  it('reset-to-default clears the override', async () => {
     const settingsPuts: string[] = []
     vi.stubGlobal(
       'fetch',
@@ -167,9 +163,7 @@ describe('AdminPanel', () => {
           return Promise.resolve(jsonResponse({ saved: true }))
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(
-            jsonResponse({ instructions: 'team rules', conventions: null, default_instructions: 'BUILT-IN' }),
-          )
+          return Promise.resolve(jsonResponse({ instructions: 'team rules', default_instructions: 'BUILT-IN' }))
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -184,7 +178,7 @@ describe('AdminPanel', () => {
       .find((b) => b.text() === '恢复默认')!
       .trigger('click')
     await flushPromises()
-    // Only clears instructions; omitting the conventions key = the server leaves it unchanged
+    // Only clears instructions
     expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
     // The editor is filled back with the built-in default, entering the faded default state
     const textarea = wrapper.findAll('textarea')[0]

@@ -173,10 +173,6 @@ pub fn handle(
                         .settings_get("instructions")
                         .map_err(ToolError::from)?
                         .filter(|s| !s.is_empty());
-                    let conventions = st
-                        .settings_get("conventions")
-                        .map_err(ToolError::from)?
-                        .filter(|s| !s.is_empty());
                     // Semantic search config is returned as-is: the endpoint is Admin-only and
                     // api_key and instructions are both "server secrets", no extra masking
                     let embed = &store::Store::SETTING_EMBEDDING_BASE_URL;
@@ -191,8 +187,7 @@ pub fn handle(
                         200,
                         json!({
                             "instructions": instructions,
-                            "conventions": conventions,
-                                                        // Auth switch: the auth boundary is decided by this explicit switch,
+                            // Auth switch: the auth boundary is decided by this explicit switch,
                             "auth_required": st.auth_required()?,
                                                         // Anonymous identity capability set: tokenless requests are resolved
                                                         // against it once auth is enabled; null = unset (anonymous rejected)
@@ -217,7 +212,6 @@ pub fn handle(
                 };
                 const VALID_KEYS: &[&str] = &[
                     "instructions",
-                    "conventions",
                     "auth_required",
                     store::Store::SETTING_ANONYMOUS_PERMISSIONS,
                     store::Store::SETTING_EMBEDDING_ENABLED,
@@ -827,22 +821,23 @@ mod tests {
         );
         assert_eq!(status, 404);
 
-        // Settings: write (base + additional conventions) → read back; unknown keys rejected; empty values are also valid (falls back to default)
-        let settings_body = serde_json::to_vec(
-            &json!({ "instructions": "团队共享库规范", "conventions": "标签小写" }),
-        )
-        .unwrap();
+        // Settings: write (custom prompt) → read back; unknown keys rejected; empty values are also valid (falls back to default)
+        let settings_body =
+            serde_json::to_vec(&json!({ "instructions": "团队共享库规范" })).unwrap();
         let (status, v) = handle(&db, &open_ctx(), "PUT", "/api/settings", "", &settings_body);
         assert_eq!(status, 200, "{v}");
         let (status, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
         assert_eq!(status, 200);
         assert_eq!(v["instructions"], "团队共享库规范");
-        assert_eq!(v["conventions"], "标签小写");
+        assert!(
+            v.get("conventions").is_none(),
+            "the retired conventions key is gone (conventions live as a reserved tag now)"
+        );
         assert!(
             v["default_instructions"].as_str().unwrap().len() > 50,
             "GET must carry the built-in default for the UI's restore action"
         );
-        // Unknown keys rejected
+        // Unknown keys rejected — including the retired conventions key
         let (status, _) = handle(
             &db,
             &open_ctx(),
@@ -850,6 +845,15 @@ mod tests {
             "/api/settings",
             "",
             br#"{"nope": "x"}"#,
+        );
+        assert_eq!(status, 400);
+        let (status, _) = handle(
+            &db,
+            &open_ctx(),
+            "PUT",
+            "/api/settings",
+            "",
+            br#"{"conventions": "obsolete"}"#,
         );
         assert_eq!(status, 400);
         // Auth switch: boolean round-trip (alice is admin by now, guard passes); non-boolean rejected
@@ -887,7 +891,6 @@ mod tests {
         let (status, v) = handle(&db, &open_ctx(), "GET", "/api/settings", "", &[]);
         assert_eq!(status, 200);
         assert_eq!(v["instructions"], json!(null));
-        assert_eq!(v["conventions"], "标签小写");
 
         // Delete → deleting again gives 404
         let (status, _) = handle(&db, &open_ctx(), "DELETE", "/api/identities/alice", "", &[]);

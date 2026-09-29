@@ -79,7 +79,6 @@ const settings = {
   // 匿名身份能力集：真实服务端为全键布尔对象或 null（未设置 = 匿名被拒绝）
   anonymous_permissions: null as Record<string, boolean> | null,
   instructions: '',
-  conventions: '',
   embedding_enabled: false,
   embedding_base_url: '',
   embedding_model: '',

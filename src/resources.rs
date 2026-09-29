@@ -22,7 +22,7 @@ use std::path::Path;
 
 /// The reserved tag whose memories surface as individual resources in `resources/list`
 /// (shared with the tool layer's reserved-tag guards).
-pub const CONVENTIONS_TAG: &str = "conventions";
+pub use crate::model::RESERVED_TAG as CONVENTIONS_TAG;
 
 /// Entries per `resources/list` page.
 const LIST_PAGE_SIZE: usize = 50;

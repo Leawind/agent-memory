@@ -28,24 +28,6 @@
         />
         <MarkdownView v-else :source="instructions" class="prompt-preview" :class="{ 'is-default': isDefault }" />
       </el-form-item>
-      <el-form-item>
-        <template #label>
-          <span class="field-label">
-            {{ t('access.conventionsLabel') }}
-            <el-tooltip :content="t('access.conventionsInfo')" placement="top">
-              <el-icon class="am-info"><InfoFilled /></el-icon>
-            </el-tooltip>
-          </span>
-        </template>
-        <el-input
-          v-if="mode === 'edit'"
-          v-model="conventions"
-          type="textarea"
-          :rows="4"
-          :placeholder="t('access.conventionsPlaceholder')"
-        />
-        <MarkdownView v-else :source="conventions" class="prompt-preview" />
-      </el-form-item>
     </el-form>
     <div class="save-row">
       <el-button :disabled="isDefault" :loading="resetting" @click="resetToDefault">
@@ -70,19 +52,16 @@ import { run } from './caps'
 
 const props = defineProps<{
   instructions: string
-  conventions: string
   /** The server's currently effective built-in default prompt (baseline for save normalization and restore-to-default) */
   defaultInstructions: string
 }>()
 
 // Local editing state, refreshed when the parent loads
 const instructions = ref(props.instructions)
-const conventions = ref(props.conventions)
 watch(
-  () => [props.instructions, props.conventions],
-  ([i, c]) => {
+  () => props.instructions,
+  (i) => {
     instructions.value = i
-    conventions.value = c
   },
 )
 
@@ -104,19 +83,14 @@ function normalizedInstructions(): string {
 async function save(): Promise<void> {
   saving.value = true
   try {
-    await run(() =>
-      api.put('/api/settings', {
-        instructions: normalizedInstructions(),
-        conventions: conventions.value,
-      }),
-    )
+    await run(() => api.put('/api/settings', { instructions: normalizedInstructions() }))
     toastSuccess(t('access.saved'))
   } finally {
     saving.value = false
   }
 }
 
-// Restore default: only touch instructions, do not refetch the whole card (keeps an unsaved conventions draft)
+// Restore default: only touch instructions, do not refetch the whole card (keeps an unsaved draft)
 async function resetToDefault(): Promise<void> {
   resetting.value = true
   try {
