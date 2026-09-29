@@ -1,6 +1,6 @@
 //! HTTP layer: one process serving three kinds of clients at once.
 //!
-//! - `POST /mcp`: MCP Streamable HTTP (stateless POST/JSON mode), for agents
+//! - `POST /mcp`: MCP Streamable HTTP (modern protocol, stateless POST/JSON mode), for agents
 //! - `/api/*`: the admin backend (implemented in `crate::api`, reusing tool-layer handlers), for the management UI
 //! - `/`: the Vue3 management UI embedded via rust-embed (SPA)
 //!
@@ -206,9 +206,13 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
         match route(&method, &path) {
             Route::Mcp => {
                 // Panic isolation paired with per-request transactions: a single request cannot take down the server
-                let negotiated = header_value(&req, "MCP-Protocol-Version");
+                let headers = protocol::TransportHeaders {
+                    protocol_version: header_value(&req, "MCP-Protocol-Version"),
+                    method: header_value(&req, "Mcp-Method"),
+                    name: header_value(&req, "Mcp-Name"),
+                };
                 match catch_unwind(AssertUnwindSafe(|| {
-                    process_mcp(db_path, &ctx, &body, negotiated.as_deref())
+                    process_mcp(db_path, &ctx, &body, &headers)
                 })) {
                     Ok((status, payload, detail)) => (status, "application/json", payload, detail),
                     Err(_) => (
@@ -326,14 +330,14 @@ fn route(method: &str, path: &str) -> Route {
 // ---------------------------------------------------------------- MCP endpoint
 
 /// Hand one JSON-RPC message to the protocol layer, returning the HTTP status code and response body.
-/// Notifications (no id) have no response body → 202 Accepted; everything else → 200.
-/// `negotiated` comes from the MCP-Protocol-Version request header (the client's declared negotiated version).
+/// Notifications (no id) have no response body → 202 Accepted; everything else carries the status the
+/// protocol layer chose (200 for results and tool-level errors, 400/404 for malformed requests).
 /// The third return value is the call summary for verbose logging (method name + the target tool of tools/call).
 fn process_mcp(
     db_path: &Path,
     ctx: &IdentityCtx,
     body: &[u8],
-    negotiated: Option<&str>,
+    headers: &protocol::TransportHeaders,
 ) -> (u16, Vec<u8>, Option<String>) {
     let msg: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -343,9 +347,13 @@ fn process_mcp(
         }
     };
     let detail = mcp_summary(&msg);
-    match protocol::handle_message(db_path, ctx, negotiated, &msg) {
-        Some(resp) => (200, serde_json::to_vec(&resp).unwrap_or_default(), detail),
-        None => (202, Vec::new(), detail),
+    match protocol::handle(db_path, ctx, headers, &msg) {
+        protocol::Outcome::Reply { status, value } => (
+            status,
+            serde_json::to_vec(&value).unwrap_or_default(),
+            detail,
+        ),
+        protocol::Outcome::Accepted => (202, Vec::new(), detail),
     }
 }
 
@@ -768,8 +776,13 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("agent-memory-http-{}.db", std::process::id()));
         let ctx = crate::auth::IdentityCtx::open_mode();
+        let headers = protocol::TransportHeaders {
+            protocol_version: Some(protocol::PROTOCOL_VERSION.into()),
+            method: None,
+            name: None,
+        };
         // Parse failure → 400 + -32700, no call summary
-        let (status, body, detail) = process_mcp(&path, &ctx, b"not json", None);
+        let (status, body, detail) = process_mcp(&path, &ctx, b"not json", &headers);
         assert_eq!(status, 400);
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
@@ -777,12 +790,12 @@ mod tests {
         );
         assert_eq!(detail, None);
 
-        // Notification → 202 empty body, summary is the method name
+        // Notification → 202 empty body, summary is the method name (no header enforcement)
         let (status, body, detail) = process_mcp(
             &path,
             &ctx,
             br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-            None,
+            &headers,
         );
         assert_eq!(status, 202);
         assert!(body.is_empty());

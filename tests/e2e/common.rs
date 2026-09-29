@@ -1,6 +1,6 @@
 //! Test infrastructure: temporary databases, server process management, a hand-written minimal HTTP client, and a CLI runner.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -8,6 +8,46 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
+
+/// The only protocol revision the modern server speaks.
+pub(crate) const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
+
+/// Build a modern-protocol JSON-RPC request body: injects the required `_meta` fields into params
+/// (the stateless replacement for the initialize handshake).
+pub(crate) fn rpc_body(id: Value, method: &str, params: Value) -> String {
+    let mut params = if params.is_object() {
+        params
+    } else {
+        json!({})
+    };
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    });
+    serde_json::to_string(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
+        .expect("serialize rpc body")
+}
+
+/// The mirrored request headers a conforming modern client must send; Mcp-Name only for
+/// tools/call (params.name) and resources/read (params.uri).
+pub(crate) fn mcp_headers(method: &str, params: &Value) -> Vec<(String, String)> {
+    let mut out = vec![
+        (
+            "MCP-Protocol-Version".to_string(),
+            MCP_PROTOCOL_VERSION.to_string(),
+        ),
+        ("Mcp-Method".to_string(), method.to_string()),
+    ];
+    let name = match method {
+        "tools/call" => params.get("name").and_then(Value::as_str),
+        "resources/read" => params.get("uri").and_then(Value::as_str),
+        _ => None,
+    };
+    if let Some(n) = name {
+        out.push(("Mcp-Name".to_string(), n.to_string()));
+    }
+    out
+}
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -137,6 +177,31 @@ pub(crate) fn try_request(
         .unwrap_or("")
         .to_string();
     Ok((status, raw[sep + 4..].to_vec(), content_type))
+}
+
+/// Send a JSON-RPC request as a conforming modern client, with optional extra headers (e.g.
+/// Authorization). Returns (status, parsed body or Null when the body is empty, e.g. 202).
+pub(crate) fn mcp_post(
+    port: u16,
+    id: Value,
+    method: &str,
+    params: Value,
+    extra: &[(&str, &str)],
+) -> (u16, Value) {
+    let body = rpc_body(id, method, params.clone());
+    let mut headers = mcp_headers(method, &params);
+    headers.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+    let refs: Vec<(&str, &str)> = headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let (status, bytes, _) = try_request(port, "POST", "/mcp", Some(&body), &refs).unwrap();
+    let parsed = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
+    (status, parsed)
 }
 
 pub(crate) fn request(

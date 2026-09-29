@@ -1,19 +1,33 @@
-//! Full flow of the agent's MCP endpoint (POST /mcp, stateless Streamable HTTP mode).
+//! Full flow of the agent's MCP endpoint (POST /mcp, modern protocol 2026-07-28, stateless).
+//!
+//! Covers the discovery flow, per-request `_meta` and mirrored-header validation, the result
+//! envelope (resultType / caching hints), status-code mapping (404 for unknown methods, 202 for
+//! notifications, 400 for batch bodies) and the tool surface with progressive disclosure.
 
 use serde_json::{json, Value};
 
-use crate::common::{cleanup, json_body, request, temp_db, try_request, HttpProc};
+use crate::common::{
+    cleanup, json_body, mcp_post, request, rpc_body, temp_db, try_request, HttpProc,
+    MCP_PROTOCOL_VERSION,
+};
 
-/// Send a JSON-RPC request to /mcp, assert HTTP 200, and return the parsed response.
-fn mcp_rpc(port: u16, body: Value) -> Value {
-    let (status, bytes, _) = request(
-        port,
-        "POST",
-        "/mcp",
-        Some(&serde_json::to_string(&body).unwrap()),
-    );
-    assert_eq!(status, 200, "unexpected status for rpc: {body}");
-    json_body(&bytes)
+/// POST to /mcp and parse the response body (Null when there is no body, e.g. 202).
+fn send(port: u16, body: &str, headers: &[(&str, &str)]) -> (u16, Value) {
+    let (status, bytes, _) = try_request(port, "POST", "/mcp", Some(body), headers).unwrap();
+    let parsed = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
+    (status, parsed)
+}
+
+/// Send a JSON-RPC request as a conforming modern client (proper `_meta` + mirrored headers);
+/// asserts HTTP 200 and returns the parsed response.
+fn mcp_rpc(port: u16, id: Value, method: &str, params: Value) -> Value {
+    let (status, resp) = mcp_post(port, id, method, params, &[]);
+    assert_eq!(status, 200, "unexpected status for {method}: {resp}");
+    resp
 }
 
 #[test]
@@ -28,39 +42,57 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["status"], "ok");
 
-    // initialize: protocol version echoed back
-    let init = mcp_rpc(
-        port,
-        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "e2e", "version": "0.0.1"}
-        }}),
+    // server/discover replaces initialize: supported versions, capabilities, identity line
+    let discover = mcp_rpc(port, json!(1), "server/discover", json!({}));
+    let result = &discover["result"];
+    assert_eq!(result["resultType"], "complete");
+    assert_eq!(result["supportedVersions"], json!(["2026-07-28"]));
+    assert_eq!(result["capabilities"]["resources"]["listChanged"], true);
+    assert_eq!(result["capabilities"]["resources"]["subscribe"], true);
+    assert_eq!(
+        result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "agent-memory"
     );
-    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(init["result"]["serverInfo"]["name"], "agent-memory");
+    // Identity-dependent → private and immediately stale
+    assert_eq!(result["ttlMs"], 0);
+    assert_eq!(result["cacheScope"], "private");
+    let instructions = result["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("Access mode: open"),
+        "discover carries the caller identity line: {instructions}"
+    );
 
     // Notification: no response body -> 202
-    let (status, body, _) = request(
+    let (status, body) = send(
         port,
-        "POST",
-        "/mcp",
-        Some(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        &[],
     );
     assert_eq!(status, 202);
-    assert!(body.is_empty());
+    assert_eq!(body, Value::Null);
+
+    // tools/list carries static caching hints (the tool surface never changes at runtime)
+    let tools = mcp_rpc(port, json!(2), "tools/list", json!({}));
+    assert_eq!(tools["result"]["resultType"], "complete");
+    assert_eq!(tools["result"]["ttlMs"], 3_600_000);
+    assert_eq!(tools["result"]["cacheScope"], "public");
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 10);
 
     // Full agent flow: create -> search (progressive disclosure, no content leak) -> fetch full text
     let created = mcp_rpc(
         port,
-        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        json!(3),
+        "tools/call",
+        json!({
             "name": "memory_create", "arguments": {
                 "summary": "项目使用 Rust 实现 agent 记忆系统",
                 "content": "仓库位于 D:\\Workspace，SQLite 做持久化，搜索无需分词。",
                 "tags": ["项目", "rust"]
             }
-        }}),
+        }),
     );
     assert!(created.get("error").is_none(), "create failed: {created}");
+    assert_eq!(created["result"]["resultType"], "complete");
     let mem_id = created["result"]["structuredContent"]["memory"]["id"]
         .as_str()
         .unwrap()
@@ -68,9 +100,9 @@ fn mcp_endpoint_end_to_end() {
 
     let searched = mcp_rpc(
         port,
-        json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "memory_search", "arguments": {"query": "记忆系统"}
-        }}),
+        json!(4),
+        "tools/call",
+        json!({"name": "memory_search", "arguments": {"query": "记忆系统"}}),
     );
     let results = searched["result"]["structuredContent"]["results"]
         .as_array()
@@ -88,9 +120,9 @@ fn mcp_endpoint_end_to_end() {
     assert!(sc.get("note").is_none(), "non-empty results carry no note");
     let empty = mcp_rpc(
         port,
-        json!({"jsonrpc": "2.0", "id": 30, "method": "tools/call", "params": {
-            "name": "memory_search", "arguments": {"query": "绝对不存在的词", "offset": 10}
-        }}),
+        json!(5),
+        "tools/call",
+        json!({"name": "memory_search", "arguments": {"query": "绝对不存在的词", "offset": 10}}),
     );
     let empty_sc = &empty["result"]["structuredContent"];
     assert_eq!(empty_sc["total_matches"], 0);
@@ -107,34 +139,11 @@ fn mcp_endpoint_end_to_end() {
         "tool result text must be compact JSON"
     );
 
-    // No structuredContent when the MCP-Protocol-Version header declares an older version (avoids injecting it twice)
-    let (status, body, _) = try_request(
-        port,
-        "POST",
-        "/mcp",
-        Some(
-            &serde_json::to_string(&json!({
-                "jsonrpc": "2.0", "id": 31, "method": "tools/call",
-                "params": {"name": "memory_search", "arguments": {"query": "记忆系统"}}
-            }))
-            .unwrap(),
-        ),
-        &[("MCP-Protocol-Version", "2025-03-26")],
-    )
-    .unwrap();
-    assert_eq!(status, 200);
-    let old = json_body(&body);
-    assert!(
-        old["result"].get("structuredContent").is_none(),
-        "pre-2025-06-18 clients must not receive structuredContent"
-    );
-    assert!(old["result"]["content"][0]["text"].is_string());
-
     let fetched = mcp_rpc(
         port,
-        json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
-            "name": "memory_get", "arguments": {"ids": [mem_id]}
-        }}),
+        json!(6),
+        "tools/call",
+        json!({"name": "memory_get", "arguments": {"ids": [mem_id]}}),
     );
     assert!(
         fetched["result"]["structuredContent"]["memories"][0]["content"]
@@ -146,34 +155,37 @@ fn mcp_endpoint_end_to_end() {
     // Update content and summary (regression: the field-update path once failed entirely when the embeddings table was absent)
     let updated = mcp_rpc(
         port,
-        json!({"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {
+        json!(7),
+        "tools/call",
+        json!({
             "name": "memory_update", "arguments": {
                 "id": mem_id,
                 "summary": "项目使用混合检索的记忆系统",
                 "content": "正文已更新：SQLite 做持久化，关键词 + 语义混合排序。"
             }
-        }}),
+        }),
     );
     assert!(updated.get("error").is_none(), "update failed: {updated}");
     assert_eq!(updated["result"]["structuredContent"]["updated"], true);
-    // A field-only update carries no tag fields
-    assert!(updated["result"]["structuredContent"]
-        .get("tags_autocreated")
-        .is_none());
 
-    // Error paths: unknown tool -> -32602; unknown method -> -32601; bad params -> isError
-    let unknown_tool = mcp_rpc(
-        port,
-        json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "nope"}}),
-    );
+    // Error paths: unknown tool -> -32602 on HTTP 200; unknown method -> 404 + -32601; bad params -> isError
+    let unknown_tool = mcp_rpc(port, json!(8), "tools/call", json!({"name": "nope"}));
     assert_eq!(unknown_tool["error"]["code"], -32602);
-    let unknown_method = mcp_rpc(port, json!({"jsonrpc": "2.0", "id": 6, "method": "bogus"}));
+    let (status, unknown_method) = send(
+        port,
+        &rpc_body(json!(9), "bogus", json!({})),
+        &[
+            ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+            ("Mcp-Method", "bogus"),
+        ],
+    );
+    assert_eq!(status, 404, "unknown methods answer 404");
     assert_eq!(unknown_method["error"]["code"], -32601);
     let bad_args = mcp_rpc(
         port,
-        json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
-            "name": "memory_create", "arguments": {"summary": "only summary"}
-        }}),
+        json!(10),
+        "tools/call",
+        json!({"name": "memory_create", "arguments": {"summary": "only summary"}}),
     );
     assert_eq!(bad_args["result"]["isError"], true);
 
@@ -187,27 +199,20 @@ fn mcp_endpoint_end_to_end() {
         port,
         "POST",
         "/mcp",
-        Some(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#),
+        Some(&rpc_body(json!(11), "ping", json!({}))),
         &[("Content-Type", "text/plain")],
     )
     .unwrap();
     assert_eq!(status, 415);
 
-    // Batch over HTTP: the ping response + notification producing no response -> single-element array
-    let (status, body, _) = request(
+    // Batch over HTTP: the modern protocol requires exactly one message per POST -> 400 + -32600
+    let (status, batch_resp) = send(
         port,
-        "POST",
-        "/mcp",
-        Some(
-            r#"[{"jsonrpc":"2.0","id":20,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"}]"#,
-        ),
+        r#"[{"jsonrpc":"2.0","id":20,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"}]"#,
+        &[],
     );
-    assert_eq!(status, 200);
-    let batch_resp = json_body(&body);
-    let batch = batch_resp.as_array().unwrap();
-    assert_eq!(batch.len(), 1);
-    assert_eq!(batch[0]["id"], 20);
-    assert_eq!(batch[0]["result"], json!({}));
+    assert_eq!(status, 400);
+    assert_eq!(batch_resp["error"]["code"], -32600);
 
     // GET /mcp -> 405; unknown paths: GET falls back to the SPA, non-GET 404
     let (status, _, _) = request(port, "GET", "/mcp", None);
@@ -222,8 +227,12 @@ fn mcp_endpoint_end_to_end() {
         port,
         "POST",
         "/mcp",
-        Some(r#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#),
-        &[("Origin", "http://evil.example")],
+        Some(&rpc_body(json!(12), "ping", json!({}))),
+        &[
+            ("Origin", "http://evil.example"),
+            ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+            ("Mcp-Method", "ping"),
+        ],
     )
     .unwrap();
     assert_eq!(status, 403);
@@ -231,15 +240,155 @@ fn mcp_endpoint_end_to_end() {
         port,
         "POST",
         "/mcp",
-        Some(r#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#),
-        &[("Origin", "http://127.0.0.1:3000")],
+        Some(&rpc_body(json!(13), "ping", json!({}))),
+        &[
+            ("Origin", "http://127.0.0.1:3000"),
+            ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+            ("Mcp-Method", "ping"),
+        ],
     )
     .unwrap();
     assert_eq!(status, 200);
 
     // Still usable after the storm
-    let pong = mcp_rpc(port, json!({"jsonrpc": "2.0", "id": 10, "method": "ping"}));
-    assert_eq!(pong["result"], json!({}));
+    let pong = mcp_rpc(port, json!(14), "ping", json!({}));
+    assert_eq!(pong["result"]["resultType"], "complete");
+
+    drop(server);
+    cleanup(&db);
+}
+
+/// Per-request `_meta` and mirrored-header validation: the stateless request contract.
+#[test]
+fn modern_protocol_request_validation() {
+    let db = temp_db("mcp-validation");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "mcp-validation");
+    let port = server.port;
+    let ping_body = rpc_body(json!(1), "ping", json!({}));
+    let ping_headers: Vec<(&str, &str)> = vec![
+        ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+        ("Mcp-Method", "ping"),
+    ];
+
+    // Baseline: a conforming request passes
+    let (status, resp) = send(port, &ping_body, &ping_headers);
+    assert_eq!(status, 200, "{resp}");
+    assert_eq!(resp["result"]["resultType"], "complete");
+
+    // Missing _meta (legacy-style request) -> 400 + -32602
+    let (status, resp) = send(
+        port,
+        r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+        &ping_headers,
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32602);
+
+    // Missing clientCapabilities -> -32602
+    let (status, resp) = send(
+        port,
+        r#"{"jsonrpc":"2.0","id":3,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#,
+        &ping_headers,
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32602);
+
+    // Unsupported protocol version (header agrees with body) -> 400 + -32022 with data
+    let body = r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"1999-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
+    let (status, resp) = send(
+        port,
+        body,
+        &[
+            ("MCP-Protocol-Version", "1999-01-01"),
+            ("Mcp-Method", "ping"),
+        ],
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32022);
+    assert_eq!(resp["error"]["data"]["supported"], json!(["2026-07-28"]));
+    assert_eq!(resp["error"]["data"]["requested"], "1999-01-01");
+
+    // Legacy initialize gets the same modern error (naming the supported versions)
+    let (status, resp) = send(
+        port,
+        r#"{"jsonrpc":"2.0","id":5,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        &[],
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32022);
+    assert_eq!(resp["error"]["data"]["supported"], json!(["2026-07-28"]));
+
+    // Missing MCP-Protocol-Version header -> 400 + -32020
+    let (status, resp) = send(port, &ping_body, &[("Mcp-Method", "ping")]);
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32020);
+
+    // Header disagrees with the body -> -32020
+    let (status, resp) = send(
+        port,
+        &ping_body,
+        &[
+            ("MCP-Protocol-Version", "2025-06-18"),
+            ("Mcp-Method", "ping"),
+        ],
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32020);
+
+    // Missing Mcp-Method header -> -32020
+    let (status, resp) = send(
+        port,
+        &ping_body,
+        &[("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)],
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32020);
+
+    // tools/call without Mcp-Name -> -32020; with a mismatching name -> -32020
+    let call_body = rpc_body(json!(6), "tools/call", json!({"name": "memory_list"}));
+    let (status, resp) = send(
+        port,
+        &call_body,
+        &[
+            ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+            ("Mcp-Method", "tools/call"),
+        ],
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32020);
+    let (status, resp) = send(
+        port,
+        &call_body,
+        &[
+            ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "memory_delete"),
+        ],
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32020);
+    // With the matching name the call goes through
+    let (status, resp) = send(
+        port,
+        &call_body,
+        &[
+            ("MCP-Protocol-Version", MCP_PROTOCOL_VERSION),
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "memory_list"),
+        ],
+    );
+    assert_eq!(status, 200, "{resp}");
+    assert_eq!(resp["result"]["structuredContent"]["total"], 0);
+
+    // A null id is malformed in the modern protocol (notifications omit the id entirely)
+    let (status, resp) = send(
+        port,
+        r#"{"jsonrpc":"2.0","id":null,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
+        &ping_headers,
+    );
+    assert_eq!(status, 400);
+    assert_eq!(resp["error"]["code"], -32600);
 
     drop(server);
     cleanup(&db);

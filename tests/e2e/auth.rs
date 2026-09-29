@@ -3,7 +3,9 @@
 
 use serde_json::json;
 
-use crate::common::{cleanup, json_body, request, run_cli, temp_db, try_request, HttpProc};
+use crate::common::{
+    cleanup, json_body, mcp_post, request, run_cli, temp_db, try_request, HttpProc,
+};
 
 #[test]
 fn token_auth_end_to_end() {
@@ -159,22 +161,14 @@ fn token_auth_end_to_end() {
     assert_eq!(status, 403);
     let (status, _, _) = try_request(port, "GET", "/api/export", None, &viewer_headers).unwrap();
     assert_eq!(status, 403);
-    let (status, body, _) = try_request(
+    let (status, resp) = mcp_post(
         port,
-        "POST",
-        "/mcp",
-        Some(
-            &serde_json::to_string(&json!({
-                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {"name": "memory_create", "arguments": {"summary": "s", "content": "c"}}
-            }))
-            .unwrap(),
-        ),
-        &viewer_headers,
-    )
-    .unwrap();
+        json!(2),
+        "tools/call",
+        json!({"name": "memory_create", "arguments": {"summary": "s", "content": "c"}}),
+        &[("Authorization", viewer_auth.as_str())],
+    );
     assert_eq!(status, 200);
-    let resp = json_body(&body);
     assert_eq!(resp["result"]["isError"], true);
     assert!(
         resp["result"]["content"][0]["text"]
@@ -214,24 +208,16 @@ fn token_auth_end_to_end() {
     assert_eq!(json_body(&body)["instructions"], "team rules");
     let (status, _, _) = try_request(port, "GET", "/api/export", None, &admin_headers).unwrap();
     assert_eq!(status, 200);
-    // initialize's instructions carry the custom prompt and the identity line
-    let (status, body, _) = try_request(
+    // discover's instructions carry the custom prompt and the identity line
+    let (status, discover) = mcp_post(
         port,
-        "POST",
-        "/mcp",
-        Some(
-            &serde_json::to_string(&json!({
-                "jsonrpc": "2.0", "id": 3, "method": "initialize",
-                "params": {"protocolVersion": "2025-06-18"}
-            }))
-            .unwrap(),
-        ),
-        &admin_headers,
-    )
-    .unwrap();
+        json!(3),
+        "server/discover",
+        json!({}),
+        &[("Authorization", admin_auth.as_str())],
+    );
     assert_eq!(status, 200);
-    let init_resp = json_body(&body);
-    let instructions = init_resp["result"]["instructions"].as_str().unwrap();
+    let instructions = discover["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("team rules"), "{instructions}");
     assert!(
         instructions.contains("Caller identity: admin"),
@@ -366,54 +352,31 @@ fn anonymous_permissions_end_to_end() {
     let (status, _, _) = request(port, "GET", "/api/export", None);
     assert_eq!(status, 403);
 
-    // MCP has the same semantics: initialize self-reports anonymous; list passes; create reports the permission error via isError
-    let (status, body, _) = request(
-        port,
-        "POST",
-        "/mcp",
-        Some(
-            &serde_json::to_string(&json!({
-                "jsonrpc": "2.0", "id": 1, "method": "initialize",
-                "params": {"protocolVersion": "2025-06-18"}
-            }))
-            .unwrap(),
-        ),
-    );
+    // MCP has the same semantics: discover self-reports anonymous; list passes; create reports the permission error via isError
+    let (status, discover) = mcp_post(port, json!(1), "server/discover", json!({}), &[]);
     assert_eq!(status, 200);
-    let init_resp = json_body(&body);
-    let instructions = init_resp["result"]["instructions"].as_str().unwrap();
+    let instructions = discover["result"]["instructions"].as_str().unwrap();
     assert!(
         instructions.contains("Access mode: anonymous"),
         "{instructions}"
     );
-    let (status, body, _) = request(
+    let (status, resp) = mcp_post(
         port,
-        "POST",
-        "/mcp",
-        Some(
-            &serde_json::to_string(&json!({
-                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {"name": "memory_list", "arguments": {}}
-            }))
-            .unwrap(),
-        ),
+        json!(2),
+        "tools/call",
+        json!({"name": "memory_list", "arguments": {}}),
+        &[],
     );
     assert_eq!(status, 200);
-    assert_eq!(json_body(&body)["result"]["isError"], json!(null));
-    let (status, body, _) = request(
+    assert_eq!(resp["result"]["isError"], json!(null));
+    let (status, resp) = mcp_post(
         port,
-        "POST",
-        "/mcp",
-        Some(
-            &serde_json::to_string(&json!({
-                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                "params": {"name": "memory_create", "arguments": {"summary": "s", "content": "c"}}
-            }))
-            .unwrap(),
-        ),
+        json!(3),
+        "tools/call",
+        json!({"name": "memory_create", "arguments": {"summary": "s", "content": "c"}}),
+        &[],
     );
     assert_eq!(status, 200);
-    let resp = json_body(&body);
     assert_eq!(resp["result"]["isError"], true);
     assert!(
         resp["result"]["content"][0]["text"]
