@@ -298,10 +298,20 @@ fn read_result(uri: &str, mime: &str, text: &str, last_modified: Option<String>)
 
 // ---------------------------------------------------------------- List assembly
 
+/// The canonical URI of a tag resource (used by the catalog and by the notification hooks).
+pub(crate) fn tag_resource_uri(name: &str) -> String {
+    format!("memory://tags/{}", encode_uri_segment(name))
+}
+
+/// The canonical URI of a memory resource (ids are already URI-safe).
+pub(crate) fn memory_resource_uri(id: &str) -> String {
+    format!("memory://memories/{id}")
+}
+
 fn tag_entry(view: &Value) -> Option<Value> {
     let name = view["name"].as_str()?;
     let mut entry = json!({
-        "uri": format!("memory://tags/{}", encode_uri_segment(name)),
+        "uri": tag_resource_uri(name),
         "name": name,
         "mimeType": "application/json",
     });
@@ -315,7 +325,7 @@ fn tag_entry(view: &Value) -> Option<Value> {
 
 fn memory_entry(memory: &Memory) -> Option<Value> {
     Some(json!({
-        "uri": format!("memory://memories/{}", memory.id),
+        "uri": memory_resource_uri(&memory.id),
         "name": memory.summary,
         "mimeType": "text/markdown",
         "annotations": {

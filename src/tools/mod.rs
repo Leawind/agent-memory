@@ -88,12 +88,15 @@ pub fn execute_with_db(
     } else {
         store::TxMode::Write
     };
+    // The notification diff needs the state before the write (outside any transaction).
+    let pre = crate::notify::capture(db_path, name, args);
     let out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
     // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     if name == "memory_create" || name == "memory_update" {
         crate::embed::after_write(db_path);
     }
+    crate::notify::after_write(name, args, &out, &pre);
     Ok(out)
 }
 
@@ -176,12 +179,12 @@ fn reserved_tag_guard(
                 )));
             }
         }
-        "memory_update" => {
-            if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) {
-                return Err(ToolError::forbidden(format!(
-                    "hanging or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
-                )));
-            }
+        "memory_update"
+            if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) =>
+        {
+            return Err(ToolError::forbidden(format!(
+                "hanging or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+            )));
         }
         _ => {}
     }
@@ -822,9 +825,14 @@ mod tests {
         let path = temp_db("reserved-tag");
 
         // An agent without admin cannot create the reserved tag or hang it on memories
-        let writer = [Cap::Read, Cap::Create, Cap::Update, Cap::Delete, Cap::TagManage];
-        let err = call_as(&path, &writer, "tag_create", json!({"name": RESERVED_TAG}))
-            .unwrap_err();
+        let writer = [
+            Cap::Read,
+            Cap::Create,
+            Cap::Update,
+            Cap::Delete,
+            Cap::TagManage,
+        ];
+        let err = call_as(&path, &writer, "tag_create", json!({"name": RESERVED_TAG})).unwrap_err();
         assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
         let err = call_as(
             &path,
@@ -839,7 +847,13 @@ mod tests {
 
         // Renaming/deleting the reserved tag is refused outright — even to a full admin
         let admin_caps = Cap::ALL;
-        call_as(&path, &admin_caps, "tag_create", json!({"name": RESERVED_TAG})).unwrap();
+        call_as(
+            &path,
+            &admin_caps,
+            "tag_create",
+            json!({"name": RESERVED_TAG}),
+        )
+        .unwrap();
         for tool in ["tag_update", "tag_delete"] {
             let mut args = json!({"name": RESERVED_TAG});
             if tool == "tag_update" {
@@ -896,11 +910,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok["updated"], true);
-        assert_eq!(
-            ok["memory"]["tags"],
-            json!(["notes"]),
-            "admin detach works"
-        );
+        assert_eq!(ok["memory"]["tags"], json!(["notes"]), "admin detach works");
 
         cleanup(&path);
     }

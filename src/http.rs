@@ -214,7 +214,26 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
                 match catch_unwind(AssertUnwindSafe(|| {
                     process_mcp(db_path, &ctx, &body, &headers)
                 })) {
-                    Ok((status, payload, detail)) => (status, "application/json", payload, detail),
+                    Ok(McpOutcome::Reply(status, payload, detail)) => {
+                        (status, "application/json", payload, detail)
+                    }
+                    // A subscriptions/listen request: log it, then hand it to a dedicated thread —
+                    // the response streams until the client cancels, and this worker must go back
+                    // to recv() immediately.
+                    Ok(McpOutcome::Listen(job, detail)) => {
+                        log_request(
+                            verbose,
+                            &method,
+                            &path,
+                            200,
+                            req.remote_addr(),
+                            Some(&ctx.name),
+                            detail.as_deref(),
+                            started.elapsed(),
+                        );
+                        spawn_subscription_stream(req, job);
+                        return;
+                    }
                     Err(_) => (
                         500,
                         "application/json",
@@ -329,32 +348,54 @@ fn route(method: &str, path: &str) -> Route {
 
 // ---------------------------------------------------------------- MCP endpoint
 
+/// What the MCP endpoint made of one request: an ordinary reply, or a subscription stream.
+enum McpOutcome {
+    Reply(u16, Vec<u8>, Option<String>),
+    Listen(crate::notify::ListenJob, Option<String>),
+}
+
 /// Hand one JSON-RPC message to the protocol layer, returning the HTTP status code and response body.
 /// Notifications (no id) have no response body → 202 Accepted; everything else carries the status the
 /// protocol layer chose (200 for results and tool-level errors, 400/404 for malformed requests).
-/// The third return value is the call summary for verbose logging (method name + the target tool of tools/call).
+/// The third value is the call summary for verbose logging (method name + the target tool of tools/call).
 fn process_mcp(
     db_path: &Path,
     ctx: &IdentityCtx,
     body: &[u8],
     headers: &protocol::TransportHeaders,
-) -> (u16, Vec<u8>, Option<String>) {
+) -> McpOutcome {
     let msg: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => {
             let err = protocol::error_value(&Value::Null, -32700, &format!("parse error: {e}"));
-            return (400, serde_json::to_vec(&err).unwrap_or_default(), None);
+            return McpOutcome::Reply(400, serde_json::to_vec(&err).unwrap_or_default(), None);
         }
     };
     let detail = mcp_summary(&msg);
     match protocol::handle(db_path, ctx, headers, &msg) {
-        protocol::Outcome::Reply { status, value } => (
+        protocol::Outcome::Reply { status, value } => McpOutcome::Reply(
             status,
             serde_json::to_vec(&value).unwrap_or_default(),
             detail,
         ),
-        protocol::Outcome::Accepted => (202, Vec::new(), detail),
+        protocol::Outcome::Listen(job) => McpOutcome::Listen(job, detail),
+        protocol::Outcome::Accepted => McpOutcome::Reply(202, Vec::new(), detail),
     }
+}
+
+/// Serve one subscription stream on a dedicated thread. tiny_http's `Response` machinery buffers
+/// the body (an 8 KB chunked encoder over a 1 KB BufWriter) and only flushes when the body ends —
+/// which never happens for an endless stream — so the response is written by hand through
+/// `into_writer` (the library's raw-stream escape hatch): close-delimited SSE, flushed per message.
+/// The keep-alive comments double as the disconnect detector; ending the loop and dropping the
+/// writer closes the connection. Dropping the handle unregisters the subscription.
+fn spawn_subscription_stream(req: tiny_http::Request, job: crate::notify::ListenJob) {
+    std::thread::spawn(move || {
+        let mut writer = req.into_writer();
+        let (rx, handle) = crate::notify::open(job);
+        crate::notify::serve_stream(&mut writer, &rx, crate::notify::KEEP_ALIVE_INTERVAL);
+        drop(handle);
+    });
 }
 
 /// MCP request summary: batch messages (arrays) and malformed structures return None and are not logged.
@@ -782,7 +823,11 @@ mod tests {
             name: None,
         };
         // Parse failure → 400 + -32700, no call summary
-        let (status, body, detail) = process_mcp(&path, &ctx, b"not json", &headers);
+        let McpOutcome::Reply(status, body, detail) =
+            process_mcp(&path, &ctx, b"not json", &headers)
+        else {
+            panic!("expected a reply");
+        };
         assert_eq!(status, 400);
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
@@ -791,12 +836,14 @@ mod tests {
         assert_eq!(detail, None);
 
         // Notification → 202 empty body, summary is the method name (no header enforcement)
-        let (status, body, detail) = process_mcp(
+        let McpOutcome::Reply(status, body, detail) = process_mcp(
             &path,
             &ctx,
             br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
             &headers,
-        );
+        ) else {
+            panic!("expected a reply");
+        };
         assert_eq!(status, 202);
         assert!(body.is_empty());
         assert_eq!(detail.as_deref(), Some("notifications/initialized"));

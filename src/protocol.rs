@@ -12,6 +12,7 @@
 //! every other JSON-RPC error rides on HTTP 200. Notifications have no response (HTTP 202).
 
 use crate::auth::IdentityCtx;
+use crate::notify::ListenJob;
 use crate::resources;
 use crate::store;
 use crate::tools;
@@ -41,6 +42,9 @@ pub enum Outcome {
     /// A JSON-RPC response plus the HTTP status it must ride on: 200 for results and tool-level
     /// errors, 400 for malformed requests, 404 for unknown methods.
     Reply { status: u16, value: Value },
+    /// A `subscriptions/listen` request: the transport must hand the request to a dedicated
+    /// thread and stream the response (SSE) for as long as the subscription lives.
+    Listen(crate::notify::ListenJob),
     /// A notification: accepted with no response body (HTTP 202).
     Accepted,
 }
@@ -308,6 +312,13 @@ pub fn handle(
             }
         }
         "resources/templates/list" => reply(200, ok_value(&id, resources::templates_list())),
+        "subscriptions/listen" => {
+            let job = listen_job(&id, ctx, &params);
+            match job {
+                Ok(job) => Outcome::Listen(job),
+                Err(message) => reply(400, error_value(&id, -32602, &message)),
+            }
+        }
         // Unknown method: HTTP 404 with the JSON-RPC body still naming -32601, so caches and
         // gateways can treat it as a missing endpoint.
         _ => reply(
@@ -315,6 +326,64 @@ pub fn handle(
             error_value(&id, -32601, &format!("method '{method}' not found")),
         ),
     }
+}
+
+/// Parse the `notifications` filter of a subscriptions/listen request. All fields are optional
+/// (omitting one = not subscribing to it); unknown keys and mistyped values are rejected.
+fn listen_job(id: &Value, ctx: &IdentityCtx, params: &Value) -> Result<ListenJob, String> {
+    const FIELD_DOC: &str =
+        "known filter fields: toolsListChanged, promptsListChanged, resourcesListChanged, resourceSubscriptions";
+    let mut filter = crate::notify::NotifyFilter::default();
+    if let Some(notifications) = params.get("notifications") {
+        let Some(map) = notifications.as_object() else {
+            return Err("invalid params: params.notifications must be an object".into());
+        };
+        for (key, value) in map {
+            match key.as_str() {
+                "toolsListChanged" | "promptsListChanged" => {
+                    if !value.is_boolean() {
+                        return Err(format!(
+                            "invalid params: notifications.{key} must be a boolean"
+                        ));
+                    }
+                    // Recorded, but never acknowledged: tools are static, prompts are not served
+                    if key == "toolsListChanged" {
+                        filter.tools_list_changed = value.as_bool().unwrap_or(false);
+                    }
+                }
+                "resourcesListChanged" => {
+                    let Some(on) = value.as_bool() else {
+                        return Err(
+                            "invalid params: notifications.resourcesListChanged must be a boolean"
+                                .into(),
+                        );
+                    };
+                    filter.resources_list_changed = on;
+                }
+                "resourceSubscriptions" => {
+                    let Some(uris) = value.as_array() else {
+                        return Err("invalid params: notifications.resourceSubscriptions must be an array of strings".into());
+                    };
+                    for uri in uris {
+                        let Some(uri) = uri.as_str() else {
+                            return Err("invalid params: notifications.resourceSubscriptions must contain only strings".into());
+                        };
+                        filter.resource_uris.push(uri.to_string());
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "invalid params: unknown notifications filter key '{other}' ({FIELD_DOC})"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(ListenJob {
+        client_id: id.clone(),
+        can_read: ctx.can(crate::auth::Cap::Read),
+        filter,
+    })
 }
 
 /// The `server/discover` result: supported versions, capabilities, identity and the effective
@@ -472,7 +541,7 @@ mod tests {
         let headers = conforming_headers(&method, msg.get("params").unwrap_or(&Value::Null));
         match handle(store_path, &IdentityCtx::open_mode(), &headers, &msg) {
             Outcome::Reply { status, value } => (status, value),
-            Outcome::Accepted => panic!("expected a reply for: {line}"),
+            Outcome::Listen(_) | Outcome::Accepted => panic!("expected a reply for: {line}"),
         }
     }
 
@@ -565,7 +634,7 @@ mod tests {
             conforming_headers("server/discover", msg.get("params").unwrap_or(&Value::Null));
         let resp = match handle(&store, &ctx, &headers, &msg) {
             Outcome::Reply { value, .. } => value,
-            Outcome::Accepted => panic!("expected a reply"),
+            Outcome::Listen(_) | Outcome::Accepted => panic!("expected a reply"),
         };
         let instructions = resp["result"]["instructions"].as_str().unwrap();
         assert_eq!(

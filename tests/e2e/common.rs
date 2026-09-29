@@ -238,3 +238,132 @@ pub(crate) fn encodeURIComponent(s: &str) -> String {
     }
     out
 }
+
+/// A client-side SSE stream: opens a `subscriptions/listen` POST and reads the
+/// `text/event-stream` response incrementally, event by event (each read bounded by a timeout).
+/// The server's stream is close-delimited (Connection: close), so body bytes are used as-is.
+pub(crate) struct SseStream {
+    stream: TcpStream,
+    body: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub(crate) struct SseEvent {
+    pub(crate) event: String,
+    pub(crate) data: String,
+}
+
+impl SseStream {
+    /// POST the given (already-built) body to /mcp and open the response stream.
+    pub(crate) fn open(
+        port: u16,
+        body: &str,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<SseStream, std::io::Error> {
+        let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+        let mut req = format!("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n");
+        for (k, v) in extra_headers {
+            write!(req, "{k}: {v}\r\n").unwrap();
+        }
+        // The MCP spec requires both content types in Accept for every request
+        req.push_str("Accept: application/json, text/event-stream\r\n");
+        req.push_str("Content-Type: application/json\r\n");
+        write!(req, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        stream.write_all(req.as_bytes())?;
+        stream.write_all(body.as_bytes())?;
+        stream.flush()?;
+
+        // Read the response head (up to the empty line)
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let n = stream.read(&mut byte)?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "connection closed before response head",
+                ));
+            }
+            head.push(byte[0]);
+            if head.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let head = String::from_utf8_lossy(&head).to_string();
+        let status: u16 = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| std::io::Error::other("bad status line"))?;
+        if status != 200 {
+            return Err(std::io::Error::other(format!(
+                "unexpected status {status}: {head}"
+            )));
+        }
+        let content_type = head
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("content-type:"))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !content_type.contains("text/event-stream") {
+            return Err(std::io::Error::other(format!(
+                "not an SSE stream: {content_type}"
+            )));
+        }
+        Ok(SseStream {
+            stream,
+            body: Vec::new(),
+        })
+    }
+
+    /// Next complete SSE event, or None on timeout. Server-sent comments (keep-alive lines) are skipped.
+    pub(crate) fn next_event(&mut self, timeout: Duration) -> Option<SseEvent> {
+        loop {
+            if let Some(ev) = self.pop_event() {
+                return Some(ev);
+            }
+            self.read_more(timeout)?;
+        }
+    }
+
+    /// Extract one complete event block ("event: ...\ndata: ...\n\n") from the decoded body.
+    fn pop_event(&mut self) -> Option<SseEvent> {
+        let sep = self.body.windows(2).position(|w| w == b"\n\n")?;
+        let block = String::from_utf8_lossy(&self.body[..sep]).to_string();
+        self.body.drain(..sep + 2);
+        let mut event = String::new();
+        let mut data = String::new();
+        for line in block.lines() {
+            if let Some(rest) = line.strip_prefix("event:") {
+                event = rest.trim().to_string();
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                data.push_str(rest.trim_start_matches(' '));
+            }
+            // Comment lines (": ...") carry no event data
+        }
+        Some(SseEvent { event, data })
+    }
+
+    /// Read more body bytes; None = timed out or connection ended.
+    fn read_more(&mut self, timeout: Duration) -> Option<()> {
+        self.stream.set_read_timeout(Some(timeout)).ok()?;
+        let mut buf = [0u8; 4096];
+        match self.stream.read(&mut buf) {
+            Ok(0) => None, // connection closed: no further events
+            Ok(n) => {
+                self.body.extend_from_slice(&buf[..n]);
+                Some(())
+            }
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                None
+            }
+            Err(_) => None,
+        }
+    }
+}

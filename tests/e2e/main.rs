@@ -18,3 +18,4 @@ mod resources;
 mod rest;
 mod semantic;
 mod shared;
+mod subscribe;

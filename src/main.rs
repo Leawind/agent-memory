@@ -12,6 +12,7 @@ mod auth;
 mod embed;
 mod http;
 mod model;
+mod notify;
 mod protocol;
 mod resources;
 mod search;
