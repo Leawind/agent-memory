@@ -46,11 +46,31 @@ src/
                  开放模式 = 全能力，匿名身份能力集由 settings 配置
   api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400/403 映射（业务逻辑不在此层）；
                  例外：identities/settings 端点走专用 handler（agent 工具面不暴露权限管理）
-  protocol.rs    MCP 协议层：initialize / ping / tools/list / tools/call，通知不回包，批量消息；
-                 工具结果文本通道必须是紧凑 JSON，structuredContent 按协商版本（2025-06-18 起）附带；
-                 initialize 回传自定义提示词（instructions 非空覆盖内置默认 + conventions 非空追加）+ 调用者身份行
-  tools/mod.rs   工具入口：execute_with_db（单事务），分发，未知参数校验（从 schema 派生），
-                 入口集中执行 ctx.require(defs::required_cap(name)) 权限守卫
+  protocol.rs    MCP 协议层（2026-07-28 现代协议，唯一支持版本）：server/discover / ping / tools/list /
+                 tools/call / resources/list / resources/read / resources/templates/list /
+                 subscriptions/listen；无 initialize 握手、无版本协商、无批量消息——每请求 params._meta
+                 必带 protocolVersion + clientCapabilities，传输镜像头（MCP-Protocol-Version/Mcp-Method/
+                 Mcp-Name，=?base64?..?= 哨兵解码）与 body 校验一致，错误映射 -32020/-32022/-32602；
+                 状态码：未知方法 404 + -32601，通知 202，批量 400；结果信封带 resultType:"complete"，
+                 五个可缓存方法带 ttlMs/cacheScope（discover 身份相关 → private/0，tools/list 静态 → public/1h）；
+                 discover 回传自定义提示词（instructions 非空覆盖内置默认）+ 调用者身份行；
+                 工具结果文本通道必须是紧凑 JSON，structuredContent 恒附带
+  resources.rs   memory:// 资源面（RFC 3986 严格解析，percent 编解码标签名）：
+                 memory://tags/{tag} 目录型 JSON（标签元数据 + 最近 100 条摘要，绝不带正文）、
+                 memory://memories/{id} 唯一携带正文（text/markdown + lastModified 注解）；
+                 resources/list = 每标签一条 + 每条常驻约定记忆一条（base64 offset cursor，页 50）；
+                 权限为过滤掩码：无 read → 空目录 + not-found（不泄漏存在性）；目标缺失一律
+                 -32602 + data.uri，禁止空 contents 冒充存在
+  notify.rs      订阅与变更通知：subscriptions/listen 开请求级 SSE 流（Response 缓冲不适合无限流，
+                 经 Request::into_writer 手写响应，close 定界、逐消息 flush、15s keep-alive 注释兼作
+                 断连检测）；acknowledged 首发并回显请求 id 为订阅 id，只 ack 服务端支持的子集
+                 （toolsListChanged 永不支持——工具静态；无 read 能力 ack 全空，掩码语义）；
+                 进程级订阅注册表（OnceLock<RwLock> 风格 static + Mutex），写后钩子 after_write
+                 （事务外、MCP 与 REST 两面共用）把写事件映射为 updated（该 URI 读取结果将变）/
+                 list_changed（resources/list 成员变），写前 capture 读 diff 所需旧标签
+  tools/mod.rs   工具入口：execute_with_db（单事务 + 事务外 embed/notify 钩子），分发，未知参数校验
+                 （从 schema 派生），入口集中执行 ctx.require(defs::required_cap(name)) 权限守卫 +
+                 保留标签守卫（conventions：改名/删除绝对禁止，创建/挂摘需 Admin；REST 面复用 execute 自动一致）
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
@@ -119,11 +139,20 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 4. **跨平台数据**：schema 内不得存平台相关状态（绝对路径、换行风格等）；SQLite 文件
    格式平台无关，同一份 .db 跨机复制可用（停服后复制，或用 export）。
 5. **defs.rs 是契约**：新增/修改工具先改 defs.rs 的 schema（含描述），参数校验自动从
-   properties 派生；渐进式披露约定不变——list/search 永不返回 content，只有 memory_get 返回。
-   REST API（/api/*）必须复用同一批 handler，不得另写校验逻辑。
+   properties 派生；渐进式披露约定不变——list/search 永不返回 content，只有 memory_get 返回；
+   资源面同源一致——目录型资源（tag 资源、resources/list）绝不携带正文，
+   仅 memory://memories/{id} 单条读取返回正文。REST API（/api/*）必须复用同一批 handler，
+   不得另写校验逻辑。
    错误分类用 `ToolError`（NotFound→404 / Invalid→400 / Forbidden→403），**禁止**再按错误文本匹配分类。
-6. **协议兼容**：MCP 协议版本支持 2024-11-05 / 2025-03-26 / 2025-06-18；id 边界格式
-   严格为 `"m{n}"`——normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
+6. **协议兼容（2026-07-28 现代协议，唯一版本）**：无 initialize 握手/版本协商/批量消息/会话；
+   每请求 `_meta` 必带 `io.modelcontextprotocol/protocolVersion` + `clientCapabilities`（缺失
+   -32602），镜像头与 body 校验一致（-32020），版本不支持 -32022；未知方法 404 + -32601，
+   通知 202；协议层只认单条 JSON-RPC 消息。旧协议客户端不可用是已接受的决策——
+   官方 SDK 1.x（legacy 握手）会被拒绝，scripts/sdk-compat-check.ts 因此为手写客户端，
+   SDK v2 发布后切回。常驻约定 = 保留标签 `conventions` 下的记忆（settings 的 conventions 键
+   已废弃）：该标签不可改名/删除，创建与挂/摘需 Admin 能力；同时以 memory:// 资源暴露，
+   写入前先读。id 边界格式严格为 `"m{n}"`——normalize_id 只去空白，parse_id 拒绝省略
+   m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **仓库只有源码，构建产物一律不入库**：`ui/dist`、`ui/lib/dist`（连同 target/、
    node_modules/）全部 gitignore；rust-embed debug-embed 编译期嵌入 `ui/dist`，
@@ -169,6 +198,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 - 端到端测试在 `tests/e2e/`（main.rs 只做 mod 声明，按场景分文件，共享基建在
   common.rs）：真实 spawn 二进制（serve --port 随机 + --db 临时目录），
   HTTP 客户端用 std::net 手写（不引 dev 依赖）；服务器启动用全局锁串行化避免端口竞争。
+  订阅场景的 SSE 客户端同样手写（SseStream：严格 CRLF 分帧、增量读 + 逐事件超时；
+  流为 close 定界，无 chunked 解码）。
 - 请求行/URL 里的非 ASCII 必须 percent-encode（tiny_http 不接受原始 UTF-8 请求行）。
 - 单元测试分布在各模块（store 的级联/迁移/体检、tools 的契约校验、protocol 的对抗输入、
   http 的路由/Origin/解码）。数据文件一律指到临时目录，绝不碰用户真实数据。
@@ -181,9 +212,11 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 
 ## 开发脚本（scripts/，TypeScript，需 node ≥24 原生类型剥离运行，不参与构建）
 
-- `sdk-compat-check.ts`：用官方 MCP TypeScript SDK 走完整 agent 流程的兼容性
-  回归（initialize/listTools/callTool/错误通道/无状态重连），发布前必跑。
-  用法：根目录 `pnpm install` 后 `MCP_URL=http://127.0.0.1:8899/mcp node scripts/sdk-compat-check.ts`。
+- `sdk-compat-check.ts`：手写 2026-07-28 现代协议客户端的兼容性回归
+  （server/discover/tools 流程/渐进式披露/错误通道/resources/订阅流/无状态重连），发布前必跑。
+  官方 TypeScript SDK 尚无现代协议客户端（1.x 走 legacy initialize 握手，本服务器
+  刻意拒绝），SDK v2 发布后切回官方实现。
+  用法：`MCP_URL=http://127.0.0.1:8899/mcp node scripts/sdk-compat-check.ts`。
 - `soak.ts`：双进程混合负载浸泡（写/搜/列表/标签轮转并发），失败分类能区分
   客户端过载（ECONNREFUSED 风暴）与服务端真实错误（5xx/BUSY）。
 - 两个脚本的类型检查：`pnpm typecheck`（workspace 命令，CI ui-tests job 一并执行）。
