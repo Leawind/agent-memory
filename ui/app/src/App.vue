@@ -86,7 +86,9 @@
 
             <!-- Language: dropdown. The trigger is a fixed translate icon, never the current language
                  text (nativeName in menu items never follows the UI language; adding a language =
-                 a new dictionary + one menu item) -->
+                 a new dictionary + one menu item). Element Plus icons have no translate glyph and
+                 pulling in a second icon set for one glyph is not worth it, so the standard
+                 "languages" mark is inlined here (same as the de-agent-bug shell). -->
             <el-dropdown trigger="click" @command="setLang">
               <button type="button" class="lang-btn" :aria-label="t('shell.language')">
                 <svg
@@ -94,12 +96,19 @@
                   viewBox="0 0 24 24"
                   width="15"
                   height="15"
-                  fill="currentColor"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                   aria-hidden="true"
                 >
-                  <path
-                    d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"
-                  />
+                  <path d="m5 8 6 6" />
+                  <path d="m4 14 6-6 2-3" />
+                  <path d="M2 5h12" />
+                  <path d="M7 2h1" />
+                  <path d="m22 22-5-10-5 10" />
+                  <path d="M14 18h6" />
                 </svg>
                 <el-icon :size="12"><ArrowDown /></el-icon>
               </button>
@@ -653,18 +662,19 @@ body {
   align-items: center;
   gap: 5px;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: none;
   border-radius: 999px;
   background: var(--el-fill-color);
   color: var(--el-text-color-regular);
-  font-size: 12px;
-  font-family: inherit;
   cursor: pointer;
 }
 .lang-btn:hover {
   color: var(--el-text-color-primary);
   background: var(--el-fill-color-dark);
+}
+.lang-icon {
+  display: block;
 }
 .lang-option {
   flex: 1;
