@@ -186,6 +186,25 @@ impl IdentityCtx {
         }
     }
 
+    /// Every listed capability must be present; the error names all missing ones at once so the
+    /// caller does not have to retry one permission at a time.
+    pub fn require_all(&self, caps: &[Cap]) -> Result<(), ToolError> {
+        let missing: Vec<&str> = caps
+            .iter()
+            .filter(|c| !self.can(**c))
+            .map(|c| c.as_str())
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err(ToolError::forbidden(format!(
+            "identity '{}' lacks the '{}' permission{} (ask the server operator)",
+            self.name,
+            missing.join("', '"),
+            if missing.len() > 1 { "s" } else { "" },
+        )))
+    }
+
     /// The self-description summary returned to the agent in initialize.
     pub fn summary(&self) -> Value {
         json!({

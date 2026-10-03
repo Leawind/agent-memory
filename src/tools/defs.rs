@@ -18,6 +18,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "memory_search",
     "memory_get",
     "memory_update",
+    "memory_merge",
     "memory_delete",
 ];
 
@@ -162,6 +163,22 @@ pub fn tool_definitions() -> Value {
             false, false,
         ),
         def(
+            "memory_merge",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and created_at; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset created_at. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id to keep."},
+                    "source": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id to merge in and delete."},
+                    "summary": {"type": "string", "description": "Optional replacement summary for the target."},
+                    "content": {"type": "string", "description": "Optional replacement content for the target; omit to append the source content after the target's."}
+                },
+                "required": ["target", "source"],
+                "additionalProperties": false
+            }),
+            false, true,
+        ),
+        def(
             "memory_delete",
             "Permanently delete one or more memories by id.",
             json!({
@@ -233,30 +250,20 @@ pub fn is_read_only(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Tool name → capability required from the caller (the single registry of permissions, enforced centrally at the
-/// tools::execute entry point). Only queried for tools in TOOL_NAMES; the fallback branch exists for type completeness only.
-pub fn required_cap(tool: &str) -> Cap {
-    static CAPS: OnceLock<HashMap<String, Cap>> = OnceLock::new();
-    CAPS.get_or_init(|| {
-        [
-            ("tag_create", Cap::TagManage),
-            ("tag_list", Cap::Read),
-            ("tag_update", Cap::TagManage),
-            ("tag_delete", Cap::TagManage),
-            ("memory_create", Cap::Create),
-            ("memory_list", Cap::Read),
-            ("memory_search", Cap::Read),
-            ("memory_get", Cap::Read),
-            ("memory_update", Cap::Update),
-            ("memory_delete", Cap::Delete),
-        ]
-        .into_iter()
-        .map(|(t, c)| (t.to_string(), c))
-        .collect()
-    })
-    .get(tool)
-    .copied()
-    .unwrap_or(Cap::Read)
+/// Tool name → the capabilities required from the caller (the single registry of permissions,
+/// enforced centrally at the tools::execute entry point). Tools acting across two capability
+/// domains require both (memory_merge updates one memory and deletes another). Only queried for
+/// tools in TOOL_NAMES; the fallback branch exists for type completeness only.
+pub fn required_caps(tool: &str) -> &'static [Cap] {
+    match tool {
+        "tag_create" | "tag_update" | "tag_delete" => &[Cap::TagManage],
+        "memory_create" => &[Cap::Create],
+        "memory_list" | "memory_search" | "memory_get" => &[Cap::Read],
+        "memory_update" => &[Cap::Update],
+        "memory_merge" => &[Cap::Update, Cap::Delete],
+        "memory_delete" => &[Cap::Delete],
+        _ => &[Cap::Read],
+    }
 }
 
 #[cfg(test)]
@@ -291,12 +298,15 @@ mod tests {
         use crate::auth::Cap;
         for name in TOOL_NAMES {
             // Registered as long as it does not panic (the mapping is a static table; coverage is enough)
-            let _ = required_cap(name);
+            assert!(!required_caps(name).is_empty());
         }
-        assert_eq!(required_cap("memory_get"), Cap::Read);
-        assert_eq!(required_cap("memory_create"), Cap::Create);
-        assert_eq!(required_cap("memory_update"), Cap::Update);
-        assert_eq!(required_cap("memory_delete"), Cap::Delete);
-        assert_eq!(required_cap("tag_update"), Cap::TagManage);
+        assert_eq!(required_caps("memory_get"), &[Cap::Read]);
+        assert_eq!(required_caps("memory_create"), &[Cap::Create]);
+        assert_eq!(required_caps("memory_update"), &[Cap::Update]);
+        assert_eq!(required_caps("memory_delete"), &[Cap::Delete]);
+        assert_eq!(required_caps("tag_update"), &[Cap::TagManage]);
+        // A merge rewrites one memory and deletes another: it must not be reachable with either
+        // capability alone
+        assert_eq!(required_caps("memory_merge"), &[Cap::Update, Cap::Delete]);
     }
 }

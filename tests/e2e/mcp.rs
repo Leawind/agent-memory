@@ -76,7 +76,7 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(tools["result"]["resultType"], "complete");
     assert_eq!(tools["result"]["ttlMs"], 3_600_000);
     assert_eq!(tools["result"]["cacheScope"], "public");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 10);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 11);
 
     // Full agent flow: create -> search (progressive disclosure, no content leak) -> fetch full text
     let created = mcp_rpc(

@@ -1,6 +1,7 @@
 //! Memory management: CRUD, browsing and search (the carrier of progressive disclosure).
 
-use crate::model::{normalize_id, normalize_tag_name, now};
+use crate::auth::IdentityCtx;
+use crate::model::{normalize_id, normalize_tag_name, now, RESERVED_TAG};
 use crate::search;
 use crate::store::Store;
 use crate::tools::params::{
@@ -344,6 +345,99 @@ pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     }
     attach_id_note(&mut out, !missing.is_empty(), &invalid);
     Ok(out)
+}
+
+/// Merge a duplicate memory into a kept one: the target survives with its id and created_at
+/// intact, tags become the union, the source is deleted. This closes the loop duplicate_of /
+/// similar_to open — before it, the only path away from a duplicate was delete + re-create,
+/// which reset created_at.
+pub fn memory_merge(
+    st: &Store,
+    ctx: &IdentityCtx,
+    args: &Map<String, Value>,
+) -> Result<Value, ToolError> {
+    fn parse_id_arg(raw: &str) -> Result<i64, ToolError> {
+        Store::parse_id(raw).ok_or_else(|| {
+            ToolError::invalid(format!(
+                "malformed memory id '{raw}': ids look like 'm123' (a leading 'm' is required)"
+            ))
+        })
+    }
+    let raw_target = normalize_id(&req_str(args, "target")?);
+    let raw_source = normalize_id(&req_str(args, "source")?);
+    let target_id = parse_id_arg(&raw_target)?;
+    let source_id = parse_id_arg(&raw_source)?;
+    if target_id == source_id {
+        return Err(ToolError::invalid(
+            "cannot merge a memory into itself: target and source are the same id",
+        ));
+    }
+    let summary = match opt_str(args, "summary")? {
+        Some(s) => Some(validate_summary(&s)?),
+        None => None,
+    };
+    let explicit_content = match opt_str(args, "content")? {
+        Some(c) => Some(validate_content(&c)?),
+        None => None,
+    };
+
+    let (mut found_t, missing_t) = st.get_memories(&[target_id])?;
+    let (mut found_s, missing_s) = st.get_memories(&[source_id])?;
+    if !missing_t.is_empty() || !missing_s.is_empty() {
+        let mut missing = missing_t;
+        missing.extend(missing_s);
+        return Err(ToolError::not_found(format!(
+            "memory not found: {} (use memory_list or memory_search first)",
+            missing.join(", ")
+        )));
+    }
+    let target = found_t.pop().expect("target loaded");
+    let source = found_s.pop().expect("source loaded");
+
+    // Reserved-tag rule, data-dependent edition: the arguments name no tags, so the entry guard
+    // cannot see this — merging unions the tags onto the target (an attach when the source carries
+    // conventions) and deletes a resident memory when the source is one. Both are admin-only moves.
+    let touches_reserved = target
+        .tags
+        .iter()
+        .chain(source.tags.iter())
+        .any(|t| t == RESERVED_TAG);
+    if touches_reserved && !ctx.can(crate::auth::Cap::Admin) {
+        return Err(ToolError::forbidden(format!(
+            "merging memories that carry the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+        )));
+    }
+
+    let merged_content = explicit_content
+        .clone()
+        .unwrap_or_else(|| format!("{}\n\n{}", target.content, source.content));
+    validate_content(&merged_content)?;
+    // Source tag ids join the target (INSERT OR IGNORE dedups the overlap); no auto-creation —
+    // both memories' tags already exist by definition
+    let source_tag_ids = st.tag_ids_for_names(&source.tags)?;
+    st.update_memory(
+        target_id,
+        summary.as_deref(),
+        Some(&merged_content),
+        &source_tag_ids,
+        &[],
+    )?;
+    let (deleted, _) = st.delete_memories(&[source_id])?;
+    if deleted.is_empty() {
+        // Unreachable inside the transaction (the source was just read), but never lie about a
+        // delete that did not happen
+        return Err(ToolError::not_found(format!(
+            "memory '{raw_source}' disappeared during merge; nothing was changed"
+        )));
+    }
+
+    let view = memory_view(st, target_id)?;
+    Ok(json!({
+        "merged": true,
+        "memory": view,
+        "removed": raw_source,
+        "content_appended": explicit_content.is_none(),
+    }))
 }
 
 /// Semantic pass: query embedding + cosine ranking against stored vectors, RRF-fused with the keyword pass.

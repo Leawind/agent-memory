@@ -111,7 +111,7 @@ pub fn execute(
         .ok_or_else(|| ToolError::invalid("arguments must be a JSON object"))?;
     check_known_args(name, map)?;
     if TOOL_NAMES.contains(&name) {
-        ctx.require(defs::required_cap(name))?;
+        ctx.require_all(defs::required_caps(name))?;
         reserved_tag_guard(ctx, name, map)?;
     }
 
@@ -125,6 +125,9 @@ pub fn execute(
         "memory_search" => memory_ops::memory_search(st, map),
         "memory_get" => memory_ops::memory_get(st, map),
         "memory_update" => memory_ops::memory_update(st, map),
+        // The merge needs the identity for the data-dependent reserved-tag check (its arguments
+        // name no tags; only the loaded memories reveal whether conventions is involved)
+        "memory_merge" => memory_ops::memory_merge(st, ctx, map),
         "memory_delete" => memory_ops::memory_delete(st, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
@@ -1098,6 +1101,161 @@ mod tests {
             json!({"summary": "s2", "content": "c2", "tags": ["meta"]}),
         )
         .unwrap();
+
+        cleanup(&path);
+    }
+
+    /// memory_merge closes the duplicate loop: the target keeps id and created_at, tags union,
+    /// content appends (or is replaced), and the source disappears.
+    #[test]
+    fn memory_merge_absorbs_source_into_target() {
+        let path = temp_db("merge");
+        let first = call(
+            &path,
+            "memory_create",
+            json!({"summary": "Deploy runbook", "content": "step one", "tags": ["ops"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        let target = first["memory"]["id"].as_str().unwrap().to_string();
+        let target_created = first["memory"]["created_at"].as_u64().unwrap();
+        let second = call(
+            &path,
+            "memory_create",
+            json!({"summary": "deploy runbook v2", "content": "step two", "tags": ["ops", "release"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        let source = second["memory"]["id"].as_str().unwrap().to_string();
+
+        let merged = call(
+            &path,
+            "memory_merge",
+            json!({"target": target, "source": source}),
+        )
+        .unwrap();
+        assert_eq!(merged["merged"], true);
+        assert_eq!(merged["removed"], source.as_str());
+        assert_eq!(merged["memory"]["id"], target.as_str());
+        assert_eq!(
+            merged["memory"]["created_at"], target_created,
+            "created_at survives the merge"
+        );
+        assert_eq!(merged["content_appended"], true);
+        let tags = merged["memory"]["tags"].as_array().unwrap();
+        assert_eq!(tags.len(), 2, "tags union: {merged}");
+
+        // Content was appended, the source is gone
+        let got = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
+        let content = got["memories"][0]["content"].as_str().unwrap();
+        assert_eq!(content, "step one\n\nstep two");
+        let gone = call(&path, "memory_get", json!({"ids": [source]})).unwrap();
+        assert_eq!(gone["missing"].as_array().unwrap().len(), 1);
+
+        // Explicit summary/content replace instead of append
+        let third = call(
+            &path,
+            "memory_create",
+            json!({"summary": "another duplicate", "content": "more"}),
+        )
+        .unwrap();
+        let source2 = third["memory"]["id"].as_str().unwrap().to_string();
+        let merged = call(
+            &path,
+            "memory_merge",
+            json!({"target": target, "source": source2, "summary": "Deploy runbook (unified)", "content": "unified body"}),
+        )
+        .unwrap();
+        assert_eq!(merged["content_appended"], false);
+        assert_eq!(merged["memory"]["summary"], "Deploy runbook (unified)");
+        let got = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
+        assert_eq!(got["memories"][0]["content"], "unified body");
+
+        // Misuse: self-merge, malformed ids, missing ids
+        let err = call(
+            &path,
+            "memory_merge",
+            json!({"target": target, "source": target}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("into itself"), "got: {err}");
+        let err = call(
+            &path,
+            "memory_merge",
+            json!({"target": target, "source": "5"}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("malformed"), "got: {err}");
+        let err = call(
+            &path,
+            "memory_merge",
+            json!({"target": target, "source": "m999"}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::NotFound(_)), "got: {err:?}");
+
+        cleanup(&path);
+    }
+
+    /// Merge spans two capability domains: update alone (or delete alone) must not reach it, and
+    /// merging anything that carries the reserved tag needs admin on top.
+    #[test]
+    fn memory_merge_permission_boundaries() {
+        use crate::model::RESERVED_TAG;
+        let path = temp_db("merge-caps");
+        let both = [Cap::Update, Cap::Delete];
+        let mk = |summary: &str, tags: Value| {
+            call(&path, "memory_create", json!({"summary": summary, "content": "c", "tags": tags, "create_missing_tags": true}))
+                .unwrap()["memory"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let a = mk("a", json!(["ops"]));
+        let b = mk("b", json!(["ops"]));
+
+        // Update-only cannot merge (it would smuggle a delete)
+        let err = call_as(
+            &path,
+            &[Cap::Update],
+            "memory_merge",
+            json!({"target": a, "source": b}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        assert!(
+            err.to_string().contains("'delete'"),
+            "names the missing permission: {err}"
+        );
+        // Delete-only cannot either (it would smuggle an update)
+        let err = call_as(
+            &path,
+            &[Cap::Delete],
+            "memory_merge",
+            json!({"target": a, "source": b}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("'update'"), "got: {err}");
+
+        // Conventions memories need admin even with update + delete
+        let admin = Cap::ALL;
+        let conv = mk("rule", json!([RESERVED_TAG]));
+        let other = mk("plain", json!([]));
+        let err = call_as(
+            &path,
+            &both,
+            "memory_merge",
+            json!({"target": conv, "source": other}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        assert!(err.to_string().contains("reserved"), "got: {err}");
+        let ok = call_as(
+            &path,
+            &admin,
+            "memory_merge",
+            json!({"target": conv, "source": other}),
+        )
+        .unwrap();
+        assert_eq!(ok["merged"], true);
 
         cleanup(&path);
     }

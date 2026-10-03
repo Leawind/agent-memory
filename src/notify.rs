@@ -220,6 +220,11 @@ pub struct PreState {
 pub fn capture(db_path: &Path, tool: &str, args: &Value) -> PreState {
     let ids: Vec<String> = match tool {
         "memory_update" => vec![args["id"].as_str().unwrap_or_default().to_string()],
+        // Merge diffs the target's tags (first id) and needs the source's tags for its removal events
+        "memory_merge" => vec![
+            args["target"].as_str().unwrap_or_default().to_string(),
+            args["source"].as_str().unwrap_or_default().to_string(),
+        ],
         "memory_delete" => args["ids"]
             .as_array()
             .map(|a| {
@@ -393,6 +398,54 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
             let has_conventions = final_tags.iter().any(|t| t == RESERVED_TAG);
             if had_conventions != has_conventions {
                 push(&mut events, Event::ListChanged);
+            }
+        }
+        "memory_merge" => {
+            // The target is rewritten (merged content, possibly summary) and gains the source's
+            // tags; the source is deleted outright. Same event shapes as memory_update on the
+            // target plus memory_delete on the source.
+            let id = result["memory"]["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            push(
+                &mut events,
+                Event::Updated(resources::memory_resource_uri(&id)),
+            );
+            let final_tags = memory_tags(result);
+            for tag in &final_tags {
+                if !pre.old_tags.contains(tag) {
+                    push(
+                        &mut events,
+                        Event::Updated(resources::tag_resource_uri(tag)),
+                    );
+                }
+            }
+            if final_tags.iter().any(|t| t == RESERVED_TAG)
+                && !pre.old_tags.iter().any(|t| t == RESERVED_TAG)
+            {
+                // The resident-conventions set gained a member
+                push(&mut events, Event::ListChanged);
+            }
+            if let Some(removed) = result["removed"].as_str() {
+                push(
+                    &mut events,
+                    Event::Updated(resources::memory_resource_uri(removed)),
+                );
+                if let Some(source_tags) = pre.tags_by_id.get(removed) {
+                    for tag in source_tags {
+                        // The source's entry leaves every catalog it appeared in (the target may
+                        // still carry the tag, but the catalog's content changed either way)
+                        push(
+                            &mut events,
+                            Event::Updated(resources::tag_resource_uri(tag)),
+                        );
+                        if tag == RESERVED_TAG {
+                            // ...and the resident-conventions set lost a member
+                            push(&mut events, Event::ListChanged);
+                        }
+                    }
+                }
             }
         }
         "memory_delete" => {
@@ -622,6 +675,36 @@ mod tests {
                 Event::Updated("memory://memories/m2".into()),
                 Event::Updated("memory://tags/a".into()),
                 Event::Updated("memory://tags/shared".into()),
+                Event::Updated("memory://tags/conventions".into()),
+                Event::ListChanged
+            ]
+        );
+    }
+
+    #[test]
+    fn memory_merge_events_cover_target_rewrite_and_source_removal() {
+        let pre = PreState {
+            old_tags: vec!["a".into()],
+            tags_by_id: HashMap::from([
+                ("m1".into(), vec!["a".into()]),
+                ("m2".into(), vec!["b".into(), "conventions".into()]),
+            ]),
+        };
+        // Target m1 gains tag b (its content is merged); source m2 (tagged b + conventions) dies:
+        // its memory resource goes, its tags' catalogs shrink, and the resident-conventions set
+        // loses a member (list_changed)
+        let evs = events_for(
+            "memory_merge",
+            json!({"target": "m1", "source": "m2"}),
+            json!({"merged": true, "memory": {"id": "m1", "tags": ["a", "b"]}, "removed": "m2"}),
+            &pre,
+        );
+        assert_eq!(
+            evs,
+            vec![
+                Event::Updated("memory://memories/m1".into()),
+                Event::Updated("memory://tags/b".into()),
+                Event::Updated("memory://memories/m2".into()),
                 Event::Updated("memory://tags/conventions".into()),
                 Event::ListChanged
             ]

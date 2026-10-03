@@ -1009,7 +1009,7 @@ mod tests {
         let store = temp_db("tools-list");
         let (_, listing) = roundtrip(&store, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
         assert_eq!(listing["result"]["resultType"], "complete");
-        assert_eq!(listing["result"]["tools"].as_array().unwrap().len(), 10);
+        assert_eq!(listing["result"]["tools"].as_array().unwrap().len(), 11);
         assert_eq!(listing["result"]["ttlMs"], 3_600_000);
         assert_eq!(listing["result"]["cacheScope"], "public");
         cleanup(&store);
