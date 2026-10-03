@@ -32,6 +32,35 @@ pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolErro
     if let Some(re) = &filter {
         tags.retain(|t| re.is_match(t["name"].as_str().unwrap_or_default()));
     }
+    // The reserved tag must be discoverable even before it exists: without a row there is no way
+    // to learn it exists except by crashing into a guard error. Synthesize it (filter applies to
+    // it like any other name), then restore the documented browse order (count desc, name asc).
+    let re_match = |name: &str| filter.as_ref().is_none_or(|re| re.is_match(name));
+    if re_match(crate::model::RESERVED_TAG)
+        && !tags
+            .iter()
+            .any(|t| t["name"].as_str() == Some(crate::model::RESERVED_TAG))
+    {
+        tags.push(json!({
+            "name": crate::model::RESERVED_TAG,
+            "description": crate::model::RESERVED_TAG_DESCRIPTION,
+            "memory_count": 0,
+            "last_used_at": Value::Null,
+            "created_at": Value::Null,
+            "reserved": true,
+        }));
+    }
+    fn sort_key(v: &Value) -> (u64, &str) {
+        (
+            v["memory_count"].as_u64().unwrap_or(0),
+            v["name"].as_str().unwrap_or_default(),
+        )
+    }
+    tags.sort_by(|a, b| {
+        let (count_a, name_a) = sort_key(a);
+        let (count_b, name_b) = sort_key(b);
+        count_b.cmp(&count_a).then(name_a.cmp(name_b))
+    });
     let total_memories = st.stats()?["memories"].clone();
     Ok(json!({
         "total_tags": tags.len(),

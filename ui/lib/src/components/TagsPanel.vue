@@ -26,6 +26,11 @@
         <el-table-column prop="name" :label="t('tags.colName')" min-width="140" sortable>
           <template #default="{ row }">
             <el-tag>{{ row.name }}</el-tag>
+            <el-tooltip :content="t('tags.reservedHint')" placement="top" :enterable="false">
+              <el-tag v-if="row.reserved" size="small" type="warning" class="am-reserved">
+                {{ t('tags.reserved') }}
+              </el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column prop="description" :label="t('tags.colDescription')" min-width="150" show-overflow-tooltip>
@@ -52,12 +57,21 @@
         </el-table-column>
         <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
           <template #default="{ row }">
-            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
-              <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row)" />
-            </el-tooltip>
-            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
-              <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="openDelete(row)" />
-            </el-tooltip>
+            <!-- Reserved tags can be neither renamed nor deleted server-side; hide the dead controls -->
+            <template v-if="!row.reserved">
+              <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+                <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row)" />
+              </el-tooltip>
+              <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
+                <el-button
+                  link
+                  type="danger"
+                  :icon="Delete"
+                  :aria-label="t('common.delete')"
+                  @click="openDelete(row)"
+                />
+              </el-tooltip>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -233,6 +247,9 @@ defineExpose({
 .am-tag-filter {
   margin-bottom: 12px;
   width: 100%;
+}
+.am-reserved {
+  margin-left: 6px;
 }
 .delete-body {
   display: flex;

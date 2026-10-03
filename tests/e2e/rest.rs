@@ -30,7 +30,18 @@ fn rest_api_end_to_end() {
 
     let (status, body, _) = request(port, "GET", "/api/tags", None);
     assert_eq!(status, 200);
-    assert_eq!(json_body(&body)["tags"].as_array().unwrap().len(), 2);
+    // 2 created + the reserved tag, which tag_list always surfaces (synthesized placeholder)
+    let listed = json_body(&body);
+    assert_eq!(listed["tags"].as_array().unwrap().len(), 3);
+    assert_eq!(listed["total_tags"], 3);
+    let conv = listed["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "conventions")
+        .expect("reserved tag listed");
+    assert_eq!(conv["reserved"], true);
+    assert_eq!(conv["memory_count"], 0);
 
     // Tag regex filter: match / no match / invalid regex -> 400
     let (status, body, _) = request(port, "GET", "/api/tags?filter=%5E%E9%A1%B9", None);

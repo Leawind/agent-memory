@@ -24,6 +24,9 @@ pub const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 /// renamed or deleted. Attaching it to / detaching it from memories requires the admin capability
 /// (guarded centrally in `tools::execute`).
 pub const RESERVED_TAG: &str = "conventions";
+/// Description reported for the reserved tag when it is listed before anyone created it
+/// (the synthesized `tag_list` row); once created, the tag's own description wins.
+pub const RESERVED_TAG_DESCRIPTION: &str = "Reserved tag: anchors the operator-curated resident conventions (exposed as memory:// resources). It cannot be renamed or deleted, and attaching it to memories requires the 'admin' permission.";
 
 #[derive(Clone, Debug)]
 pub struct Memory {

@@ -17,7 +17,10 @@ export interface TagView {
   description: string
   memory_count: number
   last_used_at: number | null
-  created_at: number
+  /** Null for the synthesized reserved-tag row (the tag does not exist in the store yet) */
+  created_at: number | null
+  /** Reserved tags (conventions) can be neither renamed nor deleted; the panel hides those actions */
+  reserved: boolean
 }
 
 export interface TagListResp {

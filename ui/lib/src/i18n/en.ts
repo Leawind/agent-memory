@@ -45,6 +45,9 @@ export default {
     colMemoryCount: 'Memories',
     colLastUsed: 'Last used',
     colCreatedAt: 'Created',
+    reserved: 'Reserved',
+    reservedHint:
+      'Reserved tag: anchors the operator-curated resident conventions. It can be neither renamed nor deleted; attaching it to memories requires the admin permission',
     editTitle: 'Edit Tag',
     createTitle: 'New Tag',
     nameLabel: 'Name (unique, ≤100 characters; renaming updates every memory referencing it)',

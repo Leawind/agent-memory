@@ -250,12 +250,15 @@ fn row_to_tag_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let count: i64 = r.get(2)?;
     let last: Option<i64> = r.get(3)?;
     let created: i64 = r.get(4)?;
+    let name: String = r.get(0)?;
+    let reserved = name == crate::model::RESERVED_TAG;
     Ok(json!({
-        "name": r.get::<_, String>(0)?,
+        "name": name,
         "description": r.get::<_, String>(1)?,
         "memory_count": count,
         "last_used_at": last.map(|t| json!(t)).unwrap_or(Value::Null),
         "created_at": created,
+        "reserved": reserved,
     }))
 }
 

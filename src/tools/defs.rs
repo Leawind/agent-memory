@@ -39,7 +39,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "tag_list",
-            "List tags with descriptions, memory counts, creation and last-used timestamps (epoch seconds, UTC; name filterable by regex). Start here when exploring the memory store.",
+            "List tags with descriptions, memory counts, creation and last-used timestamps (epoch seconds, UTC; name filterable by regex). Each row carries reserved: true for reserved tags - 'conventions' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {

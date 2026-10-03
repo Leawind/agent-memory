@@ -444,10 +444,12 @@ mod tests {
         assert_eq!(upd["name"], "lang");
         let tl = call(&path, "tag_list", json!({})).unwrap();
         let tags = tl["tags"].as_array().unwrap();
-        assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0]["name"], "lang");
-        assert_eq!(tags[0]["memory_count"], 1);
-        assert_eq!(tags[0]["description"], "Programming languages");
+        let lang = tags
+            .iter()
+            .find(|t| t["name"] == "lang")
+            .expect("renamed tag listed");
+        assert_eq!(lang["memory_count"], 1);
+        assert_eq!(lang["description"], "Programming languages");
 
         // detach only removes the tag
         call(
@@ -682,9 +684,9 @@ mod tests {
         let second = call(&path, "tag_create", json!({"name": "Rust"})).unwrap();
         assert_eq!(second["similar_existing"], "rust");
         assert!(second["note"].as_str().unwrap().contains("tag_update"));
-        // Non-blocking: both tags created successfully
+        // Non-blocking: both tags created successfully (plus the synthesized reserved row)
         let tl = call(&path, "tag_list", json!({})).unwrap();
-        assert_eq!(tl["tags"].as_array().unwrap().len(), 2);
+        assert_eq!(tl["tags"].as_array().unwrap().len(), 3);
 
         cleanup(&path);
     }
@@ -783,7 +785,8 @@ mod tests {
         assert!(err.to_string().contains("'create'"), "got: {err}");
         assert!(call_as(&path, &read_caps, "tag_create", json!({"name": "t"})).is_err());
         // Forbidden must happen before any side effect: the database should have no new tag
-        assert!(call(&path, "tag_list", json!({})).unwrap()["total_tags"] == 0);
+        // (total_tags is 1: the always-listed reserved placeholder, created by nobody)
+        assert!(call(&path, "tag_list", json!({})).unwrap()["total_tags"] == 1);
 
         // create without delete: can write, cannot delete
         call_as(
@@ -848,8 +851,9 @@ mod tests {
             err.to_string().starts_with("attaching the reserved tag"),
             "got: {err}"
         );
-        // Forbidden happens before any side effect: no tag, no memory
-        assert_eq!(call(&path, "tag_list", json!({})).unwrap()["total_tags"], 0);
+        // Forbidden happens before any side effect: no tag, no memory (the one row is the
+        // always-listed reserved placeholder, not a side effect)
+        assert_eq!(call(&path, "tag_list", json!({})).unwrap()["total_tags"], 1);
 
         // Renaming/deleting the reserved tag is refused outright — even to a full admin
         let admin_caps = Cap::ALL;
@@ -917,6 +921,56 @@ mod tests {
         .unwrap();
         assert_eq!(ok["updated"], true);
         assert_eq!(ok["memory"]["tags"], json!(["notes"]), "admin detach works");
+
+        cleanup(&path);
+    }
+
+    /// The reserved tag is discoverable through tag_list: flagged on its real row, and synthesized
+    /// (zero memories, builtin description) before anyone created it — discoverability must not
+    /// depend on having first crashed into a guard error.
+    #[test]
+    fn tag_list_always_surfaces_the_reserved_tag() {
+        use crate::model::RESERVED_TAG;
+        let path = temp_db("reserved-listed");
+
+        let listed = call(&path, "tag_list", json!({})).unwrap();
+        let rows = listed["tags"].as_array().unwrap();
+        assert_eq!(listed["total_tags"], 1, "only the synthesized reserved row");
+        assert_eq!(rows[0]["name"], RESERVED_TAG);
+        assert_eq!(rows[0]["reserved"], true);
+        assert_eq!(rows[0]["memory_count"], 0);
+        assert!(
+            rows[0]["description"].as_str().unwrap().contains("Reserved"),
+            "synthesized row carries the builtin description"
+        );
+
+        // The regex filter applies to the synthesized row like any other name
+        let filtered = call(&path, "tag_list", json!({"filter": "^conv"})).unwrap();
+        assert_eq!(filtered["total_tags"], 1);
+        let filtered = call(&path, "tag_list", json!({"filter": "^nomatch"})).unwrap();
+        assert_eq!(filtered["total_tags"], 0);
+
+        // Once created, the real row replaces the placeholder (admin creates conventions + one other)
+        let admin_caps = Cap::ALL;
+        call_as(
+            &path,
+            &admin_caps,
+            "tag_create",
+            json!({"name": RESERVED_TAG, "description": "house rules"}),
+        )
+        .unwrap();
+        call_as(&path, &admin_caps, "tag_create", json!({"name": "rust"})).unwrap();
+        let listed = call(&path, "tag_list", json!({})).unwrap();
+        let rows = listed["tags"].as_array().unwrap();
+        assert_eq!(listed["total_tags"], 2);
+        let conv = rows
+            .iter()
+            .find(|t| t["name"] == RESERVED_TAG)
+            .expect("conventions listed");
+        assert_eq!(conv["reserved"], true);
+        assert_eq!(conv["description"], "house rules", "real description wins");
+        let other = rows.iter().find(|t| t["name"] == "rust").unwrap();
+        assert_eq!(other["reserved"], false);
 
         cleanup(&path);
     }
