@@ -212,11 +212,10 @@ impl Store {
             let mut unknown: Vec<String> = Vec::new();
             for n in names {
                 if !self.tag_exists(n)? {
-                    let mut entry = format!("'{n}'");
-                    if let Some(similar) = self.find_tag_case_insensitive(n)? {
-                        entry.push_str(&format!(" (did you mean '{similar}'?)"));
+                    match self.find_tag_case_insensitive(n)? {
+                        Some(similar) => unknown.push(format!("'{n}' (did you mean '{similar}'?)")),
+                        None => unknown.push(format!("'{n}'")),
                     }
-                    unknown.push(entry);
                 }
             }
             if !unknown.is_empty() {

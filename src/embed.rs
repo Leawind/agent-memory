@@ -231,6 +231,60 @@ pub fn after_write(db_path: &Path) {
     }
 }
 
+/// Cosine similarity at which a stored memory counts as a near-duplicate of a freshly created one.
+/// Advisory threshold: false positives cost a harmless hint, misses cost nothing (the exact-summary
+/// duplicate_of check runs regardless).
+pub const DEDUP_SIMILARITY: f32 = 0.90;
+
+/// After a memory_create commits and its vector was backfilled, scan stored embeddings for
+/// near-duplicates of the new memory and attach them as `similar_to` hints on the tool result —
+/// closing the loop the way `duplicate_of` does for exact summaries, but for paraphrases. Pure
+/// fallback semantics: no configuration, no vector yet (service down), or any read failure leaves
+/// the result untouched, because the hint is a companion to the write, never a gate on it.
+pub fn dedup_hint(db_path: &Path, result: &mut Value) {
+    let Some(id_str) = result["memory"]["id"].as_str() else {
+        return;
+    };
+    let Some(id) = Store::parse_id(id_str) else {
+        return;
+    };
+    let run = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+        let Some(cfg) = st.embedding_config()? else {
+            return Ok(Vec::new());
+        };
+        let table = st.embeddings_active(&cfg.model)?;
+        let Some(mine) = table.get(&id) else {
+            return Ok(Vec::new());
+        };
+        let mut hits: Vec<(i64, f32)> = table
+            .iter()
+            .filter(|(other, _)| **other != id)
+            .map(|(other, vec)| (*other, cosine(mine, vec)))
+            .filter(|(_, s)| *s >= DEDUP_SIMILARITY)
+            .collect();
+        hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let hits = hits
+            .into_iter()
+            .take(5)
+            .map(|(other, s)| {
+                json!({
+                    "id": Store::format_id(other),
+                    // Rounded: the third decimal is noise at hint precision
+                    "similarity": (s * 1000.0).round() / 1000.0,
+                })
+            })
+            .collect();
+        Ok::<_, String>(hits)
+    });
+    match run {
+        Ok(hits) if !hits.is_empty() => {
+            result["similar_to"] = Value::Array(hits);
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("semantic duplicate hint skipped: {e}"),
+    }
+}
+
 /// RRF fusion ranking over keyword + vector recall.
 ///
 /// Each channel contributes `1/(K+rank)` by rank, which naturally sidesteps the incomparable units of "keyword TF scores"
@@ -433,5 +487,57 @@ mod tests {
             vec![1, 0, 2],
             "b, ranked on both channels, should beat a, the keyword-only leader"
         );
+    }
+
+    /// The create-time dedup hint: near-identical vectors above the threshold land in similar_to
+    /// (newest hit first, self excluded); unrelated or missing vectors leave the result untouched,
+    /// and so does missing configuration — the hint is a companion, never a gate.
+    #[test]
+    fn dedup_hint_flags_near_duplicates_only() {
+        use crate::store::test_support::{cleanup, temp_db};
+
+        let path = temp_db("dedup-hint");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        // Configure semantic search (the hint reads the same settings the search path does)
+        st.settings_put(Store::SETTING_EMBEDDING_ENABLED, "true")
+            .unwrap();
+        st.settings_put(Store::SETTING_EMBEDDING_BASE_URL, "http://127.0.0.1:9")
+            .unwrap();
+        st.settings_put(Store::SETTING_EMBEDDING_MODEL, "test-model")
+            .unwrap();
+
+        // m2 is a near-duplicate of m1 (similarity 1), m3 is unrelated
+        st.insert_memory("a", "body a", &[], 1, 1).unwrap();
+        st.insert_memory("b", "body b", &[], 1, 1).unwrap();
+        st.insert_memory("c", "body c", &[], 1, 1).unwrap();
+        st.embedding_put(1, "test-model", &[1.0, 0.0]).unwrap();
+        st.embedding_put(2, "test-model", &[0.999, 0.045]).unwrap();
+        st.embedding_put(3, "test-model", &[0.0, 1.0]).unwrap();
+
+        let mut result = serde_json::json!({"memory": {"id": "m1"}});
+        dedup_hint(&path, &mut result);
+        let hits = result["similar_to"].as_array().expect("hint attached");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["id"], "m2");
+        assert!(hits[0]["similarity"].as_f64().unwrap() >= DEDUP_SIMILARITY as f64);
+
+        // No vector for the created memory yet (service was down): silent no-op
+        let mut result = serde_json::json!({"memory": {"id": "m9"}});
+        dedup_hint(&path, &mut result);
+        assert!(result.get("similar_to").is_none());
+
+        // No configuration at all: silent no-op
+        let path2 = temp_db("dedup-hint-noconf");
+        cleanup(&path2);
+        let st2 = Store::open(&path2).unwrap();
+        st2.insert_memory("a", "body", &[], 1, 1).unwrap();
+        st2.embedding_put(1, "test-model", &[1.0]).unwrap();
+        let mut result = serde_json::json!({"memory": {"id": "m1"}});
+        dedup_hint(&path2, &mut result);
+        assert!(result.get("similar_to").is_none());
+
+        cleanup(&path);
+        cleanup(&path2);
     }
 }

@@ -90,11 +90,15 @@ pub fn execute_with_db(
     };
     // The notification diff needs the state before the write (outside any transaction).
     let pre = crate::notify::capture(db_path, name, args);
-    let out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
+    let mut out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
     // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
+    // A successful create then gets a semantic near-duplicate scan attached to its result (advisory, fallback-safe).
     if name == "memory_create" || name == "memory_update" {
         crate::embed::after_write(db_path);
+        if name == "memory_create" {
+            crate::embed::dedup_hint(db_path, &mut out);
+        }
     }
     crate::notify::after_write(name, args, &out, &pre);
     Ok(out)
