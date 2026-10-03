@@ -75,6 +75,14 @@ pub fn opt_u64(args: &Map<String, Value>, key: &str) -> Result<Option<u64>, Stri
     }
 }
 
+pub fn opt_bool(args: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(format!("parameter '{key}' must be a boolean")),
+    }
+}
+
 pub fn validate_summary(s: &str) -> Result<String, String> {
     let t = s.trim();
     if t.is_empty() {

@@ -124,6 +124,7 @@ async function save() {
         content: form.value.content,
         add_tags: [...after].filter((t) => !before.has(t)),
         remove_tags: [...before].filter((t) => !after.has(t)),
+        create_missing_tags: true,
       })
       toastSuccess(t('editor.updated'))
     } else {
@@ -131,6 +132,7 @@ async function save() {
         summary: form.value.summary,
         content: form.value.content,
         tags: form.value.tags,
+        create_missing_tags: true,
       })
       toastSuccess(t('editor.created'))
     }

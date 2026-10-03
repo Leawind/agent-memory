@@ -4,7 +4,7 @@ use crate::model::{normalize_id, normalize_tag_name, now};
 use crate::search;
 use crate::store::Store;
 use crate::tools::params::{
-    normalize_tag_list, opt_regex, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
+    normalize_tag_list, opt_bool, opt_regex, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
     validate_content, validate_summary,
 };
 use crate::tools::ToolError;
@@ -15,8 +15,11 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let content = validate_content(&req_str(args, "content")?)?;
     let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
     let tags = normalize_tag_list(&raw_tags)?;
+    // Default off: unknown tags are an error listing similar existing ones, keeping the taxonomy
+    // from rotting through casual tagging; the agent opts into auto-creation explicitly.
+    let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
 
-    let linkage = st.link_tags(&tags)?;
+    let linkage = st.link_tags(&tags, create_missing)?;
 
     // Duplicate detection (deterministic rule: titles exactly equal after normalization). Computed before insertion so the memory cannot match itself.
     // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
@@ -286,6 +289,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(l) => Some(normalize_tag_list(&l)?),
         None => None,
     };
+    let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
     if summary.is_none() && content.is_none() && add_tags.is_none() && remove_tags.is_none() {
         return Err(ToolError::invalid(
             "nothing to update: provide summary, content, add_tags and/or remove_tags",
@@ -296,7 +300,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let mut linkage_opt = None;
     let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(add) = &add_tags {
-        linkage_opt = Some(st.link_tags(add)?);
+        linkage_opt = Some(st.link_tags(add, create_missing)?);
     }
     if let Some(remove) = &remove_tags {
         remove_ids = st.tag_ids_for_names(remove)?;

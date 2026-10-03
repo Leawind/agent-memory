@@ -16,7 +16,9 @@ fn two_server_processes_share_one_db() {
         a.port,
         "POST",
         "/api/memories",
-        Some(r#"{"summary": "written by A", "content": "a", "tags": ["share"]}"#),
+        Some(
+            r#"{"summary": "written by A", "content": "a", "tags": ["share"], "create_missing_tags": true}"#,
+        ),
     );
     assert_eq!(status, 200);
     let (status, body, _) = request(b.port, "GET", "/api/memories?query=written", None);

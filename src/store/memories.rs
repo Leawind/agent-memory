@@ -290,7 +290,7 @@ mod tests {
     /// Test helper: link tags by name and insert a memory (the production path resolves ids in the handler).
     fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
         let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        let ids = st.link_tags(&names).unwrap().ids;
+        let ids = st.link_tags(&names, true).unwrap().ids;
         st.insert_memory(summary, content, &ids, at, at).unwrap()
     }
 
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(all[0].tags, vec!["notes".to_string(), "rust".to_string()]);
 
         // Update: change fields + add/remove tags (name → id resolution goes through the same path as the handler)
-        let add = st.link_tags(&["study".into()]).unwrap();
+        let add = st.link_tags(&["study".into()], true).unwrap();
         let remove = st.tag_ids_for_names(&["notes".into()]).unwrap();
         let changed = st
             .update_memory(id, Some("new summary"), None, &add.ids, &remove)
@@ -414,7 +414,7 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         let id = insert_with_tags(&st, "s", "c", &["a"], 1);
-        let add = st.link_tags(&["a".into(), "b".into()]).unwrap();
+        let add = st.link_tags(&["a".into(), "b".into()], true).unwrap();
         let remove = st.tag_ids_for_names(&["a".into()]).unwrap();
         st.update_memory(id, None, None, &add.ids, &remove).unwrap();
         let (found, _) = st.get_memories(&[id]).unwrap();

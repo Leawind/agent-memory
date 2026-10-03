@@ -45,7 +45,7 @@ fn subscriptions_end_to_end() {
         port,
         json!(1),
         "tools/call",
-        json!({"name": "memory_create", "arguments": {"summary": "seed", "content": "c", "tags": ["seed-tag"]}}),
+        json!({"name": "memory_create", "arguments": {"summary": "seed", "content": "c", "tags": ["seed-tag"], "create_missing_tags": true}}),
         &[],
     );
     assert_eq!(resp["result"]["isError"], json!(null), "{resp}");
@@ -109,7 +109,7 @@ fn subscriptions_end_to_end() {
         port,
         json!(3),
         "tools/call",
-        json!({"name": "memory_create", "arguments": {"summary": "note", "content": "body", "tags": ["watched"]}}),
+        json!({"name": "memory_create", "arguments": {"summary": "note", "content": "body", "tags": ["watched"], "create_missing_tags": true}}),
         &[],
     );
     assert_eq!(resp["result"]["isError"], json!(null), "{resp}");

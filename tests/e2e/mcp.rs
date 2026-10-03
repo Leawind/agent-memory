@@ -87,7 +87,7 @@ fn mcp_endpoint_end_to_end() {
             "name": "memory_create", "arguments": {
                 "summary": "项目使用 Rust 实现 agent 记忆系统",
                 "content": "仓库位于 D:\\Workspace，SQLite 做持久化，搜索无需分词。",
-                "tags": ["项目", "rust"]
+                "tags": ["项目", "rust"], "create_missing_tags": true
             }
         }),
     );

@@ -406,7 +406,7 @@ mod tests {
         store::with_db_in(path, TxMode::Write, |st| -> Result<(), String> {
             st.tag_create("rust", "Rust language")?;
             st.tag_create("项目", "")?;
-            let rust_ids = st.link_tags(&["rust".into()])?.ids;
+            let rust_ids = st.link_tags(&["rust".into()], true)?.ids;
             st.insert_memory(
                 "Borrow checker",
                 "The borrow checker forbids aliasing + mutation.",
@@ -414,7 +414,7 @@ mod tests {
                 10,
                 20,
             )?;
-            let conv_ids = st.link_tags(&[CONVENTIONS_TAG.into()])?.ids;
+            let conv_ids = st.link_tags(&[CONVENTIONS_TAG.into()], true)?.ids;
             st.insert_memory(
                 "Commit rules",
                 "Summary in one line; tags lowercase.",
@@ -568,7 +568,7 @@ mod tests {
 
         // Page size honored: seed more conventions memories than one page holds
         store::with_db_in(&path, TxMode::Write, |st| -> Result<(), String> {
-            let ids = st.link_tags(&[CONVENTIONS_TAG.into()])?.ids;
+            let ids = st.link_tags(&[CONVENTIONS_TAG.into()], true)?.ids;
             for i in 0..60 {
                 st.insert_memory(&format!("conv {i}"), "body", &ids, i as u64, i as u64)?;
             }

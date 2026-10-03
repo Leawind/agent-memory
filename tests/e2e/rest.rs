@@ -74,7 +74,7 @@ fn rest_api_end_to_end() {
         "POST",
         "/api/memories",
         Some(
-            r#"{"summary": "用户偏好深色主题", "content": "2026-09 确认", "tags": ["项目A", "偏好"]}"#,
+            r#"{"summary": "用户偏好深色主题", "content": "2026-09 确认", "tags": ["项目A", "偏好"], "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -132,7 +132,9 @@ fn rest_api_end_to_end() {
         port,
         "PUT",
         &format!("/api/memories/{mem_id}"),
-        Some(r#"{"summary": "用户偏好浅色主题", "remove_tags": ["偏好"], "add_tags": ["外观"]}"#),
+        Some(
+            r#"{"summary": "用户偏好浅色主题", "remove_tags": ["偏好"], "add_tags": ["外观"], "create_missing_tags": true}"#,
+        ),
     );
     assert_eq!(status, 200);
 
@@ -181,7 +183,9 @@ fn rest_api_end_to_end() {
         port,
         "POST",
         "/api/memories",
-        Some(r#"{"summary": "临时记忆", "content": "x", "tags": ["临时"]}"#),
+        Some(
+            r#"{"summary": "临时记忆", "content": "x", "tags": ["临时"], "create_missing_tags": true}"#,
+        ),
     );
     assert_eq!(status, 200);
     let (status, body, _) = request(

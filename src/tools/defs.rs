@@ -80,13 +80,14 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_create",
-            "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the full text revealed on demand (level 2). Unknown tags are auto-created. The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update). If existing memories have the same summary they are listed in duplicate_of - prefer memory_update on those instead of storing again.",
+            "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the full text revealed on demand (level 2). Tags must exist: unknown names are rejected with the closest existing tags listed - create them explicitly with tag_create, reuse the listed names, or pass create_missing_tags: true to auto-create them empty (keeping the taxonomy tidy is your job; case variants and synonyms rot it). The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update). If existing memories have the same summary they are listed in duplicate_of - prefer memory_update on those instead of storing again.",
             json!({
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Full text of the memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory."}
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description."}
                 },
                 "required": ["summary", "content"],
                 "additionalProperties": false
@@ -143,15 +144,16 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_update",
-            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Touching a memory refreshes its updated_at. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
+            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Touching a memory refreshes its updated_at. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
             json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content. Markdown is recommended."},
-                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append (auto-created if unknown). Applied before remove_tags, so a tag present in both lists ends up removed."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."}
+                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
                 "additionalProperties": false

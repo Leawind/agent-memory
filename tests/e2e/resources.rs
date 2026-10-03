@@ -12,7 +12,7 @@ fn create_memory(port: u16, summary: &str, content: &str, tags: &[&str]) -> Stri
         json!(1),
         "tools/call",
         json!({"name": "memory_create", "arguments": {
-            "summary": summary, "content": content, "tags": tags
+            "summary": summary, "content": content, "tags": tags, "create_missing_tags": true
         }}),
         &[],
     );
@@ -244,7 +244,7 @@ fn create_memory_with(port: u16, summary: &str, content: &str, tags: &[&str], au
         json!(1),
         "tools/call",
         json!({"name": "memory_create", "arguments": {
-            "summary": summary, "content": content, "tags": tags
+            "summary": summary, "content": content, "tags": tags, "create_missing_tags": true
         }}),
         &[("Authorization", auth)],
     );

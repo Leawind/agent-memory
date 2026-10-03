@@ -53,7 +53,7 @@ mod tests {
         let path = temp_db("tx");
         cleanup(&path);
         let r: Result<(), String> = with_db_in(&path, TxMode::Write, |st| {
-            let ids = st.link_tags(&["t".into()])?.ids;
+            let ids = st.link_tags(&["t".into()], true)?.ids;
             st.insert_memory("s", "c", &ids, 1, 1)?;
             Err("boom".into())
         });

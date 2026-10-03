@@ -271,7 +271,8 @@ mod tests {
             json!({
                 "summary": "Rust borrow checker notes",
                 "content": "The borrow checker forbids simultaneous aliasing and mutation.",
-                "tags": ["rust", "notes"]
+                "tags": ["rust", "notes"],
+                "create_missing_tags": true
             }),
         )
         .unwrap();
@@ -311,7 +312,7 @@ mod tests {
         let upd = call(
             &path,
             "memory_update",
-            json!({"id": id, "add_tags": ["study"], "remove_tags": ["notes"]}),
+            json!({"id": id, "add_tags": ["study"], "remove_tags": ["notes"], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(upd["memory"]["tags"].as_array().unwrap().len(), 2);
@@ -355,7 +356,7 @@ mod tests {
         let first = call(
             &path,
             "memory_create",
-            json!({"summary": "a", "content": "ca", "tags": ["described", "fresh"]}),
+            json!({"summary": "a", "content": "ca", "tags": ["described", "fresh"], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(first["tags_autocreated"], json!(["fresh"]));
@@ -366,7 +367,7 @@ mod tests {
         let second = call(
             &path,
             "memory_create",
-            json!({"summary": "b", "content": "cb", "tags": ["described", "fresh"]}),
+            json!({"summary": "b", "content": "cb", "tags": ["described", "fresh"], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(second["tags_autocreated"], json!([]));
@@ -471,19 +472,19 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "a", "content": "ca", "tags": ["x"]}),
+            json!({"summary": "a", "content": "ca", "tags": ["x"], "create_missing_tags": true}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "b", "content": "cb", "tags": ["x", "keep"]}),
+            json!({"summary": "b", "content": "cb", "tags": ["x", "keep"], "create_missing_tags": true}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "c", "content": "cc", "tags": ["keep"]}),
+            json!({"summary": "c", "content": "cc", "tags": ["keep"], "create_missing_tags": true}),
         )
         .unwrap();
 
@@ -697,7 +698,7 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "s", "content": "c", "tags": ["rust"]}),
+            json!({"summary": "s", "content": "c", "tags": ["rust"], "create_missing_tags": true}),
         )
         .unwrap();
 
@@ -916,7 +917,7 @@ mod tests {
             &path,
             &admin_caps,
             "memory_update",
-            json!({"id": id, "add_tags": ["notes"], "remove_tags": [RESERVED_TAG]}),
+            json!({"id": id, "add_tags": ["notes"], "remove_tags": [RESERVED_TAG], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(ok["updated"], true);
@@ -940,7 +941,10 @@ mod tests {
         assert_eq!(rows[0]["reserved"], true);
         assert_eq!(rows[0]["memory_count"], 0);
         assert!(
-            rows[0]["description"].as_str().unwrap().contains("Reserved"),
+            rows[0]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Reserved"),
             "synthesized row carries the builtin description"
         );
 
@@ -971,6 +975,71 @@ mod tests {
         assert_eq!(conv["description"], "house rules", "real description wins");
         let other = rows.iter().find(|t| t["name"] == "rust").unwrap();
         assert_eq!(other["reserved"], false);
+
+        cleanup(&path);
+    }
+
+    /// Default-off auto-creation: unknown tags are rejected with the closest existing tags listed,
+    /// so agents cannot fragment the taxonomy by casual tagging (case variants, plurals). The
+    /// opt-in flag keeps the auto-create path available when it really is wanted.
+    #[test]
+    fn unknown_tags_rejected_unless_creation_is_explicit() {
+        let path = temp_db("unknown-tags");
+        call(&path, "tag_create", json!({"name": "meta"})).unwrap();
+
+        // Unknown tag without the flag: rejected, the existing case variant is suggested
+        let err = call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": "c", "tags": ["META"]}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Invalid(_)), "got: {err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("unknown tags: 'META'"), "got: {msg}");
+        assert!(msg.contains("did you mean 'meta'"), "got: {msg}");
+        assert!(
+            msg.contains("tag_create") && msg.contains("create_missing_tags"),
+            "got: {msg}"
+        );
+        // Nothing was created by the failed call
+        assert_eq!(call(&path, "tag_list", json!({})).unwrap()["total_tags"], 2);
+
+        // The same call with the flag opts into auto-creation
+        let ok = call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": "c", "tags": ["META"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        assert_eq!(ok["tags_autocreated"], json!(["META"]));
+
+        // memory_update's add_tags path follows the same rule
+        let err = call(
+            &path,
+            "memory_update",
+            json!({"id": "m1", "add_tags": ["totally-new"]}),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("unknown tags: 'totally-new'"),
+            "got: {err}"
+        );
+        let ok = call(
+            &path,
+            "memory_update",
+            json!({"id": "m1", "add_tags": ["totally-new"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        assert_eq!(ok["tags_autocreated"], json!(["totally-new"]));
+
+        // Existing tags never need the flag
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s2", "content": "c2", "tags": ["meta"]}),
+        )
+        .unwrap();
 
         cleanup(&path);
     }

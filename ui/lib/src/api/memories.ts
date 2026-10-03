@@ -7,6 +7,8 @@ export interface MemoryCreateInput {
   summary: string
   content: string
   tags: string[]
+  /** The panel's tag select is allow-create: names the user typed are deliberate, so auto-create them */
+  create_missing_tags?: boolean
 }
 
 /** Input for editing a memory: tags are expressed as add/remove sets (server convention add_tags / remove_tags) */
@@ -15,6 +17,8 @@ export interface MemoryUpdateInput {
   content?: string
   add_tags?: string[]
   remove_tags?: string[]
+  /** Same semantics as in MemoryCreateInput */
+  create_missing_tags?: boolean
 }
 
 export function getMemory(client: ApiClient, id: string): Promise<MemoryFull> {

@@ -192,11 +192,35 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// Ensure the tags exist (auto-created with empty descriptions), resolve internal ids, and return the per-name
-    /// link info: `ids` corresponds one-to-one with the input names; `autocreated` holds tags created this time,
-    /// `reused` the already-existing ones, and `missing_description` the reused tags with an empty description
-    /// (usually left over from earlier auto-creation — left to the caller whether to remind about filling them in).
-    pub fn link_tags(&self, names: &[String]) -> Result<TagLinkage, String> {
+    /// Resolve tag names to linkable tags. With `create_missing` the missing names are auto-created
+    /// (empty description) and classified into `autocreated` / `reused` / `missing_description`;
+    /// without it, unknown names are an error that names each one and any case-variant already in
+    /// the store — the agent decides between reusing, an explicit tag_create, or opting into
+    /// auto-creation, so the taxonomy cannot rot through casual tagging.
+    ///
+    /// `ids` corresponds one-to-one with the input names; `autocreated` holds tags created this
+    /// time, `reused` the already-existing ones, and `missing_description` the reused tags with an
+    /// empty description (usually left over from earlier auto-creation — left to the caller whether
+    /// to remind about filling them in).
+    pub fn link_tags(&self, names: &[String], create_missing: bool) -> Result<TagLinkage, String> {
+        if !create_missing {
+            let mut unknown: Vec<String> = Vec::new();
+            for n in names {
+                if !self.tag_exists(n)? {
+                    let mut entry = format!("'{n}'");
+                    if let Some(similar) = self.find_tag_case_insensitive(n)? {
+                        entry.push_str(&format!(" (did you mean '{similar}'?)"));
+                    }
+                    unknown.push(entry);
+                }
+            }
+            if !unknown.is_empty() {
+                return Err(format!(
+                    "unknown tags: {}; create them explicitly with tag_create, reuse the existing names, or pass create_missing_tags: true to auto-create them empty",
+                    unknown.join(", ")
+                ));
+            }
+        }
         let mut out = TagLinkage {
             ids: Vec::with_capacity(names.len()),
             autocreated: Vec::new(),
@@ -270,7 +294,7 @@ mod tests {
     /// Test helper: link tags by name and insert a memory (the production path resolves ids in the handler).
     fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
         let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        let ids = st.link_tags(&names).unwrap().ids;
+        let ids = st.link_tags(&names, true).unwrap().ids;
         st.insert_memory(summary, content, &ids, at, at).unwrap()
     }
 
@@ -282,14 +306,18 @@ mod tests {
         let st = Store::open(&path).unwrap();
         st.tag_create("described", "has description").unwrap();
 
-        let first = st.link_tags(&["described".into(), "fresh".into()]).unwrap();
+        let first = st
+            .link_tags(&["described".into(), "fresh".into()], true)
+            .unwrap();
         assert_eq!(first.autocreated, vec!["fresh".to_string()]);
         assert_eq!(first.reused, vec!["described".to_string()]);
         assert!(first.missing_description.is_empty());
         assert_eq!(first.ids.len(), 2);
 
         // Second call reuses everything; fresh, auto-created earlier with an empty description → lands in missing_description
-        let second = st.link_tags(&["described".into(), "fresh".into()]).unwrap();
+        let second = st
+            .link_tags(&["described".into(), "fresh".into()], true)
+            .unwrap();
         assert!(second.autocreated.is_empty());
         assert_eq!(
             second.reused,

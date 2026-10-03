@@ -441,7 +441,7 @@ mod tests {
 
         // With foreign keys off, inject orphan references, reverse orphans, case conflicts and an empty title
         st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
-        let rust_id = st.link_tags(&["rust".into()]).unwrap().ids[0];
+        let rust_id = st.link_tags(&["rust".into()], true).unwrap().ids[0];
         // Orphan reference: a link row pointing at nonexistent tag id 999
         st.conn
             .execute(
@@ -486,7 +486,7 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         st.tag_create("t", "desc").unwrap();
-        let ids = st.link_tags(&["t".into()]).unwrap().ids;
+        let ids = st.link_tags(&["t".into()], true).unwrap().ids;
         st.insert_memory("s", "body", &ids, 1, 1).unwrap();
         let dump = st.export_dump().unwrap();
 
@@ -524,7 +524,7 @@ mod tests {
         let dump = {
             let st = Store::open(&src).unwrap();
             st.tag_create("t", "带描述的标签").unwrap();
-            let ids = st.link_tags(&["t".into()]).unwrap().ids;
+            let ids = st.link_tags(&["t".into()], true).unwrap().ids;
             st.insert_memory("s1", "body1", &ids, 100, 200).unwrap();
             st.insert_memory("s2", "body2", &[], 300, 400).unwrap();
             st.export_dump().unwrap()
