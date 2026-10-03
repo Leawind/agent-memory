@@ -83,6 +83,8 @@ async function main(): Promise<void> {
           summary: `soak ${w} ${Date.now()}`,
           content: "soak body",
           tags: ["soak"],
+          // the tag is fixed fixture vocabulary; opt into auto-creation explicitly
+          create_missing_tags: true,
         });
         if (r.status === 200) ops.create++;
         else recordFail("create", r);

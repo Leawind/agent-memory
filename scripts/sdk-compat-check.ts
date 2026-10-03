@@ -183,7 +183,7 @@ try {
   // ---- tools/list: the full inventory plus static caching hints
   const tools = await rpc(2, "tools/list")
   const toolNames = ((tools.result?.tools as { name: string }[] | undefined) ?? []).map((t) => t.name)
-  check("tools/list returns 10 tools", toolNames.length === 10, `got ${toolNames.length}`)
+  check("tools/list returns 11 tools", toolNames.length === 11, `got ${toolNames.length}`)
   check(
     "tools/list is public and cacheable",
     tools.result?.cacheScope === "public" && tools.result?.ttlMs === 3_600_000,
@@ -196,6 +196,8 @@ try {
       summary: "SDK 联调记忆：现代协议客户端可用",
       content: "手写 2026-07-28 客户端连接成功，含 resources 与订阅流。",
       tags: ["sdk", "联调"],
+      // Fixture tags: auto-create deliberately, the default now rejects unknown names
+      create_missing_tags: true,
     },
   })
   check("tools/call memory_create", created.result?.isError !== true, JSON.stringify(created).slice(0, 120))
@@ -209,6 +211,23 @@ try {
     createdId ?? "",
   )
   if (createdId === null) throw new Error("create did not return an id")
+
+  // Unknown tags are rejected by default (with the closest existing names listed); the flag opts in
+  const unknownTag = await rpc(31, "tools/call", {
+    name: "memory_create",
+    arguments: { summary: "tag gate probe", content: "body", tags: ["sdk"] },
+  })
+  check("existing tags need no create_missing_tags", unknownTag.result?.isError !== true)
+  const rejectedTag = await rpc(32, "tools/call", {
+    name: "memory_create",
+    arguments: { summary: "tag gate probe 2", content: "body", tags: ["no-such-tag-xyz"] },
+  })
+  check(
+    "unknown tags rejected unless create_missing_tags",
+    rejectedTag.result?.isError === true &&
+      JSON.stringify(rejectedTag.result).includes("unknown tags"),
+    JSON.stringify(rejectedTag.result).slice(0, 120),
+  )
 
   const searched = await rpc(4, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
   const searchedStructured = structuredOf(searched) as typeof structured
@@ -229,7 +248,7 @@ try {
 
   const updated = await rpc(6, "tools/call", {
     name: "memory_update",
-    arguments: { id: createdId, add_tags: ["验证完成"] },
+    arguments: { id: createdId, add_tags: ["验证完成"], create_missing_tags: true },
   })
   check(
     "memory_update add_tags",
@@ -238,6 +257,55 @@ try {
         | string[]
         | undefined
     )?.includes("验证完成") === true,
+  )
+
+  // ---- Duplicate lifecycle: create a near-duplicate, merge it back, preview a purge
+  const dup = await rpc(33, "tools/call", {
+    name: "memory_create",
+    arguments: { summary: "sdk 联调记忆：现代协议客户端可用", content: "重复内容，等待合并。" },
+  })
+  const dupId =
+    (structuredOf(dup) as { memory?: { id?: string } } | undefined)?.memory?.id ?? null
+  check("near-duplicate stored (duplicate_of is advisory)", dup.result?.isError !== true && typeof dupId === "string")
+  if (dupId !== null) {
+    const merged = await rpc(34, "tools/call", {
+      name: "memory_merge",
+      arguments: { target: createdId, source: dupId },
+    })
+    const mergedStructured = structuredOf(merged) as
+      | { merged?: boolean, removed?: string, memory?: { id?: string, created_at?: number } }
+      | undefined
+    check(
+      "memory_merge keeps the target and removes the source",
+      mergedStructured?.merged === true &&
+        mergedStructured?.removed === dupId &&
+        mergedStructured?.memory?.id === createdId,
+    )
+    const gone = await rpc(35, "tools/call", { name: "memory_get", arguments: { ids: [dupId] } })
+    check(
+      "merged source is gone",
+      ((structuredOf(gone) as { missing?: string[] } | undefined)?.missing ?? []).includes(dupId),
+    )
+  }
+
+  const tagList = await rpc(36, "tools/call", { name: "tag_list", arguments: {} })
+  const conventions = (structuredOf(tagList) as { tags?: { name?: string, reserved?: boolean }[] })
+    ?.tags?.find((t) => t.name === "conventions")
+  check("reserved tag listed with reserved flag", conventions?.reserved === true)
+
+  const purgePreview = await rpc(37, "tools/call", {
+    name: "tag_delete",
+    arguments: { name: "sdk", mode: "purge", dry_run: true },
+  })
+  const preview = structuredOf(purgePreview) as { dry_run?: boolean, memories_affected?: number } | undefined
+  check(
+    "tag_delete dry_run previews without deleting",
+    preview?.dry_run === true && (preview?.memories_affected ?? 0) >= 1,
+  )
+  const stillThere = await rpc(38, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
+  check(
+    "dry_run deleted nothing",
+    (structuredOf(stillThere) as { total_matches?: number } | undefined)?.total_matches !== 0,
   )
 
   // ---- Error channels
@@ -338,7 +406,10 @@ try {
   const tagDoc = JSON.parse(
     (tagRead.result?.contents as { text: string }[] | undefined)?.[0]?.text ?? "{}",
   ) as { name?: string, memories?: { id?: string }[], memory_count?: number }
-  check("tag directory read returns the JSON catalog", tagDoc.name === "sdk" && tagDoc.memory_count === 1)
+  check(
+    "tag directory read returns the JSON catalog",
+    tagDoc.name === "sdk" && (tagDoc.memory_count ?? 0) >= 1,
+  )
   check(
     "tag directory leaks no memory content",
     !("content" in ((tagDoc.memories?.[0] as Record<string, unknown> | undefined) ?? {})),
