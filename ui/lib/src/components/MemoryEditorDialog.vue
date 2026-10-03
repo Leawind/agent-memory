@@ -3,6 +3,9 @@
     :model-value="visible"
     :title="form.id ? t('editor.editTitle') : t('editor.createTitle')"
     :width="width"
+    align-center
+    append-to-body
+    class="memory-editor-dialog"
     @update:model-value="emit('update:visible', $event)"
   >
     <el-form label-position="top">
@@ -13,6 +16,19 @@
           show-word-limit
           :placeholder="t('editor.summaryPlaceholder')"
         />
+      </el-form-item>
+      <el-form-item :label="t('editor.tagsLabel')">
+        <el-select
+          v-model="form.tags"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          :placeholder="t('editor.tagsPlaceholder')"
+          class="tags-select"
+        >
+          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
+        </el-select>
       </el-form-item>
       <el-form-item>
         <template #label>
@@ -31,19 +47,6 @@
           :placeholder="t('editor.contentPlaceholder')"
         />
         <MarkdownView v-else class="content-preview" :source="form.content" />
-      </el-form-item>
-      <el-form-item :label="t('editor.tagsLabel')">
-        <el-select
-          v-model="form.tags"
-          multiple
-          filterable
-          allow-create
-          default-first-option
-          :placeholder="t('editor.tagsPlaceholder')"
-          class="tags-select"
-        >
-          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
-        </el-select>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -81,7 +84,7 @@ const emit = defineEmits<{
 const client = useApiClient()
 
 const saving = ref(false)
-const contentTab = ref<'edit' | 'preview'>('edit')
+const contentTab = ref<'edit' | 'preview'>('preview')
 // Content editor view: edit the source or preview the rendered Markdown
 const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
 // Original tag set while editing, converted to add/remove on save
@@ -91,7 +94,8 @@ watch(
   () => props.visible,
   async (open) => {
     if (!open) return
-    contentTab.value = 'edit'
+    // Editing an existing memory opens rendered; creating starts in the source editor
+    contentTab.value = props.memoryId ? 'preview' : 'edit'
     if (props.memoryId) {
       try {
         const full = await getMemory(client, props.memoryId)
@@ -147,6 +151,9 @@ async function save() {
   align-items: center;
   width: 100%;
 }
+.content-label > :last-child {
+  margin-left: auto;
+}
 .tags-select {
   width: 100%;
 }
@@ -158,5 +165,19 @@ async function save() {
   border-radius: 4px;
   padding: 5px 11px;
   min-height: 260px;
+}
+</style>
+
+<!-- Unscoped: with append-to-body the dialog element lives outside this component tree -->
+<style>
+.memory-editor-dialog {
+  resize: both;
+  overflow: auto;
+  max-width: 95vw;
+  max-height: 90vh;
+}
+.memory-editor-dialog .el-dialog__body {
+  max-height: 65vh;
+  overflow-y: auto;
 }
 </style>
