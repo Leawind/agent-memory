@@ -1,16 +1,17 @@
 <template>
   <el-dialog
     :model-value="visible"
-    :title="form.id ? t('editor.editTitle') : t('editor.createTitle')"
+    :title="memoryId ? t('editor.editTitle') : t('editor.createTitle')"
     :width="width"
     align-center
     append-to-body
     class="memory-editor-dialog"
     @update:model-value="emit('update:visible', $event)"
   >
-    <el-form label-position="top">
+    <el-form v-loading="loading" label-position="top">
       <el-form-item :label="t('editor.summaryLabel')">
         <el-input
+          ref="summaryInput"
           v-model="form.summary"
           maxlength="512"
           show-word-limit
@@ -51,13 +52,16 @@
     </el-form>
     <template #footer>
       <el-button @click="emit('update:visible', false)">{{ t('common.cancel') }}</el-button>
-      <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
+      <el-button type="primary" :loading="saving" :disabled="loading" @click="save">
+        {{ t('common.save') }}
+      </el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
+import type { InputInstance } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, getMemory, updateMemory } from '../api/memories'
@@ -85,6 +89,9 @@ const client = useApiClient()
 
 const saving = ref(false)
 const contentTab = ref<'edit' | 'preview'>('preview')
+const summaryInput = ref<InputInstance | null>(null)
+// Fetching the full memory on open; while true the (still empty) form must not be savable
+const loading = ref(false)
 // Content editor view: edit the source or preview the rendered Markdown
 const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
 // Original tag set while editing, converted to add/remove on save
@@ -96,7 +103,11 @@ watch(
     if (!open) return
     // Editing an existing memory opens rendered; creating starts in the source editor
     contentTab.value = props.memoryId ? 'preview' : 'edit'
+    // Reset optimistically so a slow fetch never shows the previously edited memory's data
+    form.value = { id: null, summary: '', content: '', tags: [] }
+    originalTags = []
     if (props.memoryId) {
+      loading.value = true
       try {
         const full = await getMemory(client, props.memoryId)
         form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
@@ -104,15 +115,19 @@ watch(
       } catch (e: unknown) {
         toastError(e instanceof Error ? e.message : String(e))
         emit('update:visible', false)
+        // Keep loading=true: the dialog is closing and its (empty) form must stay unsavable
+        return
       }
-    } else {
-      form.value = { id: null, summary: '', content: '', tags: [] }
-      originalTags = []
+      loading.value = false
     }
+    // Keyboard entry starts at the first field, once any loading mask is gone
+    await nextTick()
+    summaryInput.value?.focus()
   },
 )
 
 async function save() {
+  if (loading.value) return
   saving.value = true
   try {
     if (form.value.id) {
@@ -179,7 +194,9 @@ async function save() {
   max-height: 90vh;
 }
 .memory-editor-dialog .el-dialog__body {
-  max-height: 65vh;
+  /* At small viewport heights the min() shrinks the body so header and footer stay visible
+     inside the 90vh dialog; at large heights the 65vh cap keeps the dialog from sprawling */
+  max-height: min(65vh, calc(90vh - 150px));
   overflow-y: auto;
 }
 </style>
