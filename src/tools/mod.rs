@@ -134,7 +134,7 @@ pub fn execute(
 /// Checked here at the entry with the identity context at hand, so the MCP face and the REST face
 /// (which reuses tools::execute) enforce identical rules:
 /// - the tag itself can never be renamed or deleted (hard rule, admins included);
-/// - creating it and hanging it on / detaching it from memories requires the admin capability,
+/// - creating it and attaching it to / detaching it from memories requires the admin capability,
 ///   keeping the operator-curated conventions out of agents' reach.
 fn reserved_tag_guard(
     ctx: &IdentityCtx,
@@ -175,7 +175,7 @@ fn reserved_tag_guard(
         "memory_create" => {
             if involves_reserved(args, &["tags"]) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
-                    "hanging the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+                    "attaching the reserved tag '{RESERVED_TAG}' to a memory requires the 'admin' permission (conventions are operator-curated)"
                 )));
             }
         }
@@ -183,7 +183,7 @@ fn reserved_tag_guard(
             if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) =>
         {
             return Err(ToolError::forbidden(format!(
-                "hanging or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+                "attaching or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
             )));
         }
         _ => {}
@@ -818,13 +818,13 @@ mod tests {
     }
 
     /// Reserved-tag rules for 'conventions': the tag itself can never be renamed or deleted
-    /// (admins included); creating it and hanging/detaching it on memories requires admin.
+    /// (admins included); creating it and attaching/detaching it on memories requires admin.
     #[test]
     fn reserved_conventions_tag_is_guarded() {
         use crate::model::RESERVED_TAG;
         let path = temp_db("reserved-tag");
 
-        // An agent without admin cannot create the reserved tag or hang it on memories
+        // An agent without admin cannot create the reserved tag or attach it to memories
         let writer = [
             Cap::Read,
             Cap::Create,
@@ -842,6 +842,12 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        // The attach message says "attaching", not "changing" — the caller referenced the tag on a
+        // new memory, and a change wording would misdescribe the attempted action
+        assert!(
+            err.to_string().starts_with("attaching the reserved tag"),
+            "got: {err}"
+        );
         // Forbidden happens before any side effect: no tag, no memory
         assert_eq!(call(&path, "tag_list", json!({})).unwrap()["total_tags"], 0);
 

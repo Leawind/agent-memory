@@ -21,7 +21,7 @@ pub const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 
 /// The reserved tag marking operator-curated standing rules ("resident conventions"): memories
 /// carrying it are exposed as resources in their own right, and the tag itself can never be
-/// renamed or deleted. Hanging it on / detaching it from memories requires the admin capability
+/// renamed or deleted. Attaching it to / detaching it from memories requires the admin capability
 /// (guarded centrally in `tools::execute`).
 pub const RESERVED_TAG: &str = "conventions";
 
