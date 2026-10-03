@@ -182,12 +182,9 @@ pub(crate) fn serve_stream<W: std::io::Write>(
         Connection: close\r\n\
         \r\n";
     const KEEP_ALIVE_LINE: &[u8] = b": keep-alive\n\n";
-    eprintln!("DBG SVR writing head");
     if writer.write_all(HEAD).and_then(|_| writer.flush()).is_err() {
-        eprintln!("DBG SVR head write failed");
         return;
     }
-    eprintln!("DBG SVR head written");
     loop {
         let message = match rx.recv_timeout(keep_alive) {
             Ok(bytes) => bytes,
