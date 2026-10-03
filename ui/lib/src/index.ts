@@ -22,7 +22,7 @@ export { default as MarkdownView } from './components/MarkdownView.vue'
 // API and utilities
 export { createApiClient, useApiClient } from './api/client'
 export type { ApiClient } from './api/client'
-export { renderMarkdown, sanitizeHtml } from './markdown'
+export { renderMarkdown } from './markdown'
 export { formatTime, formatSize } from './format'
 export { buildMemoriesQuery, isSearchMode } from './query'
 export { useMemories } from './composables/useMemories'

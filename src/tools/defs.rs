@@ -114,7 +114,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_search",
-            "Search across tags, summaries and content. All whitespace-separated terms must match (AND); a quoted term (\"exact phrase\") must match verbatim and scores a bonus. Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Repeated hits and whole-word ASCII matches rank higher. Tag matches rank highest. When the server has semantic search enabled, results also include meaning-similar memories that share no keywords (mode 'hybrid'); if the embedding service is unavailable the search silently falls back to keyword-only and the response carries semantic_fallback: true. Returns ranked summaries plus a short HTML-escaped content snippet - call memory_get on the promising ids to reveal full content.",
+            "Search across tags, summaries and content. All whitespace-separated terms must match (AND); a quoted term (\"exact phrase\") must match verbatim and scores a bonus. Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Repeated hits and whole-word ASCII matches rank higher. Tag matches rank highest. When the server has semantic search enabled, results also include meaning-similar memories that share no keywords (mode 'hybrid'); if the embedding service is unavailable the search silently falls back to keyword-only and the response carries semantic_fallback: true. Returns ranked summaries plus a short plain-text excerpt of the content (unescaped data, single line) - call memory_get on the promising ids to reveal full content.",
             json!({
                 "type": "object",
                 "properties": {

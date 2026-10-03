@@ -4,7 +4,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { buildMemoriesQuery, isSearchMode } from '../query'
-import { sanitizeHtml } from '../markdown'
 import { useMemoryConfig } from '../config'
 import { createMemory, deleteMemory, getMemory, updateMemory } from '../api/memories'
 import { listTags } from '../api/tags'
@@ -72,8 +71,8 @@ export function useMemories() {
       if (isSearchMode(query.value)) {
         const data = (await client.get<MemorySearchResp>(`/api/memories?${qs}`)) as MemorySearchResp
         if (seq !== requestSeq) return
-        // Server snippets are HTML (<mark> highlight); sanitize with DOMPurify before v-html
-        searchResults.value = (data.results ?? []).map((r) => ({ ...r, snippet: sanitizeHtml(r.snippet) }))
+        // Snippets are plain text from the server and are rendered via text interpolation — never v-html
+        searchResults.value = data.results ?? []
         total.value = data.total_matches ?? 0
         // When a hybrid request fell back to keyword search because the embedding service was
         // unavailable, say so explicitly (never silently)

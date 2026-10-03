@@ -284,7 +284,7 @@ fn ceil_boundary(s: &str, mut i: usize) -> usize {
     i
 }
 
-/// Fallback snippet when there are no content hit positions (start of the content, escaped the same way). Vector-only semantic hits
+/// Fallback snippet when there are no content hit positions (start of the content). Vector-only semantic hits
 /// have no term anchors and take this path.
 pub fn fallback_snippet(content: &str) -> String {
     make_snippet(content, None)
@@ -294,8 +294,9 @@ pub fn fallback_snippet(content: &str) -> String {
 /// Match positions come from folded lookup and are always original byte offsets; window edges
 /// fall back to character-boundary alignment so nothing is cut mid-character.
 ///
-/// Results are HTML-escaped: content is external input co-written by multiple agents, and snippets are rendered
-/// by the management UI via v-html — leaving them unescaped is open injection.
+/// The result is plain text, unescaped: snippets are data, and rendering concerns (HTML escaping
+/// among them) belong to the display layer — the web UI renders them via text interpolation,
+/// so no escaping is needed anywhere.
 fn make_snippet(content: &str, pos: Option<usize>) -> String {
     let (start, end) = match pos {
         None => (0, SNIPPET_AFTER.min(content.len())),
@@ -316,7 +317,7 @@ fn make_snippet(content: &str, pos: Option<usize>) -> String {
             }
         })
         .collect();
-    let inner = escape_html(inner.trim());
+    let inner = inner.trim().to_string();
     let mut out = String::new();
     if start > 0 {
         out.push('…');
@@ -326,13 +327,6 @@ fn make_snippet(content: &str, pos: Option<usize>) -> String {
         out.push('…');
     }
     out
-}
-
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 #[cfg(test)]
@@ -535,19 +529,23 @@ mod tests {
     }
 
     #[test]
-    fn snippet_escapes_html() {
+    fn snippet_stays_plain_text() {
         let a = mem(
             "m1",
             &[],
             "s",
-            "hello <img src=x onerror=alert(1)> world",
+            "hello <img src=x onerror=alert(1)> & \"quotes\" world",
             1,
         );
         let hits = run(std::slice::from_ref(&a), "img", &[], None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
-        assert!(sn.contains("&lt;img"), "snippet must escape HTML: {sn}");
-        assert!(!sn.contains("<img"), "raw HTML must not survive: {sn}");
+        // Snippets are data, not markup: raw text goes out verbatim and the display layer
+        // decides how to render it (the UI interpolates it as text)
+        assert!(sn.contains("<img"), "raw text must survive: {sn}");
+        assert!(sn.contains("& \"quotes\""), "no entity noise: {sn}");
+        assert!(!sn.contains("&lt;"), "no HTML escaping: {sn}");
+        assert!(!sn.contains("&quot;"), "no HTML escaping: {sn}");
     }
 
     #[test]

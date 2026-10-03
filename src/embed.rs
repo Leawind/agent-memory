@@ -378,7 +378,7 @@ mod tests {
             "a double hit must rank ahead of a vector-only hit"
         );
         assert_eq!(hits[1].idx, 1);
-        // Vector-only hits take the fallback snippet (start of content), HTML-escaped
+        // Vector-only hits take the fallback snippet (start of content), plain text
         assert!(hits[1].snippet.contains("哈希存储"));
     }
 

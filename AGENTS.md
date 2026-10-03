@@ -83,7 +83,8 @@ src/
                  唯一标识，id 对 MCP 使用者完全不可见，改名不动 id
   sql.rs         SQL 语句登记表：include_str! 嵌入 sql/ 目录，Rust 代码不出现 SQL 文本
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
-                 中文子串匹配（内存内计算）、片段窗口优选；片段必须 HTML 转义（UI 以 v-html 渲染）
+                 中文子串匹配（内存内计算）、片段窗口优选；片段是纯文本原样返回（展示层
+                 职责不进数据层，UI 以文本插值渲染，不走 v-html）
   embed.rs       语义搜索：OpenAI 兼容 /embeddings 客户端（ureq+rustls，全项目唯一出站 HTTP）、
                  向量 BLOB 编解码/余弦、RRF 混合排序、process_pending 有界批量补跑；
                  回退是硬性原则——服务不可用只降级不失败（搜索回退关键词 + semantic_fallback 标记，
@@ -162,10 +163,10 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    触发重编译重嵌入，无需 cargo clean。
 9. **前端格式化**：ui/ 源码用 Prettier 统一（无分号、单引号、120 列，配置在根
    .prettierrc.json）；CI 强制 `format:check`，提交前先 `pnpm format`。
-10. **Markdown 渲染必须消毒**：记忆正文是多 agent 共写的外部输入，
-    管理界面渲染前必须经 DOMPurify（`ui/lib/src/markdown.ts` 统一出口：
-    Markdown 走 renderMarkdown，服务端 HTML 片段走 sanitizeHtml），
-    新增渲染入口不得绕过它直接 `v-html`。
+10. **Markdown 渲染必须消毒，纯文本禁止 v-html**：记忆正文是多 agent 共写的外部输入，
+    管理界面渲染 Markdown 前必须经 DOMPurify（`ui/lib/src/markdown.ts` 的
+    renderMarkdown 是唯一合法的 v-html 入口）；服务端纯文本数据（搜索片段等）
+    一律文本插值渲染，新增渲染入口不得绕过这两条直接 `v-html`。
 11. **鉴权边界**：无账号体系（不注册、不登录、不引 OAuth）——token 即身份，只存
     SHA-256 + 尾缀提示（哈希手写在 `util.rs`，token 明文仅在创建/重置响应出现一次，
     丢失即重置），token 生成只用 SQLite `randomblob`，不引随机数依赖。

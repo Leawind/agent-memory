@@ -50,7 +50,8 @@
         <el-table-column :label="t('memories.colSummary')">
           <template #default="{ row }">
             <div class="am-summary">{{ row.summary }}</div>
-            <div class="am-snippet" v-html="row.snippet" />
+            <!-- Snippets are plain text (server sends them unescaped); text interpolation, never v-html -->
+            <div class="am-snippet">{{ row.snippet }}</div>
           </template>
         </el-table-column>
         <el-table-column :label="t('memories.colTags')" min-width="150">
