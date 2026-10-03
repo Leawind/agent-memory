@@ -145,7 +145,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_update",
-            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Touching a memory refreshes its updated_at. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
+            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Updating summary or content refreshes updated_at; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
             json!({
                 "type": "object",
                 "properties": {

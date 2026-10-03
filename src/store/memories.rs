@@ -200,7 +200,10 @@ impl Store {
         Ok((found, missing))
     }
 
-    /// Update memory fields and tags; returns whether anything changed (deciding whether updated_at is refreshed).
+    /// Update memory fields and tags; returns whether anything changed. updated_at tracks the
+    /// *content* timeline: it is written only when summary/content change (inside
+    /// MEMORY_UPDATE_FIELDS), so curating tags never pushes an old memory back to the top of the
+    /// default newest-first browse — the field values agents read did not move.
     /// Tags are added/removed by internal id (add is resolved by the handler via `link_tags` first, remove via
     /// `tag_ids_for_names` — nonexistent names are skipped silently).
     pub fn update_memory(
@@ -231,7 +234,8 @@ impl Store {
             changed = true;
         }
         // Contract (defs.rs): add_tags runs before remove_tags; when both lists contain the same
-        // tag the final result is removal (the explicit remove intent wins).
+        // tag the final result is removal (the explicit remove intent wins). Tag-only changes do
+        // not touch updated_at — see the doc above.
         for tag_id in add_tag_ids {
             let n = self
                 .conn
@@ -245,11 +249,6 @@ impl Store {
                 .execute(sql::MEMORY_UNLINK_TAG, params![id, tag_id])
                 .map_err(|e| e.to_string())?;
             changed = changed || n > 0;
-        }
-        if changed {
-            self.conn
-                .execute(sql::MEMORY_TOUCH, params![crate::model::now() as i64, id])
-                .map_err(|e| e.to_string())?;
         }
         Ok(changed)
     }
@@ -419,6 +418,48 @@ mod tests {
         st.update_memory(id, None, None, &add.ids, &remove).unwrap();
         let (found, _) = st.get_memories(&[id]).unwrap();
         assert_eq!(found[0].tags, vec!["b".to_string()]);
+        cleanup(&path);
+    }
+
+    /// updated_at tracks the content timeline: tag-only adjustments report changed=true but leave
+    /// the timestamp (and therefore the default newest-first browse order) alone; only a summary
+    /// or content write moves it.
+    #[test]
+    fn tag_only_updates_do_not_bump_updated_at() {
+        let path = temp_db("touch");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let old = insert_with_tags(&st, "old", "old body", &["a"], 100);
+        let fresh = insert_with_tags(&st, "fresh", "fresh body", &["a"], 200);
+
+        // Tag-only change on the older memory: changed, but its updated_at is untouched, so the
+        // default updated_at-desc listing keeps the genuinely newer memory first
+        let add = st.link_tags(&["b".into()], true).unwrap();
+        let changed = st.update_memory(old, None, None, &add.ids, &[]).unwrap();
+        assert!(changed);
+        let (_, page) = st
+            .list_memories(None, None, "updated_at", false, 0, 10)
+            .unwrap();
+        assert_eq!(page[0].summary, "fresh");
+
+        // A content write does move it back to the top
+        st.update_memory(old, None, Some("rewritten"), &[], &[])
+            .unwrap();
+        let (_, page) = st
+            .list_memories(None, None, "updated_at", false, 0, 10)
+            .unwrap();
+        assert_eq!(page[0].summary, "old");
+
+        // ...and a no-op change (existing tag re-added) touches nothing at all
+        let (before, _) = st.get_memories(&[fresh]).unwrap();
+        let existing = st.link_tags(&["a".into()], true).unwrap();
+        let changed = st
+            .update_memory(fresh, None, None, &existing.ids, &[])
+            .unwrap();
+        assert!(!changed);
+        let (after, _) = st.get_memories(&[fresh]).unwrap();
+        assert_eq!(before[0].updated_at, after[0].updated_at);
+
         cleanup(&path);
     }
 }

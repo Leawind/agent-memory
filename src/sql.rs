@@ -32,7 +32,6 @@ pub const MEMORY_TAG_ID_PAIRS: &str = include_str!("../sql/memory_tag_id_pairs.s
 pub const MEMORY_LIST_PAGE: &str = include_str!("../sql/memory_list_page.sql");
 pub const MEMORY_LIST_COUNT: &str = include_str!("../sql/memory_list_count.sql");
 pub const MEMORY_UPDATE_FIELDS: &str = include_str!("../sql/memory_update_fields.sql");
-pub const MEMORY_TOUCH: &str = include_str!("../sql/memory_touch.sql");
 pub const MEMORY_DELETE: &str = include_str!("../sql/memory_delete.sql");
 pub const MEMORY_SUMMARIES: &str = include_str!("../sql/memory_summaries.sql");
 
@@ -118,7 +117,6 @@ mod tests {
             ("MEMORY_LIST_PAGE", MEMORY_LIST_PAGE),
             ("MEMORY_LIST_COUNT", MEMORY_LIST_COUNT),
             ("MEMORY_UPDATE_FIELDS", MEMORY_UPDATE_FIELDS),
-            ("MEMORY_TOUCH", MEMORY_TOUCH),
             ("MEMORY_DELETE", MEMORY_DELETE),
             ("MEMORY_SUMMARIES", MEMORY_SUMMARIES),
             ("EMBEDDING_PUT", EMBEDDING_PUT),
