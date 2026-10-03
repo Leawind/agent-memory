@@ -2,7 +2,7 @@
 
 use crate::model::normalize_tag_name;
 use crate::store::Store;
-use crate::tools::params::{opt_regex, opt_str, req_str, validate_description};
+use crate::tools::params::{opt_bool, opt_regex, opt_str, req_str, validate_description};
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
 
@@ -117,10 +117,23 @@ pub fn tag_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
             )))
         }
     };
+    let dry_run = opt_bool(args, "dry_run")?.unwrap_or(false);
     if !st.tag_exists(&name)? {
         return Err(ToolError::not_found(format!(
             "tag '{name}' not found (see tag_list)"
         )));
+    }
+    // Preview before impact: purge deletes irreversibly, so the caller can price it first
+    // (count for both modes, plus the exact ids that would die under purge).
+    if dry_run {
+        let ids = st.tag_memory_ids(&name)?;
+        return Ok(json!({
+            "dry_run": true,
+            "name": name,
+            "mode": mode,
+            "memories_affected": ids.len(),
+            "memory_ids": if mode == "purge" { json!(ids) } else { Value::Null },
+        }));
     }
     match mode {
         "detach" => {

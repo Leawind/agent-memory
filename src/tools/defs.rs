@@ -66,12 +66,13 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "tag_delete",
-            "Delete a tag. mode 'detach' (default) removes only the tag from memories and keeps them; mode 'purge' also permanently deletes every memory carrying this tag.",
+            "Delete a tag. mode 'detach' (default) removes only the tag from memories and keeps them; mode 'purge' also permanently deletes every memory carrying this tag - preview the impact first with dry_run: true (reports the affected memory count and, for purge, their ids) since purge cannot be undone.",
             json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["detach", "purge"], "description": "Default: detach."}
+                    "mode": {"type": "string", "enum": ["detach", "purge"], "description": "Default: detach."},
+                    "dry_run": {"type": "boolean", "description": "Default false. True reports what would happen (memories_affected; memory_ids for purge) without changing anything."}
                 },
                 "required": ["name"],
                 "additionalProperties": false

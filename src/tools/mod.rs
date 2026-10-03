@@ -496,6 +496,58 @@ mod tests {
         cleanup(&path);
     }
 
+    /// dry_run prices a deletion without performing it: counts for both modes, exact ids for
+    /// purge, and provably no side effect.
+    #[test]
+    fn tag_delete_dry_run_previews_without_touching_anything() {
+        let path = temp_db("dry-run");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "a", "content": "ca", "tags": ["x"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "b", "content": "cb", "tags": ["x", "keep"], "create_missing_tags": true}),
+        )
+        .unwrap();
+
+        let preview = call(
+            &path,
+            "tag_delete",
+            json!({"name": "x", "mode": "purge", "dry_run": true}),
+        )
+        .unwrap();
+        assert_eq!(preview["dry_run"], true);
+        assert_eq!(preview["memories_affected"], 2);
+        let ids = preview["memory_ids"].as_array().unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.iter().all(|i| i.as_str().unwrap().starts_with('m')));
+
+        // Nothing happened: both memories and the tag are still there
+        assert_eq!(call(&path, "memory_list", json!({})).unwrap()["total"], 2);
+        let tl = call(&path, "tag_list", json!({})).unwrap();
+        assert!(tl["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "x" && t["reserved"] == false));
+
+        // detach preview counts, too, but carries no ids
+        let preview = call(
+            &path,
+            "tag_delete",
+            json!({"name": "x", "mode": "detach", "dry_run": true}),
+        )
+        .unwrap();
+        assert_eq!(preview["memories_affected"], 2);
+        assert!(preview["memory_ids"].is_null());
+
+        cleanup(&path);
+    }
+
     #[test]
     fn validation_and_missing_errors() {
         let path = temp_db("errors");

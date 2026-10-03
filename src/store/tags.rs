@@ -164,13 +164,18 @@ impl Store {
         Ok(affected)
     }
 
+    /// Ids (as "m{n}") of every memory carrying the tag — the purge preview's impact list.
+    pub fn tag_memory_ids(&self, name: &str) -> Result<Vec<String>, String> {
+        let ids = self.ids_with_tag(name)?;
+        Ok(ids.iter().map(|i| Self::format_id(*i)).collect())
+    }
+
     /// purge: also delete every memory carrying the tag, returning the deleted memory ids.
     pub fn tag_delete_purge(&self, name: &str) -> Result<Vec<String>, String> {
         if !self.tag_exists(name)? {
             return Err(format!("tag '{name}' not found (see tag_list)"));
         }
-        let ids = self.ids_with_tag(name)?;
-        let id_strs: Vec<String> = ids.iter().map(|i| Self::format_id(*i)).collect();
+        let id_strs = self.tag_memory_ids(name)?;
         self.conn
             .execute(sql::PURGE_MEMORIES_WITH_TAG, [name])
             .map_err(|e| e.to_string())?;
