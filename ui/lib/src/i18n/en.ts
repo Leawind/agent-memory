@@ -39,7 +39,7 @@ export default {
     title: 'Tags',
     subtitle: 'Tags are an agent-maintained taxonomy; renaming updates every memory that references the tag',
     create: 'New Tag',
-    filterPlaceholder: 'Filter names by regex, e.g. ^proj/ or rust$ (case-sensitive)',
+    filterPlaceholder: 'Filter names by regex, e.g. ^proj/ or rust$ (case-insensitive)',
     colName: 'Name',
     colDescription: 'Description',
     colMemoryCount: 'Memories',

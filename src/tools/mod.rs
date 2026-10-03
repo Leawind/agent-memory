@@ -572,6 +572,12 @@ mod tests {
         let tl = call(&path, "tag_list", json!({"filter": "^proj/"})).unwrap();
         assert_eq!(tl["total_tags"], 1);
         assert_eq!(tl["tags"][0]["name"], "proj/alpha");
+        // Case-insensitive, mirroring content search's case folding: case variants in the
+        // taxonomy must not split the filters either
+        let up = call(&path, "tag_list", json!({"filter": "^PROJ/"})).unwrap();
+        assert_eq!(up["total_tags"], 1);
+        let ml = call(&path, "memory_list", json!({"tag_filter": "MISC"})).unwrap();
+        assert_eq!(ml["total"], 1);
         let none = call(&path, "tag_list", json!({"filter": "zzz"})).unwrap();
         assert_eq!(none["total_tags"], 0);
         assert_eq!(none["tags"].as_array().unwrap().len(), 0);

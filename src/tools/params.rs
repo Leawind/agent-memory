@@ -25,10 +25,14 @@ pub fn opt_str(args: &Map<String, Value>, key: &str) -> Result<Option<String>, S
 }
 
 /// Optional regex argument: take the string and compile it (invalid pattern → readable error, mapped to 400 by the handler).
+/// Matching is case-insensitive, mirroring content search's case folding — a taxonomy that sprouted
+/// case variants (the exact problem similar_existing warns about) must not also split the filters.
 pub fn opt_regex(args: &Map<String, Value>, key: &str) -> Result<Option<regex::Regex>, String> {
     match opt_str(args, key)? {
         None => Ok(None),
-        Some(pattern) => regex::Regex::new(&pattern)
+        Some(pattern) => regex::RegexBuilder::new(&pattern)
+            .case_insensitive(true)
+            .build()
             .map(Some)
             .map_err(|e| format!("parameter '{key}' is not a valid regular expression: {e}")),
     }

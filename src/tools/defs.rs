@@ -43,7 +43,7 @@ pub fn tool_definitions() -> Value {
             json!({
                 "type": "object",
                 "properties": {
-                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-sensitive; Rust regex syntax. Omit to list all tags."}
+                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax. Omit to list all tags."}
                 },
                 "additionalProperties": false
             }),
@@ -101,7 +101,7 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "tag": {"type": "string", "description": "Only memories carrying this exact tag."},
-                    "tag_filter": {"type": "string", "description": "Only memories carrying at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-sensitive; Rust regex syntax). Combinable with 'tag' (both must hold)."},
+                    "tag_filter": {"type": "string", "description": "Only memories carrying at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tag' (both must hold)."},
                     "sort": {"type": "string", "enum": ["updated_at", "created_at", "id"], "description": "Default: updated_at."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
                     "offset": {"type": "integer", "minimum": 0},
@@ -119,7 +119,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional filter: memory must carry at least one of these tags."},
-                    "tag_filter": {"type": "string", "description": "Optional filter: memory must carry at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-sensitive; Rust regex syntax). Combinable with 'tags' (both must hold)."},
+                    "tag_filter": {"type": "string", "description": "Optional filter: memory must carry at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tags' (both must hold)."},
                     "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (keyword + semantic) when the server has semantic search configured, otherwise plain keyword. 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}

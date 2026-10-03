@@ -39,7 +39,7 @@ export default {
     title: '标签',
     subtitle: '标签是 agent 自主维护的分类体系；改名会同步更新所有引用它的记忆',
     create: '新建标签',
-    filterPlaceholder: '正则过滤标签名，如 ^proj/ 、rust$（大小写敏感）',
+    filterPlaceholder: '正则过滤标签名，如 ^proj/ 、rust$（大小写不敏感）',
     colName: '名称',
     colDescription: '描述',
     colMemoryCount: '记忆数',
