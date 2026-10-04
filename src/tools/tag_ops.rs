@@ -15,7 +15,8 @@ pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     st.tag_create(&name, &description)?;
     // Non-blocking hint: when a tag differing only in case already exists, remind the agent to keep the taxonomy
     // from fragmenting (e.g. "rust" and "Rust" coexisting). Whether to merge is the agent's call, via tag_update.
-    let mut out = json!({"created": true, "tag": st.tag_view(&name)?});
+    // No "created": true echo — a non-error result already means success.
+    let mut out = json!({"tag": st.tag_view(&name)?});
     if let Some(existing) = st.find_tag_case_insensitive(&name)? {
         out["similar_existing"] = json!(existing);
         out["note"] = json!(format!(

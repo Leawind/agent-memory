@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **工具**：响应去噪——"空则整个省略"贯彻到底：`memory_create` 的四个分类/提示字段（`tags_autocreated` / `tags_reused` / `tags_missing_description` / `duplicate_of`）、`memory_update` 的逐项分类、`memory_get` / `memory_delete` 的 `missing` 列表改为仅非空时出现（`memory_update` 原本就已是条件形状，两条写路径就此一致）；删除 `tag_create` / `memory_merge` 的恒真布尔 `created` / `merged`（非错误结果即成功语义）
 - **工具**：记忆时间戳改为人读得懂的形式——`memory_list` / `memory_search` 摘要与 `memory://tags/{tag}` 目录只携带一个 `updated` 字段，`memory_get` 与写操作回显携带 `created` + `updated`，值统一为服务器本地墙钟的紧凑格式 `YYYY-MM-DD HH:MM`（epoch 数字对模型不可读，等于白占 token；存储与导出格式不变，仍是 epoch 秒）。破坏性更改：摘要不再携带 `created_at`（创建顺序由 id 编码，`memory_list` 的 `sort` 同步去掉与 `id` 重复的 `created_at`）；管理界面记忆表去掉创建时间列；新增 chrono 依赖做本地时区换算，`util::format_utc_iso` 一并改由 chrono 生成
 - **工具**：标签视图瘦身（`tag_list`、`tag_create`/`tag_update` 回显的 `tag`、`memory://tags/{tag}` 目录元数据）——字段改为 `name` / `count`（原 `memory_count`），空 `description` 整个省略，`reserved` 仅在保留标签上以 `true` 出现；删除行级 `created_at` / `last_used_at`（时间戳占 token、不直观且参考价值低）与响应级 `total_tags`（与数组长度重复）/ `total_memories`（总量归 stats）。破坏性更改：管理界面标签表去掉两列时间列，mock API 与 sdk-compat-check 同步新形状
 - **export**：导出 JSON 精简重构——`tags` / `memories` 改为以 id 为键的对象（tag 键 = 内部自增 id 十进制串，记忆键 = `m<N>`），记忆对标签的引用改为按 tag id 数组；去掉 `total_memories` / `total_tags` / `memory_count` / `last_used_at` 等派生信息（均可由导出文件本身推出），只保留主数据；CLI 与 REST 导出一律紧凑 JSON（单行）。破坏性更改：`import` 只接受新格式，旧版数组形状直接拒绝；引用导出中不存在的 tag id、非法 id 键、文件内重名标签均报错；目标库必须为空、id 重新编号、记忆时间戳按导出值保留的语义不变

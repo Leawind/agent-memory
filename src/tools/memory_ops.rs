@@ -28,15 +28,24 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     let id = st.insert_memory(&summary, &content, &linkage.ids, now(), now())?;
     let view = memory_view(st, id)?;
-    // The three-way tag-link classification is always returned: created / reused / reused-but-missing-description (hinting to fill
-    // the description in with tag_update), sparing the agent a follow-up tag_list to check whether links are complete
-    Ok(json!({
-        "memory": view,
-        "tags_autocreated": linkage.autocreated,
-        "tags_reused": linkage.reused,
-        "tags_missing_description": linkage.missing_description,
-        "duplicate_of": duplicate_of,
-    }))
+    // Sparse response: the three-way tag-link classification (created / reused /
+    // reused-but-missing-description, sparing a follow-up tag_list) and the duplicate hint attach
+    // only when non-empty — the common case (all tags known, nothing duplicated) carries zero
+    // scaffold tokens
+    let mut out = json!({ "memory": view });
+    if !linkage.autocreated.is_empty() {
+        out["tags_autocreated"] = json!(linkage.autocreated);
+    }
+    if !linkage.reused.is_empty() {
+        out["tags_reused"] = json!(linkage.reused);
+    }
+    if !linkage.missing_description.is_empty() {
+        out["tags_missing_description"] = json!(linkage.missing_description);
+    }
+    if !duplicate_of.is_empty() {
+        out["duplicate_of"] = json!(duplicate_of);
+    }
+    Ok(out)
 }
 
 pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -227,7 +236,11 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     let (numeric, invalid) = split_ids(&ids);
     let (found, missing) = st.get_memories(&numeric)?;
     let memories: Vec<Value> = found.iter().map(|m| m.full_view()).collect();
-    let mut out = json!({"memories": memories, "missing": missing});
+    let mut out = json!({"memories": memories});
+    // Sparse: a fully successful read is just the memories array
+    if !missing.is_empty() {
+        out["missing"] = json!(missing);
+    }
     if !invalid.is_empty() {
         out["invalid_ids"] = json!(invalid);
     }
@@ -328,11 +341,17 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     )?;
 
     let mut out = json!({"updated": changed, "memory": memory_view(st, id)?});
-    // Same three-way classification as memory_create; carried only when this call actually created new tags
+    // Same three-way classification as memory_create: attached per-array, only when non-empty
     if let Some(linkage) = linkage_opt {
-        out["tags_autocreated"] = json!(linkage.autocreated);
-        out["tags_reused"] = json!(linkage.reused);
-        out["tags_missing_description"] = json!(linkage.missing_description);
+        if !linkage.autocreated.is_empty() {
+            out["tags_autocreated"] = json!(linkage.autocreated);
+        }
+        if !linkage.reused.is_empty() {
+            out["tags_reused"] = json!(linkage.reused);
+        }
+        if !linkage.missing_description.is_empty() {
+            out["tags_missing_description"] = json!(linkage.missing_description);
+        }
     }
     Ok(out)
 }
@@ -341,7 +360,10 @@ pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let ids = req_id_list(args, "ids", 50)?;
     let (numeric, invalid) = split_ids(&ids);
     let (deleted, missing) = st.delete_memories(&numeric)?;
-    let mut out = json!({"deleted": deleted, "missing": missing});
+    let mut out = json!({"deleted": deleted});
+    if !missing.is_empty() {
+        out["missing"] = json!(missing);
+    }
     if !invalid.is_empty() {
         out["invalid_ids"] = json!(invalid);
     }
@@ -434,8 +456,8 @@ pub fn memory_merge(
     }
 
     let view = memory_view(st, target_id)?;
+    // No "merged": true echo - a non-error result already means success
     Ok(json!({
-        "merged": true,
         "memory": view,
         "removed": raw_source,
         "content_appended": explicit_content.is_none(),

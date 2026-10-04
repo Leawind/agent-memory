@@ -273,13 +273,11 @@ try {
       arguments: { target: createdId, source: dupId },
     })
     const mergedStructured = structuredOf(merged) as
-      | { merged?: boolean, removed?: string, memory?: { id?: string, created?: string } }
+      | { removed?: string, memory?: { id?: string, created?: string } }
       | undefined
     check(
       "memory_merge keeps the target and removes the source",
-      mergedStructured?.merged === true &&
-        mergedStructured?.removed === dupId &&
-        mergedStructured?.memory?.id === createdId,
+      mergedStructured?.removed === dupId && mergedStructured?.memory?.id === createdId,
     )
     const gone = await rpc(35, "tools/call", { name: "memory_get", arguments: { ids: [dupId] } })
     check(

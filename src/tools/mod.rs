@@ -285,14 +285,10 @@ mod tests {
         .unwrap();
         let id = created["memory"]["id"].as_str().unwrap().to_string();
         assert_eq!(created["tags_autocreated"].as_array().unwrap().len(), 2);
-        assert_eq!(created["tags_reused"].as_array().unwrap().len(), 0);
-        assert_eq!(
-            created["tags_missing_description"]
-                .as_array()
-                .unwrap()
-                .len(),
-            0
-        );
+        // Sparse response: empty classifications are omitted outright
+        assert!(created.get("tags_reused").is_none());
+        assert!(created.get("tags_missing_description").is_none());
+        assert!(created.get("duplicate_of").is_none());
 
         // Search hits, with no content leaked (first layer of progressive disclosure)
         let found = call(&path, "memory_search", json!({"query": "borrow"})).unwrap();
@@ -325,8 +321,8 @@ mod tests {
         assert_eq!(upd["memory"]["tags"].as_array().unwrap().len(), 2);
         // The three-way classification only describes tags passed to add_tags this time (rust is not in the list, so not classified)
         assert_eq!(upd["tags_autocreated"], json!(["study"]));
-        assert_eq!(upd["tags_reused"], json!([]));
-        assert_eq!(upd["tags_missing_description"], json!([]));
+        assert!(upd.get("tags_reused").is_none());
+        assert!(upd.get("tags_missing_description").is_none());
 
         // Update content and title (regression: the field-update path once failed the whole update when the embeddings table was missing)
         let upd_fields = call(
@@ -368,7 +364,7 @@ mod tests {
         .unwrap();
         assert_eq!(first["tags_autocreated"], json!(["fresh"]));
         assert_eq!(first["tags_reused"], json!(["described"]));
-        assert_eq!(first["tags_missing_description"], json!([]));
+        assert!(first.get("tags_missing_description").is_none());
 
         // Second call reuses everything; fresh was auto-created last time with an empty description → named hint
         let second = call(
@@ -377,7 +373,7 @@ mod tests {
             json!({"summary": "b", "content": "cb", "tags": ["described", "fresh"], "create_missing_tags": true}),
         )
         .unwrap();
-        assert_eq!(second["tags_autocreated"], json!([]));
+        assert!(second.get("tags_autocreated").is_none());
         assert_eq!(second["tags_reused"], json!(["described", "fresh"]));
         assert_eq!(second["tags_missing_description"], json!(["fresh"]));
 
@@ -407,7 +403,8 @@ mod tests {
 
         let del = call(&path, "memory_delete", json!({"ids": ["102"]})).unwrap();
         assert_eq!(del["deleted"], json!([]));
-        assert_eq!(del["missing"], json!([]));
+        // Sparse: nothing missing, no missing key
+        assert!(del.get("missing").is_none());
         assert_eq!(del["invalid_ids"], json!(["102"]));
 
         let err = call(&path, "memory_update", json!({"id": "102", "summary": "x"})).unwrap_err();
@@ -1159,7 +1156,6 @@ mod tests {
             json!({"target": target, "source": source}),
         )
         .unwrap();
-        assert_eq!(merged["merged"], true);
         assert_eq!(merged["removed"], source.as_str());
         assert_eq!(merged["memory"]["id"], target.as_str());
         let after = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
@@ -1283,7 +1279,7 @@ mod tests {
             json!({"target": conv, "source": other}),
         )
         .unwrap();
-        assert_eq!(ok["merged"], true);
+        assert_eq!(ok["removed"], other.as_str());
 
         cleanup(&path);
     }
@@ -1307,14 +1303,14 @@ mod tests {
         let dups = second["duplicate_of"].as_array().unwrap();
         assert_eq!(dups.len(), 1);
         assert_eq!(dups[0], "m1");
-        // Empty array when there is no duplicate
+        // Sparse response: no duplicate → no duplicate_of key at all
         let third = call(
             &path,
             "memory_create",
             json!({"summary": "totally different", "content": "v3"}),
         )
         .unwrap();
-        assert_eq!(third["duplicate_of"].as_array().unwrap().len(), 0);
+        assert!(third.get("duplicate_of").is_none());
         cleanup(&path);
     }
 
