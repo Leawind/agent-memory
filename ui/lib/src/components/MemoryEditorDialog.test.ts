@@ -27,7 +27,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 /** The dialog teleports to document.body (append-to-body); query it there. */
 function dialogEl() {
-  return document.querySelector('.memory-editor-dialog') as HTMLElement
+  return document.querySelector('.am-form-dialog') as HTMLElement
 }
 function saveButton() {
   return dialogEl().querySelector('.el-button--primary') as HTMLButtonElement

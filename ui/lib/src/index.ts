@@ -17,6 +17,7 @@ export { default as TagsPanel } from './components/TagsPanel.vue'
 export { default as OpsDialog } from './components/OpsDialog.vue'
 export { default as AdminPanel } from './components/AdminPanel.vue'
 export { default as MemoryEditorDialog } from './components/MemoryEditorDialog.vue'
+export { default as FormDialog } from './components/FormDialog.vue'
 export { default as MarkdownView } from './components/MarkdownView.vue'
 
 // API and utilities

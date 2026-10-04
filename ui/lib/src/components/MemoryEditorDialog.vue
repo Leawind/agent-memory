@@ -1,14 +1,16 @@
 <template>
-  <el-dialog
-    :model-value="visible"
+  <FormDialog
+    :visible="visible"
     :title="memoryId ? t('editor.editTitle') : t('editor.createTitle')"
     :width="width"
     align-center
     append-to-body
-    class="memory-editor-dialog"
-    @update:model-value="emit('update:visible', $event)"
+    :saving="saving"
+    :submit-disabled="loading"
+    @update:visible="emit('update:visible', $event)"
+    @submit="save"
   >
-    <el-form v-loading="loading" label-position="top">
+    <div v-loading="loading">
       <el-form-item :label="t('editor.summaryLabel')">
         <el-input
           ref="summaryInput"
@@ -49,14 +51,8 @@
         />
         <MarkdownView v-else class="content-preview" :source="form.content" />
       </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="emit('update:visible', false)">{{ t('common.cancel') }}</el-button>
-      <el-button type="primary" :loading="saving" :disabled="loading" @click="save">
-        {{ t('common.save') }}
-      </el-button>
-    </template>
-  </el-dialog>
+    </div>
+  </FormDialog>
 </template>
 
 <script setup lang="ts">
@@ -66,6 +62,7 @@ import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, getMemory, updateMemory } from '../api/memories'
 import type { MemoryDraft } from '../composables/useMemories'
+import FormDialog from './FormDialog.vue'
 import MarkdownView from './MarkdownView.vue'
 import MarkdownModeToggle from './MarkdownModeToggle.vue'
 import { t } from '../i18n'
@@ -182,21 +179,5 @@ async function save() {
   border-radius: 4px;
   padding: 5px 11px;
   min-height: 260px;
-}
-</style>
-
-<!-- Unscoped: with append-to-body the dialog element lives outside this component tree -->
-<style>
-.memory-editor-dialog {
-  resize: both;
-  overflow: auto;
-  max-width: 95vw;
-  max-height: 90vh;
-}
-.memory-editor-dialog .el-dialog__body {
-  /* At small viewport heights the min() shrinks the body so header and footer stay visible
-     inside the 90vh dialog; at large heights the 65vh cap keeps the dialog from sprawling */
-  max-height: min(65vh, calc(90vh - 150px));
-  overflow-y: auto;
 }
 </style>

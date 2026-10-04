@@ -1,25 +1,19 @@
 <template>
   <!-- Create / edit capabilities -->
-  <el-dialog
-    v-model="visible"
+  <FormDialog
+    v-model:visible="visible"
     :title="editing ? t('access.editTitle', { name: editing.name }) : t('access.createTitle')"
     :width="compact ? '96%' : '480px'"
+    :saving="submitting"
+    @submit="submit"
   >
-    <el-form label-position="top" @submit.prevent>
-      <el-form-item v-if="!editing" :label="t('access.nameLabel')">
-        <el-input v-model="form.name" :placeholder="t('access.namePlaceholder')" />
-      </el-form-item>
-      <el-form-item :label="t('access.permsLabel')">
-        <CapsEditor v-model:caps="form.caps" v-model:preset="preset" />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="visible = false">{{ t('common.cancel') }}</el-button>
-      <el-button type="primary" :loading="submitting" @click="submit">
-        {{ t('common.save') }}
-      </el-button>
-    </template>
-  </el-dialog>
+    <el-form-item v-if="!editing" :label="t('access.nameLabel')">
+      <el-input v-model="form.name" :placeholder="t('access.namePlaceholder')" />
+    </el-form-item>
+    <el-form-item :label="t('access.permsLabel')">
+      <CapsEditor v-model:caps="form.caps" v-model:preset="preset" />
+    </el-form-item>
+  </FormDialog>
 </template>
 
 <script setup lang="ts">
@@ -28,6 +22,7 @@ import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { toastSuccess } from '../../toast'
 import { CAPS, emptyCaps, run, type IdentityRow, type PresetKey } from './caps'
+import FormDialog from '../FormDialog.vue'
 import CapsEditor from './CapsEditor.vue'
 
 defineProps<{

@@ -76,35 +76,39 @@
         </el-table-column>
       </el-table>
 
-      <el-dialog
-        v-model="dialogVisible"
+      <FormDialog
+        v-model:visible="dialogVisible"
         :title="form.oldName ? t('tags.editTitle') : t('tags.createTitle')"
         :width="narrow ? '96%' : '480px'"
+        :saving="saving"
+        @submit="save"
       >
-        <el-form label-position="top">
-          <!-- Prefill the current name when editing: small tweaks are direct edits, no need to retype the full name; the server treats an unchanged-name submit as a no-rename -->
-          <el-form-item :label="t('tags.nameLabel')">
-            <el-input v-model="form.name" maxlength="100" show-word-limit :placeholder="t('tags.namePlaceholder')" />
-          </el-form-item>
-          <el-form-item :label="t('tags.descLabel')">
-            <el-input
-              v-model="form.description"
-              type="textarea"
-              :rows="3"
-              maxlength="512"
-              show-word-limit
-              :placeholder="t('tags.descPlaceholder')"
-            />
-          </el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
-          <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
-        </template>
-      </el-dialog>
+        <!-- Prefill the current name when editing: small tweaks are direct edits, no need to retype the full name; the server treats an unchanged-name submit as a no-rename -->
+        <el-form-item :label="t('tags.nameLabel')">
+          <el-input v-model="form.name" maxlength="100" show-word-limit :placeholder="t('tags.namePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('tags.descLabel')">
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="3"
+            maxlength="512"
+            show-word-limit
+            :placeholder="t('tags.descPlaceholder')"
+          />
+        </el-form-item>
+      </FormDialog>
 
       <!-- Delete-mode choice: the rich structure (tag name / count) can't be interpolated as one sentence, so it's split into three fixed-order segments -->
-      <el-dialog v-model="deleteVisible" :title="t('tags.deleteTitle')" :width="narrow ? '96%' : '480px'">
+      <FormDialog
+        v-model:visible="deleteVisible"
+        :title="t('tags.deleteTitle')"
+        :width="narrow ? '96%' : '480px'"
+        :saving="saving"
+        submit-type="danger"
+        :submit-text="t('common.delete')"
+        @submit="doDelete"
+      >
         <p class="delete-body">
           {{ t('tags.deleteBefore') }}
           <el-tag>{{ target?.name }}</el-tag>
@@ -116,11 +120,7 @@
           <el-radio value="detach">{{ t('tags.detach') }}</el-radio>
           <el-radio value="purge">{{ t('tags.purge') }}</el-radio>
         </el-radio-group>
-        <template #footer>
-          <el-button @click="deleteVisible = false">{{ t('common.cancel') }}</el-button>
-          <el-button type="danger" :loading="saving" @click="doDelete">{{ t('common.delete') }}</el-button>
-        </template>
-      </el-dialog>
+      </FormDialog>
     </el-config-provider>
   </div>
 </template>
@@ -131,6 +131,7 @@ import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
 import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'
+import FormDialog from './FormDialog.vue'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useTags } from '../composables/useTags'
