@@ -221,6 +221,14 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     }
 }
 
+/// Whether a tool's committed write changes memory content and thereby invalidates vectors: the
+/// single predicate both server faces (MCP / REST) use to decide whether a write triggers the
+/// backfill hook.
+pub fn needs_backfill(tool: &str) -> bool {
+    use crate::tools::{MEMORY_CREATE, MEMORY_EDIT, MEMORY_UPDATE};
+    matches!(tool, MEMORY_CREATE | MEMORY_EDIT | MEMORY_UPDATE)
+}
+
 /// The write path's hook point (called after the memory_create / memory_update transaction commits).
 /// When the embedding service is unavailable, only log to stderr: the memory is saved, and vectors are left for backfill.
 pub fn after_write(db_path: &Path) {

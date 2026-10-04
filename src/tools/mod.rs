@@ -98,10 +98,7 @@ pub fn execute_with_db(
     // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     // A successful create then gets a semantic near-duplicate scan attached to its result (advisory, fallback-safe).
-    if matches!(
-        name,
-        defs::MEMORY_CREATE | defs::MEMORY_UPDATE | defs::MEMORY_EDIT
-    ) {
+    if crate::embed::needs_backfill(name) {
         crate::embed::after_write(db_path);
         if name == defs::MEMORY_CREATE {
             crate::embed::dedup_hint(db_path, &mut out);

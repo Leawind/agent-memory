@@ -65,7 +65,7 @@ pub fn handle(
             ("GET", ["whoami"]) => Ok((200, ctx.summary())),
             ("GET", ["stats"]) => {
                 ctx.require(Cap::Read)?;
-                db_tx(db_path, tx_mode, |st| {
+                store::with_db_in(db_path, tx_mode, |st| {
                     st.stats().map_err(ToolError::from).map(|v| (200, v))
                 })
             }
@@ -75,7 +75,7 @@ pub fn handle(
                     Ok(m) => Value::Object(m),
                     Err(e) => return Ok(bad_request(e)),
                 };
-                db_tx(db_path, TxMode::Write, |st| {
+                store::with_db_in(db_path, TxMode::Write, |st| {
                     st.import_dump(&dump)
                         .map_err(ToolError::invalid)
                         .map(|(memories, tags)| {
@@ -88,7 +88,7 @@ pub fn handle(
             }
             ("GET", ["doctor"]) => {
                 ctx.require(Cap::Admin)?;
-                db_tx(db_path, tx_mode, |st| {
+                store::with_db_in(db_path, tx_mode, |st| {
                     st.hygiene_issues().map_err(ToolError::from).map(|issues| {
                         let ok = issues.is_empty();
                         (200, json!({ "ok": ok, "issues": issues }))
@@ -97,7 +97,7 @@ pub fn handle(
             }
             ("GET", ["identities"]) => {
                 ctx.require(Cap::Admin)?;
-                db_tx(db_path, tx_mode, |st| {
+                store::with_db_in(db_path, tx_mode, |st| {
                     st.identity_list()
                         .map_err(ToolError::from)
                         .map(|identities| (200, json!({ "identities": identities })))
@@ -119,7 +119,7 @@ pub fn handle(
                 };
                 let perms = Permissions::from_json(args.get("permissions").unwrap_or(&Value::Null))
                     .map_err(ToolError::invalid)?;
-                db_tx(db_path, TxMode::Write, |st| {
+                store::with_db_in(db_path, TxMode::Write, |st| {
                     st.identity_create(&name, &perms)
                         .map_err(ToolError::from)
                         .map(|(token, mut view)| {
@@ -131,7 +131,7 @@ pub fn handle(
             }
             ("POST", ["identities", name, "token-reset"]) => {
                 ctx.require(Cap::Admin)?;
-                db_tx(db_path, TxMode::Write, |st| {
+                store::with_db_in(db_path, TxMode::Write, |st| {
                     st.identity_reset_token(name)
                         .map_err(ToolError::from)?
                         .map(|token| (200, json!({ "token": token })))
@@ -146,7 +146,7 @@ pub fn handle(
                 };
                 let perms = Permissions::from_json(args.get("permissions").unwrap_or(&Value::Null))
                     .map_err(ToolError::invalid)?;
-                db_tx(db_path, TxMode::Write, |st| {
+                store::with_db_in(db_path, TxMode::Write, |st| {
                     if !st
                         .identity_set_permissions(name, &perms)
                         .map_err(ToolError::from)?
@@ -161,7 +161,7 @@ pub fn handle(
             }
             ("DELETE", ["identities", name]) => {
                 ctx.require(Cap::Admin)?;
-                db_tx(db_path, TxMode::Write, |st| {
+                store::with_db_in(db_path, TxMode::Write, |st| {
                     if !st.identity_delete(name).map_err(ToolError::from)? {
                         return Err(ToolError::not_found(format!("identity '{name}' not found")));
                     }
@@ -170,7 +170,7 @@ pub fn handle(
             }
             ("GET", ["settings"]) => {
                 ctx.require(Cap::Admin)?;
-                db_tx(db_path, tx_mode, |st| {
+                store::with_db_in(db_path, tx_mode, |st| {
                     // Empty strings normalize to null: means "unset (use default)", the UI shows a placeholder
                     let instructions = st
                         .settings_get("instructions")
@@ -192,8 +192,8 @@ pub fn handle(
                             "instructions": instructions,
                             // Auth switch: the auth boundary is decided by this explicit switch,
                             "auth_required": st.auth_required()?,
-                                                        // Anonymous identity capability set: tokenless requests are resolved
-                                                        // against it once auth is enabled; null = unset (anonymous rejected)
+                            // Anonymous identity capability set: tokenless requests are resolved
+                            // against it once auth is enabled; null = unset (anonymous rejected)
                             "anonymous_permissions": st
                                 .anonymous_permissions()?
                                 .map(|p| p.to_json()),
@@ -201,7 +201,7 @@ pub fn handle(
                             "embedding_base_url": base_url,
                             "embedding_model": model,
                             "embedding_api_key": api_key,
-                                                        // Built-in default prompt: what the UI shows as the "restore default" target
+                            // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
                     ))
@@ -284,7 +284,7 @@ pub fn handle(
                         "nothing to update: provide at least one settings key",
                     )));
                 }
-                db_tx(db_path, TxMode::Write, |st| {
+                store::with_db_in(db_path, TxMode::Write, |st| {
                     // An admin identity must exist before enabling auth, otherwise every request
                     // would 401 with no one able to manage (token plaintext appears only once at creation). Checking in the same transaction avoids concurrent bypass.
                     let enabling = updates
@@ -351,7 +351,7 @@ pub fn handle(
                 if let Some(f) = query_get(query, "filter") {
                     args.insert("filter".into(), json!(f));
                 }
-                db_tx(db_path, tx_mode, |st| {
+                store::with_db_in(db_path, tx_mode, |st| {
                     tools::execute(st, ctx, TAG_LIST, &Value::Object(args)).map(|v| (200, v))
                 })
             }
@@ -360,14 +360,7 @@ pub fn handle(
                     Ok(m) => m,
                     Err(e) => return Ok(bad_request(e)),
                 };
-                let args = Value::Object(args);
-                let pre = crate::notify::capture(db_path, TAG_CREATE, &args);
-                let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, TAG_CREATE, &args).map(|v| (200, v))
-                })?;
-                // Change notifications run after the transaction commits (same hook semantics as the MCP path)
-                crate::notify::after_write(TAG_CREATE, &args, &out.1, &pre);
-                Ok(out)
+                tool_write(db_path, ctx, TAG_CREATE, &Value::Object(args))
             }
             ("PUT", ["tags", tag_name]) => {
                 let args = match args_from_body() {
@@ -381,27 +374,16 @@ pub fn handle(
                         full.insert(k, v);
                     }
                 }
-                let args = Value::Object(full);
-                let pre = crate::notify::capture(db_path, TAG_UPDATE, &args);
-                let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, TAG_UPDATE, &args).map(|v| (200, v))
-                })?;
-                crate::notify::after_write(TAG_UPDATE, &args, &out.1, &pre);
-                Ok(out)
+                tool_write(db_path, ctx, TAG_UPDATE, &Value::Object(full))
             }
             ("DELETE", ["tags", tag_name]) => {
                 let mode = query_get(query, "mode").unwrap_or_else(|| "detach".into());
                 let args = json!({ "name": tag_name, "mode": mode });
-                let pre = crate::notify::capture(db_path, TAG_DELETE, &args);
-                let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, TAG_DELETE, &args).map(|v| (200, v))
-                })?;
-                crate::notify::after_write(TAG_DELETE, &args, &out.1, &pre);
-                Ok(out)
+                tool_write(db_path, ctx, TAG_DELETE, &args)
             }
             ("GET", ["memories"]) => {
                 let args = list_or_search_args(query);
-                db_tx(db_path, tx_mode, |st| {
+                store::with_db_in(db_path, tx_mode, |st| {
                     let name = if query_get(query, "query").is_some() {
                         MEMORY_SEARCH
                     } else {
@@ -415,17 +397,9 @@ pub fn handle(
                     Ok(m) => m,
                     Err(e) => return Ok(bad_request(e)),
                 };
-                let args = Value::Object(args);
-                let pre = crate::notify::capture(db_path, MEMORY_CREATE, &args);
-                let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, MEMORY_CREATE, &args).map(|v| (200, v))
-                })?;
-                // Embedding and change notifications run after the transaction commits (same hook semantics as the MCP path)
-                crate::embed::after_write(db_path);
-                crate::notify::after_write(MEMORY_CREATE, &args, &out.1, &pre);
-                Ok(out)
+                tool_write(db_path, ctx, MEMORY_CREATE, &Value::Object(args))
             }
-            ("GET", ["memories", mem_id]) => db_tx(db_path, tx_mode, |st| {
+            ("GET", ["memories", mem_id]) => store::with_db_in(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] })).map(|v| {
                     let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
                         || v["invalid_ids"].as_array().is_some_and(|m| !m.is_empty());
@@ -449,32 +423,20 @@ pub fn handle(
                 for (k, v) in args {
                     full.insert(k, v);
                 }
-                let args = Value::Object(full);
-                let pre = crate::notify::capture(db_path, MEMORY_UPDATE, &args);
-                let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, MEMORY_UPDATE, &args).map(|v| (200, v))
-                })?;
-                crate::embed::after_write(db_path);
-                crate::notify::after_write(MEMORY_UPDATE, &args, &out.1, &pre);
-                Ok(out)
+                tool_write(db_path, ctx, MEMORY_UPDATE, &Value::Object(full))
             }
             ("DELETE", ["memories", mem_id]) => {
-                let args = json!({ "ids": [mem_id] });
-                let pre = crate::notify::capture(db_path, MEMORY_DELETE, &args);
-                let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, MEMORY_DELETE, &args).map(|v| {
-                        if v["deleted"].as_array().is_some_and(|d| d.is_empty()) {
-                            (
-                                404,
-                                json!({ "error": format!("memory '{}' not found", mem_id) }),
-                            )
-                        } else {
-                            (200, v)
-                        }
-                    })
-                })?;
-                crate::notify::after_write(MEMORY_DELETE, &args, &out.1, &pre);
-                Ok(out)
+                let out = tool_write(db_path, ctx, MEMORY_DELETE, &json!({ "ids": [mem_id] }))?;
+                // Nothing was deleted: the REST face surfaces that as 404 (the tool result reports
+                // it in `missing`; the notification hook already no-opped on the empty deletion)
+                if out.1["deleted"].as_array().is_some_and(|d| d.is_empty()) {
+                    Ok((
+                        404,
+                        json!({ "error": format!("memory '{}' not found", mem_id) }),
+                    ))
+                } else {
+                    Ok(out)
+                }
             }
             _ => Ok(bad_request(ToolError::invalid(format!(
                 "no such API route: {method} {path}"
@@ -506,13 +468,25 @@ pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
     })
 }
 
-/// Executes one tool in a single transaction with a 200 status code (routes override the status as needed).
-fn db_tx(
+/// One write-tool call on the REST face, carrying the same post-commit hook sequence as the MCP
+/// path (`execute_with_db`): capture the pre-write state → single transaction → embedding
+/// backfill for memory-content writes → change notifications. Routes only assemble the
+/// arguments and, where the REST surface demands it, adjust the returned status.
+fn tool_write(
     db_path: &Path,
-    mode: TxMode,
-    f: impl FnOnce(&store::Store) -> Result<(u16, Value), ToolError>,
+    ctx: &IdentityCtx,
+    tool: &str,
+    args: &Value,
 ) -> Result<(u16, Value), ToolError> {
-    store::with_db_in(db_path, mode, f)
+    let pre = crate::notify::capture(db_path, tool, args);
+    let out = store::with_db_in(db_path, TxMode::Write, |st| {
+        tools::execute(st, ctx, tool, args).map(|v| (200, v))
+    })?;
+    if crate::embed::needs_backfill(tool) {
+        crate::embed::after_write(db_path);
+    }
+    crate::notify::after_write(tool, args, &out.1, &pre);
+    Ok(out)
 }
 
 fn bad_request(e: ToolError) -> (u16, Value) {
