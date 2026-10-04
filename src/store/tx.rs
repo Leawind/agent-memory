@@ -18,6 +18,13 @@ pub enum TxMode {
 /// own error type (e.g. the tool layer's `ToolError`); infrastructure errors
 /// (open/begin/commit) are converted from String. On error or panic the function returns early
 /// or unwinds, and closing the connection rolls back automatically — relying on the "commit only on success" ordering.
+///
+/// Every call opens a fresh connection, which also re-runs migrations and the schema fingerprint
+/// check. That is a deliberate tradeoff, not an oversight: at this service's scale (one writer at
+/// a time, personal-server request rates) the per-request open cost is noise, and in exchange
+/// every request is self-healing (a schema drifted out from under a running process is refused
+/// immediately instead of blowing up mid-operation). Revisit with a connection pool only if
+/// profiling ever demands it.
 pub fn with_db_in<T, E>(
     path: &Path,
     mode: TxMode,

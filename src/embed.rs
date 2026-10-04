@@ -171,7 +171,8 @@ impl EmbedOutcome {
 }
 
 /// Backfill one batch for memories missing vectors (or whose vector model is stale): read config and the pending list (read-only transaction)
-/// → call the embedding service (outside transactions) → write vectors (a separate write transaction).
+/// → call the embedding service (outside transactions) → write vectors and count what is left (one write transaction —
+/// the same connection serves both, so a full pass opens two databases, not three).
 pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     let batch = batch.clamp(1, MAX_BATCH);
     let (cfg, pending) = match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
@@ -201,23 +202,20 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
         Err(e) => return EmbedOutcome::Failed(e),
     };
 
-    if let Err(e) = crate::store::with_db_in(db_path, TxMode::Write, |st| {
+    // Storing and counting share one write transaction: the count sees this batch's puts, so the
+    // reported remaining is identical to a post-commit recount
+    match crate::store::with_db_in(db_path, TxMode::Write, |st| {
         for ((id, _, _), vec) in pending.iter().zip(&vectors) {
             st.embedding_put(*id, &cfg.model, vec)?;
         }
-        Ok::<(), String>(())
-    }) {
-        return EmbedOutcome::Failed(format!("cannot store embeddings: {e}"));
-    }
-
-    match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        st.embedding_pending_count(&cfg.model)
+        let remaining = st.embedding_pending_count(&cfg.model)?;
+        Ok::<_, String>(remaining)
     }) {
         Ok(remaining) => EmbedOutcome::Processed {
             processed: pending.len(),
             remaining,
         },
-        Err(e) => EmbedOutcome::Failed(format!("cannot count pending: {e}")),
+        Err(e) => EmbedOutcome::Failed(format!("cannot store embeddings: {e}")),
     }
 }
 
