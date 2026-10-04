@@ -2,29 +2,31 @@
   <!-- After create / reset: the token is shown in plaintext only once -->
   <el-dialog v-model="visible" :title="title" :width="compact ? '96%' : '560px'">
     <p>{{ t('access.created') }}</p>
-    <code class="new-token">{{ token }}</code>
+    <div class="token-row">
+      <code class="new-token">{{ token }}</code>
+      <el-button
+        class="copy-btn"
+        circle
+        :title="t('access.copyToken')"
+        :aria-label="t('access.copyToken')"
+        @click="copyToken(token)"
+      >
+        <el-icon><Check v-if="justCopied" /><CopyDocument v-else /></el-icon>
+      </el-button>
+    </div>
     <template #footer>
+      <el-button @click="visible = false">{{ t('access.close') }}</el-button>
       <!-- One-click save when the host injects onIdentityToken (the standalone shell stores it in its multi-identity token table and switches) -->
       <el-button v-if="config.onIdentityToken" type="primary" @click="saveToBrowser">
         {{ t('access.saveToBrowser') }}
-      </el-button>
-      <el-button
-        type="primary"
-        @click="
-          () => {
-            copyToken(token)
-            visible = false
-          }
-        "
-      >
-        {{ t('access.copyToken') }}
       </el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
+import { Check, CopyDocument } from '@element-plus/icons-vue'
 import { t } from '../../i18n'
 import { useMemoryConfig } from '../../config'
 import { toastError, toastSuccess } from '../../toast'
@@ -65,20 +67,35 @@ async function saveToBrowser(): Promise<void> {
   }
 }
 
+// Copy keeps the dialog open (the token must stay visible until the user closes it
+// themselves); the icon briefly flips to a checkmark as in-place feedback.
+const justCopied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+
 async function copyToken(value: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(value)
+    justCopied.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (justCopied.value = false), 1500)
     toastSuccess(t('access.copied'))
   } catch {
     toastError(value)
   }
 }
+
+onBeforeUnmount(() => clearTimeout(copiedTimer))
 </script>
 
 <style scoped>
-.new-token {
-  display: block;
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 8px;
+}
+.new-token {
+  flex: 1;
   padding: 10px 12px;
   border-radius: 6px;
   background: var(--el-fill-color);

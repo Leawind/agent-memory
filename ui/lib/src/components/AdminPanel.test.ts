@@ -322,10 +322,11 @@ describe('AdminPanel', () => {
     return wrapper
   }
 
-  // The token-once dialog (a hidden create dialog also exists in the DOM; pick by content)
+  // The token-once dialog (a hidden create dialog also exists in the DOM; pick by content;
+  // the copy control is an icon with an aria-label, not visible text)
   function tokenDialog(wrapper: ReturnType<typeof mount>) {
     const dialogs = wrapper.findAll('.el-dialog')
-    const found = dialogs.find((d) => d.text().includes('复制 Token'))
+    const found = dialogs.find((d) => d.find('.new-token').exists())
     expect(found, 'token-once dialog should be visible').toBeTruthy()
     return found!
   }
@@ -334,6 +335,24 @@ describe('AdminPanel', () => {
     const wrapper = await createIdentityAndOpenTokenDialog()
     const dialog = tokenDialog(wrapper)
     expect(dialog.text()).not.toContain('保存到本浏览器')
+    wrapper.unmount()
+  })
+
+  it('copy icon copies the token and keeps the dialog open', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const wrapper = await createIdentityAndOpenTokenDialog()
+    const dialog = tokenDialog(wrapper)
+    await dialog.find('button[aria-label="复制 Token"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('tok-bob-123')
+    const toast = document.querySelector('.el-message')
+    expect(toast?.textContent).toContain('已复制')
+    // Toasts auto-dismiss on a real 3s timer; drop it now so later tests querying
+    // document-level .el-message elements don't pick this one up
+    toast?.remove()
+    // The dialog is deliberately left open: closing is the user's job via the footer button
+    expect(dialog.find('.new-token').exists()).toBe(true)
     wrapper.unmount()
   })
 

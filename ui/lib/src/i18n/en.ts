@@ -140,6 +140,7 @@ export default {
     capAdmin: 'Admin',
     copyToken: 'Copy token',
     copied: 'Copied',
+    close: 'Close',
     created: 'Shown once only — the server stores only a hash. Copy and save it now:',
     resetToken: 'Reset token',
     resetTitle: 'Reset token',

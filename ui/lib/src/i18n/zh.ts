@@ -138,6 +138,7 @@ export default {
     capAdmin: '管理员',
     copyToken: '复制 Token',
     copied: '已复制',
+    close: '关闭',
     created: 'token 仅此一次展示，服务端只存哈希，请立即复制保存：',
     resetToken: '重置 Token',
     resetTitle: '重置 Token',
