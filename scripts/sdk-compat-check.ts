@@ -183,7 +183,7 @@ try {
   // ---- tools/list: the full inventory plus static caching hints
   const tools = await rpc(2, "tools/list")
   const toolNames = ((tools.result?.tools as { name: string }[] | undefined) ?? []).map((t) => t.name)
-  check("tools/list returns 11 tools", toolNames.length === 11, `got ${toolNames.length}`)
+  check("tools/list returns 12 tools", toolNames.length === 12, `got ${toolNames.length}`)
   check(
     "tools/list is public and cacheable",
     tools.result?.cacheScope === "public" && tools.result?.ttlMs === 3_600_000,
@@ -257,6 +257,23 @@ try {
         | string[]
         | undefined
     )?.includes("验证完成") === true,
+  )
+
+  // ---- memory_edit: span replacement inside existing content (no full restatement)
+  const edited = await rpc(39, "tools/call", {
+    name: "memory_edit",
+    arguments: { id: createdId, old_string: "手写 2026-07-28 客户端连接成功", new_string: "手写 2026-07-28 客户端全流程跑通" },
+  })
+  check("memory_edit replaces the span", edited.result?.isError !== true, JSON.stringify(edited).slice(0, 120))
+  const editStructured = structuredOf(edited) as { replaced?: number } | undefined
+  check("memory_edit reports the replacement count", editStructured?.replaced === 1)
+  const editedMiss = await rpc(40, "tools/call", {
+    name: "memory_edit",
+    arguments: { id: createdId, old_string: "not present anywhere", new_string: "x" },
+  })
+  check(
+    "memory_edit missing old_string fails without side effects",
+    editedMiss.result?.isError === true && JSON.stringify(editedMiss.result).includes("not found"),
   )
 
   // ---- Duplicate lifecycle: create a near-duplicate, merge it back, preview a purge

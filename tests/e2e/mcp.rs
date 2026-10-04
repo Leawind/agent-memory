@@ -76,7 +76,7 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(tools["result"]["resultType"], "complete");
     assert_eq!(tools["result"]["ttlMs"], 3_600_000);
     assert_eq!(tools["result"]["cacheScope"], "public");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 11);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 12);
 
     // Full agent flow: create -> search (progressive disclosure, no content leak) -> fetch full text
     let created = mcp_rpc(
@@ -167,6 +167,41 @@ fn mcp_endpoint_end_to_end() {
     );
     assert!(updated.get("error").is_none(), "update failed: {updated}");
     assert_eq!(updated["result"]["structuredContent"]["updated"], true);
+
+    // memory_edit: replace a span inside the content without restating it; the response stays
+    // sparse (no content echo) and the change is visible through memory_get
+    let edited = mcp_rpc(
+        port,
+        json!(70),
+        "tools/call",
+        json!({
+            "name": "memory_edit", "arguments": {
+                "id": mem_id,
+                "old_string": "SQLite 做持久化",
+                "new_string": "SQLite 做持久化（WAL 模式）"
+            }
+        }),
+    );
+    assert!(edited.get("error").is_none(), "edit failed: {edited}");
+    let edit_sc = &edited["result"]["structuredContent"];
+    assert_eq!(edit_sc["replaced"], 1);
+    assert!(
+        edit_sc.get("content").is_none(),
+        "edit must not echo the full content"
+    );
+    let refetched = mcp_rpc(
+        port,
+        json!(71),
+        "tools/call",
+        json!({"name": "memory_get", "arguments": {"ids": [mem_id]}}),
+    );
+    assert!(
+        refetched["result"]["structuredContent"]["memories"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("WAL 模式"),
+        "edited span must be visible through memory_get: {refetched}"
+    );
 
     // Error paths: unknown tool -> -32602 on HTTP 200; unknown method -> 404 + -32601; bad params -> isError
     let unknown_tool = mcp_rpc(port, json!(8), "tools/call", json!({"name": "nope"}));

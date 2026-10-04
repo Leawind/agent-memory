@@ -22,7 +22,7 @@ use std::path::Path;
 
 pub use defs::{tool_definitions, TOOL_NAMES};
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -94,7 +94,7 @@ pub fn execute_with_db(
     // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     // A successful create then gets a semantic near-duplicate scan attached to its result (advisory, fallback-safe).
-    if name == "memory_create" || name == "memory_update" {
+    if name == "memory_create" || name == "memory_update" || name == "memory_edit" {
         crate::embed::after_write(db_path);
         if name == "memory_create" {
             crate::embed::dedup_hint(db_path, &mut out);
@@ -129,6 +129,7 @@ pub fn execute(
         "memory_search" => memory_ops::memory_search(st, map),
         "memory_get" => memory_ops::memory_get(st, map),
         "memory_update" => memory_ops::memory_update(st, map),
+        "memory_edit" => memory_ops::memory_edit(st, map),
         // The merge needs the identity for the data-dependent reserved-tag check (its arguments
         // name no tags; only the loaded memories reveal whether conventions is involved)
         "memory_merge" => memory_ops::memory_merge(st, ctx, map),
@@ -1280,6 +1281,254 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok["removed"], other.as_str());
+
+        cleanup(&path);
+    }
+
+    /// memory_edit replaces an exact span inside the content: single matches swap in place, the
+    /// response stays sparse (no content echo — progressive disclosure), and an empty new_string
+    /// deletes the span.
+    #[test]
+    fn memory_edit_replaces_exact_spans() {
+        let path = temp_db("memory-edit");
+        call(
+            &path,
+            "memory_create",
+            json!({
+                "summary": "Deploy runbook",
+                "content": "step one: build\nstep two: test\nstep three: release",
+                "tags": ["ops"],
+                "create_missing_tags": true
+            }),
+        )
+        .unwrap();
+
+        let r = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "step two: test", "new_string": "step two: full test suite"}),
+        )
+        .unwrap();
+        assert_eq!(r["replaced"], 1);
+        assert!(
+            r.get("content").is_none(),
+            "edit response must not echo the full content"
+        );
+        let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
+        assert_eq!(
+            got["memories"][0]["content"],
+            "step one: build\nstep two: full test suite\nstep three: release"
+        );
+
+        // Empty new_string = delete the span (byte-exact, newline included)
+        call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "step one: build\n", "new_string": ""}),
+        )
+        .unwrap();
+        let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
+        assert_eq!(
+            got["memories"][0]["content"],
+            "step two: full test suite\nstep three: release"
+        );
+
+        cleanup(&path);
+    }
+
+    /// Ambiguity discipline: 0 hits and multi-hits both fail without touching anything; the
+    /// multi-hit error reports the count and offers replace_all, which then replaces every
+    /// occurrence.
+    #[test]
+    fn memory_edit_ambiguity_is_rejected_until_resolved() {
+        let path = temp_db("memory-edit-ambiguity");
+        let original = "todo: a\ndone: b\ntodo: c";
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": original}),
+        )
+        .unwrap();
+
+        // 0 hits (byte-exact, so a case change already misses), with a re-read hint
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "TODO: a", "new_string": "x"}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Invalid(_)), "got: {err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not found") && msg.contains("memory_get"),
+            "got: {msg}"
+        );
+
+        // 2 hits without replace_all: rejected with the count, memory untouched
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "todo:", "new_string": "x"}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("2 times"), "got: {err}");
+        assert_eq!(
+            call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap()["memories"][0]["content"],
+            original
+        );
+
+        // replace_all replaces every occurrence and reports how many
+        let r = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "todo:", "new_string": "note:", "replace_all": true}),
+        )
+        .unwrap();
+        assert_eq!(r["replaced"], 2);
+        assert_eq!(
+            call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap()["memories"][0]["content"],
+            "note: a\ndone: b\nnote: c"
+        );
+
+        cleanup(&path);
+    }
+
+    /// No-op edits are rejected outright (identical strings, empty old_string), as are malformed
+    /// ids and unknown memories — the same id discipline as memory_update.
+    #[test]
+    fn memory_edit_rejects_no_ops_and_bad_ids() {
+        let path = temp_db("memory-edit-noop");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": "hello world"}),
+        )
+        .unwrap();
+
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "hello", "new_string": "hello"}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("identical"), "got: {err}");
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "", "new_string": "x"}),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("old_string must not be empty"),
+            "got: {err}"
+        );
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "12", "old_string": "hello", "new_string": "x"}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("malformed"), "got: {err}");
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m99", "old_string": "hello", "new_string": "x"}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::NotFound(_)), "got: {err:?}");
+
+        cleanup(&path);
+    }
+
+    /// The content cap applies to the post-edit result: growing past MAX_CONTENT_CHARS fails the
+    /// whole edit and the memory keeps its previous body.
+    #[test]
+    fn memory_edit_respects_the_content_cap() {
+        let path = temp_db("memory-edit-cap");
+        let base = "x".repeat(crate::model::MAX_CONTENT_CHARS - 1);
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": base}),
+        )
+        .unwrap();
+
+        // replace_all sidesteps the uniqueness check so the size rejection is what fires
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "x", "new_string": "xxx", "replace_all": true}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("too long"), "got: {err}");
+        assert_eq!(
+            call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap()["memories"][0]["content"],
+            base,
+            "the failed edit must not have touched anything"
+        );
+
+        cleanup(&path);
+    }
+
+    /// memory_edit sits in the update capability domain: a zero-permission identity is Forbidden
+    /// before execution, an update-only identity can edit.
+    #[test]
+    fn memory_edit_permission_boundaries() {
+        use crate::auth::Cap;
+        let path = temp_db("memory-edit-caps");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "s", "content": "hello world"}),
+        )
+        .unwrap();
+
+        let err = call_as(
+            &path,
+            &[],
+            "memory_edit",
+            json!({"id": "m1", "old_string": "hello", "new_string": "bye"}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
+        assert!(err.to_string().contains("'update'"), "got: {err}");
+
+        let ok = call_as(
+            &path,
+            &[Cap::Update],
+            "memory_edit",
+            json!({"id": "m1", "old_string": "hello", "new_string": "bye"}),
+        )
+        .unwrap();
+        assert_eq!(ok["replaced"], 1);
+
+        cleanup(&path);
+    }
+
+    /// Editing a conventions memory's body follows memory_update's rule: content rewrites need only
+    /// the update permission (the reserved-tag guard covers attaching/detaching, not editing).
+    #[test]
+    fn memory_edit_on_conventions_content_needs_no_admin() {
+        use crate::auth::Cap;
+        use crate::model::RESERVED_TAG;
+        let path = temp_db("memory-edit-conventions");
+        let created = call_as(
+            &path,
+            &Cap::ALL,
+            "memory_create",
+            json!({"summary": "rule", "content": "always lint", "tags": [RESERVED_TAG], "create_missing_tags": true}),
+        )
+        .unwrap();
+        let id = created["memory"]["id"].as_str().unwrap().to_string();
+
+        let ok = call_as(
+            &path,
+            &[Cap::Update],
+            "memory_edit",
+            json!({"id": id, "old_string": "always lint", "new_string": "always lint before commit"}),
+        )
+        .unwrap();
+        assert_eq!(ok["replaced"], 1);
 
         cleanup(&path);
     }

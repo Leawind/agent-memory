@@ -397,6 +397,18 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 push(&mut events, Event::ListChanged);
             }
         }
+        "memory_edit" => {
+            // Content replaced in place: only that memory resource's read result moves (tags are
+            // untouched, so no catalog nor membership event)
+            let id = result["memory"]["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            push(
+                &mut events,
+                Event::Updated(resources::memory_resource_uri(&id)),
+            );
+        }
         "memory_merge" => {
             // The target is rewritten (merged content, possibly summary) and gains the source's
             // tags; the source is deleted outright. Same event shapes as memory_update on the
@@ -648,6 +660,18 @@ mod tests {
             &pre,
         );
         assert!(evs.is_empty());
+    }
+
+    #[test]
+    fn memory_edit_events_cover_the_memory_resource_only() {
+        // Content replaced in place; tags are untouched, so no tag-catalog nor membership event
+        let evs = events_for(
+            "memory_edit",
+            json!({"id": "m1", "old_string": "a", "new_string": "b"}),
+            json!({"replaced": 1, "memory": {"id": "m1", "tags": ["a"]}}),
+            &PreState::default(),
+        );
+        assert_eq!(evs, vec![Event::Updated("memory://memories/m1".into())]);
     }
 
     #[test]

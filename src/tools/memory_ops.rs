@@ -356,6 +356,66 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     Ok(out)
 }
 
+/// Edit one memory's content by exact string replacement (the harness file-editor pattern): the
+/// caller cites the span to change instead of restating the whole body, so a one-word fix on a long
+/// memory costs tokens for the span only and the untouched parts cannot silently drift. Matching is
+/// byte-exact; ambiguity fails without side effects (with the match count) unless replace_all.
+pub fn memory_edit(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let raw_id = normalize_id(&req_str(args, "id")?);
+    // Same id discipline as memory_update: format errors are 400, not lumped into "not found" (404)
+    let Some(id) = Store::parse_id(&raw_id) else {
+        return Err(ToolError::invalid(format!(
+            "malformed memory id '{raw_id}': ids look like 'm123' (a leading 'm' is required)"
+        )));
+    };
+    let old_string = req_str(args, "old_string")?;
+    let new_string = req_str(args, "new_string")?;
+    let replace_all = opt_bool(args, "replace_all")?.unwrap_or(false);
+    if old_string.is_empty() {
+        return Err(ToolError::invalid(
+            "old_string must not be empty (an empty match is ambiguous; to rewrite the whole content use memory_update)",
+        ));
+    }
+    if old_string == new_string {
+        return Err(ToolError::invalid(
+            "old_string and new_string are identical: nothing to replace",
+        ));
+    }
+
+    let (mut found, _) = st.get_memories(&[id])?;
+    let memory = found.pop().ok_or_else(|| {
+        ToolError::not_found(format!(
+            "memory '{raw_id}' not found (use memory_list or memory_search first)"
+        ))
+    })?;
+    let count = memory.content.matches(&old_string).count();
+    if count == 0 {
+        return Err(ToolError::invalid(format!(
+            "old_string not found in memory '{raw_id}' (matching is byte-exact: case-sensitive, whitespace-significant); use memory_get to re-read the current content"
+        )));
+    }
+    if count > 1 && !replace_all {
+        return Err(ToolError::invalid(format!(
+            "old_string matches {count} times in memory '{raw_id}': add surrounding text to make the match unique, or pass replace_all: true to replace every occurrence"
+        )));
+    }
+
+    let updated = if replace_all {
+        memory.content.replace(&old_string, &new_string)
+    } else {
+        memory.content.replacen(&old_string, &new_string, 1)
+    };
+    // The cap applies to the post-edit result; failing here leaves the memory untouched
+    validate_content(&updated)
+        .map_err(|e| ToolError::invalid(format!("edit rejected, nothing was changed: {e}")))?;
+    st.update_memory(id, None, Some(&updated), &[], &[])?;
+
+    Ok(json!({
+        "replaced": if replace_all { count } else { 1 },
+        "memory": memory_view(st, id)?,
+    }))
+}
+
 pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let ids = req_id_list(args, "ids", 50)?;
     let (numeric, invalid) = split_ids(&ids);

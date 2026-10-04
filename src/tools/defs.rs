@@ -18,6 +18,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "memory_search",
     "memory_get",
     "memory_update",
+    "memory_edit",
     "memory_merge",
     "memory_delete",
 ];
@@ -146,7 +147,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_update",
-            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
+            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). For a small change inside long content, memory_edit (exact string replacement) is far cheaper than restating the whole body. Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
             json!({
                 "type": "object",
                 "properties": {
@@ -158,6 +159,22 @@ pub fn tool_definitions() -> Value {
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
+                "additionalProperties": false
+            }),
+            false, false,
+        ),
+        def(
+            "memory_edit",
+            "Edit a memory's content by exact string replacement instead of restating the whole body - the efficient way to change a long memory. old_string is located in the current content byte-exact (case-sensitive, whitespace-significant) and swapped for new_string in place. The edit fails without side effects when old_string is absent (re-read the content with memory_get first) or when it matches more than once (then add surrounding text to make the match unique, or pass replace_all: true to replace every occurrence and the response reports the count). new_string may be empty to delete the matched span; old_string must be non-empty and differ from new_string. Refreshes the updated time and re-embeds the memory for semantic search, same as memory_update.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
+                    "old_string": {"type": "string", "minLength": 1, "description": "Exact text to replace (byte-exact: case-sensitive, whitespace-significant)."},
+                    "new_string": {"type": "string", "description": "Replacement text; may be empty to delete the matched span. Must differ from old_string."},
+                    "replace_all": {"type": "boolean", "description": "Default false: old_string must match exactly once. True replaces every occurrence."}
+                },
+                "required": ["id", "old_string", "new_string"],
                 "additionalProperties": false
             }),
             false, false,
@@ -259,7 +276,7 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
         "tag_create" | "tag_update" | "tag_delete" => &[Cap::TagManage],
         "memory_create" => &[Cap::Create],
         "memory_list" | "memory_search" | "memory_get" => &[Cap::Read],
-        "memory_update" => &[Cap::Update],
+        "memory_update" | "memory_edit" => &[Cap::Update],
         "memory_merge" => &[Cap::Update, Cap::Delete],
         "memory_delete" => &[Cap::Delete],
         _ => &[Cap::Read],
