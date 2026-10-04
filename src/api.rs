@@ -17,7 +17,10 @@
 use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
-use crate::tools::{self, ToolError};
+use crate::tools::{
+    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_SEARCH,
+    MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
+};
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
@@ -349,7 +352,7 @@ pub fn handle(
                     args.insert("filter".into(), json!(f));
                 }
                 db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "tag_list", &Value::Object(args)).map(|v| (200, v))
+                    tools::execute(st, ctx, TAG_LIST, &Value::Object(args)).map(|v| (200, v))
                 })
             }
             ("POST", ["tags"]) => {
@@ -358,12 +361,12 @@ pub fn handle(
                     Err(e) => return Ok(bad_request(e)),
                 };
                 let args = Value::Object(args);
-                let pre = crate::notify::capture(db_path, "tag_create", &args);
+                let pre = crate::notify::capture(db_path, TAG_CREATE, &args);
                 let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "tag_create", &args).map(|v| (200, v))
+                    tools::execute(st, ctx, TAG_CREATE, &args).map(|v| (200, v))
                 })?;
                 // Change notifications run after the transaction commits (same hook semantics as the MCP path)
-                crate::notify::after_write("tag_create", &args, &out.1, &pre);
+                crate::notify::after_write(TAG_CREATE, &args, &out.1, &pre);
                 Ok(out)
             }
             ("PUT", ["tags", tag_name]) => {
@@ -379,30 +382,30 @@ pub fn handle(
                     }
                 }
                 let args = Value::Object(full);
-                let pre = crate::notify::capture(db_path, "tag_update", &args);
+                let pre = crate::notify::capture(db_path, TAG_UPDATE, &args);
                 let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "tag_update", &args).map(|v| (200, v))
+                    tools::execute(st, ctx, TAG_UPDATE, &args).map(|v| (200, v))
                 })?;
-                crate::notify::after_write("tag_update", &args, &out.1, &pre);
+                crate::notify::after_write(TAG_UPDATE, &args, &out.1, &pre);
                 Ok(out)
             }
             ("DELETE", ["tags", tag_name]) => {
                 let mode = query_get(query, "mode").unwrap_or_else(|| "detach".into());
                 let args = json!({ "name": tag_name, "mode": mode });
-                let pre = crate::notify::capture(db_path, "tag_delete", &args);
+                let pre = crate::notify::capture(db_path, TAG_DELETE, &args);
                 let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "tag_delete", &args).map(|v| (200, v))
+                    tools::execute(st, ctx, TAG_DELETE, &args).map(|v| (200, v))
                 })?;
-                crate::notify::after_write("tag_delete", &args, &out.1, &pre);
+                crate::notify::after_write(TAG_DELETE, &args, &out.1, &pre);
                 Ok(out)
             }
             ("GET", ["memories"]) => {
                 let args = list_or_search_args(query);
                 db_tx(db_path, tx_mode, |st| {
                     let name = if query_get(query, "query").is_some() {
-                        "memory_search"
+                        MEMORY_SEARCH
                     } else {
-                        "memory_list"
+                        MEMORY_LIST
                     };
                     tools::execute(st, ctx, name, &args).map(|v| (200, v))
                 })
@@ -413,17 +416,17 @@ pub fn handle(
                     Err(e) => return Ok(bad_request(e)),
                 };
                 let args = Value::Object(args);
-                let pre = crate::notify::capture(db_path, "memory_create", &args);
+                let pre = crate::notify::capture(db_path, MEMORY_CREATE, &args);
                 let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "memory_create", &args).map(|v| (200, v))
+                    tools::execute(st, ctx, MEMORY_CREATE, &args).map(|v| (200, v))
                 })?;
                 // Embedding and change notifications run after the transaction commits (same hook semantics as the MCP path)
                 crate::embed::after_write(db_path);
-                crate::notify::after_write("memory_create", &args, &out.1, &pre);
+                crate::notify::after_write(MEMORY_CREATE, &args, &out.1, &pre);
                 Ok(out)
             }
             ("GET", ["memories", mem_id]) => db_tx(db_path, tx_mode, |st| {
-                tools::execute(st, ctx, "memory_get", &json!({ "ids": [mem_id] })).map(|v| {
+                tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] })).map(|v| {
                     let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
                         || v["invalid_ids"].as_array().is_some_and(|m| !m.is_empty());
                     if not_found {
@@ -447,19 +450,19 @@ pub fn handle(
                     full.insert(k, v);
                 }
                 let args = Value::Object(full);
-                let pre = crate::notify::capture(db_path, "memory_update", &args);
+                let pre = crate::notify::capture(db_path, MEMORY_UPDATE, &args);
                 let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "memory_update", &args).map(|v| (200, v))
+                    tools::execute(st, ctx, MEMORY_UPDATE, &args).map(|v| (200, v))
                 })?;
                 crate::embed::after_write(db_path);
-                crate::notify::after_write("memory_update", &args, &out.1, &pre);
+                crate::notify::after_write(MEMORY_UPDATE, &args, &out.1, &pre);
                 Ok(out)
             }
             ("DELETE", ["memories", mem_id]) => {
                 let args = json!({ "ids": [mem_id] });
-                let pre = crate::notify::capture(db_path, "memory_delete", &args);
+                let pre = crate::notify::capture(db_path, MEMORY_DELETE, &args);
                 let out = db_tx(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, "memory_delete", &args).map(|v| {
+                    tools::execute(st, ctx, MEMORY_DELETE, &args).map(|v| {
                         if v["deleted"].as_array().is_some_and(|d| d.is_empty()) {
                             (
                                 404,
@@ -470,7 +473,7 @@ pub fn handle(
                         }
                     })
                 })?;
-                crate::notify::after_write("memory_delete", &args, &out.1, &pre);
+                crate::notify::after_write(MEMORY_DELETE, &args, &out.1, &pre);
                 Ok(out)
             }
             _ => Ok(bad_request(ToolError::invalid(format!(

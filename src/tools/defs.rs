@@ -8,25 +8,42 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// Tool names as constants: the name string is the key of the agent-facing contract, and the
+/// dispatcher, capability registry, reserved-tag guards, notification hooks and both server faces
+/// (MCP / REST) all key on these — a rename is a one-line edit here, and any stale literal still
+/// matched elsewhere fails to compile.
+pub const TAG_CREATE: &str = "tag_create";
+pub const TAG_LIST: &str = "tag_list";
+pub const TAG_UPDATE: &str = "tag_update";
+pub const TAG_DELETE: &str = "tag_delete";
+pub const MEMORY_CREATE: &str = "memory_create";
+pub const MEMORY_LIST: &str = "memory_list";
+pub const MEMORY_SEARCH: &str = "memory_search";
+pub const MEMORY_GET: &str = "memory_get";
+pub const MEMORY_UPDATE: &str = "memory_update";
+pub const MEMORY_EDIT: &str = "memory_edit";
+pub const MEMORY_MERGE: &str = "memory_merge";
+pub const MEMORY_DELETE: &str = "memory_delete";
+
 pub const TOOL_NAMES: &[&str] = &[
-    "tag_create",
-    "tag_list",
-    "tag_update",
-    "tag_delete",
-    "memory_create",
-    "memory_list",
-    "memory_search",
-    "memory_get",
-    "memory_update",
-    "memory_edit",
-    "memory_merge",
-    "memory_delete",
+    TAG_CREATE,
+    TAG_LIST,
+    TAG_UPDATE,
+    TAG_DELETE,
+    MEMORY_CREATE,
+    MEMORY_LIST,
+    MEMORY_SEARCH,
+    MEMORY_GET,
+    MEMORY_UPDATE,
+    MEMORY_EDIT,
+    MEMORY_MERGE,
+    MEMORY_DELETE,
 ];
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
         def(
-            "tag_create",
+            TAG_CREATE,
             "Create a new tag. Tags are labels used to organize memories; you own the taxonomy. Fails if the tag already exists (check with tag_list). If a tag differing only by case exists, it is created anyway but reported in similar_existing - prefer merging to keep the taxonomy tidy.",
             json!({
                 "type": "object",
@@ -40,7 +57,7 @@ pub fn tool_definitions() -> Value {
             false, false,
         ),
         def(
-            "tag_list",
+            TAG_LIST,
             "List tags with descriptions and memory counts. Token-frugal sparse rows: description is omitted when empty and reserved: true appears only on reserved tags - 'conventions' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
             json!({
                 "type": "object",
@@ -52,7 +69,7 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            "tag_update",
+            TAG_UPDATE,
             "Update a tag: rename it and/or set its description (the only way to fill in a description after tag_create). Memories referencing the tag follow a rename automatically - only the label changes. Omit new_name to keep the current name; omit description to keep the current one; at least one of the two is required. The response flags renamed / description_updated tell which parts actually changed.",
             json!({
                 "type": "object",
@@ -67,7 +84,7 @@ pub fn tool_definitions() -> Value {
             false, false,
         ),
         def(
-            "tag_delete",
+            TAG_DELETE,
             "Delete a tag. mode 'detach' (default) removes only the tag from memories and keeps them; mode 'purge' also permanently deletes every memory carrying this tag - preview the impact first with dry_run: true (reports the affected memory count and, for purge, their ids) since purge cannot be undone.",
             json!({
                 "type": "object",
@@ -82,7 +99,7 @@ pub fn tool_definitions() -> Value {
             false, true,
         ),
         def(
-            "memory_create",
+            MEMORY_CREATE,
             "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the full text revealed on demand (level 2). Tags must exist: unknown names are rejected with the closest existing tags listed - create them explicitly with tag_create, reuse the listed names, or pass create_missing_tags: true to auto-create them empty (keeping the taxonomy tidy is your job; case variants and synonyms rot it). The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update) - each list only attached when non-empty. Existing memories with the same summary are listed in duplicate_of, and with semantic search enabled near-duplicates by embedding similarity additionally appear in similar_to (also only when found) - both are advisory: prefer memory_update / memory_merge on those instead of storing again.",
             json!({
                 "type": "object",
@@ -98,7 +115,7 @@ pub fn tool_definitions() -> Value {
             false, false,
         ),
         def(
-            "memory_list",
+            MEMORY_LIST,
             "Browse memories, optionally filtered by tag. Returns summaries only (id, tags, abstract, and one 'updated' time rendered as the server's local wall clock, 'YYYY-MM-DD HH:MM') - never full content; call memory_get for entries worth reading. Newest first by default; paginated.",
             json!({
                 "type": "object",
@@ -115,7 +132,7 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            "memory_search",
+            MEMORY_SEARCH,
             "Search across tags, summaries and content. All whitespace-separated terms must match (AND); a quoted term (\"exact phrase\") must match verbatim and scores a bonus. Matching is substring-based and case-insensitive, so CJK queries work without segmentation. Repeated hits and whole-word ASCII matches rank higher. Tag matches rank highest. When the server has semantic search enabled, results also include meaning-similar memories that share no keywords (mode 'hybrid'); if the embedding service is unavailable the search silently falls back to keyword-only and the response carries semantic_fallback: true. Returns ranked summaries plus a short plain-text excerpt of the content (unescaped data, single line) - call memory_get on the promising ids to reveal full content. score is an ordering integer, not a percentage. Keyword mode sums field weights: exact tag hit +40 per tag, tag substring +25, summary hit +10 each (capped at 3), content hit +3 each (capped at 3), ASCII whole-word bonus +5 (summary) / +2 (content), whole quoted phrase +8 - so roughly 50+ means a strong multi-field match and 10-30 a weak single-field one. Hybrid mode instead reports an RRF fusion of both channels' ranks (scaled, tiny values) comparable only within the same response; do not compare scores across modes.",
             json!({
                 "type": "object",
@@ -133,7 +150,7 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            "memory_get",
+            MEMORY_GET,
             "Reveal the full content of one or more memories by id (progressive disclosure level 2). Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
             json!({
                 "type": "object",
@@ -146,7 +163,7 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            "memory_update",
+            MEMORY_UPDATE,
             "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). For a small change inside long content, memory_edit (exact string replacement) is far cheaper than restating the whole body. Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
             json!({
                 "type": "object",
@@ -164,7 +181,7 @@ pub fn tool_definitions() -> Value {
             false, false,
         ),
         def(
-            "memory_edit",
+            MEMORY_EDIT,
             "Edit a memory's content by exact string replacement instead of restating the whole body - the efficient way to change a long memory. old_string is located in the current content byte-exact (case-sensitive, whitespace-significant) and swapped for new_string in place. The edit fails without side effects when old_string is absent (re-read the content with memory_get first) or when it matches more than once (then add surrounding text to make the match unique, or pass replace_all: true to replace every occurrence and the response reports the count). new_string may be empty to delete the matched span; old_string must be non-empty and differ from new_string. Refreshes the updated time and re-embeds the memory for semantic search, same as memory_update.",
             json!({
                 "type": "object",
@@ -180,7 +197,7 @@ pub fn tool_definitions() -> Value {
             false, false,
         ),
         def(
-            "memory_merge",
+            MEMORY_MERGE,
             "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin.",
             json!({
                 "type": "object",
@@ -196,7 +213,7 @@ pub fn tool_definitions() -> Value {
             false, true,
         ),
         def(
-            "memory_delete",
+            MEMORY_DELETE,
             "Permanently delete one or more memories by id.",
             json!({
                 "type": "object",
@@ -273,12 +290,12 @@ pub fn is_read_only(tool: &str) -> bool {
 /// tools in TOOL_NAMES; the fallback branch exists for type completeness only.
 pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
-        "tag_create" | "tag_update" | "tag_delete" => &[Cap::TagManage],
-        "memory_create" => &[Cap::Create],
-        "memory_list" | "memory_search" | "memory_get" => &[Cap::Read],
-        "memory_update" | "memory_edit" => &[Cap::Update],
-        "memory_merge" => &[Cap::Update, Cap::Delete],
-        "memory_delete" => &[Cap::Delete],
+        TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
+        MEMORY_CREATE => &[Cap::Create],
+        MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET => &[Cap::Read],
+        MEMORY_UPDATE | MEMORY_EDIT => &[Cap::Update],
+        MEMORY_MERGE => &[Cap::Update, Cap::Delete],
+        MEMORY_DELETE => &[Cap::Delete],
         _ => &[Cap::Read],
     }
 }

@@ -20,7 +20,11 @@ use crate::store::{self, Store};
 use serde_json::{Map, Value};
 use std::path::Path;
 
-pub use defs::{tool_definitions, TOOL_NAMES};
+pub use defs::{
+    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIST,
+    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
+    TOOL_NAMES,
+};
 
 pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
@@ -94,9 +98,12 @@ pub fn execute_with_db(
     // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     // A successful create then gets a semantic near-duplicate scan attached to its result (advisory, fallback-safe).
-    if name == "memory_create" || name == "memory_update" || name == "memory_edit" {
+    if matches!(
+        name,
+        defs::MEMORY_CREATE | defs::MEMORY_UPDATE | defs::MEMORY_EDIT
+    ) {
         crate::embed::after_write(db_path);
-        if name == "memory_create" {
+        if name == defs::MEMORY_CREATE {
             crate::embed::dedup_hint(db_path, &mut out);
         }
     }
@@ -120,20 +127,20 @@ pub fn execute(
     }
 
     match name {
-        "tag_create" => tag_ops::tag_create(st, map),
-        "tag_list" => tag_ops::tag_list(st, map),
-        "tag_update" => tag_ops::tag_update(st, map),
-        "tag_delete" => tag_ops::tag_delete(st, map),
-        "memory_create" => memory_ops::memory_create(st, map),
-        "memory_list" => memory_ops::memory_list(st, map),
-        "memory_search" => memory_ops::memory_search(st, map),
-        "memory_get" => memory_ops::memory_get(st, map),
-        "memory_update" => memory_ops::memory_update(st, map),
-        "memory_edit" => memory_ops::memory_edit(st, map),
+        defs::TAG_CREATE => tag_ops::tag_create(st, map),
+        defs::TAG_LIST => tag_ops::tag_list(st, map),
+        defs::TAG_UPDATE => tag_ops::tag_update(st, map),
+        defs::TAG_DELETE => tag_ops::tag_delete(st, map),
+        defs::MEMORY_CREATE => memory_ops::memory_create(st, map),
+        defs::MEMORY_LIST => memory_ops::memory_list(st, map),
+        defs::MEMORY_SEARCH => memory_ops::memory_search(st, map),
+        defs::MEMORY_GET => memory_ops::memory_get(st, map),
+        defs::MEMORY_UPDATE => memory_ops::memory_update(st, map),
+        defs::MEMORY_EDIT => memory_ops::memory_edit(st, map),
         // The merge needs the identity for the data-dependent reserved-tag check (its arguments
         // name no tags; only the loaded memories reveal whether conventions is involved)
-        "memory_merge" => memory_ops::memory_merge(st, ctx, map),
-        "memory_delete" => memory_ops::memory_delete(st, map),
+        defs::MEMORY_MERGE => memory_ops::memory_merge(st, ctx, map),
+        defs::MEMORY_DELETE => memory_ops::memory_delete(st, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
 }
@@ -162,16 +169,16 @@ fn reserved_tag_guard(
             .any(|t| t.trim() == RESERVED_TAG)
     }
     match name {
-        "tag_create" => {
+        defs::TAG_CREATE => {
             if raw_tag(args, "name").as_deref() == Some(RESERVED_TAG) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
                     "'{RESERVED_TAG}' is a reserved tag; creating it requires the 'admin' permission (it anchors the operator-curated conventions)"
                 )));
             }
         }
-        "tag_update" | "tag_delete" => {
+        defs::TAG_UPDATE | defs::TAG_DELETE => {
             let mut targets = vec![raw_tag(args, "name")];
-            if name == "tag_update" {
+            if name == defs::TAG_UPDATE {
                 targets.push(raw_tag(args, "new_name"));
             }
             if targets.into_iter().flatten().any(|t| t == RESERVED_TAG) {
@@ -180,14 +187,14 @@ fn reserved_tag_guard(
                 )));
             }
         }
-        "memory_create" => {
+        defs::MEMORY_CREATE => {
             if involves_reserved(args, &["tags"]) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
                     "attaching the reserved tag '{RESERVED_TAG}' to a memory requires the 'admin' permission (conventions are operator-curated)"
                 )));
             }
         }
-        "memory_update"
+        defs::MEMORY_UPDATE
             if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) =>
         {
             return Err(ToolError::forbidden(format!(

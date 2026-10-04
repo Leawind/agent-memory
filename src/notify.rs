@@ -19,6 +19,10 @@
 
 use crate::model::RESERVED_TAG;
 use crate::resources;
+use crate::tools::{
+    MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_MERGE, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE,
+    TAG_UPDATE,
+};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -216,13 +220,13 @@ pub struct PreState {
 
 pub fn capture(db_path: &Path, tool: &str, args: &Value) -> PreState {
     let ids: Vec<String> = match tool {
-        "memory_update" => vec![args["id"].as_str().unwrap_or_default().to_string()],
+        MEMORY_UPDATE => vec![args["id"].as_str().unwrap_or_default().to_string()],
         // Merge diffs the target's tags (first id) and needs the source's tags for its removal events
-        "memory_merge" => vec![
+        MEMORY_MERGE => vec![
             args["target"].as_str().unwrap_or_default().to_string(),
             args["source"].as_str().unwrap_or_default().to_string(),
         ],
-        "memory_delete" => args["ids"]
+        MEMORY_DELETE => args["ids"]
             .as_array()
             .map(|a| {
                 a.iter()
@@ -304,8 +308,8 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
         }
     }
     match tool {
-        "tag_create" => push(&mut events, Event::ListChanged),
-        "tag_update" => {
+        TAG_CREATE => push(&mut events, Event::ListChanged),
+        TAG_UPDATE => {
             let renamed = result["renamed"] == true;
             let description_updated = result["description_updated"] == true;
             let final_name = result["name"].as_str().unwrap_or_default();
@@ -329,7 +333,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 );
             }
         }
-        "tag_delete" => {
+        TAG_DELETE => {
             push(&mut events, Event::ListChanged);
             push(
                 &mut events,
@@ -338,7 +342,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 )),
             );
         }
-        "memory_create" => {
+        MEMORY_CREATE => {
             let autocreated = result["tags_autocreated"]
                 .as_array()
                 .is_some_and(|a| !a.is_empty());
@@ -363,7 +367,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 );
             }
         }
-        "memory_update" => {
+        MEMORY_UPDATE => {
             let id = result["memory"]["id"]
                 .as_str()
                 .unwrap_or_default()
@@ -397,7 +401,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 push(&mut events, Event::ListChanged);
             }
         }
-        "memory_edit" => {
+        MEMORY_EDIT => {
             // Content replaced in place: only that memory resource's read result moves (tags are
             // untouched, so no catalog nor membership event)
             let id = result["memory"]["id"]
@@ -409,7 +413,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 Event::Updated(resources::memory_resource_uri(&id)),
             );
         }
-        "memory_merge" => {
+        MEMORY_MERGE => {
             // The target is rewritten (merged content, possibly summary) and gains the source's
             // tags; the source is deleted outright. Same event shapes as memory_update on the
             // target plus memory_delete on the source.
@@ -457,7 +461,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 }
             }
         }
-        "memory_delete" => {
+        MEMORY_DELETE => {
             let mut affected_tags: Vec<String> = Vec::new();
             let mut conventions_gone = false;
             for id in result["deleted"]
