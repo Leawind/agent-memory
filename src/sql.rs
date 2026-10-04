@@ -43,6 +43,7 @@ pub const EMBEDDING_PENDING_COUNT: &str = include_str!("../sql/embedding_pending
 pub const EMBEDDING_EMBEDDED_COUNT: &str = include_str!("../sql/embedding_embedded_count.sql");
 
 pub const HYGIENE_ORPHANS: &str = include_str!("../sql/hygiene_orphans.sql");
+pub const HYGIENE_REVERSE_ORPHANS: &str = include_str!("../sql/hygiene_reverse_orphans.sql");
 pub const HYGIENE_MEMORIES: &str = include_str!("../sql/hygiene_memories.sql");
 
 pub const IDENTITY_INSERT: &str = include_str!("../sql/identity_insert.sql");
@@ -126,6 +127,7 @@ mod tests {
             ("EMBEDDING_PENDING_COUNT", EMBEDDING_PENDING_COUNT),
             ("EMBEDDING_EMBEDDED_COUNT", EMBEDDING_EMBEDDED_COUNT),
             ("HYGIENE_ORPHANS", HYGIENE_ORPHANS),
+            ("HYGIENE_REVERSE_ORPHANS", HYGIENE_REVERSE_ORPHANS),
             ("HYGIENE_MEMORIES", HYGIENE_MEMORIES),
             ("STATS_MEMORY_COUNT", STATS_MEMORY_COUNT),
             ("STATS_TAG_COUNT", STATS_TAG_COUNT),

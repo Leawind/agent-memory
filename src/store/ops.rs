@@ -32,10 +32,7 @@ impl Store {
         // Reverse orphans: link rows pointing at nonexistent memories (possible while foreign keys are off)
         let reverse_ids: Vec<i64> = self
             .conn
-            .prepare(
-                "SELECT DISTINCT memory_id FROM memory_tags \
-                 WHERE memory_id NOT IN (SELECT id FROM memories) ORDER BY memory_id",
-            )
+            .prepare(sql::HYGIENE_REVERSE_ORPHANS)
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
