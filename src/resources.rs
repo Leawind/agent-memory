@@ -59,6 +59,24 @@ impl ResourceError {
             data: json!({ "uri": uri }),
         }
     }
+
+    /// Attach the requested uri to the error's data: every read error carries it, but store-layer
+    /// strings arrive via `From<String>` without one.
+    fn with_uri(mut self, uri: &str) -> Self {
+        if self.data.get("uri").is_none() {
+            self.data["uri"] = json!(uri);
+        }
+        self
+    }
+}
+
+impl From<String> for ResourceError {
+    /// Store / infrastructure errors arrive as plain strings with no kind information and classify
+    /// as invalid. Existence is never inferred from error text: read paths decide it with
+    /// dedicated queries and construct `not_found` explicitly.
+    fn from(message: String) -> Self {
+        ResourceError::invalid(message, json!({}))
+    }
 }
 
 type ResourceResult = Result<Value, ResourceError>;
@@ -73,7 +91,7 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
     let entries = store::with_db_in(
         store_path,
         TxMode::ReadOnly,
-        |st| -> Result<Vec<Value>, String> {
+        |st| -> Result<Vec<Value>, ResourceError> {
             let mut entries: Vec<Value> = st
                 .tag_views()?
                 .into_iter()
@@ -94,8 +112,7 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
             entries.extend(conv);
             Ok(entries)
         },
-    )
-    .map_err(|e| ResourceError::invalid(e, json!({})))?;
+    )?;
     Ok(paginate(entries, offset))
 }
 
@@ -223,7 +240,12 @@ fn encode_uri_segment(name: &str) -> String {
 // ---------------------------------------------------------------- Reads
 
 fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
-    let doc = store::with_db_in(store_path, TxMode::ReadOnly, |st| -> Result<Value, String> {
+    let doc = store::with_db_in(store_path, TxMode::ReadOnly, |st| -> Result<Value, ResourceError> {
+        // Existence is a dedicated query, not an error-text guess: a missing tag is a structured
+        // not-found, everything the store reports as a string stays a plain invalid error
+        if !st.tag_exists(name)? {
+            return Err(ResourceError::not_found(uri));
+        }
         let view = st.tag_view(name)?;
         let (_, page) = st.list_memories(Some(name), None, "updated_at", false, 0, TAG_RESOURCE_LIMIT)?;
         let memories: Vec<Value> = page.iter().map(Memory::summary_view).collect();
@@ -245,13 +267,7 @@ fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
         }
         Ok(doc)
     })
-    .map_err(|e| {
-        if e.contains("not found") {
-            ResourceError::not_found(uri)
-        } else {
-            ResourceError::invalid(e, json!({ "uri": uri }))
-        }
-    })?;
+    .map_err(|e| e.with_uri(uri))?;
     Ok(read_result(
         uri,
         "application/json",
@@ -269,7 +285,8 @@ fn read_memory(store_path: &Path, uri: &str, raw_id: &str) -> ResourceResult {
     };
     let (mut found, _) =
         store::with_db_in(store_path, TxMode::ReadOnly, |st| st.get_memories(&[id]))
-            .map_err(|e| ResourceError::invalid(e, json!({ "uri": uri })))?;
+            .map_err(ResourceError::from)
+            .map_err(|e| e.with_uri(uri))?;
     let memory = found.pop().ok_or_else(|| ResourceError::not_found(uri))?;
     Ok(read_result(
         uri,
@@ -531,8 +548,9 @@ mod tests {
         assert!(err.message.contains("malformed"), "{}", err.message);
         assert_eq!(err.data["uri"], "memory://memories/102");
 
-        // Unknown tag
+        // Unknown tag: classified structurally (dedicated existence query), not by error text
         let err = read(&path, &open_ctx(), "memory://tags/nope").unwrap_err();
+        assert!(err.message.contains("not found"), "{}", err.message);
         assert_eq!(err.data["uri"], "memory://tags/nope");
         cleanup(&path);
     }
