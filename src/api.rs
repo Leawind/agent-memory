@@ -21,6 +21,7 @@ use crate::tools::{
     self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_SEARCH,
     MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
 };
+use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
@@ -43,7 +44,7 @@ pub fn handle(
         .unwrap_or("")
         .split('/')
         .filter(|s| !s.is_empty())
-        .map(percent_decode)
+        .map(percent_decode_lenient)
         .collect();
     let segments: Vec<&str> = segments_owned.iter().map(String::as_str).collect();
 
@@ -529,36 +530,10 @@ fn query_get(query: &str, key: &str) -> Option<String> {
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         if k == key {
-            return Some(percent_decode(v));
+            return Some(percent_decode_lenient(v));
         }
     }
     None
-}
-
-/// Percent-decoding (lenient handling of invalid sequences).
-pub fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = &s[i + 1..i + 3];
-            match u8::from_str_radix(hex, 16) {
-                Ok(b) => {
-                    out.push(b);
-                    i += 3;
-                }
-                Err(_) => {
-                    out.push(bytes[i]);
-                    i += 1;
-                }
-            }
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -579,16 +554,6 @@ mod tests {
         }
         let perms = Permissions::from_json(&Value::Object(obj)).unwrap();
         IdentityCtx::new("tester", perms)
-    }
-
-    #[test]
-    fn percent_decode_handles_utf8_and_invalid() {
-        assert_eq!(percent_decode("%E9%A1%B9%E7%9B%AE"), "项目");
-        assert_eq!(percent_decode("plain"), "plain");
-        assert_eq!(percent_decode("a%2Fb"), "a/b");
-        // Invalid sequences are kept as-is
-        assert_eq!(percent_decode("a%ZZb"), "a%ZZb");
-        assert_eq!(percent_decode("a%2"), "a%2");
     }
 
     #[test]

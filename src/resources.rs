@@ -179,14 +179,14 @@ fn parse_uri(uri: &str) -> Result<Target, String> {
     }
     match kind {
         "tags" => {
-            let name = percent_decode(value)
+            let name = util::percent_decode_strict(value)
                 .map_err(|_| "resource uri contains a malformed percent-encoding".to_string())?;
             let name = normalize_tag_name(&name)
                 .map_err(|e| format!("invalid tag in resource uri: {e}"))?;
             Ok(Target::Tag(name))
         }
         "memories" => {
-            let id = percent_decode(value)
+            let id = util::percent_decode_strict(value)
                 .map_err(|_| "resource uri contains a malformed percent-encoding".to_string())?;
             Ok(Target::Memory(id))
         }
@@ -194,29 +194,6 @@ fn parse_uri(uri: &str) -> Result<Target, String> {
             "unknown resource kind '/{other}/' (expected tags/ or memories/)"
         )),
     }
-}
-
-/// Percent-decode one URI path segment (strict: `%` must start a valid 2-hex-digit escape; `+`
-/// is NOT a space — that is form encoding, not URI encoding).
-fn percent_decode(segment: &str) -> Result<String, String> {
-    let bytes = segment.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            if i + 2 >= bytes.len() {
-                return Err("truncated percent-escape".into());
-            }
-            let hex = &segment[i + 1..i + 3];
-            let byte = u8::from_str_radix(hex, 16).map_err(|_| "malformed percent-escape")?;
-            out.push(byte);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).map_err(|_| "percent-decoded value is not valid UTF-8".into())
 }
 
 /// Percent-encode a tag name into one URI path segment: RFC 3986 unreserved characters pass
@@ -482,7 +459,7 @@ mod tests {
     fn encode_uri_segment_roundtrip() {
         for name in ["rust", "proj/alpha", "项目 记忆", "a b&c?d#e", "100%"] {
             let encoded = encode_uri_segment(name);
-            let decoded = percent_decode(&encoded).unwrap();
+            let decoded = util::percent_decode_strict(&encoded).unwrap();
             assert_eq!(decoded, name, "roundtrip for {name}");
             assert!(!encoded.contains('?') && !encoded.contains('#'));
         }

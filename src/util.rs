@@ -69,6 +69,52 @@ pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Percent-decoding core: every valid `%XX` escape becomes its byte; malformed input is handled
+/// per-escape according to `strict` (error out, or keep the `%` literal and move on). `+` is never
+/// a space — that is form encoding, not URI encoding.
+fn percent_decode_bytes(s: &str, strict: bool) -> Result<Vec<u8>, String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 3 > bytes.len() {
+                if strict {
+                    return Err("truncated percent-escape".into());
+                }
+            } else {
+                match u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                    Ok(byte) => {
+                        out.push(byte);
+                        i += 3;
+                        continue;
+                    }
+                    Err(_) if strict => return Err("malformed percent-escape".into()),
+                    Err(_) => {}
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    Ok(out)
+}
+
+/// Strict percent-decode (the `memory://` resource URIs): a malformed escape or a non-UTF-8
+/// result is an error — resource identities must not be silently mangled.
+pub fn percent_decode_strict(s: &str) -> Result<String, String> {
+    let bytes = percent_decode_bytes(s, true)?;
+    String::from_utf8(bytes).map_err(|_| "percent-decoded value is not valid UTF-8".into())
+}
+
+/// Lenient percent-decode (the REST face's path and query segments): malformed escapes stay
+/// literal and invalid UTF-8 decodes lossily — tiny_http hands the raw request line through, and
+/// one bad segment must not sink an otherwise routable request.
+pub fn percent_decode_lenient(s: &str) -> String {
+    let bytes = percent_decode_bytes(s, false).unwrap_or_else(|_| s.as_bytes().to_vec());
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// Format a Unix-seconds timestamp as UTC ISO 8601 (e.g. `2026-09-25T21:41:50Z`). Used by the
 /// memory resource's `lastModified` annotation (protocol-level metadata, hence precise UTC).
 pub fn format_utc_iso(epoch_secs: u64) -> String {
@@ -228,6 +274,27 @@ mod tests {
             sha256_hex(&[b'a'; 1000]),
             "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
         );
+    }
+
+    #[test]
+    fn percent_decode_strict_and_lenient() {
+        // Shared core: escapes and multi-byte UTF-8 decode identically in both modes
+        assert_eq!(percent_decode_strict("%E9%A1%B9%E7%9B%AE").unwrap(), "项目");
+        assert_eq!(percent_decode_lenient("%E9%A1%B9%E7%9B%AE"), "项目");
+        assert_eq!(percent_decode_lenient("plain"), "plain");
+        assert_eq!(percent_decode_lenient("a%2Fb"), "a/b");
+        // Strict mode rejects: malformed escape, truncated escape, non-UTF-8 bytes
+        assert!(percent_decode_strict("a%ZZb").is_err());
+        assert!(percent_decode_strict("a%2").is_err());
+        assert!(percent_decode_strict("%FF").is_err());
+        // Lenient mode keeps invalid escapes literally (per-escape, not whole-string fallback);
+        // valid escapes still decode even in a mixed string, lossily when not valid UTF-8
+        assert_eq!(percent_decode_lenient("a%ZZb"), "a%ZZb");
+        assert_eq!(percent_decode_lenient("a%2"), "a%2");
+        assert_eq!(percent_decode_lenient("%E9%A1%ZZ"), "\u{FFFD}%ZZ");
+        // `+` is not a space in either mode (form encoding is not URI encoding)
+        assert_eq!(percent_decode_strict("a+b").unwrap(), "a+b");
+        assert_eq!(percent_decode_lenient("a+b"), "a+b");
     }
 
     #[test]
