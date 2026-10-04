@@ -98,13 +98,13 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_list",
-            "Browse memories, optionally filtered by tag. Returns summaries only (id, tags, abstract, timestamps as epoch seconds UTC) - never full content; call memory_get for entries worth reading. Newest first by default; paginated.",
+            "Browse memories, optionally filtered by tag. Returns summaries only (id, tags, abstract, and one 'updated' time rendered as the server's local wall clock, 'YYYY-MM-DD HH:MM') - never full content; call memory_get for entries worth reading. Newest first by default; paginated.",
             json!({
                 "type": "object",
                 "properties": {
                     "tag": {"type": "string", "description": "Only memories carrying this exact tag."},
                     "tag_filter": {"type": "string", "description": "Only memories carrying at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tag' (both must hold)."},
-                    "sort": {"type": "string", "enum": ["updated_at", "created_at", "id"], "description": "Default: updated_at."},
+                    "sort": {"type": "string", "enum": ["updated_at", "id"], "description": "Default: updated_at. 'id' equals creation order."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
                     "offset": {"type": "integer", "minimum": 0},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Default 20."}
@@ -146,7 +146,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_update",
-            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Updating summary or content refreshes updated_at; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
+            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
             json!({
                 "type": "object",
                 "properties": {
@@ -164,7 +164,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             "memory_merge",
-            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and created_at; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset created_at. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin.",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin.",
             json!({
                 "type": "object",
                 "properties": {

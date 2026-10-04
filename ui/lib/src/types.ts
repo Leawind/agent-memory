@@ -4,11 +4,12 @@ export interface MemorySummary {
   id: string
   tags: string[]
   summary: string
-  created_at: number
-  updated_at: number
+  /** Compact server-local wall clock "YYYY-MM-DD HH:MM"; summaries carry no creation time (the id encodes creation order) */
+  updated: string
 }
 
 export interface MemoryFull extends MemorySummary {
+  created: string
   content: string
 }
 
@@ -39,7 +40,7 @@ export interface SearchResult {
   summary: string
   score: number
   snippet: string
-  updated_at: number
+  updated: string
 }
 
 export interface MemorySearchResp {

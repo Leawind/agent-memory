@@ -39,22 +39,29 @@ pub struct Memory {
 }
 
 impl Memory {
-    /// First layer of progressive disclosure: summary view (no content).
+    /// First layer of progressive disclosure: summary view (no content). One compact server-local
+    /// `updated` time; creation time is not exposed at this level — browsing runs on recency, and
+    /// the id already encodes creation order.
     pub fn summary_view(&self) -> Value {
         json!({
             "id": self.id,
             "tags": self.tags,
             "summary": self.summary,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
+            "updated": crate::util::format_local_compact(self.updated_at),
         })
     }
 
-    /// Second layer of progressive disclosure: full view (with content).
+    /// Second layer of progressive disclosure: full view (with content), both timestamps as the
+    /// compact server-local wall clock.
     pub fn full_view(&self) -> Value {
-        let mut v = self.summary_view();
-        v["content"] = json!(self.content);
-        v
+        json!({
+            "id": self.id,
+            "tags": self.tags,
+            "summary": self.summary,
+            "created": crate::util::format_local_compact(self.created_at),
+            "updated": crate::util::format_local_compact(self.updated_at),
+            "content": self.content,
+        })
     }
 }
 

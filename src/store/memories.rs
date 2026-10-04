@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(total3, 5);
         assert_eq!(page3[0].summary, "s0");
         let (total4, _) = st
-            .list_memories(Some("t1"), None, "created_at", false, 0, 200)
+            .list_memories(Some("t1"), None, "id", false, 0, 200)
             .unwrap();
         assert_eq!(total4, 5);
         // Tag set filtering (tag_set is JSON array text of ids, expanded with json_each; empty set = no results)

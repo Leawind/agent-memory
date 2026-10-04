@@ -12,8 +12,8 @@ const fullMemory = {
   summary: '已有记忆摘要',
   content: '正文内容',
   tags: ['t1'],
-  created_at: 1,
-  updated_at: 2,
+  created: '2026-10-04 08:00',
+  updated: '2026-10-04 08:00',
 }
 
 function jsonResponse(body: unknown, status = 200) {

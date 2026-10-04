@@ -46,12 +46,14 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     };
     let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let sort_opt = opt_str(args, "sort")?;
+    // 'id' is the creation order (ids are monotonic at insert), so there is no separate
+    // created_at sort key — and the summary rows do not carry a creation timestamp at all
     let sort = match sort_opt.as_deref() {
         None => "updated_at",
-        Some(s @ ("updated_at" | "created_at" | "id")) => s,
+        Some(s @ ("updated_at" | "id")) => s,
         Some(o) => {
             return Err(ToolError::invalid(format!(
-                "sort must be 'updated_at', 'created_at' or 'id', got '{o}'"
+                "sort must be 'updated_at' or 'id', got '{o}'"
             )))
         }
     };
@@ -191,7 +193,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                 "summary": m.summary,
                 "score": h.score,
                 "snippet": h.snippet,
-                "updated_at": m.updated_at,
+                "updated": crate::util::format_local_compact(m.updated_at),
             })
         })
         .collect();
@@ -347,10 +349,10 @@ pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     Ok(out)
 }
 
-/// Merge a duplicate memory into a kept one: the target survives with its id and created_at
+/// Merge a duplicate memory into a kept one: the target survives with its id and creation time
 /// intact, tags become the union, the source is deleted. This closes the loop duplicate_of /
 /// similar_to open — before it, the only path away from a duplicate was delete + re-create,
-/// which reset created_at.
+/// which reset the created time.
 pub fn memory_merge(
     st: &Store,
     ctx: &IdentityCtx,

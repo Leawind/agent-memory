@@ -273,7 +273,7 @@ try {
       arguments: { target: createdId, source: dupId },
     })
     const mergedStructured = structuredOf(merged) as
-      | { merged?: boolean, removed?: string, memory?: { id?: string, created_at?: number } }
+      | { merged?: boolean, removed?: string, memory?: { id?: string, created?: string } }
       | undefined
     check(
       "memory_merge keeps the target and removes the source",

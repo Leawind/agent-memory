@@ -92,8 +92,26 @@ const parseId = (raw: string | undefined): MockMemory | undefined => {
   const m = /^m(\d+)$/.exec(raw ?? '')
   return m ? memories.find((x) => x.id === Number(m[1])) : undefined
 }
-const fullView = (m: MockMemory) => ({ ...m, id: formatId(m.id) })
-const summaryView = (m: MockMemory) => (({ content: _c, ...rest }) => rest)(fullView(m))
+// 紧凑本地墙钟，与真实服务端的 created/updated 渲染一致（YYYY-MM-DD HH:MM）
+const compactTime = (ts: number): string => {
+  const d = new Date(ts * 1000)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+const fullView = (m: MockMemory) => ({
+  id: formatId(m.id),
+  tags: m.tags,
+  summary: m.summary,
+  created: compactTime(m.created_at),
+  updated: compactTime(m.updated_at),
+  content: m.content,
+})
+const summaryView = (m: MockMemory) => ({
+  id: formatId(m.id),
+  tags: m.tags,
+  summary: m.summary,
+  updated: compactTime(m.updated_at),
+})
 // 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、reserved 仅保留标签出现
 const tagViews = () =>
   [...tags.entries()]
@@ -301,8 +319,15 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   if (segs[1] === 'export' && method === 'GET') {
     sendJson(res, 200, {
       exported_at: now(),
-      tags: tagViews(),
-      memories: memories.map(fullView),
+      // 导出保持主数据形状（epoch 秒），对齐真实服务的备份格式（memory_view 才做本地渲染）
+      tags: [...tags.entries()].map(([name, tag]) => ({ name, description: tag.description })),
+      memories: memories.map((m) => ({
+        summary: m.summary,
+        content: m.content,
+        tags: m.tags,
+        created_at: m.created_at,
+        updated_at: m.updated_at,
+      })),
     })
     return
   }

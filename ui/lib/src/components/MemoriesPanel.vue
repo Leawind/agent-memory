@@ -60,8 +60,8 @@
           </template>
         </el-table-column>
         <el-table-column prop="score" :label="t('memories.colScore')" width="80" sortable />
-        <el-table-column :label="t('memories.colUpdatedAt')" width="170">
-          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+        <el-table-column :label="t('memories.colUpdatedAt')" width="150">
+          <template #default="{ row }">{{ row.updated }}</template>
         </el-table-column>
         <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
           <template #default="{ row }">
@@ -75,7 +75,7 @@
         </el-table-column>
       </el-table>
 
-      <!-- List mode: click the created/updated column headers to sort (convention: direction shown on the right of the active header, click to toggle) -->
+      <!-- List mode: click the updated/id column headers to sort (convention: direction shown on the right of the active header, click to toggle) -->
       <el-table
         v-else
         :data="rows"
@@ -90,17 +90,8 @@
             <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column
-          v-if="!compact"
-          prop="created_at"
-          :label="t('memories.colCreatedAt')"
-          width="170"
-          sortable="custom"
-        >
-          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="170" sortable="custom">
-          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+        <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="150" sortable="custom">
+          <template #default="{ row }">{{ row.updated }}</template>
         </el-table-column>
         <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
           <template #default="{ row }">
@@ -155,7 +146,6 @@ import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
 import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'
-import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
@@ -206,10 +196,8 @@ const emptyNote = computed(() => {
 })
 
 const rootRef = ref<HTMLElement | null>(null)
-// Container <960px switches to compact (hides the created-at column so the updated-at/actions
-// columns are not pushed out of the viewport);
-// <720px switches to narrow (dialogs narrow)
-const { compact, narrow } = useContainerWidth(rootRef)
+// <720px switches to narrow mode (dialogs narrow); all table columns are flexible-width so none are lost
+const { narrow } = useContainerWidth(rootRef)
 
 const editorVisible = ref(false)
 const editingId = ref<string | null>(null)
@@ -239,7 +227,7 @@ function onSortChange(payload: { prop: string; order: 'ascending' | 'descending'
   // The parameter must not be named order — it would shadow the outer order ref and the
   // assignment would land on the parameter (strict mode throws a TypeError outright)
   const { prop, order: nextOrder } = payload
-  if (nextOrder && (prop === 'updated_at' || prop === 'created_at' || prop === 'id')) {
+  if (nextOrder && (prop === 'updated_at' || prop === 'id')) {
     sort.value = prop
     order.value = nextOrder === 'ascending' ? 'asc' : 'desc'
   } else {

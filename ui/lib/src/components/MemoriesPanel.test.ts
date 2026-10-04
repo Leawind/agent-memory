@@ -8,11 +8,20 @@ const listPayload = {
   total: 1,
   offset: 0,
   limit: 20,
-  memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], created_at: 1, updated_at: 2 }],
+  memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], updated: '2026-10-04 08:00' }],
 }
 const searchPayload = {
   total_matches: 1,
-  results: [{ id: 'm1', summary: '搜索命中的记忆', tags: ['t1'], score: 50, snippet: '…命中片段…', updated_at: 2 }],
+  results: [
+    {
+      id: 'm1',
+      summary: '搜索命中的记忆',
+      tags: ['t1'],
+      score: 50,
+      snippet: '…命中片段…',
+      updated: '2026-10-04 08:00',
+    },
+  ],
 }
 const tagsPayload = { tags: [{ name: 't1', count: 1 }] }
 
@@ -71,14 +80,14 @@ describe('MemoriesPanel', () => {
     fetchMock.mockClear()
     const table = wrapper.findComponent({ name: 'ElTable' })
     expect(table.exists()).toBe(true)
-    table.vm.$emit('sort-change', { prop: 'created_at', order: 'ascending' })
+    table.vm.$emit('sort-change', { prop: 'id', order: 'ascending' })
     await flushPromises()
     await flushPromises()
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
     const listCall = urls.filter((u) => u.includes('/api/memories?')).at(-1)
     // Sorting must actually reach the request parameters (regression: onSortChange once threw
     // due to parameter shadowing, so reload never ran)
-    expect(listCall).toContain('sort=created_at')
+    expect(listCall).toContain('sort=id')
     expect(listCall).toContain('order=asc')
     wrapper.unmount()
   })

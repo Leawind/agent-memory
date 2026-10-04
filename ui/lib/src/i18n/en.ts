@@ -26,7 +26,6 @@ export default {
     colSummary: 'Summary',
     colTags: 'Tags',
     colScore: 'Score',
-    colCreatedAt: 'Created',
     colUpdatedAt: 'Updated',
     colActions: 'Actions',
     deleteTitle: 'Confirm deletion',

@@ -7,7 +7,7 @@ const listPayload = {
   total: 1,
   offset: 0,
   limit: 20,
-  memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], created_at: 1, updated_at: 2 }],
+  memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], updated: '2026-10-04 08:00' }],
 }
 const tagsPayload = { tags: [] }
 

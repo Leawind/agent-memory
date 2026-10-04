@@ -31,6 +31,9 @@ include = [
 ]
 
 [dependencies]
+# 工具视图里 created/updated 的本地墙钟渲染：std 没有时区数据；`time` crate 在多线程
+# 进程里出于健全性拒绝返回本地偏移（服务端是多线程 HTTP），chrono 无此限制
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.5.61", features = ["derive"] }
 regex = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }

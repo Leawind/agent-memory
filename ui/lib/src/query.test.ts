@@ -8,14 +8,14 @@ describe('buildMemoriesQuery', () => {
       query: '',
       tagFilter: '项目',
       mode: 'auto',
-      sort: 'created_at',
+      sort: 'id',
       order: 'asc',
       page: 2,
       pageSize: 50,
     })
     const p = new URLSearchParams(qs)
     expect(p.get('tag')).toBe('项目')
-    expect(p.get('sort')).toBe('created_at')
+    expect(p.get('sort')).toBe('id')
     expect(p.get('order')).toBe('asc')
     expect(p.get('offset')).toBe('50')
     expect(p.get('limit')).toBe('50')

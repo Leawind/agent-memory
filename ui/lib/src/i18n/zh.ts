@@ -26,7 +26,6 @@ export default {
     colSummary: '摘要',
     colTags: '标签',
     colScore: '评分',
-    colCreatedAt: '创建时间',
     colUpdatedAt: '更新时间',
     colActions: '操作',
     deleteTitle: '删除确认',

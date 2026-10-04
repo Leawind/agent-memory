@@ -1,4 +1,7 @@
-//! Small utility functions (std-only, no time library).
+//! Small utility functions. Base64 and SHA-256 are hand-written std-only (minimal-dependency
+//! stance); time formatting goes through `chrono` — local wall-clock conversion needs the OS
+//! time-zone database, which std lacks and the `time` crate refuses to touch in multithreaded
+//! processes (the server is a multithreaded HTTP worker pool).
 
 /// Standard-alphabet Base64 encode (RFC 4648, with padding). Std-only, mirroring the project's
 /// minimal-dependency stance; used for the `=?base64?...?=` header sentinels and the opaque
@@ -66,17 +69,29 @@ pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Format a Unix-seconds timestamp as UTC ISO 8601 (e.g. `2026-09-25T21:41:50Z`).
-///
-/// Date conversion uses Howard Hinnant's civil_from_days algorithm (proleptic Gregorian calendar,
-/// including leap-year/century rules), relying on integer arithmetic only; unit tests anchor a few known points in time.
+/// Format a Unix-seconds timestamp as UTC ISO 8601 (e.g. `2026-09-25T21:41:50Z`). Used by the
+/// memory resource's `lastModified` annotation (protocol-level metadata, hence precise UTC).
 pub fn format_utc_iso(epoch_secs: u64) -> String {
-    let secs = epoch_secs as i64;
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
+    time_string(chrono::Utc, epoch_secs, "%Y-%m-%dT%H:%M:%SZ")
+}
+
+/// Format a Unix-seconds timestamp as the server's local wall clock, minute precision
+/// (`2026-10-04 21:41`). Agent-facing memory views use this instead of epoch: models cannot
+/// convert epoch mentally, and a self-hosted box serves one operator whose wall clock is the
+/// reference. Out-of-range values fall back to the raw epoch number (unreachable in practice).
+pub fn format_local_compact(epoch_secs: u64) -> String {
+    time_string(chrono::Local, epoch_secs, "%Y-%m-%d %H:%M")
+}
+
+fn time_string<Tz>(tz: Tz, epoch_secs: u64, pattern: &str) -> String
+where
+    Tz: chrono::TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    tz.timestamp_opt(epoch_secs as i64, 0)
+        .single()
+        .map(|t| t.format(pattern).to_string())
+        .unwrap_or_else(|| epoch_secs.to_string())
 }
 
 /// SHA-256 digest (lowercase hex). Hand-written on std to avoid a hashing dependency — the only use is
@@ -150,20 +165,6 @@ pub fn sha256_hex(data: &[u8]) -> String {
     h.iter().map(|v| format!("{v:08x}")).collect()
 }
 
-/// Days since 1970-01-01 → (year, month, day). Hinnant, "chrono-Compatible Low-Level Date Algorithms".
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (y + i64::from(m <= 2), m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +175,14 @@ mod tests {
         // Two widely known time anchors
         assert_eq!(format_utc_iso(1_000_000_000), "2001-09-09T01:46:40Z");
         assert_eq!(format_utc_iso(2_000_000_000), "2033-05-18T03:33:20Z");
+    }
+
+    #[test]
+    fn local_compact_shape() {
+        // Shape-only assertion: the concrete value depends on the machine's time zone, so the
+        // test anchors the format, not the clock
+        let re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$").unwrap();
+        assert!(re.is_match(&format_local_compact(1_000_000_000)));
     }
 
     #[test]

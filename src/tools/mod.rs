@@ -22,7 +22,7 @@ use std::path::Path;
 
 pub use defs::{tool_definitions, TOOL_NAMES};
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps (created_at / updated_at / last_used_at) are epoch seconds in UTC and recorded automatically — never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -1126,7 +1126,7 @@ mod tests {
         cleanup(&path);
     }
 
-    /// memory_merge closes the duplicate loop: the target keeps id and created_at, tags union,
+    /// memory_merge closes the duplicate loop: the target keeps id and creation time, tags union,
     /// content appends (or is replaced), and the source disappears.
     #[test]
     fn memory_merge_absorbs_source_into_target() {
@@ -1138,7 +1138,13 @@ mod tests {
         )
         .unwrap();
         let target = first["memory"]["id"].as_str().unwrap().to_string();
-        let target_created = first["memory"]["created_at"].as_u64().unwrap();
+        // The create echo is a summary view (no content, no created field): the creation time is
+        // read back through the full view, which is exactly where the contract exposes it
+        let target_created = call(&path, "memory_get", json!({"ids": [target]})).unwrap()
+            ["memories"][0]["created"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let second = call(
             &path,
             "memory_create",
@@ -1156,9 +1162,10 @@ mod tests {
         assert_eq!(merged["merged"], true);
         assert_eq!(merged["removed"], source.as_str());
         assert_eq!(merged["memory"]["id"], target.as_str());
+        let after = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
         assert_eq!(
-            merged["memory"]["created_at"], target_created,
-            "created_at survives the merge"
+            after["memories"][0]["created"], target_created,
+            "creation time survives the merge"
         );
         assert_eq!(merged["content_appended"], true);
         let tags = merged["memory"]["tags"].as_array().unwrap();

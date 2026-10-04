@@ -26,7 +26,7 @@ export function useMemories() {
   const tagFilter = ref('')
   /** Search mode: auto (server decides hybrid/keyword per its config) / keyword / hybrid */
   const mode = ref<'auto' | 'keyword' | 'hybrid'>('auto')
-  const sort = ref<'updated_at' | 'created_at' | 'id'>('updated_at')
+  const sort = ref<'updated_at' | 'id'>('updated_at')
   const order = ref<'asc' | 'desc'>('desc')
   const page = ref(1)
   const pageSize = ref(defaultPageSize)
