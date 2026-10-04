@@ -39,6 +39,7 @@ pub const EMBEDDING_PUT: &str = include_str!("../sql/embedding_put.sql");
 pub const EMBEDDING_DELETE: &str = include_str!("../sql/embedding_delete.sql");
 pub const EMBEDDING_ACTIVE_ALL: &str = include_str!("../sql/embedding_active_all.sql");
 pub const EMBEDDING_PENDING_BATCH: &str = include_str!("../sql/embedding_pending_batch.sql");
+pub const EMBEDDING_PENDING_FOR: &str = include_str!("../sql/embedding_pending_for.sql");
 pub const EMBEDDING_PENDING_COUNT: &str = include_str!("../sql/embedding_pending_count.sql");
 pub const EMBEDDING_EMBEDDED_COUNT: &str = include_str!("../sql/embedding_embedded_count.sql");
 
@@ -124,6 +125,7 @@ mod tests {
             ("EMBEDDING_DELETE", EMBEDDING_DELETE),
             ("EMBEDDING_ACTIVE_ALL", EMBEDDING_ACTIVE_ALL),
             ("EMBEDDING_PENDING_BATCH", EMBEDDING_PENDING_BATCH),
+            ("EMBEDDING_PENDING_FOR", EMBEDDING_PENDING_FOR),
             ("EMBEDDING_PENDING_COUNT", EMBEDDING_PENDING_COUNT),
             ("EMBEDDING_EMBEDDED_COUNT", EMBEDDING_EMBEDDED_COUNT),
             ("HYGIENE_ORPHANS", HYGIENE_ORPHANS),

@@ -227,20 +227,87 @@ pub fn needs_backfill(tool: &str) -> bool {
     matches!(tool, MEMORY_CREATE | MEMORY_EDIT | MEMORY_UPDATE)
 }
 
-/// The write path's hook point (called after the memory_create / memory_update transaction commits).
-/// When the embedding service is unavailable, only log to stderr: the memory is saved, and vectors are left for backfill.
+/// Single-flight guard for the background backfill worker: at most one drain loop runs at a time,
+/// so a burst of writes cannot pile up threads.
+static BACKFILL_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The write path's hook point (called after a memory-write transaction commits, on both server
+/// faces). The backfill runs on a background thread: the memory is already saved, so a slow or
+/// unavailable embedding service must never hold the write response hostage — vectors land
+/// shortly after, or stay pending for the admin endpoint / CLI backfill (fallback semantics
+/// unchanged). Writes landing while a worker drains are covered by that worker's loop; the only
+/// miss window (a write committing after the worker's final count returned zero) is closed by the
+/// next write or the next backfill run.
 pub fn after_write(db_path: &Path) {
-    if let EmbedOutcome::Failed(e) = process_pending(db_path, 4) {
-        eprintln!(
-            "embedding backfill after write failed (the memory itself is saved; it will be retried by the next backfill): {e}"
-        );
+    use std::sync::atomic::Ordering;
+    if BACKFILL_RUNNING.swap(true, Ordering::AcqRel) {
+        return; // a worker is already draining the queue
     }
+    let db_path = db_path.to_path_buf();
+    std::thread::spawn(move || {
+        loop {
+            match process_pending(&db_path, 4) {
+                EmbedOutcome::Processed { remaining, .. } if remaining > 0 => continue,
+                EmbedOutcome::Failed(e) => {
+                    eprintln!(
+                        "embedding backfill failed (the memory itself is saved; it will be retried by the next backfill): {e}"
+                    );
+                    break;
+                }
+                _ => break, // queue drained, or semantic search not configured
+            }
+        }
+        BACKFILL_RUNNING.store(false, Ordering::Release);
+    });
 }
 
 /// Cosine similarity at which a stored memory counts as a near-duplicate of a freshly created one.
 /// Advisory threshold: false positives cost a harmless hint, misses cost nothing (the exact-summary
 /// duplicate_of check runs regardless).
 pub const DEDUP_SIMILARITY: f32 = 0.90;
+
+/// The create-time dedup hint needs the new memory's vector to be deterministic, but the queue now
+/// drains on a background thread — so the hint embeds its own text while the vector is still
+/// pending. Every failure degrades silently: the hint is advisory, and the vector stays queued for
+/// the backfill.
+fn ensure_vector(db_path: &Path, id: i64) {
+    let loaded = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+        let Some(cfg) = st.embedding_config()? else {
+            return Ok(None);
+        };
+        let Some(row) = st.embedding_pending_for(&cfg.model, id)? else {
+            return Ok(None); // vector already stored (or the memory is gone)
+        };
+        Ok::<_, String>(Some((cfg, row)))
+    });
+    let (cfg, (_, summary, content)) = match loaded {
+        Ok(Some(pair)) => pair,
+        Ok(None) => return,
+        Err(e) => {
+            eprintln!("semantic duplicate hint skipped: {e}");
+            return;
+        }
+    };
+    let vectors = embed_texts(
+        &cfg,
+        &[embed_memory_text(&summary, &content)],
+        QUERY_TIMEOUT,
+    );
+    match vectors {
+        Ok(v) if !v.is_empty() => {
+            let stored = crate::store::with_db_in(db_path, TxMode::Write, |st| {
+                st.embedding_put(id, &cfg.model, &v[0])
+            });
+            if let Err(e) = stored {
+                eprintln!("semantic duplicate hint skipped: cannot store vector: {e}");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!(
+            "embedding the created memory for the dedup hint failed (the memory itself is saved; the vector stays queued for backfill): {e}"
+        ),
+    }
+}
 
 /// After a memory_create commits and its vector was backfilled, scan stored embeddings for
 /// near-duplicates of the new memory and attach them as `similar_to` hints on the tool result —
@@ -254,6 +321,7 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
     let Some(id) = Store::parse_id(id_str) else {
         return;
     };
+    ensure_vector(db_path, id);
     let run = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
         let Some(cfg) = st.embedding_config()? else {
             return Ok(Vec::new());

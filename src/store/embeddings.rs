@@ -74,6 +74,33 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
+    /// One specific memory's pending row for the current model (`None` once its vector is stored):
+    /// lets the create-time dedup hint embed exactly the new memory instead of depending on the
+    /// asynchronous backfill having reached it.
+    pub fn embedding_pending_for(
+        &self,
+        model: &str,
+        id: i64,
+    ) -> Result<Option<(i64, String, String)>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::EMBEDDING_PENDING_FOR)
+            .map_err(|e| e.to_string())?;
+        let mut rows = st
+            .query_map(params![model, id], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        match rows.next() {
+            Some(row) => row.map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    }
+
     pub fn embedding_pending_count(&self, model: &str) -> Result<usize, String> {
         self.conn
             .query_row(sql::EMBEDDING_PENDING_COUNT, [model], |r| {

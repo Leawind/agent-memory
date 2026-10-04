@@ -99,10 +99,13 @@ pub fn execute_with_db(
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     // A successful create then gets a semantic near-duplicate scan attached to its result (advisory, fallback-safe).
     if crate::embed::needs_backfill(name) {
-        crate::embed::after_write(db_path);
+        // The dedup hint must see the new memory's vector deterministically, so for a create it
+        // embeds that one text synchronously (bounded by the query timeout); everything else
+        // drains on a background thread and never delays the response.
         if name == defs::MEMORY_CREATE {
             crate::embed::dedup_hint(db_path, &mut out);
         }
+        crate::embed::after_write(db_path);
     }
     crate::notify::after_write(name, args, &out, &pre);
     Ok(out)

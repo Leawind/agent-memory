@@ -167,17 +167,30 @@ fn semantic_search_hybrid_and_fallback() {
         assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
     }
 
-    // auto (configured) -> hybrid: both recalled (m1 via keywords, m2 via the vector path only)
-    let (status, body, _) = request(
-        port,
-        "GET",
-        &format!("/api/memories?query={}", encodeURIComponent(query)),
-        None,
-    );
-    assert_eq!(status, 200);
-    let out = json_body(&body);
-    assert_eq!(out["mode"], "hybrid");
-    assert!(out.get("semantic_fallback").is_none());
+    // auto (configured) -> hybrid: both recalled (m1 via keywords, m2 via the vector path only).
+    // Vectors land via the background backfill worker triggered by each write, so poll briefly
+    // for the vector-only hit instead of assuming synchronous embedding.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let out = loop {
+        let (status, body, _) = request(
+            port,
+            "GET",
+            &format!("/api/memories?query={}", encodeURIComponent(query)),
+            None,
+        );
+        assert_eq!(status, 200);
+        let out = json_body(&body);
+        assert_eq!(out["mode"], "hybrid");
+        assert!(out.get("semantic_fallback").is_none());
+        if out["results"].as_array().is_some_and(|a| a.len() == 2) {
+            break out;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "vector-only hit was never recalled: {out}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
     let results = out["results"].as_array().unwrap();
     assert_eq!(results.len(), 2, "向量独有命中必须被召回: {out}");
     let summaries: Vec<&str> = results
