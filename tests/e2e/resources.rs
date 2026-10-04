@@ -97,7 +97,7 @@ fn resources_end_to_end() {
     assert_eq!(content["mimeType"], "application/json");
     let doc: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
     assert_eq!(doc["name"], "rust");
-    assert_eq!(doc["memory_count"], 1);
+    assert_eq!(doc["count"], 1);
     assert_eq!(doc["memories"][0]["id"], plain_id.as_str());
     assert!(
         !content["text"]

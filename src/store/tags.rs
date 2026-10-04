@@ -274,20 +274,25 @@ impl Store {
     }
 }
 
+/// Sparse agent-facing shape: tokens are the currency, so keys carrying no information are
+/// dropped outright — undescribed tags omit `description`, and `reserved` appears only when
+/// true (everything except 'conventions'). Timestamps are not exposed at all: they cost
+/// several tokens per row and rarely change what the agent does next.
 fn row_to_tag_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
-    let count: i64 = r.get(2)?;
-    let last: Option<i64> = r.get(3)?;
-    let created: i64 = r.get(4)?;
     let name: String = r.get(0)?;
-    let reserved = name == crate::model::RESERVED_TAG;
-    Ok(json!({
+    let count: i64 = r.get(2)?;
+    let mut v = json!({
         "name": name,
-        "description": r.get::<_, String>(1)?,
-        "memory_count": count,
-        "last_used_at": last.map(|t| json!(t)).unwrap_or(Value::Null),
-        "created_at": created,
-        "reserved": reserved,
-    }))
+        "count": count,
+    });
+    let description: String = r.get(1)?;
+    if !description.is_empty() {
+        v["description"] = json!(description);
+    }
+    if name == crate::model::RESERVED_TAG {
+        v["reserved"] = json!(true);
+    }
+    Ok(v)
 }
 
 #[cfg(test)]

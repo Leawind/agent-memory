@@ -43,8 +43,6 @@ export default {
     colName: '名称',
     colDescription: '描述',
     colMemoryCount: '记忆数',
-    colLastUsed: '最近使用',
-    colCreatedAt: '创建时间',
     reserved: '保留',
     reservedHint: '保留标签：锚定操作者维护的常驻约定，不可改名或删除；挂载到记忆需要 admin 权限',
     editTitle: '编辑标签',

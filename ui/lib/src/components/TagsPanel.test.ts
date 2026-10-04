@@ -14,10 +14,10 @@ describe('TagsPanel', () => {
       vi.fn(() =>
         Promise.resolve(
           jsonResponse({
-            total_tags: 2,
             tags: [
-              { name: 'rust', description: '语言', memory_count: 3, last_used_at: 100, created_at: 50 },
-              { name: 'infra', description: '', memory_count: 0, last_used_at: null, created_at: 60 },
+              { name: 'rust', count: 3, description: '语言' },
+              // Undescribed tags omit description entirely (sparse agent-facing shape)
+              { name: 'infra', count: 0 },
             ],
           }),
         ),

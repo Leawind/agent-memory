@@ -43,8 +43,6 @@ export default {
     colName: 'Name',
     colDescription: 'Description',
     colMemoryCount: 'Memories',
-    colLastUsed: 'Last used',
-    colCreatedAt: 'Created',
     reserved: 'Reserved',
     reservedHint:
       'Reserved tag: anchors the operator-curated resident conventions. It can be neither renamed nor deleted; attaching it to memories requires the admin permission',

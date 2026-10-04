@@ -14,18 +14,14 @@ export interface MemoryFull extends MemorySummary {
 
 export interface TagView {
   name: string
-  description: string
-  memory_count: number
-  last_used_at: number | null
-  /** Null for the synthesized reserved-tag row (the tag does not exist in the store yet) */
-  created_at: number | null
-  /** Reserved tags (conventions) can be neither renamed nor deleted; the panel hides those actions */
-  reserved: boolean
+  count: number
+  /** Omitted when the tag has no description */
+  description?: string
+  /** Present (true) only on the reserved tag (conventions), which can be neither renamed nor deleted; the panel hides those actions */
+  reserved?: true
 }
 
 export interface TagListResp {
-  total_tags: number
-  total_memories: number
   tags: TagView[]
 }
 

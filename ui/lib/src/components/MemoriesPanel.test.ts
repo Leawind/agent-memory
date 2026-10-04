@@ -14,7 +14,7 @@ const searchPayload = {
   total_matches: 1,
   results: [{ id: 'm1', summary: '搜索命中的记忆', tags: ['t1'], score: 50, snippet: '…命中片段…', updated_at: 2 }],
 }
-const tagsPayload = { total_tags: 1, tags: [{ name: 't1', description: '', memory_count: 1 }] }
+const tagsPayload = { tags: [{ name: 't1', count: 1 }] }
 
 function mockFetch(url: string | URL) {
   const u = String(url)

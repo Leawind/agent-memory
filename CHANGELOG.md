@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **工具**：标签视图瘦身（`tag_list`、`tag_create`/`tag_update` 回显的 `tag`、`memory://tags/{tag}` 目录元数据）——字段改为 `name` / `count`（原 `memory_count`），空 `description` 整个省略，`reserved` 仅在保留标签上以 `true` 出现；删除行级 `created_at` / `last_used_at`（时间戳占 token、不直观且参考价值低）与响应级 `total_tags`（与数组长度重复）/ `total_memories`（总量归 stats）。破坏性更改：管理界面标签表去掉两列时间列，mock API 与 sdk-compat-check 同步新形状；记忆摘要时间戳不动（面板按其排序）
 - **export**：导出 JSON 精简重构——`tags` / `memories` 改为以 id 为键的对象（tag 键 = 内部自增 id 十进制串，记忆键 = `m<N>`），记忆对标签的引用改为按 tag id 数组；去掉 `total_memories` / `total_tags` / `memory_count` / `last_used_at` 等派生信息（均可由导出文件本身推出），只保留主数据；CLI 与 REST 导出一律紧凑 JSON（单行）。破坏性更改：`import` 只接受新格式，旧版数组形状直接拒绝；引用导出中不存在的 tag id、非法 id 键、文件内重名标签均报错；目标库必须为空、id 重新编号、记忆时间戳按导出值保留的语义不变
 - **鉴权**：身份 token 改为 `sk_` 前缀 + 62 位小写十六进制（共 65 字符；SQLite `hex()` 输出大写，生成语句用 `lower()` 收敛），随机性仍全部来自 SQLite `randomblob`；库内按哈希比对，已签发的旧 token 继续有效，重置后获得新格式
 - **schema**：标签改用自增内部 id 关联记忆（`memory_tags(memory_id, tag_id)`），标签名唯一非空仍是对外唯一标识；id 是系统内部属性，对 MCP 使用者不可见，改名只动标签行、引用自动跟随。破坏性更改：基线迁移直接改写，旧库不兼容（schema 指纹校验会拒绝打开并给出 export/import 恢复指引）

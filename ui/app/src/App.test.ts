@@ -50,7 +50,7 @@ describe('App shell', () => {
       vi.fn((url: string | URL) => {
         const u = String(url)
         if (u.includes('/api/tags')) {
-          return Promise.resolve(jsonResponse({ total_tags: 0, tags: [] }))
+          return Promise.resolve(jsonResponse({ tags: [] }))
         }
         if (u.includes('/api/stats')) {
           return Promise.resolve(
@@ -173,7 +173,7 @@ describe('App shell', () => {
         if (u.includes('/api/settings')) {
           return Promise.resolve(jsonResponse({ instructions: null, auth_required: false }))
         }
-        if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ total_tags: 0, tags: [] }))
+        if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ tags: [] }))
         return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
       }),
     )
@@ -415,7 +415,7 @@ describe('App shell', () => {
         if (u.includes('/api/settings')) {
           return Promise.resolve(jsonResponse({ instructions: null, default_instructions: '' }))
         }
-        if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ total_tags: 0, tags: [] }))
+        if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ tags: [] }))
         if (u.includes('/api/stats')) {
           return Promise.resolve(
             jsonResponse({ path: '/tmp/m.db', memories: 0, tags: 0, next_id: 'm1', file_size: 0, newest_update: null }),

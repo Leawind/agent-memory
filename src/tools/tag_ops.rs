@@ -43,16 +43,14 @@ pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolErro
     {
         tags.push(json!({
             "name": crate::model::RESERVED_TAG,
-            "description": crate::model::RESERVED_TAG_DESCRIPTION,
-            "memory_count": 0,
-            "last_used_at": Value::Null,
-            "created_at": Value::Null,
+            "count": 0,
             "reserved": true,
+            "description": crate::model::RESERVED_TAG_DESCRIPTION,
         }));
     }
     fn sort_key(v: &Value) -> (u64, &str) {
         (
-            v["memory_count"].as_u64().unwrap_or(0),
+            v["count"].as_u64().unwrap_or(0),
             v["name"].as_str().unwrap_or_default(),
         )
     }
@@ -61,12 +59,9 @@ pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolErro
         let (count_b, name_b) = sort_key(b);
         count_b.cmp(&count_a).then(name_a.cmp(name_b))
     });
-    let total_memories = st.stats()?["memories"].clone();
-    Ok(json!({
-        "total_tags": tags.len(),
-        "total_memories": total_memories,
-        "tags": tags,
-    }))
+    // No total_* echoes: total_tags duplicates the array length and the store-wide memory count
+    // is the stats tool's job, not something a tag browser acts on.
+    Ok(json!({ "tags": tags }))
 }
 
 pub fn tag_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {

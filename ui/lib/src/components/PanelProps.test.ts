@@ -9,7 +9,7 @@ const listPayload = {
   limit: 20,
   memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], created_at: 1, updated_at: 2 }],
 }
-const tagsPayload = { total_tags: 0, tags: [] }
+const tagsPayload = { tags: [] }
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) }

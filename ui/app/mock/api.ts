@@ -94,14 +94,18 @@ const parseId = (raw: string | undefined): MockMemory | undefined => {
 }
 const fullView = (m: MockMemory) => ({ ...m, id: formatId(m.id) })
 const summaryView = (m: MockMemory) => (({ content: _c, ...rest }) => rest)(fullView(m))
+// 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、reserved 仅保留标签出现
 const tagViews = () =>
-  [...tags.entries()].map(([name, tag]) => ({
-    name,
-    description: tag.description,
-    memory_count: memories.filter((m) => m.tags.includes(name)).length,
-    last_used_at: null,
-    created_at: tag.created_at,
-  }))
+  [...tags.entries()]
+    .map(([name, tag]) => {
+      const view: Record<string, unknown> = {
+        name,
+        count: memories.filter((m) => m.tags.includes(name)).length,
+      }
+      if (tag.description) view.description = tag.description
+      return view
+    })
+    .sort((a, b) => (b.count as number) - (a.count as number) || String(a.name).localeCompare(String(b.name)))
 
 // 片段：命中处前后取一段、转义后用 <mark> 包住（UI 侧会再过 DOMPurify）
 function snippet(content: string, query: string): string {
@@ -238,7 +242,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
 
   // 标签
   if (segs[1] === 'tags' && segs.length === 2 && method === 'GET') {
-    sendJson(res, 200, { total_tags: tags.size, total_memories: memories.length, tags: tagViews() })
+    sendJson(res, 200, { tags: tagViews() })
     return
   }
   if (segs[1] === 'tags' && segs.length === 2 && method === 'POST') {
@@ -297,8 +301,6 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   if (segs[1] === 'export' && method === 'GET') {
     sendJson(res, 200, {
       exported_at: now(),
-      total_memories: memories.length,
-      total_tags: tags.size,
       tags: tagViews(),
       memories: memories.map(fullView),
     })

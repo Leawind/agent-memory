@@ -36,25 +36,7 @@
         <el-table-column prop="description" :label="t('tags.colDescription')" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.description || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="memory_count" :label="t('tags.colMemoryCount')" width="90" sortable />
-        <el-table-column
-          prop="last_used_at"
-          :label="t('tags.colLastUsed')"
-          width="170"
-          sortable
-          :sort-method="byTimeField('last_used_at')"
-        >
-          <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
-        </el-table-column>
-        <el-table-column
-          prop="created_at"
-          :label="t('tags.colCreatedAt')"
-          width="170"
-          sortable
-          :sort-method="byTimeField('created_at')"
-        >
-          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-        </el-table-column>
+        <el-table-column prop="count" :label="t('tags.colMemoryCount')" width="90" sortable />
         <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
           <template #default="{ row }">
             <!-- Reserved tags can be neither renamed nor deleted server-side; hide the dead controls -->
@@ -113,7 +95,7 @@
           {{ t('tags.deleteBefore') }}
           <el-tag>{{ target?.name }}</el-tag>
           {{ t('tags.deleteMiddle') }}
-          <b>{{ target?.memory_count }}</b>
+          <b>{{ target?.count }}</b>
           {{ t('tags.deleteAfter') }}
         </p>
         <el-radio-group v-model="deleteMode">
@@ -132,7 +114,6 @@ import { ElMessageBox } from 'element-plus'
 import { toastError, toastSuccess } from '../toast'
 import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import FormDialog from './FormDialog.vue'
-import { formatTime } from '../format'
 import { t } from '../i18n'
 import { useTags } from '../composables/useTags'
 import { useContainerWidth } from '../composables/useContainerWidth'
@@ -173,11 +154,6 @@ const deleteVisible = ref(false)
 const deleteMode = ref<'detach' | 'purge'>('detach')
 const target = ref<TagView | null>(null)
 
-/** Time column sorting (last_used_at may be null, treated as 0; plain numeric comparison avoids the default lexicographic order) */
-function byTimeField(field: 'last_used_at' | 'created_at') {
-  return (a: TagView, b: TagView) => (a[field] ?? 0) - (b[field] ?? 0)
-}
-
 function openCreate() {
   Object.assign(form, { oldName: null, name: '', description: '' })
   dialogVisible.value = true
@@ -217,7 +193,7 @@ async function doDelete() {
   if (deleteMode.value === 'purge') {
     try {
       await ElMessageBox.confirm(
-        t('tags.purgeConfirm', { name: target.value?.name, count: target.value?.memory_count ?? 0 }),
+        t('tags.purgeConfirm', { name: target.value?.name, count: target.value?.count ?? 0 }),
         t('tags.purgeConfirmTitle'),
         { type: 'error', confirmButtonText: t('tags.purgeButton') },
       )

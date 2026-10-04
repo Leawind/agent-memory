@@ -405,10 +405,10 @@ try {
   const tagRead = await rpc(16, "resources/read", { uri: "memory://tags/sdk" })
   const tagDoc = JSON.parse(
     (tagRead.result?.contents as { text: string }[] | undefined)?.[0]?.text ?? "{}",
-  ) as { name?: string, memories?: { id?: string }[], memory_count?: number }
+  ) as { name?: string, memories?: { id?: string }[], count?: number }
   check(
     "tag directory read returns the JSON catalog",
-    tagDoc.name === "sdk" && (tagDoc.memory_count ?? 0) >= 1,
+    tagDoc.name === "sdk" && (tagDoc.count ?? 0) >= 1,
   )
   check(
     "tag directory leaks no memory content",

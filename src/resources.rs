@@ -227,14 +227,17 @@ fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
         let view = st.tag_view(name)?;
         let (_, page) = st.list_memories(Some(name), None, "updated_at", false, 0, TAG_RESOURCE_LIMIT)?;
         let memories: Vec<Value> = page.iter().map(Memory::summary_view).collect();
-        let memory_count = view["memory_count"].clone();
+        let memory_count = view["count"].clone();
         let mut doc = json!({
             // Directory resource: metadata + summaries only, never content (progressive disclosure)
             "name": view["name"],
-            "description": view["description"],
-            "memory_count": memory_count,
+            "count": memory_count,
             "memories": memories,
         });
+        // The sparse tag view omits description when empty; mirror that here
+        if let Some(description) = view["description"].as_str() {
+            doc["description"] = json!(description);
+        }
         if page.len() < memory_count.as_u64().unwrap_or(0) as usize {
             doc["note"] = json!(format!(
                 "showing the {TAG_RESOURCE_LIMIT} most recently updated; use memory_list with tag '{name}' to page through the rest"
@@ -485,7 +488,7 @@ mod tests {
         let doc: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
         assert_eq!(doc["name"], "rust");
         assert_eq!(doc["description"], "Rust language");
-        assert_eq!(doc["memory_count"], 1);
+        assert_eq!(doc["count"], 1);
         assert_eq!(doc["memories"][0]["summary"], "Borrow checker");
         // Progressive disclosure: the directory carries no memory content
         assert!(
