@@ -100,7 +100,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_CREATE,
-            "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the full text revealed on demand (level 2). Tags must exist: unknown names are rejected with the closest existing tags listed - create them explicitly with tag_create, reuse the listed names, or pass create_missing_tags: true to auto-create them empty (keeping the taxonomy tidy is your job; case variants and synonyms rot it). The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update) - each list only attached when non-empty. Existing memories with the same summary are listed in duplicate_of, and with semantic search enabled near-duplicates by embedding similarity additionally appear in similar_to (also only when found) - both are advisory: prefer memory_update / memory_merge on those instead of storing again.",
+            "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the full text revealed on demand (level 2). Tags must exist: unknown names are rejected with the closest existing tags listed - create them explicitly with tag_create, reuse the listed names, or pass create_missing_tags: true to auto-create them empty (keeping the taxonomy tidy is your job; case variants and synonyms rot it). The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update) - each list only attached when non-empty. Existing memories with the same summary are listed in duplicate_of, and with semantic search enabled near-duplicates by embedding similarity additionally appear in similar_to (also only when found) - both are advisory: prefer memory_update / memory_merge on those instead of storing again. Do not reference other memories by id: ids are unstable (delete/merge removes them, export/import renumbers them) - link memories by tag or searchable keyword instead; text that looks like it contains id references draws a warning note.",
             json!({
                 "type": "object",
                 "properties": {
@@ -164,7 +164,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_UPDATE,
-            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). For a small change inside long content, memory_edit (exact string replacement) is far cheaper than restating the whole body. Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create).",
+            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). For a small change inside long content, memory_edit (exact string replacement) is far cheaper than restating the whole body. Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. When tags are added, the response reports tags_autocreated / tags_reused / tags_missing_description (same meaning as in memory_create). Replacing the content changes what other memories' references to this id point at: the response lists referencing memories under referenced_by (ids + summaries) when the content actually changed. Do not reference other memories by id (unstable - see memory_create); id-like text in the written fields draws a warning note.",
             json!({
                 "type": "object",
                 "properties": {
@@ -182,7 +182,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_EDIT,
-            "Edit a memory's content by exact string replacement instead of restating the whole body - the efficient way to change a long memory. old_string is located in the current content byte-exact (case-sensitive, whitespace-significant) and swapped for new_string in place. The edit fails without side effects when old_string is absent (re-read the content with memory_get first) or when it matches more than once (then add surrounding text to make the match unique, or pass replace_all: true to replace every occurrence and the response reports the count). new_string may be empty to delete the matched span; old_string must be non-empty and differ from new_string. Refreshes the updated time and re-embeds the memory for semantic search, same as memory_update.",
+            "Edit a memory's content by exact string replacement instead of restating the whole body - the efficient way to change a long memory. old_string is located in the current content byte-exact (case-sensitive, whitespace-significant) and swapped for new_string in place. The edit fails without side effects when old_string is absent (re-read the content with memory_get first) or when it matches more than once (then add surrounding text to make the match unique, or pass replace_all: true to replace every occurrence and the response reports the count). new_string may be empty to delete the matched span; old_string must be non-empty and differ from new_string. Refreshes the updated time and re-embeds the memory for semantic search, same as memory_update. id-like tokens in new_string draw a warning note: do not reference other memories by id (ids are unstable - see memory_create).",
             json!({
                 "type": "object",
                 "properties": {
@@ -198,7 +198,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_MERGE,
-            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin.",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired.",
             json!({
                 "type": "object",
                 "properties": {
@@ -214,7 +214,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_DELETE,
-            "Permanently delete one or more memories by id.",
+            "Permanently delete one or more memories by id. The response lists remaining memories that referenced a deleted id (referenced_by, ids + summaries) so their now-dangling mentions can be repaired.",
             json!({
                 "type": "object",
                 "properties": {

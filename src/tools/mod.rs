@@ -26,7 +26,7 @@ pub use defs::{
     TOOL_NAMES,
 };
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -766,6 +766,128 @@ mod tests {
             json!({"query": "searchable", "mode": "hybrid"}),
         );
         assert!(hybrid.is_err(), "unconfigured hybrid must be a hard error");
+
+        cleanup(&path);
+    }
+
+    /// Cross-memory id references: freshly written text containing id-shaped tokens draws a
+    /// warning note (non-blocking, word-bounded so fragments stay unnoticed); delete / update /
+    /// merge report the memories whose mentions now dangle or drift, ids + summaries only.
+    #[test]
+    fn id_references_warn_on_write_and_report_inbound() {
+        let path = temp_db("id-refs");
+
+        // create: id-shaped text warns without blocking
+        let warned = call(
+            &path,
+            "memory_create",
+            json!({"summary": "alpha", "content": "see m2 for details"}),
+        )
+        .unwrap();
+        assert_eq!(warned["memory"]["id"], "m1");
+        let note = warned["note"].as_str().unwrap();
+        assert!(
+            note.contains("m2") && note.contains("unstable"),
+            "got: {note}"
+        );
+
+        // Word-boundary discipline: fragments and case variants are not id references
+        let quiet = call(
+            &path,
+            "memory_create",
+            json!({"summary": "beta", "content": "cm3 connector and M4 bolt stay unnoticed"}),
+        )
+        .unwrap();
+        assert!(quiet.get("note").is_none(), "got: {quiet:?}");
+
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "gamma", "content": "the referenced body"}),
+        )
+        .unwrap();
+
+        // edit: id-like tokens in new_string warn too
+        let edited = call(
+            &path,
+            "memory_edit",
+            json!({
+                "id": "m3",
+                "old_string": "the referenced body",
+                "new_string": "the referenced body (see m9)"
+            }),
+        )
+        .unwrap();
+        assert_eq!(edited["replaced"], 1);
+        assert!(
+            edited["note"].as_str().unwrap().contains("m9"),
+            "got: {edited}"
+        );
+
+        // update replacing the content: inbound references are reported (content drift), summary-level only
+        let updated = call(
+            &path,
+            "memory_update",
+            json!({"id": "m2", "content": "rewritten body"}),
+        )
+        .unwrap();
+        assert_eq!(updated["updated"], true);
+        let refs = updated["referenced_by"].as_array().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["id"], "m1");
+        assert_eq!(refs[0]["to"], "m2");
+        assert_eq!(refs[0]["summary"], "alpha");
+        assert!(
+            refs[0].get("content").is_none(),
+            "inbound report must not leak content"
+        );
+
+        // Tag-only update: nothing drifted, no inbound report
+        let tag_only = call(
+            &path,
+            "memory_update",
+            json!({"id": "m2", "add_tags": ["solo"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        assert!(tag_only.get("referenced_by").is_none(), "got: {tag_only:?}");
+
+        // delete: surviving memories mentioning the deleted id are reported
+        let deleted = call(&path, "memory_delete", json!({"ids": ["m2"]})).unwrap();
+        assert_eq!(deleted["deleted"], json!(["m2"]));
+        let refs = deleted["referenced_by"].as_array().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["id"], "m1");
+        assert_eq!(refs[0]["to"], "m2");
+
+        // merge: references to the absorbed id are reported — the target included, its merged
+        // content may carry the mention
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "delta", "content": "filler"}),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "epsilon", "content": "see m4"}),
+        )
+        .unwrap();
+        let merged = call(
+            &path,
+            "memory_merge",
+            json!({"target": "m5", "source": "m4"}),
+        )
+        .unwrap();
+        assert_eq!(merged["removed"], "m4");
+        let refs = merged["referenced_by"].as_array().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["id"], "m5");
+        assert_eq!(refs[0]["to"], "m4");
+        assert!(
+            merged["note"].as_str().unwrap().contains("absorbed id m4"),
+            "got: {merged}"
+        );
 
         cleanup(&path);
     }

@@ -78,7 +78,12 @@ src/
                  保留标签守卫（conventions：改名/删除绝对禁止，创建/挂摘需 Admin；REST 面复用 execute 自动一致）
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
-  tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）
+  tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）；
+                 memory_ops 承载跨记忆 id 引用卫生：写入面（create/update/edit、merge 的
+                 显式 content）检出疑似 m{n} 引用（词边界、区分大小写）附 note 告警不阻塞，
+                 delete/update/merge 在响应 referenced_by（id+摘要，绝不带正文）报告入向
+                 引用——id 是不稳定标识（删除/合并即失效、export/import 重编号），约定用
+                 标签/关键词互链，工具描述与 INSTRUCTIONS 同步写明
   store/         SQLite 持久化目录：mod.rs 是 Store 结构体与 open/id 换算（open 时按迁移
                  文本做 schema 指纹校验：表 + 列与实测不符即拒绝打开），tx.rs 是
                  事务入口（TxMode/with_db_in），migrate.rs 是迁移运行器；

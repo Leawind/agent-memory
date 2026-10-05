@@ -45,6 +45,10 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     if !duplicate_of.is_empty() {
         out["duplicate_of"] = json!(duplicate_of);
     }
+    let refs = id_like_tokens(&[&summary, &content]);
+    if !refs.is_empty() {
+        append_note(&mut out, id_reference_note(&refs));
+    }
     Ok(out)
 }
 
@@ -362,6 +366,34 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
             out["tags_missing_description"] = json!(linkage.missing_description);
         }
     }
+    // Id-reference hygiene: freshly written text containing id-shaped tokens warns; replacing the
+    // content changes what inbound references to this id see, so referencing memories are reported
+    let mut written: Vec<&str> = Vec::new();
+    if let Some(s) = &summary {
+        written.push(s);
+    }
+    if let Some(c) = &content {
+        written.push(c);
+    }
+    let refs = id_like_tokens(&written);
+    if !refs.is_empty() {
+        append_note(&mut out, id_reference_note(&refs));
+    }
+    if changed && content.is_some() {
+        let memories = st.all_memories()?;
+        let inbound = inbound_references(&memories, &raw_id, &raw_id);
+        if !inbound.is_empty() {
+            out["referenced_by"] = json!(inbound
+                .iter()
+                .map(|(id, summary)| json!({"id": id, "summary": summary, "to": raw_id.as_str()}))
+                .collect::<Vec<_>>());
+            append_note(
+                &mut out,
+                "these memories reference this memory's id (see referenced_by) and were written against its previous content — check whether they still describe it accurately"
+                    .to_string(),
+            );
+        }
+    }
     Ok(out)
 }
 
@@ -419,10 +451,15 @@ pub fn memory_edit(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         .map_err(|e| ToolError::invalid(format!("edit rejected, nothing was changed: {e}")))?;
     st.update_memory(id, None, Some(&updated), &[], &[])?;
 
-    Ok(json!({
+    let mut out = json!({
         "replaced": if replace_all { count } else { 1 },
         "memory": memory_view(st, id)?,
-    }))
+    });
+    let refs = id_like_tokens(&[&new_string]);
+    if !refs.is_empty() {
+        append_note(&mut out, id_reference_note(&refs));
+    }
+    Ok(out)
 }
 
 pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -437,6 +474,25 @@ pub fn memory_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         out["invalid_ids"] = json!(invalid);
     }
     attach_id_note(&mut out, !missing.is_empty(), &invalid);
+    // References die with their target: surviving memories mentioning a deleted id are reported
+    // (ids + summaries only, progressive disclosure) so the caller can repair the dangling mentions
+    if !deleted.is_empty() {
+        let memories = st.all_memories()?;
+        let mut dangling = Vec::new();
+        for did in &deleted {
+            for (id, summary) in inbound_references(&memories, did, "") {
+                dangling.push(json!({"id": id, "summary": summary, "to": did}));
+            }
+        }
+        if !dangling.is_empty() {
+            out["referenced_by"] = json!(dangling);
+            append_note(
+                &mut out,
+                "some remaining memories reference a deleted id (see referenced_by): those mentions now dangle — repair or drop them"
+                    .to_string(),
+            );
+        }
+    }
     Ok(out)
 }
 
@@ -525,12 +581,101 @@ pub fn memory_merge(
     }
 
     let view = memory_view(st, target_id)?;
+    // Id-reference hygiene: the absorbed id dies here — surviving memories mentioning it (the
+    // target included: its merged content may carry such a mention) are reported; explicit
+    // replacement content gets the same id-shaped-token warning as create/update
+    let memories = st.all_memories()?;
+    let inbound = inbound_references(&memories, &raw_source, "");
     // No "merged": true echo - a non-error result already means success
-    Ok(json!({
+    let mut out = json!({
         "memory": view,
-        "removed": raw_source,
+        "removed": raw_source.as_str(),
         "content_appended": explicit_content.is_none(),
-    }))
+    });
+    if !inbound.is_empty() {
+        out["referenced_by"] = json!(inbound
+            .iter()
+            .map(|(id, summary)| json!({"id": id, "summary": summary, "to": raw_source.as_str()}))
+            .collect::<Vec<_>>());
+        append_note(
+            &mut out,
+            format!("the absorbed id {raw_source} is still referenced (see referenced_by): those mentions now dangle — repair or drop them"),
+        );
+    }
+    if let Some(c) = &explicit_content {
+        let refs = id_like_tokens(&[c]);
+        if !refs.is_empty() {
+            append_note(&mut out, id_reference_note(&refs));
+        }
+    }
+    Ok(out)
+}
+
+/// Id-shaped token detection for freshly written text: `m123`, word-bounded and case-sensitive —
+/// exactly the shape `Store::parse_id` accepts. Cross-memory id references are discouraged (ids are
+/// unstable: delete/merge removes them, export/import renumbers them), so writes containing them
+/// draw a warning note; fragments like "cm3" or uppercase "M4" stay unnoticed by construction.
+fn id_like_tokens(texts: &[&str]) -> Vec<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\bm[0-9]+\b").expect("static regex"));
+    let mut found: Vec<String> = Vec::new();
+    for text in texts {
+        for m in re.find_iter(text) {
+            let token = m.as_str().to_string();
+            if !found.contains(&token) {
+                found.push(token);
+            }
+        }
+    }
+    found
+}
+
+/// Compact display of a token list, capped so a pathological body cannot flood the note.
+fn display_list(tokens: &[String]) -> String {
+    const MAX: usize = 5;
+    match tokens.len() {
+        0 => String::new(),
+        n if n <= MAX => tokens.join(", "),
+        n => format!("{} and {} more", tokens[..MAX].join(", "), n - MAX),
+    }
+}
+
+/// The guidance note for written text containing id-shaped tokens (non-blocking: the write lands).
+fn id_reference_note(tokens: &[String]) -> String {
+    format!(
+        "{} {} like a memory-id reference{}; ids are unstable identifiers (delete/merge removes them, export/import renumbers them) — link to memories by tag or searchable keyword instead",
+        display_list(tokens),
+        if tokens.len() == 1 { "looks" } else { "look" },
+        if tokens.len() == 1 { "" } else { "s" }
+    )
+}
+
+/// Other memories (excluding `exclude_id`) whose summary or content reference `target` exactly
+/// (word-bounded, so m30 does not count as a mention of m3). Reported as (id, summary) pairs —
+/// progressive disclosure holds: the report never carries content.
+fn inbound_references(
+    memories: &[crate::model::Memory],
+    target: &str,
+    exclude_id: &str,
+) -> Vec<(String, String)> {
+    let pattern =
+        regex::Regex::new(&format!(r"\b{}\b", regex::escape(target))).expect("escaped id pattern");
+    memories
+        .iter()
+        .filter(|m| m.id != exclude_id)
+        .filter(|m| pattern.is_match(&m.summary) || pattern.is_match(&m.content))
+        .map(|m| (m.id.clone(), m.summary.clone()))
+        .collect()
+}
+
+/// Append to the response note, joining with "; " when one is already present (the sparse
+/// single-note shape shared with attach_id_note).
+fn append_note(out: &mut Value, msg: String) {
+    let joined = match out.get("note").and_then(Value::as_str) {
+        Some(existing) => format!("{existing}; {msg}"),
+        None => msg,
+    };
+    out["note"] = json!(joined);
 }
 
 /// Semantic pass: query embedding + cosine ranking against stored vectors, RRF-fused with the keyword pass.
