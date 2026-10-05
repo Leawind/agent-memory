@@ -114,6 +114,7 @@ import { elementPlusLocale } from '../i18n/elementPlus'
 import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { toastError } from '../toast'
+import { tagExprReady } from '../tagExprGuard'
 import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
@@ -189,12 +190,16 @@ const emptyNote = computed(() => {
 })
 
 // Typing applies through a debounce (an expression is composed over several keystrokes);
-// Enter / clear / suggestion selection apply immediately
+// Enter / clear / suggestion selection apply immediately. The debounced path is gated on
+// local completeness (tagExprReady): a half-typed expression — unterminated quote, dangling
+// operator, trailing word that is not a known tag yet — would only draw an unknown-tag error
+// toast per keystroke, so it waits. The apply path always sends: a deliberately applied
+// expression deserves the server's precise did-you-mean error.
 let exprTimer: ReturnType<typeof setTimeout> | undefined
 function onExprChanged() {
   clearTimeout(exprTimer)
   exprTimer = setTimeout(() => {
-    void run(onSearch)
+    if (tagExprReady(tagExpr.value, tagOptions.value)) void run(onSearch)
   }, 400)
 }
 function onExprApply() {

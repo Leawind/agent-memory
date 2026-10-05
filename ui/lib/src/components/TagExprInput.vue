@@ -8,6 +8,7 @@
       :placeholder="placeholder"
       clearable
       :prefix-icon="Collection"
+      spellcheck="false"
       @update:model-value="onInput"
       @clear="onClear"
       @keydown.up.prevent="move(-1)"
