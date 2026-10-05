@@ -202,7 +202,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
     （OpenAI 兼容 `/embeddings`，配置在 settings 四键 `embedding_*`，REST/UI 可改）；
     回退是硬性承诺——embedding 服务不可用只允许降级不允许失败：搜索回退纯关键词
     并携带 `semantic_fallback` 标记（显式 `mode: hybrid` 同样回退而非报错），写入
-    静默留待补跑（向量缺失由 doctor/stats 呈现）。embedding 网络调用一律在数据库
+    静默留待补跑（向量缺失由 doctor/stats 呈现）；语义检索未配置时 auto 走纯
+    关键词并显式携带 `semantic: "disabled"`，不留推断空间。embedding 网络调用一律在数据库
     事务之外（写路径 = 工具事务提交后 `embed::after_write` 补跑，短事务存向量）；
     向量是派生数据（`memory_embeddings` 表随记忆级联删除，export/import 不携带，
     模型指纹不符视为缺失），混合排序用 RRF 融合（关键词分与余弦不同量纲，禁止

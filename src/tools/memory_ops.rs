@@ -145,14 +145,20 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
     // Embedding service unavailable (timeout/error/database read failure) → fall back to the keyword pass and flag it,
-    // the fallback being a promise, not an error path.
+    // the fallback being a promise, not an error path. Semantic search not configured at all →
+    // keyword under auto as well, flagged explicitly so the caller never has to infer the state
+    // from mode + tool description.
     let config = st.embedding_config().map_err(ToolError::invalid)?;
     let mut used_hybrid = false;
     let mut semantic_fallback = false;
+    let mut semantic_disabled = false;
     let hits = match mode {
         SearchMode::Keyword => keyword_hits,
         SearchMode::Auto => match &config {
-            None => keyword_hits,
+            None => {
+                semantic_disabled = true;
+                keyword_hits
+            }
             Some(cfg) => {
                 let (hits, ok) = semantic_pass(
                     st,
@@ -216,6 +222,9 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     });
     if semantic_fallback {
         out["semantic_fallback"] = json!(true);
+    }
+    if semantic_disabled {
+        out["semantic"] = json!("disabled");
     }
     // Progressive-disclosure guidance is carried only on the first page; by paging, the client has already read it, saving repeated context overhead
     if offset == 0 {

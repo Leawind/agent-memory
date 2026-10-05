@@ -732,6 +732,44 @@ mod tests {
         cleanup(&path);
     }
 
+    /// Semantic-state signaling on search responses: with embedding unconfigured, auto runs
+    /// keyword-only and must say so explicitly (semantic: "disabled") instead of leaving the
+    /// caller to infer it from mode + tool description. Explicit keyword stays unflagged (the
+    /// caller chose it), and unconfigured hybrid is a parameter error, not a silent downgrade.
+    #[test]
+    fn search_flags_semantic_disabled_under_auto() {
+        let path = temp_db("semantic-disabled");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "note", "content": "searchable body"}),
+        )
+        .unwrap();
+
+        let auto = call(&path, "memory_search", json!({"query": "searchable"})).unwrap();
+        assert_eq!(auto["mode"], "keyword");
+        assert_eq!(auto["semantic"], "disabled");
+        assert!(auto.get("semantic_fallback").is_none());
+
+        let keyword = call(
+            &path,
+            "memory_search",
+            json!({"query": "searchable", "mode": "keyword"}),
+        )
+        .unwrap();
+        assert_eq!(keyword["mode"], "keyword");
+        assert!(keyword.get("semantic").is_none());
+
+        let hybrid = call(
+            &path,
+            "memory_search",
+            json!({"query": "searchable", "mode": "hybrid"}),
+        );
+        assert!(hybrid.is_err(), "unconfigured hybrid must be a hard error");
+
+        cleanup(&path);
+    }
+
     #[test]
     fn memory_list_reports_tag_state() {
         let path = temp_db("list-note");
