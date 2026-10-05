@@ -622,14 +622,14 @@ mod tests {
             br#"{"summary": "x"}"#,
         );
         assert_eq!(status, 404);
-        // Validation failure (missing required argument) → 400
+        // Validation failure (missing required argument) → 400 (content is optional; summary is not)
         let (status, _) = handle(
             &db,
             &open_ctx(),
             "POST",
             "/api/memories",
             "",
-            br#"{"summary": "only"}"#,
+            br#"{"content": "body without summary"}"#,
         );
         assert_eq!(status, 400);
         // Non-JSON body → 400

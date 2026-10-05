@@ -100,10 +100,9 @@ pub fn validate_summary(s: &str) -> Result<String, String> {
     Ok(t.to_string())
 }
 
+/// Content may be empty: a summary-only memory stores an empty body (the handlers normalize
+/// whitespace-only input to ""). Only the size cap is enforced here.
 pub fn validate_content(s: &str) -> Result<String, String> {
-    if s.trim().is_empty() {
-        return Err("content must not be empty".into());
-    }
     if s.chars().count() > MAX_CONTENT_CHARS {
         return Err(format!(
             "content is too long (max {MAX_CONTENT_CHARS} characters)"

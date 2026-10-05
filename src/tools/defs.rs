@@ -104,16 +104,16 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_CREATE,
-            "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the full text revealed on demand (level 2). Tags must exist: unknown names are rejected with the closest existing tags listed - create them explicitly with tag_create, reuse the listed names, or pass create_missing_tags: true to auto-create them empty (keeping the taxonomy tidy is your job; case variants and synonyms rot it). The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update) - each list only attached when non-empty. Existing memories with the same summary are listed in duplicate_of, and with semantic search enabled near-duplicates by embedding similarity additionally appear in similar_to (also only when found) - both are advisory: prefer memory_update / memory_merge on those instead of storing again. Do not reference other memories by id: ids are unstable (delete/merge removes them, export/import renumbers them) - link memories by tag or searchable keyword instead; text that looks like it contains id references draws a warning note.",
+            "Store a new memory. 'summary' is the one-line abstract shown by searches and lists (progressive disclosure level 1); 'content' is the optional full text revealed on demand (level 2) - omit it when the summary alone says it all, and the memory stores with an empty body. Tags must exist: unknown names are rejected with the closest existing tags listed - create them explicitly with tag_create, reuse the listed names, or pass create_missing_tags: true to auto-create them empty (keeping the taxonomy tidy is your job; case variants and synonyms rot it). The response reports tags_autocreated (created just now), tags_reused (already existed) and tags_missing_description (reused tags that still lack a description - consider filling one in with tag_update) - each list only attached when non-empty. Existing memories with the same summary are listed in duplicate_of, and with semantic search enabled near-duplicates by embedding similarity additionally appear in similar_to (also only when found) - both are advisory: prefer memory_update / memory_merge on those instead of storing again. Do not reference other memories by id: ids are unstable (delete/merge removes them, export/import renumbers them) - link memories by tag or searchable keyword instead; text that looks like it contains id references draws a warning note.",
             json!({
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
-                    "content": {"type": "string", "description": "Full text of the memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
+                    "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description."}
                 },
-                "required": ["summary", "content"],
+                "required": ["summary"],
                 "additionalProperties": false
             }),
             false, false,
@@ -176,7 +176,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
-                    "content": {"type": "string", "description": "Replacement content. Markdown is recommended."},
+                    "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
                     "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
                     "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}

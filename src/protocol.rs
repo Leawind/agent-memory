@@ -1211,7 +1211,7 @@ mod tests {
 
         let (_, bad_args) = roundtrip(
             &store,
-            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"only"}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_create","arguments":{"content":"body without summary"}}}"#,
         );
         assert_eq!(bad_args["result"]["isError"], true);
         assert_eq!(bad_args["result"]["resultType"], "complete");

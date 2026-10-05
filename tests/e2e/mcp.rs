@@ -226,7 +226,7 @@ fn mcp_endpoint_end_to_end() {
         port,
         json!(10),
         "tools/call",
-        json!({"name": "memory_create", "arguments": {"summary": "only summary"}}),
+        json!({"name": "memory_create", "arguments": {"content": "body without summary"}}),
     );
     assert_eq!(bad_args["result"]["isError"], true);
 

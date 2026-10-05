@@ -49,7 +49,11 @@ fn opt_tag_expr(st: &Store, args: &Map<String, Value>) -> Result<Option<TagExpr>
 
 pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let summary = validate_summary(&req_str(args, "summary")?)?;
-    let content = validate_content(&req_str(args, "content")?)?;
+    // Content is optional: a summary-only memory stores an empty body (whitespace counts as none)
+    let content = match opt_str(args, "content")? {
+        Some(c) if !c.trim().is_empty() => validate_content(&c)?,
+        _ => String::new(),
+    };
     let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
     let tags = normalize_tag_list(&raw_tags)?;
     // Default off: unknown tags are an error listing similar existing ones, keeping the taxonomy
@@ -377,7 +381,9 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         None => None,
     };
     let content = match opt_str(args, "content")? {
-        Some(c) => Some(validate_content(&c)?),
+        Some(c) if !c.trim().is_empty() => Some(validate_content(&c)?),
+        // Explicit empty / whitespace content clears the body (summary-only memory)
+        Some(_) => Some(String::new()),
         None => None,
     };
     let add_tags = match opt_str_list(args, "add_tags")? {

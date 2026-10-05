@@ -563,8 +563,8 @@ mod tests {
     #[test]
     fn validation_and_missing_errors() {
         let path = temp_db("errors");
-        // Missing required argument
-        assert!(call(&path, "memory_create", json!({"summary": "s"})).is_err());
+        // Missing required argument (content is optional; summary is not)
+        assert!(call(&path, "memory_create", json!({"content": "c"})).is_err());
         // Empty title
         assert!(call(
             &path,
@@ -988,6 +988,67 @@ mod tests {
         .unwrap();
         assert_eq!(out["total_matches"], 1);
         assert_eq!(out["results"][0]["id"], "m1");
+
+        cleanup(&path);
+    }
+
+    /// Summary-only memories: content is optional on create (whitespace counts as none), memory_get
+    /// reveals an empty body, search hits the summary with an empty snippet, update can add and
+    /// clear the body, and edit on a bodyless memory fails without side effects.
+    #[test]
+    fn summary_only_memories() {
+        let path = temp_db("summary-only");
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "只此一句摘要", "tags": ["t"], "create_missing_tags": true}),
+        )
+        .unwrap();
+        let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
+        assert_eq!(got["memories"][0]["content"], "");
+        // Search hits the summary; empty content yields an empty snippet (progressive disclosure holds)
+        let found = call(&path, "memory_search", json!({"query": "一句"})).unwrap();
+        assert_eq!(found["total_matches"], 1);
+        assert_eq!(found["results"][0]["snippet"], "");
+        // Explicit whitespace content also counts as no body
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "空白正文归空", "content": "   "}),
+        )
+        .unwrap();
+        let got = call(&path, "memory_get", json!({"ids": ["m2"]})).unwrap();
+        assert_eq!(got["memories"][0]["content"], "");
+
+        // update adds a body, then clears it again (summary-only round trip)
+        call(
+            &path,
+            "memory_update",
+            json!({"id": "m1", "content": "现在有正文了"}),
+        )
+        .unwrap();
+        let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
+        assert_eq!(got["memories"][0]["content"], "现在有正文了");
+        call(
+            &path,
+            "memory_update",
+            json!({"id": "m1", "content": "   "}),
+        )
+        .unwrap();
+        let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
+        assert_eq!(got["memories"][0]["content"], "");
+
+        // edit on a bodyless memory fails without side effects and points at memory_update
+        let err = call(
+            &path,
+            "memory_edit",
+            json!({"id": "m1", "old_string": "x", "new_string": "y"}),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("old_string not found"),
+            "got: {err}"
+        );
 
         cleanup(&path);
     }
