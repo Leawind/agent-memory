@@ -12,8 +12,9 @@
   >
     <!-- Title row per the workspace spec: 记忆 #<id> + delete + save; the save button stays
          disabled until the form actually differs from the loaded memory (or, when creating,
-         until summary and content are both present). The edge strips flanking the dialog
-         resize its width, the dragged edge tracking the pointer. -->
+         until a summary is present — content is optional, a summary-only memory is valid).
+         The edge strips flanking the dialog resize its width, the dragged edge tracking the
+         pointer. -->
     <template #header>
       <div class="am-dialog-head">
         <h3 class="am-dialog-title">
@@ -155,7 +156,8 @@ const dirty = computed(() => {
 
 const canSave = computed(() => {
   if (loading.value) return false
-  if (!props.memoryId) return form.value.summary.trim() !== '' && form.value.content.trim() !== ''
+  // Creating needs a summary only: content is optional (summary-only memories are valid)
+  if (!props.memoryId) return form.value.summary.trim() !== ''
   return dirty.value
 })
 

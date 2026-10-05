@@ -114,6 +114,7 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
                  分隔条可拖拽调宽（180–420px，localStorage 持久化，窄容器折叠为限高块）），右侧
                  MemoriesPanel（Modrinth 式卡片列表：摘要独占一行、标签/片段另起一行，整卡点击弹
                  MemoryEditorDialog：标题行「记忆 #<ID>」+ 删除 + 无修改禁用保存，新建复用同一弹窗；
+                 正文可选——仅摘要即可保存（摘要-only 记忆正文为空串，update 传空即清空正文）；
                  工具栏的标签过滤是表达式文本框 TagExprInput（输入 tag_expr 集合表达式，键入
                  标签名时 token 级下拉自动补全、Enter/选中即应用、输入防抖应用；表达式
                  localStorage 持久化；vue-i18n 消息里的 | 须写成 {'|'} 转义））；

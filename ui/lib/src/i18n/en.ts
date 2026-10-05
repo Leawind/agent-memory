@@ -70,10 +70,11 @@ export default {
     createTitle: 'New Memory',
     summaryLabel: 'Summary (one-line intro shown in lists and search)',
     summaryPlaceholder: 'A precise, self-contained sentence',
-    contentLabel: 'Content (Markdown)',
+    contentLabel: 'Content (Markdown, optional)',
     tabEdit: 'Edit',
     tabPreview: 'Preview',
-    contentPlaceholder: 'Markdown supported: headings, lists, code blocks, tables…',
+    contentPlaceholder:
+      'Leave empty when the summary says it all. Markdown supported: headings, lists, code blocks, tables…',
     tagsLabel: 'Tags (press Enter to add; new ones allowed)',
     tagsPlaceholder: 'Select or type a tag',
     updated: 'Updated',

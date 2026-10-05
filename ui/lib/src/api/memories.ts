@@ -5,6 +5,7 @@ import type { MemoryFull, MemoryListResp, MemorySearchResp } from '../types'
 /** Input for creating a memory (tags are the target set) */
 export interface MemoryCreateInput {
   summary: string
+  /** Optional body: an empty string stores a summary-only memory */
   content: string
   tags: string[]
   /** The panel's tag select is allow-create: names the user typed are deliberate, so auto-create them */

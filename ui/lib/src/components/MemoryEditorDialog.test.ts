@@ -86,7 +86,7 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
-  it('creating: titled 新建记忆, save unlocks only with summary and content filled', async () => {
+  it('creating: titled 新建记忆, a summary alone unlocks save (content is optional)', async () => {
     const wrapper = await openDialog(null)
     expect(dialogTitle().textContent).toContain('新建记忆')
     expect(deleteButton()).toBeNull()
@@ -97,9 +97,7 @@ describe('MemoryEditorDialog', () => {
     // Empty form: not savable
     expect(saveButton().disabled).toBe(true)
     await new DOMWrapper(summaryInput()).setValue('新摘要')
-    expect(saveButton().disabled).toBe(true)
-    const textarea = dialogEl().querySelector('textarea') as HTMLTextAreaElement
-    await new DOMWrapper(textarea).setValue('新正文')
+    // Summary-only memory: content stays empty and save is already unlocked
     expect(saveButton().disabled).toBe(false)
     wrapper.unmount()
   })
