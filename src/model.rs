@@ -16,7 +16,8 @@ pub const MAX_TAG_DESC_CHARS: usize = 512;
 pub const MAX_TAG_NAME_CHARS: usize = 100;
 /// API limit: maximum identity name characters.
 pub const MAX_IDENTITY_NAME_CHARS: usize = 100;
-/// API limit: maximum custom initialize prompt characters.
+/// API limit: maximum custom instructions characters (overrides the built-in discovery prompt,
+/// served by both the modern discover and the legacy initialize).
 pub const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 
 /// The reserved tag marking operator-curated standing rules ("resident conventions"): memories

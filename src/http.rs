@@ -1,6 +1,7 @@
 //! HTTP layer: one process serving three kinds of clients at once.
 //!
-//! - `POST /mcp`: MCP Streamable HTTP (modern protocol, stateless POST/JSON mode), for agents
+//! - `POST /mcp`: MCP Streamable HTTP, dual-era (modern 2026-07-28 stateless POST/JSON plus the
+//!   legacy 2025-06-18 initialize handshake), for agents
 //! - `/api/*`: the admin backend (implemented in `crate::api`, reusing tool-layer handlers), for the management UI
 //! - `/`: the Vue3 management UI embedded via rust-embed (SPA)
 //!

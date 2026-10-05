@@ -1,11 +1,18 @@
-//! MCP protocol layer: JSON-RPC 2.0 over Streamable HTTP, modern protocol revision 2026-07-28.
+//! MCP protocol layer: JSON-RPC 2.0 over Streamable HTTP, two eras over one dispatch table.
 //!
-//! The modern protocol is fully stateless: there is no initialize handshake, no version negotiation
-//! and no batch messages. Every request carries its protocol version and client capabilities in
+//! The modern era (2026-07-28) is fully stateless: no initialize handshake, no version negotiation,
+//! no batch messages. Every request carries its protocol version and client capabilities in
 //! `params._meta`; the transport mirrors selected body fields into HTTP headers (MCP-Protocol-Version /
 //! Mcp-Method / Mcp-Name), which are validated against the body here — the body is the source of truth.
-//! `server/discover` replaces initialize as the discovery entry point. Legacy clients are rejected with
-//! recognizable modern errors so dual-era clients can identify the server era and fail fast.
+//! `server/discover` is the modern discovery entry point.
+//!
+//! The legacy era (2025-06-18, the revision official SDK clients speak) is served over the same
+//! handlers. It has the initialize handshake and no per-request metadata, so era is resolved per
+//! request, statelessly and body-first: a declared `_meta` protocolVersion picks the era, an absent
+//! `_meta` means a legacy client. Era selects only the envelope strictness and initialize-vs-discover
+//! — never business behavior — so the two client surfaces cannot fork. Legacy capabilities advertise
+//! no notification channel (GET /mcp answers 405, `subscriptions/listen` is not part of that era's
+//! contract), so legacy clients are never promised an update that cannot arrive.
 //!
 //! Tool execution errors come back as isError results, while protocol-level errors come back as JSON-RPC
 //! errors. An unknown RPC method answers HTTP 404 + -32601 (distinguishing it from a missing endpoint);
@@ -19,8 +26,12 @@ use crate::tools;
 use serde_json::{json, Value};
 use std::path::Path;
 
-/// The only protocol revision this server speaks (modern protocol: per-request `_meta`, no handshake).
+/// The modern protocol revision: per-request `_meta`, no handshake, mirrored transport headers.
 pub const PROTOCOL_VERSION: &str = "2026-07-28";
+/// The legacy protocol revision served over the same handlers: initialize handshake, no per-request
+/// `_meta`, no mirrored headers. The only legacy revision supported (clients requesting others get
+/// the initialize upgrade answer per the legacy contract, or -32022 outside the handshake).
+pub const LEGACY_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
@@ -136,99 +147,139 @@ pub fn handle(
         );
     };
 
-    // Legacy clients get the definitive modern error naming the supported versions (the spec asks
-    // servers to name them in any error returned to an initialize request).
-    if method == "initialize" {
-        return reply(400, unsupported_version_error(&id, None));
-    }
-
     // Missing or null params are both treated as an empty object (JSON-RPC allows omitting params).
     let params = match obj.get("params") {
         Some(v) if !v.is_null() => v.clone(),
         _ => json!({}),
     };
 
-    // Required per-request _meta fields (the stateless replacement for the initialize handshake).
-    let meta = params.get("_meta").and_then(Value::as_object);
-    let Some(meta) = meta else {
+    // Only legacy-era clients speak initialize (the modern protocol has no handshake): the request
+    // always gets the legacy handshake answer.
+    if method == "initialize" {
         return reply(
+            200,
+            ok_value(&id, initialize_result(store_path, ctx, &params)),
+        );
+    }
+
+    // The envelope check is the only era-dependent gate; the dispatch below is shared verbatim.
+    if let Err(outcome) = check_envelope(&id, method, &params, headers) {
+        return outcome;
+    }
+    dispatch(store_path, ctx, &id, method, &params)
+}
+
+/// Validate the request's protocol envelope for the era it declares, or produce the error that
+/// era's contract demands. Stateless era resolution, body-first: modern clients are required to
+/// carry their protocol version in `params._meta`, so a declared version picks the era and an
+/// absent `_meta` means a legacy client (the legacy protocol has no per-request metadata; its
+/// version was pinned by the initialize handshake and the server speaks a single legacy revision,
+/// so there is nothing to re-check). A legacy version declared inside a modern envelope is honored
+/// as legacy — the version is the contract, the envelope is ceremony. Mirrored headers are a
+/// modern-only requirement and are never enforced for legacy requests (nor for notifications,
+/// which are answered before this check).
+fn check_envelope(
+    id: &Value,
+    method: &str,
+    params: &Value,
+    headers: &TransportHeaders,
+) -> Result<(), Outcome> {
+    let meta = params.get("_meta");
+    let declared = meta
+        .and_then(|m| m.get(META_PROTOCOL_VERSION))
+        .and_then(Value::as_str);
+    let modern = match declared {
+        Some(PROTOCOL_VERSION) => true,
+        Some(LEGACY_PROTOCOL_VERSION) => false,
+        // Declared but unsupported: name every supported version (both eras), so a dual-era client
+        // can identify what this server speaks and fail fast.
+        Some(other) => return Err(reply(400, unsupported_version_error(id, Some(other)))),
+        // No declared version: a missing _meta is a legacy client; a present-but-broken _meta
+        // (non-object, protocolVersion missing or non-string) is a modern client's bug — reported
+        // by the strict validation below, naming exactly what is missing.
+        None => meta.is_some(),
+    };
+    if !modern {
+        return Ok(());
+    }
+
+    let Some(meta) = meta.and_then(Value::as_object) else {
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32602,
                 "invalid params: params._meta is required (io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities)",
             ),
-        );
+        ));
     };
     let Some(pv) = meta.get(META_PROTOCOL_VERSION).and_then(Value::as_str) else {
-        return reply(
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32602,
                 "invalid params: _meta.io.modelcontextprotocol/protocolVersion must be a string",
             ),
-        );
+        ));
     };
     if !meta
         .get(META_CLIENT_CAPABILITIES)
         .is_some_and(Value::is_object)
     {
-        return reply(
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32602,
                 "invalid params: _meta.io.modelcontextprotocol/clientCapabilities must be an object",
             ),
-        );
+        ));
     }
 
     // Header mirroring: MCP-Protocol-Version is required and must agree with the body (the body wins
-    // on disagreement — the mismatch itself is the client bug).
+    // on disagreement — the mismatch itself is the client bug). The body version was already gated
+    // to a supported one when entering the modern branch, so pinning header == body pins the whole
+    // request to a supported version — no separate version check is needed here.
     let Some(header_pv) = headers.protocol_version.as_deref() else {
-        return reply(
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32020,
                 "Header mismatch: the MCP-Protocol-Version header is required",
             ),
-        );
+        ));
     };
     if header_pv != pv {
-        return reply(
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32020,
                 &format!("Header mismatch: MCP-Protocol-Version header value '{header_pv}' does not match body value '{pv}'"),
             ),
-        );
+        ));
     }
-    if pv != PROTOCOL_VERSION {
-        return reply(400, unsupported_version_error(&id, Some(pv)));
-    }
-
     let Some(header_method) = headers.method.as_deref() else {
-        return reply(
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32020,
                 "Header mismatch: the Mcp-Method header is required",
             ),
-        );
+        ));
     };
     if header_method != method {
-        return reply(
+        return Err(reply(
             400,
             error_value(
-                &id,
+                id,
                 -32020,
                 &format!("Header mismatch: Mcp-Method header value '{header_method}' does not match body value '{method}'"),
             ),
-        );
+        ));
     }
     // Mcp-Name mirrors params.name (tools/call) or params.uri (resources/read). Values outside the
     // header-safe ASCII set are carried as =?base64?...?= sentinels and decoded before comparing.
@@ -241,47 +292,60 @@ pub fn handle(
         let actual = match headers.name.as_deref().map(decode_header_value) {
             Some(Some(v)) => v,
             Some(None) => {
-                return reply(
+                return Err(reply(
                     400,
                     error_value(
-                        &id,
+                        id,
                         -32020,
                         "Header mismatch: the Mcp-Name header value is malformed",
                     ),
-                );
+                ));
             }
             None => {
-                return reply(
+                return Err(reply(
                     400,
                     error_value(
-                        &id,
+                        id,
                         -32020,
                         &format!("Header mismatch: the Mcp-Name header is required for {method}"),
                     ),
-                );
+                ));
             }
         };
         if actual != expected {
-            return reply(
+            return Err(reply(
                 400,
                 error_value(
-                    &id,
+                    id,
                     -32020,
                     &format!("Header mismatch: Mcp-Name header value '{actual}' does not match body value '{expected}'"),
                 ),
-            );
+            ));
         }
     }
+    Ok(())
+}
 
+/// The shared method table. Both eras dispatch here with identical semantics — the era selects only
+/// the envelope strictness and the initialize handshake, never business behavior, so the two client
+/// surfaces cannot fork. (Modern-only methods such as `subscriptions/listen` stay reachable from
+/// both: a legacy client has no reason to call them and no capability advertisement promises them.)
+fn dispatch(
+    store_path: &Path,
+    ctx: &IdentityCtx,
+    id: &Value,
+    method: &str,
+    params: &Value,
+) -> Outcome {
     match method {
-        "server/discover" => reply(200, ok_value(&id, discover(store_path, ctx))),
-        "ping" => reply(200, ok_value(&id, json!({ "resultType": "complete" }))),
+        "server/discover" => reply(200, ok_value(id, discover(store_path, ctx))),
+        "ping" => reply(200, ok_value(id, json!({ "resultType": "complete" }))),
         "tools/list" => {
             let (ttl, scope) = TOOLS_LIST_CACHE;
             reply(
                 200,
                 ok_value(
-                    &id,
+                    id,
                     json!({
                         "resultType": "complete",
                         "tools": tools::tool_definitions(),
@@ -291,41 +355,64 @@ pub fn handle(
                 ),
             )
         }
-        "tools/call" => reply(200, tools_call(store_path, ctx, &id, &params)),
+        "tools/call" => reply(200, tools_call(store_path, ctx, id, params)),
         "resources/list" => {
             let cursor = params.get("cursor").and_then(Value::as_str);
             match resources::list(store_path, ctx, cursor) {
-                Ok(v) => reply(200, ok_value(&id, v)),
-                Err(e) => reply(400, error_with_data(&id, -32602, &e.message, e.data)),
+                Ok(v) => reply(200, ok_value(id, v)),
+                Err(e) => reply(400, error_with_data(id, -32602, &e.message, e.data)),
             }
         }
         "resources/read" => {
             let Some(uri) = params.get("uri").and_then(Value::as_str) else {
                 return reply(
                     400,
-                    error_value(&id, -32602, "invalid params: params.uri must be a string"),
+                    error_value(id, -32602, "invalid params: params.uri must be a string"),
                 );
             };
             match resources::read(store_path, ctx, uri) {
-                Ok(v) => reply(200, ok_value(&id, v)),
-                Err(e) => reply(400, error_with_data(&id, -32602, &e.message, e.data)),
+                Ok(v) => reply(200, ok_value(id, v)),
+                Err(e) => reply(400, error_with_data(id, -32602, &e.message, e.data)),
             }
         }
-        "resources/templates/list" => reply(200, ok_value(&id, resources::templates_list())),
+        "resources/templates/list" => reply(200, ok_value(id, resources::templates_list())),
         "subscriptions/listen" => {
-            let job = listen_job(&id, ctx, &params);
+            let job = listen_job(id, ctx, params);
             match job {
                 Ok(job) => Outcome::Listen(job),
-                Err(message) => reply(400, error_value(&id, -32602, &message)),
+                Err(message) => reply(400, error_value(id, -32602, &message)),
             }
         }
         // Unknown method: HTTP 404 with the JSON-RPC body still naming -32601, so caches and
         // gateways can treat it as a missing endpoint.
         _ => reply(
             404,
-            error_value(&id, -32601, &format!("method '{method}' not found")),
+            error_value(id, -32601, &format!("method '{method}' not found")),
         ),
     }
+}
+
+/// The legacy initialize handshake result (the modern replacement is `server/discover`). Per the
+/// legacy contract the response names the version the server will speak: the requested one when
+/// supported, otherwise the latest version we support — the client decides whether to proceed.
+/// Legacy capabilities advertise no notification channel (GET /mcp answers 405 and the listen
+/// method is not part of that era's contract): promising `listChanged`/`subscribe` would strand
+/// a legacy client waiting for updates that cannot arrive.
+fn initialize_result(store_path: &Path, ctx: &IdentityCtx, params: &Value) -> Value {
+    let requested = params.get("protocolVersion").and_then(Value::as_str);
+    let version = match requested {
+        Some(v) if v == PROTOCOL_VERSION || v == LEGACY_PROTOCOL_VERSION => v,
+        _ => LEGACY_PROTOCOL_VERSION,
+    };
+    json!({
+        "protocolVersion": version,
+        "capabilities": {
+            "tools": {"listChanged": false},
+            "resources": {"subscribe": false, "listChanged": false},
+        },
+        "serverInfo": server_info(),
+        "instructions": instructions_with_identity(store_path, ctx),
+    })
 }
 
 /// Parse the `notifications` filter of a subscriptions/listen request. All fields are optional
@@ -386,29 +473,42 @@ fn listen_job(id: &Value, ctx: &IdentityCtx, params: &Value) -> Result<ListenJob
     })
 }
 
-/// The `server/discover` result: supported versions, capabilities, identity and the effective
-/// instructions (a non-empty `instructions` setting overrides the built-in default; read failures
-/// always fall back, never blocking discovery). Identity-dependent → private and immediately stale.
+/// The `server/discover` result: supported versions (both eras), capabilities, identity and the
+/// effective instructions (a non-empty `instructions` setting overrides the built-in default; read
+/// failures always fall back, never blocking discovery). Identity-dependent → private and
+/// immediately stale.
 fn discover(store_path: &Path, ctx: &IdentityCtx) -> Value {
-    let base = effective_instructions(store_path);
-    let instructions = format!("{base}\n\n{}", ctx.describe_line());
     json!({
         "resultType": "complete",
-        "supportedVersions": [PROTOCOL_VERSION],
+        "supportedVersions": [PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION],
         "capabilities": {
             "tools": {"listChanged": false},
             "resources": {"listChanged": true, "subscribe": true},
         },
         "_meta": {
-            "io.modelcontextprotocol/serverInfo": {
-                "name": "agent-memory",
-                "title": "Agent Memory",
-                "version": env!("CARGO_PKG_VERSION"),
-            }
+            "io.modelcontextprotocol/serverInfo": server_info(),
         },
-        "instructions": instructions,
+        "instructions": instructions_with_identity(store_path, ctx),
         "ttlMs": 0,
         "cacheScope": "private",
+    })
+}
+
+/// The effective discovery/handshake prompt: a non-empty `instructions` setting overrides the
+/// built-in default, and the caller's identity line follows last (both eras are authenticated at
+/// the transport before the protocol layer runs).
+fn instructions_with_identity(store_path: &Path, ctx: &IdentityCtx) -> String {
+    let base = effective_instructions(store_path);
+    format!("{base}\n\n{}", ctx.describe_line())
+}
+
+/// The server identification triple, shared by both discovery surfaces (modern discover carries it
+/// under `_meta`, the legacy handshake at the top level).
+fn server_info() -> Value {
+    json!({
+        "name": "agent-memory",
+        "title": "Agent Memory",
+        "version": env!("CARGO_PKG_VERSION"),
     })
 }
 
@@ -469,7 +569,7 @@ fn unsupported_version_error(id: &Value, requested: Option<&str>) -> Value {
         -32022,
         "Unsupported protocol version",
         json!({
-            "supported": [PROTOCOL_VERSION],
+            "supported": [PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION],
             "requested": requested,
         }),
     )
@@ -549,6 +649,21 @@ mod tests {
         serde_json::from_str(line).unwrap()
     }
 
+    /// Execute one JSON-RPC message as a legacy client would: no `_meta` injection and no mirrored
+    /// headers (that era has neither).
+    fn roundtrip_legacy(store_path: &Path, line: &str) -> (u16, Value) {
+        let msg: Value = serde_json::from_str(line).unwrap();
+        let headers = TransportHeaders {
+            protocol_version: None,
+            method: None,
+            name: None,
+        };
+        match handle(store_path, &IdentityCtx::open_mode(), &headers, &msg) {
+            Outcome::Reply { status, value } => (status, value),
+            Outcome::Listen(_) | Outcome::Accepted => panic!("expected a reply for: {line}"),
+        }
+    }
+
     /// Handle a pre-built message with explicit headers.
     fn handle_with(store_path: &Path, headers: &TransportHeaders, msg: &Value) -> Outcome {
         handle(store_path, &IdentityCtx::open_mode(), headers, msg)
@@ -575,7 +690,10 @@ mod tests {
         );
         assert_eq!(status, 200);
         assert_eq!(resp["result"]["resultType"], "complete");
-        assert_eq!(resp["result"]["supportedVersions"], json!(["2026-07-28"]));
+        assert_eq!(
+            resp["result"]["supportedVersions"],
+            json!(["2026-07-28", "2025-06-18"])
+        );
         assert_eq!(
             resp["result"]["capabilities"]["tools"],
             json!({"listChanged": false})
@@ -645,15 +763,103 @@ mod tests {
     }
 
     #[test]
-    fn initialize_is_rejected_with_supported_versions() {
-        let store = temp_db("initialize");
-        let (status, resp) = roundtrip(
+    fn legacy_initialize_handshake() {
+        let store = temp_db("legacy-init");
+        // The requested legacy version is echoed
+        let (status, resp) = roundtrip_legacy(
             &store,
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+            r#"{"jsonrpc":"2.0","id":"i1","method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"legacy","version":"1.0"}}}"#,
         );
-        assert_eq!(status, 400);
-        assert_eq!(resp["error"]["code"], -32022);
-        assert_eq!(resp["error"]["data"]["supported"], json!(["2026-07-28"]));
+        assert_eq!(status, 200);
+        assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
+        // Legacy clients have no notification channel: neither listChanged nor subscribe is promised
+        assert_eq!(
+            resp["result"]["capabilities"]["resources"],
+            json!({"subscribe": false, "listChanged": false})
+        );
+        assert_eq!(resp["result"]["serverInfo"]["name"], "agent-memory");
+        let instructions = resp["result"]["instructions"].as_str().unwrap();
+        assert!(instructions.contains(&IdentityCtx::open_mode().describe_line()));
+
+        // An unsupported requested version gets the latest supported one; the client decides
+        let (_, resp) = roundtrip_legacy(
+            &store,
+            r#"{"jsonrpc":"2.0","id":"i2","method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+        );
+        assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
+
+        // Missing params count as no requested version
+        let (_, resp) = roundtrip_legacy(
+            &store,
+            r#"{"jsonrpc":"2.0","id":"i3","method":"initialize"}"#,
+        );
+        assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
+
+        // The handshake ignores modern mirrored headers (a hybrid client gets the same answer)
+        let msg = request_of(
+            r#"{"jsonrpc":"2.0","id":"i4","method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        );
+        let headers = TransportHeaders {
+            protocol_version: Some(PROTOCOL_VERSION.into()),
+            method: Some("initialize".into()),
+            name: None,
+        };
+        let Outcome::Reply { status, value } = handle_with(&store, &headers, &msg) else {
+            panic!("expected a reply");
+        };
+        assert_eq!(status, 200);
+        assert_eq!(value["result"]["protocolVersion"], "2025-06-18");
+        cleanup(&store);
+    }
+
+    #[test]
+    fn legacy_requests_serve_without_envelope() {
+        let store = temp_db("legacy-serve");
+        // A legacy client sends neither _meta nor mirrored headers and still gets the full surface
+        let (status, pong) =
+            roundtrip_legacy(&store, r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
+        assert_eq!(status, 200);
+        assert_eq!(pong["result"]["resultType"], "complete");
+
+        let (status, listing) =
+            roundtrip_legacy(&store, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+        assert_eq!(status, 200);
+        assert_eq!(listing["result"]["tools"].as_array().unwrap().len(), 12);
+
+        let (status, created) = roundtrip_legacy(
+            &store,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(created["result"]["structuredContent"]["memory"]["id"], "m1");
+
+        let (status, read) = roundtrip_legacy(
+            &store,
+            r#"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"memory://memories/m1"}}"#,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(read["result"]["contents"][0]["mimeType"], "text/markdown");
+        cleanup(&store);
+    }
+
+    #[test]
+    fn legacy_version_declared_in_modern_envelope_is_honored() {
+        let store = temp_db("legacy-meta");
+        // A legacy version declared inside a modern envelope is served as legacy: the version is
+        // the contract, so the (modern-only) mirrored headers are not required.
+        let msg = request_of(
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}}"#,
+        );
+        let headers = TransportHeaders {
+            protocol_version: None,
+            method: None,
+            name: None,
+        };
+        let Outcome::Reply { status, value } = handle_with(&store, &headers, &msg) else {
+            panic!("expected a reply");
+        };
+        assert_eq!(status, 200);
+        assert_eq!(value["result"]["resultType"], "complete");
         cleanup(&store);
     }
 
@@ -689,20 +895,20 @@ mod tests {
     fn meta_validation_matrix() {
         let store = temp_db("meta");
 
-        // Missing _meta entirely → -32602
+        // No _meta at all: served as a legacy client (that era has no per-request metadata)
         let msg = request_of(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
         let headers = TransportHeaders {
-            protocol_version: Some(PROTOCOL_VERSION.into()),
-            method: Some("ping".into()),
+            protocol_version: None,
+            method: None,
             name: None,
         };
         let Outcome::Reply { status, value } = handle_with(&store, &headers, &msg) else {
             panic!("expected a reply");
         };
-        assert_eq!(status, 400);
-        assert_eq!(value["error"]["code"], -32602);
+        assert_eq!(status, 200);
+        assert_eq!(value["result"]["resultType"], "complete");
 
-        // Missing protocolVersion → -32602
+        // Missing protocolVersion inside a present _meta is a modern client's bug → -32602
         let msg = request_of(
             r#"{"jsonrpc":"2.0","id":2,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/clientCapabilities":{}}}}"#,
         );
@@ -727,7 +933,7 @@ mod tests {
         assert_eq!(status, 400);
         assert_eq!(value["error"]["code"], -32602);
 
-        // An unsupported (but present and header-matching) version → -32022 with data
+        // An unsupported declared version → -32022 naming both supported versions
         let msg = request_of(
             r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"1900-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
         );
@@ -741,7 +947,10 @@ mod tests {
         };
         assert_eq!(status, 400);
         assert_eq!(value["error"]["code"], -32022);
-        assert_eq!(value["error"]["data"]["supported"], json!(["2026-07-28"]));
+        assert_eq!(
+            value["error"]["data"]["supported"],
+            json!(["2026-07-28", "2025-06-18"])
+        );
         assert_eq!(value["error"]["data"]["requested"], "1900-01-01");
         cleanup(&store);
     }

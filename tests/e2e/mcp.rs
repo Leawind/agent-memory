@@ -1,7 +1,8 @@
 //! Full flow of the agent's MCP endpoint (POST /mcp, modern protocol 2026-07-28, stateless).
 //!
-//! Covers the discovery flow, per-request `_meta` and mirrored-header validation, the result
-//! envelope (resultType / caching hints), status-code mapping (404 for unknown methods, 202 for
+//! Covers the discovery flow, per-request `_meta` and mirrored-header validation (and their
+//! legacy-era counterparts, where the envelope is not required), the result envelope
+//! (resultType / caching hints), status-code mapping (404 for unknown methods, 202 for
 //! notifications, 400 for batch bodies) and the tool surface with progressive disclosure.
 
 use serde_json::{json, Value};
@@ -42,11 +43,14 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["status"], "ok");
 
-    // server/discover replaces initialize: supported versions, capabilities, identity line
+    // server/discover: supported versions (both eras), capabilities, identity line
     let discover = mcp_rpc(port, json!(1), "server/discover", json!({}));
     let result = &discover["result"];
     assert_eq!(result["resultType"], "complete");
-    assert_eq!(result["supportedVersions"], json!(["2026-07-28"]));
+    assert_eq!(
+        result["supportedVersions"],
+        json!(["2026-07-28", "2025-06-18"])
+    );
     assert_eq!(result["capabilities"]["resources"]["listChanged"], true);
     assert_eq!(result["capabilities"]["resources"]["subscribe"], true);
     assert_eq!(
@@ -311,14 +315,15 @@ fn modern_protocol_request_validation() {
     assert_eq!(status, 200, "{resp}");
     assert_eq!(resp["result"]["resultType"], "complete");
 
-    // Missing _meta (legacy-style request) -> 400 + -32602
+    // Missing _meta: served as a legacy client (that era has no per-request metadata), even
+    // when modern mirrored headers ride along — headers are advisory on the legacy path
     let (status, resp) = send(
         port,
         r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
         &ping_headers,
     );
-    assert_eq!(status, 400);
-    assert_eq!(resp["error"]["code"], -32602);
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["resultType"], "complete");
 
     // Missing clientCapabilities -> -32602
     let (status, resp) = send(
@@ -341,18 +346,24 @@ fn modern_protocol_request_validation() {
     );
     assert_eq!(status, 400);
     assert_eq!(resp["error"]["code"], -32022);
-    assert_eq!(resp["error"]["data"]["supported"], json!(["2026-07-28"]));
+    assert_eq!(
+        resp["error"]["data"]["supported"],
+        json!(["2026-07-28", "2025-06-18"])
+    );
     assert_eq!(resp["error"]["data"]["requested"], "1999-01-01");
 
-    // Legacy initialize gets the same modern error (naming the supported versions)
+    // Legacy initialize gets the legacy handshake answer (echo + no notification promises)
     let (status, resp) = send(
         port,
         r#"{"jsonrpc":"2.0","id":5,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
         &[],
     );
-    assert_eq!(status, 400);
-    assert_eq!(resp["error"]["code"], -32022);
-    assert_eq!(resp["error"]["data"]["supported"], json!(["2026-07-28"]));
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(
+        resp["result"]["capabilities"]["resources"],
+        json!({"subscribe": false, "listChanged": false})
+    );
 
     // Missing MCP-Protocol-Version header -> 400 + -32020
     let (status, resp) = send(port, &ping_body, &[("Mcp-Method", "ping")]);

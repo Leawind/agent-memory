@@ -9,7 +9,8 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-/// The only protocol revision the modern server speaks.
+/// The modern protocol revision the server speaks (legacy 2025-06-18 clients send no version
+/// marker at all; see the `legacy` test module).
 pub(crate) const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 
 /// Build a modern-protocol JSON-RPC request body: injects the required `_meta` fields into params

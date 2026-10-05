@@ -1,6 +1,6 @@
 //! End-to-end integration tests: actually spawn the HTTP server binary and CLI subcommands.
 //!
-//! - the agent's MCP endpoint (POST /mcp, stateless Streamable HTTP mode)
+//! - the agent's MCP endpoint (POST /mcp; modern 2026-07-28 and legacy 2025-06-18 client flows)
 //! - the admin backend /api/* (used by the embedded admin UI)
 //! - the statically served admin UI (/)
 //! - the full token auth flow and capability boundaries
@@ -13,6 +13,7 @@
 mod auth;
 mod cli;
 mod common;
+mod legacy;
 mod mcp;
 mod resources;
 mod rest;

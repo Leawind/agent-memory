@@ -46,15 +46,18 @@ src/
                  开放模式 = 全能力，匿名身份能力集由 settings 配置
   api.rs         管理后端 /api/*：复用 tools handler，percent 解码，404/400/403 映射（业务逻辑不在此层）；
                  例外：identities/settings 端点走专用 handler（agent 工具面不暴露权限管理）
-  protocol.rs    MCP 协议层（2026-07-28 现代协议，唯一支持版本）：server/discover / ping / tools/list /
-                 tools/call / resources/list / resources/read / resources/templates/list /
-                 subscriptions/listen；无 initialize 握手、无版本协商、无批量消息——每请求 params._meta
-                 必带 protocolVersion + clientCapabilities，传输镜像头（MCP-Protocol-Version/Mcp-Method/
-                 Mcp-Name，=?base64?..?= 哨兵解码）与 body 校验一致，错误映射 -32020/-32022/-32602；
-                 状态码：未知方法 404 + -32601，通知 202，批量 400；结果信封带 resultType:"complete"，
-                 五个可缓存方法带 ttlMs/cacheScope（discover 身份相关 → private/0，tools/list 静态 → public/1h）；
-                 discover 回传自定义提示词（instructions 非空覆盖内置默认）+ 调用者身份行；
-                 工具结果文本通道必须是紧凑 JSON，structuredContent 恒附带
+  protocol.rs    MCP 协议层，双时代共用一张方法表（时代只作用于信封校验与握手，业务处理器零分叉）：
+                 现代 2026-07-28（无握手无协商无批量；每请求 params._meta 必带 protocolVersion +
+                 clientCapabilities，传输镜像头 MCP-Protocol-Version/Mcp-Method/Mcp-Name
+                 （=?base64?..?= 哨兵解码）与 body 校验一致，错误映射 -32020/-32022/-32602；
+                 server/discover 为发现入口）+ 兼容 legacy 2025-06-18（initialize 握手按旧规范
+                 回显/升格应答，capabilities 声明不订阅不 listChanged——GET /mcp 恒 405，legacy
+                 无通知通道；信封零要求、镜像头不强制）。时代判定无状态、body 优先：_meta 声明
+                 现代版本 → 严格校验；声明 legacy 版本或缺 _meta → legacy 面。状态码：未知方法
+                 404 + -32601，通知 202，批量 400；结果信封带 resultType:"complete"，五个可缓存
+                 方法带 ttlMs/cacheScope（discover 身份相关 → private/0，tools/list 静态 →
+                 public/1h）；discover/initialize 同源回传自定义提示词（instructions 非空覆盖
+                 内置默认）+ 调用者身份行；工具结果文本通道必须是紧凑 JSON，structuredContent 恒附带
   resources.rs   memory:// 资源面（RFC 3986 严格解析，percent 编解码标签名）：
                  memory://tags/{tag} 目录型 JSON（标签元数据 + 最近 100 条摘要，绝不带正文）、
                  memory://memories/{id} 唯一携带正文（text/markdown + lastModified 注解）；
@@ -151,15 +154,18 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    仅 memory://memories/{id} 单条读取返回正文。REST API（/api/*）必须复用同一批 handler，
    不得另写校验逻辑。
    错误分类用 `ToolError`（NotFound→404 / Invalid→400 / Forbidden→403），**禁止**再按错误文本匹配分类。
-6. **协议兼容（2026-07-28 现代协议，唯一版本）**：无 initialize 握手/版本协商/批量消息/会话；
-   每请求 `_meta` 必带 `io.modelcontextprotocol/protocolVersion` + `clientCapabilities`（缺失
-   -32602），镜像头与 body 校验一致（-32020），版本不支持 -32022；未知方法 404 + -32601，
-   通知 202；协议层只认单条 JSON-RPC 消息。旧协议客户端不可用是已接受的决策——
-   官方 SDK 1.x（legacy 握手）会被拒绝，scripts/sdk-compat-check.ts 因此为手写客户端，
-   SDK v2 发布后切回。常驻约定 = 保留标签 `conventions` 下的记忆（settings 的 conventions 键
-   已废弃）：该标签不可改名/删除，创建与挂/摘需 Admin 能力；同时以 memory:// 资源暴露，
-   写入前先读。id 边界格式严格为 `"m{n}"`——normalize_id 只去空白，parse_id 拒绝省略
-   m 前缀的裸数字。
+6. **协议双时代（现代 2026-07-28 + 兼容 legacy 2025-06-18）**：两代共用一张方法表与同一批
+   处理器，时代只作用于信封，业务行为永不分叉。现代面：无握手/协商/批量/会话，每请求 `_meta`
+   必带 `io.modelcontextprotocol/protocolVersion` + `clientCapabilities`（缺失 -32602），镜像头
+   与 body 校验一致（-32020）；legacy 面：initialize 握手（请求版本受支持则回显，否则应答最新
+   支持版本、由客户端自决），信封零要求、镜像头不强制，capabilities 声明不订阅不 listChanged
+   （GET /mcp 恒 405——legacy 无通知通道，不许诺无法兑现的更新）。时代判定无状态、body 优先：
+   `_meta` 声明现代版本走严格校验，声明 legacy 版本或缺 `_meta` 走 legacy 面（声明了不支持的
+   版本则 -32022，data.supported 同时列出两代）。通知（无 id）两代同语义：202 免检。新增协议
+   能力默认只进现代面；往 legacy 面加东西前先论证旧客户端确实需要。常驻约定 = 保留标签
+   `conventions` 下的记忆（settings 的 conventions 键已废弃）：该标签不可改名/删除，创建与
+   挂/摘需 Admin 能力；同时以 memory:// 资源暴露，写入前先读。id 边界格式严格为 `"m{n}"`——
+   normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **仓库只有源码，构建产物一律不入库**：`ui/dist`、`ui/lib/dist`（连同 target/、
    node_modules/）全部 gitignore；rust-embed debug-embed 编译期嵌入 `ui/dist`，
@@ -219,10 +225,9 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
 
 ## 开发脚本（scripts/，TypeScript，需 node ≥24 原生类型剥离运行，不参与构建）
 
-- `sdk-compat-check.ts`：手写 2026-07-28 现代协议客户端的兼容性回归
-  （server/discover/tools 流程/渐进式披露/错误通道/resources/订阅流/无状态重连），发布前必跑。
-  官方 TypeScript SDK 尚无现代协议客户端（1.x 走 legacy initialize 握手，本服务器
-  刻意拒绝），SDK v2 发布后切回官方实现。
+- `sdk-compat-check.ts`：手写双时代客户端的兼容性回归（现代 2026-07-28：discover/工具流程/
+  渐进式披露/错误通道/resources/订阅流/无状态重连；legacy 2025-06-18：initialize 握手 +
+  无信封全流程），发布前必跑。两代都用手写客户端，以同时覆盖两个协议面。
   用法：`MCP_URL=http://127.0.0.1:8899/mcp node scripts/sdk-compat-check.ts`。
 - `soak.ts`：双进程混合负载浸泡（写/搜/列表/标签轮转并发），失败分类能区分
   客户端过载（ECONNREFUSED 风暴）与服务端真实错误（5xx/BUSY）。
