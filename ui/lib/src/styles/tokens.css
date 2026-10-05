@@ -144,3 +144,95 @@
   font-weight: 700;
   letter-spacing: -0.01em;
 }
+
+/*
+ * Dialog chrome shared by the editor dialogs. Not namespaced under .memory-ui: dialogs
+ * are appended to body (outside the host's .memory-ui wrapper), so these rules rely on
+ * the am- prefixed classes only.
+ */
+.am-form-dialog--floating {
+  /* Width is user-resizable via the .am-edge strips (see useDialogEdgeResize); the
+     min/max-width bounds below double as hard clamps for that drag — the cap is the
+     viewport minus a fixed margin, never a fixed pixel value. Height always follows the
+     content. The 90vh cap is a safety net for very long memories: the column layout makes
+     the body the only flexible child, so just the body scrolls when the cap bites. */
+  overflow: auto;
+  min-width: min(480px, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Full-height drag strips on both dialog edges; positioned against the dialog root (the
+   nearest positioned ancestor). 10px wide, centered on the edge: 5px visible, the rest
+   clipped by the dialog's own overflow. */
+.am-form-dialog .am-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 5;
+}
+.am-form-dialog .am-edge--left {
+  left: -5px;
+}
+.am-form-dialog .am-edge--right {
+  right: -5px;
+}
+.am-form-dialog .am-edge::after {
+  content: '';
+  position: absolute;
+  inset: 10px 3px;
+  border-radius: 4px;
+  background: transparent;
+}
+.am-form-dialog .am-edge:hover::after {
+  background: var(--el-border-color);
+}
+
+.am-form-dialog--floating .el-dialog__header,
+.am-form-dialog--floating .el-dialog__footer {
+  flex-shrink: 0;
+}
+
+.am-form-dialog--floating .el-dialog__body {
+  /* Content-sized while the dialog is below its 90vh cap; when the cap bites, the body is
+     the only shrinkable child (header/footer are shrink-exempt) and scrolls internally.
+     flex-basis must stay auto: a zero basis would contribute nothing to the dialog's own
+     auto height and collapse the body to zero. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Custom header row: dialog title on the left, actions (delete / save) on the right;
+   the built-in close X stays at its default spot. The header keeps one line even when the
+   dialog is resized narrow. */
+.am-form-dialog .am-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 20px;
+}
+
+.am-form-dialog .am-dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am-form-dialog .am-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}

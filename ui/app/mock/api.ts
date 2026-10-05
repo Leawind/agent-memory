@@ -42,7 +42,7 @@ const memories: MockMemory[] = [
     id: 3,
     summary: '组件库面板设计',
     content:
-      '# 三个自包含面板\n\n1. `MemoriesPanel`：列表/搜索双模式\n2. `TagsPanel`：标签表\n3. `AdminPanel`：身份、鉴权开关、提示词、备份\n\n概况是弹窗 `OpsDialog`：点击顶栏/侧栏标题打开，每次打开重拉数据。样式全部引用 `--el-*` 变量，跟随宿主主题。',
+      '# 工作台组件\n\n1. `TagsSidebar`：左侧标签侧栏，点击弹 `TagDialog`\n2. `MemoriesPanel`：卡片列表，整卡点击弹记忆弹窗\n3. `AdminPanel`：身份、鉴权开关、提示词、备份（挂在管理弹窗里）\n\n概况是弹窗 `OpsDialog`：点击顶栏标题打开，每次打开重拉数据。样式全部引用 `--el-*` 变量，跟随宿主主题。',
     tags: ['前端', '设计'],
     created_at: t - 20 * DAY,
     updated_at: t - 1 * DAY,

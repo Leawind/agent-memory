@@ -2,15 +2,20 @@
 
 前端拆成两个 pnpm workspace 包（lockfile 在仓库根目录）：
 
-- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。导出三个自包含可复用面板
-  `MemoriesPanel` / `TagsPanel` / `AdminPanel`（admin 专属：身份、鉴权开关、自定义提示词、
-  备份、体检，经 `who` prop 门控），面板支持 `show-header` / `title` / `subtitle` props 裁剪；
-  只读统计与版本信息在概况弹窗 `OpsDialog`（每次打开重拉，无运维标签页）；另附便捷壳
-  `MemoryAdmin`（sidebar/tabs 双布局，侧栏标题点击弹概况）与弹层组件（编辑对话框、
-  Markdown 视图），供其他 Vue3 系统作为组件集成。
-- **`ui/app` → `@agent-memory/app`**：独立管理站点薄壳（Modrinth 风格顶部导航栏 + 主题/语言
-  切换 + 多身份令牌下拉），直接组装三个面板（「管理」页仅对 admin 能力身份显示），
-  点击顶栏标题弹出服务概况（OpsDialog）。
+- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。核心是工作台 `MemoryWorkspace`：
+  左侧标签侧栏 `TagsSidebar`（垂直列出全部标签及其描述，点击弹出标签编辑弹窗 `TagDialog`，
+  标题行 `标签 #<名称>` + 删除/保存；可拖拽的分隔条在上下限内调整侧栏宽度并持久化），
+  右侧记忆面板 `MemoriesPanel`（Modrinth 式卡片列表：摘要在前独占一行，标签与搜索片段
+  另起一行，整卡点击弹出记忆弹窗 `MemoryEditorDialog`，标题行 `记忆 #<ID>` + 删除 +
+  无修改禁用的保存；新建复用同一弹窗）。`AdminPanel`（admin 专属：身份、鉴权开关、
+  自定义提示词、备份、体检，经 `who` prop 门控）按宿主需要挂入弹窗或页面；概况弹窗
+  `OpsDialog` 承载只读统计与版本信息（每次打开重拉）；另附便捷壳 `MemoryAdmin`
+  （品牌标题 + 工作台，标题点击弹概况）与弹层组件（`FormDialog`、Markdown 视图），
+  供其他 Vue3 系统作为组件集成。
+- **`ui/app` → `@agent-memory/app`**：独立站点薄壳（Modrinth 风格顶栏 + 主题/语言切换 +
+  多身份令牌下拉），页面主体即工作台（标签侧栏 + 记忆列表）；顶栏语言控件右侧有管理按钮
+  （仅 admin 能力身份可见），点击弹出管理窗口（内嵌 AdminPanel）；点击顶栏标题弹出服务
+  概况（OpsDialog）。
   构建产物输出到 `ui/dist/`（不入库），由 Rust 侧 rust-embed
   编译期嵌入二进制；dist 缺失时 build.rs 落占位页兜底。
 
@@ -41,7 +46,7 @@ import { provideMemoryUI } from '@agent-memory/ui'
 
 ```vue
 <script setup lang="ts">
-import { MemoriesPanel, provideMemoryUI } from '@agent-memory/ui'
+import { MemoryWorkspace, provideMemoryUI } from '@agent-memory/ui'
 
 // 任意祖先组件注入一次即可；全部字段可省略（默认同源根路径部署）
 provideMemoryUI({
@@ -52,16 +57,15 @@ provideMemoryUI({
 </script>
 
 <template>
-  <!-- 整台管理台；嵌入宿主页面时用 tabs 布局更省空间 -->
-  <MemoryAdmin layout="tabs" />
-  <!-- 或只嵌入单个面板（自包含：面板头 + 工具栏 + 表格） -->
-  <!-- <MemoriesPanel /> -->
+  <!-- 整台工作台：标签侧栏 + 记忆列表，自带编辑弹窗与两侧联动刷新 -->
+  <MemoryWorkspace />
+  <!-- AdminPanel / OpsDialog / 各弹窗组件按宿主需要挂入弹窗或页面 -->
 </template>
 ```
 
-- 面板在窄容器（<720px，ResizeObserver 实测）自动切 compact：工具栏换行、隐藏低优先级列、弹层收窄，
-  可放进宿主任意尺寸的卡片/抽屉。
-- 面板 props：`show-header: false` 隐藏标题/副标题区（宿主页面已有标题时只要工具栏+表格）；
+- 工作台在窄容器（<720px，ResizeObserver 实测）自动切 compact：侧栏折叠为列表上方的限高块、
+  拖拽条隐藏、工具栏换行、弹层收窄，可放进宿主任意尺寸的卡片/抽屉。
+- 面板 props：`show-header: false` 隐藏标题/副标题区（宿主页面已有标题时只要工具栏+列表）；
   `title` / `subtitle` 覆盖默认文案（默认文案随界面语言）。
 - `MemoryAdmin` 高度默认撑满父容器，嵌入时可用 CSS 变量 `--memory-admin-height` 覆盖（如 `480px`）。
 - **多语言**：内置 vue-i18n（`zh` / `en`），默认 `auto` 跟随浏览器语言；`provideMemoryUI({ locale: 'en' })`
@@ -76,7 +80,7 @@ provideMemoryUI({
 
 ```bash
 pnpm build        # 先 lib 后 app；app 产物输出 ui/dist（改完前端必须跑）
-pnpm test         # vitest：lib（配置注入/API 封装/查询串/Markdown 消毒/三面板挂载）+ app 壳
+pnpm test        # vitest：lib（配置注入/API 封装/查询串/Markdown 消毒/工作台与弹窗挂载）+ app 壳
 pnpm typecheck    # vue-tsc 两包（strict）
 pnpm format       # Prettier（配置在根 .prettierrc.json：无分号、单引号、120 列）
 pnpm dev          # 仅 app：热更新。默认启用内置 mock API（ui/app/mock/，内存假数据，

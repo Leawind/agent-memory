@@ -5,10 +5,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { buildMemoriesQuery, isSearchMode } from '../query'
 import { useMemoryConfig } from '../config'
-import { createMemory, deleteMemory, getMemory, updateMemory } from '../api/memories'
 import { listTags } from '../api/tags'
 import { t } from '../i18n'
-import type { MemoryFull, MemoryListResp, MemorySearchResp, MemorySummary, SearchResult, TagListResp } from '../types'
+import type { MemoryListResp, MemorySearchResp, MemorySummary, SearchResult, TagListResp } from '../types'
 
 /** Shape of the editor form: id of null means creating new */
 export interface MemoryDraft {
@@ -106,29 +105,6 @@ export function useMemories() {
     }
   }
 
-  /** Create or edit (tags are the target set, internally converted to add_tags / remove_tags). Refreshes the list on success. */
-  async function saveMemory(draft: MemoryDraft) {
-    if (draft.id) {
-      const current: MemoryFull = await getMemory(client, draft.id)
-      const before = new Set<string>(current.tags)
-      const after = new Set<string>(draft.tags)
-      await updateMemory(client, draft.id, {
-        summary: draft.summary,
-        content: draft.content,
-        add_tags: [...after].filter((t) => !before.has(t)),
-        remove_tags: [...before].filter((t) => !after.has(t)),
-      })
-    } else {
-      await createMemory(client, { summary: draft.summary, content: draft.content, tags: draft.tags })
-    }
-    await Promise.all([reload(), loadTagOptions()])
-  }
-
-  async function removeMemory(id: string) {
-    await deleteMemory(client, id)
-    await reload()
-  }
-
   onMounted(() => {
     void reload().catch(() => {}) // first-load errors are toasted by the caller (wrapped at the panel layer)
     loadTagOptions()
@@ -152,8 +128,6 @@ export function useMemories() {
     onSearch,
     reload,
     loadTagOptions,
-    saveMemory,
-    removeMemory,
   }
 }
 

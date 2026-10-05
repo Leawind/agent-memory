@@ -10,6 +10,15 @@ const listPayload = {
   limit: 20,
   memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], updated: '2026-10-04 08:00' }],
 }
+// Full-memory shape returned by the detail endpoint the dialog fetches when a card is opened
+const detailPayload = {
+  id: 'm1',
+  summary: '列表模式的记忆',
+  content: '正文内容',
+  tags: ['t1'],
+  created: '2026-10-04 07:00',
+  updated: '2026-10-04 08:00',
+}
 const searchPayload = {
   total_matches: 1,
   results: [
@@ -29,6 +38,7 @@ function mockFetch(url: string | URL) {
   const u = String(url)
   if (u.startsWith('/api/tags')) return jsonResponse(tagsPayload)
   if (u.includes('query=')) return jsonResponse(searchPayload)
+  if (/\/api\/memories\/m\d+/.test(u)) return jsonResponse(detailPayload)
   return jsonResponse(listPayload)
 }
 
@@ -48,13 +58,28 @@ describe('MemoriesPanel', () => {
     )
   })
 
-  it('mounts and renders list rows from the API', async () => {
+  it('mounts and renders memory cards from the API', async () => {
     const wrapper = mount(MemoriesPanel)
     await flushPromises()
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('列表模式的记忆')
     expect(html).toContain('m1')
+    // Card layout: the summary never shares a line with the tags
+    expect(wrapper.find('.am-memory-card .card-summary').text()).toBe('列表模式的记忆')
+    expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('t1')
+    wrapper.unmount()
+  })
+
+  it('opens the memory dialog when a card is clicked', async () => {
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    await flushPromises()
+    await wrapper.find('.am-memory-card').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'ElDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('modelValue')).toBe(true)
     wrapper.unmount()
   })
 
@@ -73,20 +98,20 @@ describe('MemoriesPanel', () => {
     wrapper.unmount()
   })
 
-  it('refetches with the sorted params when the table emits sort-change', async () => {
+  it('refetches with the sort params when the sort select changes', async () => {
     const wrapper = mount(MemoriesPanel)
     await flushPromises()
     const fetchMock = vi.mocked(globalThis.fetch)
     fetchMock.mockClear()
-    const table = wrapper.findComponent({ name: 'ElTable' })
-    expect(table.exists()).toBe(true)
-    table.vm.$emit('sort-change', { prop: 'id', order: 'ascending' })
+    // The select renders as an EP select; drive the ref-backed watcher through the component.
+    // Toolbar order: tag filter first, sort control second.
+    const selects = wrapper.findAllComponents({ name: 'ElSelect' })
+    expect(selects.length).toBeGreaterThanOrEqual(2)
+    selects[1].vm.$emit('update:modelValue', 'id:asc')
     await flushPromises()
     await flushPromises()
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
     const listCall = urls.filter((u) => u.includes('/api/memories?')).at(-1)
-    // Sorting must actually reach the request parameters (regression: onSortChange once threw
-    // due to parameter shadowing, so reload never ran)
     expect(listCall).toContain('sort=id')
     expect(listCall).toContain('order=asc')
     wrapper.unmount()

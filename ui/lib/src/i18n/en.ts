@@ -1,10 +1,5 @@
 // English messages — keys must mirror zh.ts exactly (guarded by i18n.test.ts)
 export default {
-  nav: {
-    memories: 'Memories',
-    tags: 'Tags',
-    admin: 'Admin',
-  },
   common: {
     edit: 'Edit',
     delete: 'Delete',
@@ -22,12 +17,11 @@ export default {
     modeKeyword: 'Keyword only',
     modeHybrid: 'Keyword + semantic',
     semanticFallback: 'Semantic search is unavailable; these results come from keyword matching only',
-    colId: 'ID',
-    colSummary: 'Summary',
-    colTags: 'Tags',
     colScore: 'Score',
-    colUpdatedAt: 'Updated',
-    colActions: 'Actions',
+    sortUpdatedDesc: 'Recently updated',
+    sortUpdatedAsc: 'Oldest updated',
+    sortIdAsc: 'ID ascending',
+    sortIdDesc: 'ID descending',
     deleteTitle: 'Confirm deletion',
     deleteConfirm: 'Permanently delete memory {id}?',
     deleted: 'Deleted',
@@ -36,17 +30,13 @@ export default {
   },
   tags: {
     title: 'Tags',
-    subtitle: 'Tags are an agent-maintained taxonomy; renaming updates every memory that references the tag',
+    titleFmt: 'Tag #{name}',
     create: 'New Tag',
-    filterPlaceholder: 'Filter names by regex, e.g. ^proj/ or rust$ (case-insensitive)',
-    colName: 'Name',
-    colDescription: 'Description',
-    colMemoryCount: 'Memories',
+    createTitle: 'New Tag',
+    none: 'No tags yet',
     reserved: 'Reserved',
     reservedHint:
       'Reserved tag: anchors the operator-curated resident conventions. It can be neither renamed nor deleted; attaching it to memories requires the admin permission',
-    editTitle: 'Edit Tag',
-    createTitle: 'New Tag',
     nameLabel: 'Name (unique, ≤100 characters; renaming updates every memory referencing it)',
     namePlaceholder: 'e.g. rust, project, workflow',
     descLabel: 'Description (optional, ≤512 characters)',
@@ -74,7 +64,7 @@ export default {
     version: 'Version',
   },
   editor: {
-    editTitle: 'Edit Memory',
+    titleFmt: 'Memory #{id}',
     createTitle: 'New Memory',
     summaryLabel: 'Summary (one-line intro shown in lists and search)',
     summaryPlaceholder: 'A precise, self-contained sentence',
@@ -97,6 +87,7 @@ export default {
     themeDark: 'Dark',
     themeSystem: 'System',
     language: 'Language',
+    admin: 'Admin',
     tokenPromptTitle: 'Access token',
     tokenPromptDesc:
       'This server requires token auth. Paste your access token (needed once per browser; it is attached automatically afterwards).',

@@ -1,4 +1,4 @@
-// Tag panel state: list and CRUD. Failed actions throw an Error; the panel layer shows the toast uniformly.
+// Tag state: list and CRUD. Failed actions throw an Error; the caller layer shows the toast uniformly.
 import { onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
 import { createTag, deleteTag, listTags, updateTag } from '../api/tags'
@@ -9,13 +9,11 @@ export function useTags() {
   const client = useApiClient()
   const rows = ref<TagView[]>([])
   const loading = ref(false)
-  /** Tag-name regex filter (executed server-side); empty string = no filter */
-  const filter = ref('')
 
   async function reload() {
     loading.value = true
     try {
-      const data = await listTags(client, filter.value.trim() || undefined)
+      const data = await listTags(client)
       rows.value = data.tags ?? []
     } finally {
       loading.value = false
@@ -38,10 +36,10 @@ export function useTags() {
   }
 
   onMounted(() => {
-    void reload().catch(() => {}) // first-load errors are toasted by the caller (wrapped at the panel layer)
+    void reload().catch(() => {}) // first-load errors are toasted by the caller (wrapped at the caller layer)
   })
 
-  return { rows, loading, filter, reload, create, rename, remove }
+  return { rows, loading, reload, create, rename, remove }
 }
 
 export type TagsStore = ReturnType<typeof useTags>

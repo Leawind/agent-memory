@@ -68,19 +68,3 @@ function blockWhileSaving(done: () => void): void {
   if (!props.saving) done()
 }
 </script>
-
-<!-- Unscoped: with append-to-body the dialog element lives outside this component tree -->
-<style>
-.am-form-dialog--floating {
-  resize: both;
-  overflow: auto;
-  max-width: 95vw;
-  max-height: 90vh;
-}
-.am-form-dialog--floating .el-dialog__body {
-  /* At small viewport heights the min() shrinks the body so header and footer stay visible
-     inside the 90vh dialog; at large heights the 65vh cap keeps the dialog from sprawling */
-  max-height: min(65vh, calc(90vh - 150px));
-  overflow-y: auto;
-}
-</style>

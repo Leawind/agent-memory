@@ -34,6 +34,12 @@
         >
           <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
+        <el-select v-model="sortChoice" class="sort-select">
+          <el-option :label="t('memories.sortUpdatedDesc')" value="updated_at:desc" />
+          <el-option :label="t('memories.sortUpdatedAsc')" value="updated_at:asc" />
+          <el-option :label="t('memories.sortIdAsc')" value="id:asc" />
+          <el-option :label="t('memories.sortIdDesc')" value="id:desc" />
+        </el-select>
         <el-select v-model="mode" class="mode-select" @change="run(onSearch)">
           <el-option :label="t('memories.modeAuto')" value="auto" />
           <el-option :label="t('memories.modeKeyword')" value="keyword" />
@@ -42,68 +48,30 @@
       </div>
 
       <el-alert v-if="note" :title="note" type="warning" show-icon :closable="false" />
-      <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
 
-      <!-- Search mode: show matched snippets and scores -->
-      <el-table v-if="searching" :data="searchResults" v-loading="loading">
-        <el-table-column prop="id" :label="t('memories.colId')" width="80" />
-        <el-table-column :label="t('memories.colSummary')">
-          <template #default="{ row }">
-            <div class="am-summary">{{ row.summary }}</div>
+      <!-- Card list (Modrinth discover-style): the summary is the entry's title, tags and the
+           search snippet live on their own lines below it. The whole card opens the memory
+           dialog; delete/edit live inside that dialog. -->
+      <div v-loading="loading" class="am-list">
+        <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
+        <button v-for="card in cards" :key="card.id" type="button" class="am-memory-card" @click="openEdit(card.id)">
+          <span class="card-main">
+            <span class="card-summary">{{ card.summary }}</span>
             <!-- Snippets are plain text (server sends them unescaped); text interpolation, never v-html -->
-            <div class="am-snippet">{{ row.snippet }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('memories.colTags')" min-width="150">
-          <template #default="{ row }">
-            <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="score" :label="t('memories.colScore')" width="80" sortable />
-        <el-table-column :label="t('memories.colUpdatedAt')" width="150">
-          <template #default="{ row }">{{ row.updated }}</template>
-        </el-table-column>
-        <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
-              <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row.id)" />
-            </el-tooltip>
-            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
-              <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="remove(row)" />
-            </el-tooltip>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <!-- List mode: click the updated/id column headers to sort (convention: direction shown on the right of the active header, click to toggle) -->
-      <el-table
-        v-else
-        :data="rows"
-        v-loading="loading"
-        :default-sort="{ prop: sort, order: order === 'asc' ? 'ascending' : 'descending' }"
-        @sort-change="onSortChange"
-      >
-        <el-table-column prop="id" :label="t('memories.colId')" width="80" sortable="custom" />
-        <el-table-column prop="summary" :label="t('memories.colSummary')" min-width="180" show-overflow-tooltip />
-        <el-table-column :label="t('memories.colTags')" min-width="150">
-          <template #default="{ row }">
-            <el-tag v-for="tag in row.tags" :key="tag" size="small" class="am-tag">{{ tag }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="updated_at" :label="t('memories.colUpdatedAt')" width="150" sortable="custom">
-          <template #default="{ row }">{{ row.updated }}</template>
-        </el-table-column>
-        <el-table-column :label="t('memories.colActions')" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
-              <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="openEdit(row.id)" />
-            </el-tooltip>
-            <el-tooltip :content="t('common.delete')" placement="top" :enterable="false">
-              <el-button link type="danger" :icon="Delete" :aria-label="t('common.delete')" @click="remove(row)" />
-            </el-tooltip>
-          </template>
-        </el-table-column>
-      </el-table>
+            <span v-if="card.snippet" class="card-snippet">{{ card.snippet }}</span>
+            <span class="card-tags">
+              <el-tag v-for="tag in card.tags" :key="tag" size="small">{{ tag }}</el-tag>
+            </span>
+          </span>
+          <span class="card-meta">
+            <span v-if="card.score !== undefined" class="card-score" :title="t('memories.colScore')">
+              {{ card.score }}
+            </span>
+            <span class="card-time">{{ card.updated }}</span>
+            <span class="card-id">{{ card.id }}</span>
+          </span>
+        </button>
+      </div>
 
       <div class="am-pager" v-if="!searching">
         <el-pagination
@@ -128,13 +96,14 @@
         />
       </div>
 
-      <!-- Create / edit -->
+      <!-- Create / edit / delete (delete lives in the dialog's title row) -->
       <MemoryEditorDialog
         v-model:visible="editorVisible"
         :memory-id="editingId"
         :tag-options="tagOptions"
-        :width="narrow ? '96%' : '640px'"
-        @saved="onSaved"
+        :width="narrow ? '96%' : '960px'"
+        @saved="onMutated"
+        @deleted="onMutated"
       />
     </el-config-provider>
   </div>
@@ -143,18 +112,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { elementPlusLocale } from '../i18n/elementPlus'
-import { ElMessageBox } from 'element-plus'
-import { toastError, toastSuccess } from '../toast'
-import { Delete, Edit, InfoFilled, Plus, Search } from '@element-plus/icons-vue'
+import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
 import { t } from '../i18n'
+import { toastError } from '../toast'
 import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
-import type { MemorySummary } from '../types'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the toolbar + table are wanted) */
+    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the toolbar + list are wanted) */
     showHeader?: boolean
     /** Override the default title */
     title?: string
@@ -163,6 +130,11 @@ const props = withDefaults(
   }>(),
   { showHeader: true },
 )
+
+const emit = defineEmits<{
+  /** A memory was created, updated or deleted: hosts (the workspace) refresh tag-derived views */
+  changed: []
+}>()
 
 const {
   query,
@@ -182,8 +154,29 @@ const {
   onSearch,
   reload,
   loadTagOptions,
-  removeMemory,
 } = useMemories()
+
+// Unified card shape across list rows and search hits (search adds snippet + score)
+interface MemoryCard {
+  id: string
+  summary: string
+  tags: string[]
+  updated: string
+  snippet?: string
+  score?: number
+}
+const cards = computed<MemoryCard[]>(() =>
+  searching.value
+    ? searchResults.value.map((r) => ({
+        id: r.id,
+        summary: r.summary,
+        tags: r.tags,
+        updated: r.updated,
+        snippet: r.snippet,
+        score: r.score,
+      }))
+    : rows.value.map((r) => ({ id: r.id, summary: r.summary, tags: r.tags, updated: r.updated })),
+)
 
 // The empty-result notice is generated locally (the server's note targets agents and is English
 // contract text, not passed through to the UI):
@@ -195,8 +188,20 @@ const emptyNote = computed(() => {
   return tag ? t('memories.tagEmpty', { tag }) : ''
 })
 
+// Sorting: one select over the (field, direction) pair the list query takes. The old table
+// headers were sortable; the card list carries the same capability in the toolbar instead.
+const sortChoice = computed({
+  get: () => `${sort.value}:${order.value}`,
+  set: (value: string) => {
+    const [nextSort, nextOrder] = value.split(':')
+    sort.value = nextSort as 'updated_at' | 'id'
+    order.value = nextOrder as 'asc' | 'desc'
+    run(reload)
+  },
+})
+
 const rootRef = ref<HTMLElement | null>(null)
-// <720px switches to narrow mode (dialogs narrow); all table columns are flexible-width so none are lost
+// <720px switches to narrow mode (dialogs narrow); the card list is flexible-width by nature
 const { narrow } = useContainerWidth(rootRef)
 
 const editorVisible = ref(false)
@@ -217,55 +222,118 @@ function openEdit(id: string) {
   editorVisible.value = true
 }
 
-function onSaved() {
+function onMutated() {
   run(reload)
   loadTagOptions()
+  emit('changed')
 }
 
-/** Header sorting: clicking a column head toggles asc/desc, a third click cancels and returns to the default (most recently updated first). */
-function onSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
-  // The parameter must not be named order — it would shadow the outer order ref and the
-  // assignment would land on the parameter (strict mode throws a TypeError outright)
-  const { prop, order: nextOrder } = payload
-  if (nextOrder && (prop === 'updated_at' || prop === 'id')) {
-    sort.value = prop
-    order.value = nextOrder === 'ascending' ? 'asc' : 'desc'
-  } else {
-    sort.value = 'updated_at'
-    order.value = 'desc'
-  }
-  run(reload)
-}
-
-async function remove(row: MemorySummary) {
-  try {
-    await ElMessageBox.confirm(t('memories.deleteConfirm', { id: row.id }), t('memories.deleteTitle'), {
-      type: 'warning',
-    })
-  } catch {
-    return
-  }
-  try {
-    await removeMemory(row.id)
-    toastSuccess(t('memories.deleted'))
-  } catch (e: unknown) {
-    toastError(e instanceof Error ? e.message : String(e))
-  }
-}
-
-// A permanently mounted panel cannot sense visibility itself: the host calls refresh when switching back to this panel to pull the latest data
-defineExpose({ refresh: () => run(reload) })
+// A permanently mounted panel cannot sense visibility itself: the host calls refresh when
+// switching back to this view to pull the latest data (tag options too: renames elsewhere
+// must reach the filter dropdown)
+defineExpose({
+  refresh: () => {
+    run(reload)
+    loadTagOptions()
+  },
+})
 </script>
 
 <style scoped>
-/* Search box takes a full row (flex-basis 100%), tag filter wraps to the next line */
+/* Search box takes a full row (flex-basis 100%), the selects wrap to the next line */
 .search {
   flex: 1 1 100%;
 }
 .tag-filter {
-  width: 240px;
+  width: 200px;
+}
+.sort-select {
+  width: 140px;
 }
 .mode-select {
   width: 150px;
+}
+
+/* Scrollable card area between toolbar and pager */
+.am-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Room for the loading mask and card focus rings */
+  padding: 2px;
+}
+
+/* Memory card: quiet bordered row, surface fill on hover — reads as one clickable entry */
+.am-memory-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--am-radius-lg);
+  background: var(--el-bg-color);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.am-memory-card:hover {
+  border-color: var(--el-border-color);
+  background: var(--el-fill-color-lighter);
+}
+.card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+/* Summary first, alone on its line — never sharing a row with the tags */
+.card-summary {
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.card-snippet {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+}
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* Right meta column: score (search only), updated time, id */
+.card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.card-score {
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+.card-id {
+  font-family: var(--el-font-family-mono, ui-monospace, monospace);
+  color: var(--el-text-color-placeholder);
 }
 </style>

@@ -51,22 +51,6 @@
             </template>
           </div>
 
-          <!-- Top navigation: panels stay mounted, switching keeps state; a refresh pulls the latest data on return.
-               The admin tab only shows for identities with the admin capability -->
-          <nav class="nav">
-            <button
-              v-for="item in navItems"
-              :key="item.key"
-              type="button"
-              class="nav-item"
-              :class="{ active: active === item.key }"
-              @click="active = item.key"
-            >
-              <el-icon :size="15"><component :is="item.icon" /></el-icon>
-              <span>{{ item.label }}</span>
-            </button>
-          </nav>
-
           <div class="actions">
             <!-- Theme: three-state segmented icon control (light / dark / follow system) -->
             <div class="seg" role="group" :aria-label="t('shell.theme')">
@@ -126,6 +110,14 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+
+            <!-- Admin: opens the management dialog; only rendered for identities with the admin
+                 capability (non-admins never see the entry, let alone send admin requests) -->
+            <el-tooltip v-if="isAdmin" :content="t('shell.admin')" placement="bottom" :enterable="false">
+              <button type="button" class="admin-btn" :aria-label="t('shell.admin')" @click="adminVisible = true">
+                <el-icon :size="15"><Key /></el-icon>
+              </button>
+            </el-tooltip>
           </div>
         </div>
       </header>
@@ -133,15 +125,25 @@
       <main class="content">
         <!-- .memory-ui namespace: selector prefix for the library's token styles (tokens.css) -->
         <div class="memory-ui">
-          <MemoriesPanel ref="memoriesPanel" v-show="active === 'memories'" />
-          <TagsPanel ref="tagsPanel" v-show="active === 'tags'" />
-          <!-- Admin panel: mounted only for admin identities (v-if); non-admin identities make no admin requests -->
-          <AdminPanel v-if="isAdmin" ref="adminPanel" v-show="active === 'admin'" :who="who" />
+          <MemoryWorkspace ref="workspace" />
         </div>
       </main>
 
       <!-- Server overview: opened by clicking the header title; OpsDialog refetches each time it opens -->
       <OpsDialog :visible="opsDialogVisible" @update:visible="opsDialogVisible = $event" />
+
+      <!-- Management console: identity/auth/settings cards in a dialog. Centered like the editor
+           dialogs; refreshes on every open so changes made elsewhere (or in a previous session of
+           the dialog) never linger. -->
+      <el-dialog
+        v-model="adminVisible"
+        :title="t('shell.admin')"
+        width="min(1040px, calc(100vw - 24px))"
+        align-center
+        class="admin-dialog"
+      >
+        <AdminPanel v-if="isAdmin" ref="adminPanel" :who="who" :show-header="false" />
+      </el-dialog>
 
       <!-- Token input: shown on 401 or on "add identity"; validated before it is stored.
            Non-modal + click-through: the 401 prompt doesn't lock the page, and the header identity dropdown stays usable (switching to another saved identity recovers).
@@ -175,31 +177,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import {
-  ArrowDown,
-  Check,
-  Collection,
-  Delete,
-  Key,
-  Monitor,
-  Moon,
-  Notebook,
-  Plus,
-  PriceTag,
-  Sunny,
-} from '@element-plus/icons-vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { ArrowDown, Check, Collection, Delete, Key, Monitor, Moon, Plus, Sunny } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
-import {
-  AdminPanel,
-  MemoriesPanel,
-  OpsDialog,
-  TagsPanel,
-  provideMemoryUI,
-  setMemoryUILocale,
-  t,
-} from '@agent-memory/ui'
+import { AdminPanel, MemoryWorkspace, OpsDialog, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
 import {
   UNAUTHORIZED_EVENT,
   addIdentity,
@@ -225,14 +207,12 @@ provideMemoryUI({
     addIdentity(name, token)
     refreshIdentities()
     await resolveIdentity()
-    refreshActivePanel()
+    refreshWorkspace()
   },
   // Re-resolve the identity after the auth toggle flips: the top-bar identity area reflects the open <-> token mode switch immediately
   onAuthChanged: () => resolveIdentity(),
 })
 
-type AdminTab = 'memories' | 'tags' | 'admin'
-const active = ref<AdminTab>('memories')
 // Service overview dialog: opened by clicking the top-bar title
 const opsDialogVisible = ref(false)
 
@@ -267,39 +247,13 @@ const identityLabel = computed(() => {
   return who.value?.name ?? currentName.value ?? t('shell.identityNone')
 })
 
-// The admin tab is visible to admins only; when the current tab loses visibility (e.g. switching to a lower-privileged identity), fall back to memories
-const navItems = computed(() => {
-  const items: { key: AdminTab; label: string; icon: typeof Notebook }[] = [
-    { key: 'memories', label: t('nav.memories'), icon: Notebook },
-    { key: 'tags', label: t('nav.tags'), icon: PriceTag },
-  ]
-  if (isAdmin.value) items.push({ key: 'admin', label: t('nav.admin'), icon: Key })
-  return items
-})
+// The workspace is permanently mounted and cannot sense identity switches: refresh both sides
+// after the identity changes so the visible data is never from the previous identity
+const workspace = ref<{ refresh: () => void } | null>(null)
 
-watch(navItems, (items) => {
-  if (!items.some((item) => item.key === active.value)) active.value = 'memories'
-})
-
-// Permanently mounted panels (v-show) are not remounted, so data may be stale when switching
-// back: refresh the target panel on switch
-interface RefreshablePanel {
-  refresh: () => void
+function refreshWorkspace(): void {
+  workspace.value?.refresh()
 }
-const memoriesPanel = ref<RefreshablePanel | null>(null)
-const tagsPanel = ref<RefreshablePanel | null>(null)
-const adminPanel = ref<RefreshablePanel | null>(null)
-
-function refreshActivePanel(): void {
-  const panel = {
-    memories: memoriesPanel.value,
-    tags: tagsPanel.value,
-    admin: adminPanel.value,
-  }[active.value]
-  panel?.refresh()
-}
-
-watch(active, () => refreshActivePanel())
 
 // ---- Identity dropdown and token dialog state ----
 function refreshIdentities(): void {
@@ -349,7 +303,7 @@ async function switchTo(name: string): Promise<void> {
     tokenInput.value = ''
     tokenError.value = false
   }
-  refreshActivePanel()
+  refreshWorkspace()
 }
 
 async function saveToken(): Promise<void> {
@@ -367,7 +321,7 @@ async function saveToken(): Promise<void> {
     who.value = r.who
     tokenDialog.value = false
     tokenInput.value = ''
-    refreshActivePanel()
+    refreshWorkspace()
   } else {
     tokenError.value = true
   }
@@ -398,7 +352,7 @@ async function removeIdentityClick(name: string): Promise<void> {
     await switchTo(next)
   } else {
     await resolveIdentity()
-    refreshActivePanel()
+    refreshWorkspace()
   }
 }
 
@@ -413,6 +367,17 @@ onMounted(() => {
   window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
 })
 onUnmounted(() => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized))
+
+// ---- Management dialog: the admin panel loads once mounted; refresh on every reopen ----
+const adminVisible = ref(false)
+const adminPanel = ref<{ refresh: () => void } | null>(null)
+
+watch(adminVisible, async (open) => {
+  if (!open) return
+  // The panel mounts lazily with the dialog's first render
+  await nextTick()
+  adminPanel.value?.refresh()
+})
 
 // ---- Language (UI copy and Element Plus built-in copy switch together) ----
 // Adding a language takes two steps: add a dictionary file in the lib and register it in messages
@@ -511,6 +476,12 @@ body,
 body {
   background: var(--el-bg-color-page);
 }
+/* Management dialog: the admin panel is a tall stack of cards — let the body scroll instead of
+   stretching the dialog beyond the viewport */
+.admin-dialog .el-dialog__body {
+  max-height: calc(90vh - 110px);
+  overflow-y: auto;
+}
 /* Clamp overlay widths: fixed pixel widths (the 440px token dialog etc.) must not overflow the viewport on phones */
 @media (max-width: 720px) {
   .el-dialog {
@@ -524,12 +495,12 @@ body {
 
 <style scoped>
 .shell {
-  min-height: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-/* Header: brand + navigation + preference controls. Same color as the page body (no separate band), no border */
+/* Header: brand + preference controls. Same color as the page body (no separate band), no border */
 .topbar {
   position: sticky;
   top: 0;
@@ -554,6 +525,7 @@ body {
   letter-spacing: -0.01em;
   color: var(--el-text-color-primary);
   flex-shrink: 0;
+  min-width: 0;
 }
 /* Title button: opens the server overview; negative margin cancels button padding to keep the nav baseline aligned */
 .brand-btn {
@@ -583,40 +555,6 @@ body {
   border-radius: 9px;
   color: var(--el-color-primary);
   background: linear-gradient(135deg, rgba(68, 182, 138, 0.25) 0%, rgba(58, 250, 112, 0.18) 100%);
-}
-/* Navigation: segmented pill (same as the theme switch on the right) - the container gets a recessed fill, the active item floats */
-.nav {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  padding: 2px;
-  border-radius: 999px;
-  background: var(--el-fill-color);
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 14px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--el-text-color-regular);
-  font-size: 14px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-}
-.nav-item:hover {
-  color: var(--el-text-color-primary);
-}
-.nav-item.active {
-  background: var(--el-bg-color);
-  color: var(--el-color-primary);
-  font-weight: 600;
-  box-shadow: var(--el-box-shadow-light);
 }
 .actions {
   display: flex;
@@ -682,6 +620,24 @@ body {
 }
 .lang-check {
   color: var(--el-color-primary);
+}
+
+/* Admin trigger: icon-only capsule, same family as the theme/language controls */
+.admin-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  border: none;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+}
+.admin-btn:hover {
+  color: var(--el-color-primary);
+  background: var(--el-fill-color-dark);
 }
 
 /* Identity switcher: clickable identity name inside the brand row (Agent Memory / identity name) */
@@ -769,19 +725,26 @@ body {
   color: var(--el-color-danger);
 }
 
-/* Content area: full-width padding with a centered container */
+/* Content area: the workspace fills the viewport below the header (sidebar and list scroll
+   internally, so the page itself never scrolls) */
 .content {
   flex: 1;
+  min-height: 0;
   width: 100%;
   max-width: 1240px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 20px 24px 24px;
   box-sizing: border-box;
+  display: flex;
+}
+.content .memory-ui {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* ---- Mobile adaptation ---- */
-/* <=720px: header wraps to two rows - first the brand row + preference controls, then navigation (horizontal scroll if it doesn't fit).
-   A single-row layout inevitably overflows at phone widths (nav items pushed off-viewport, overlapping the theme controls) */
+/* <=720px: header wraps to two rows - brand row first, then the preference controls. */
 @media (max-width: 720px) {
   .topbar-inner {
     height: auto;
@@ -797,20 +760,6 @@ body {
   .actions {
     order: 2;
     padding: 8px 0;
-  }
-  .nav {
-    order: 3;
-    flex-basis: 100%;
-    height: 44px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .nav::-webkit-scrollbar {
-    display: none;
-  }
-  .nav-item {
-    flex-shrink: 0;
-    height: 34px;
   }
   .identity-btn {
     max-width: 150px;

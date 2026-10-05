@@ -1,5 +1,5 @@
-// App shell mount smoke test: top-bar navigation rendering, theme application, identity dropdown
-// and admin tab permissions
+// App shell mount smoke test: top-bar controls (theme / language / admin button), the workspace
+// (tag sidebar + memory list), theme application, identity dropdown and admin dialog permissions
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
@@ -23,16 +23,25 @@ function jsonWithJson(body: unknown) {
 const adminCaps = { read: true, create: true, update: true, delete: true, tag_manage: true, admin: true }
 const viewerCaps = { read: true, create: false, update: false, delete: false, tag_manage: false, admin: false }
 
-/** Assert the label set of the nav buttons */
-function navLabels(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper.findAll('nav button').map((b) => b.text())
-}
-
 /** The token dialog's open state (App.vue's tokenDialog). el-dialog's close transition never
  * truly finishes in happy-dom, so DOM assertions of the collapsed state are unreliable; read the
  * component state driving it instead */
 function dialogOpen(wrapper: ReturnType<typeof mount>): boolean {
   return (wrapper.vm.$ as unknown as { setupState: { tokenDialog: boolean } }).setupState.tokenDialog
+}
+
+/** The top-bar admin trigger (icon capsule next to the language control) */
+function adminButton(wrapper: ReturnType<typeof mount>) {
+  return wrapper.find('.admin-btn')
+}
+
+/** Fire a workspace data request (the memory search) — used to simulate a mid-session 401 */
+async function triggerWorkspaceRequest(wrapper: ReturnType<typeof mount>): Promise<void> {
+  const input = wrapper.find('.am-toolbar input')
+  await input.setValue('x')
+  await input.trigger('keyup.enter')
+  await flushPromises()
+  await flushPromises()
 }
 
 describe('App shell', () => {
@@ -63,7 +72,7 @@ describe('App shell', () => {
     )
   })
 
-  it('mounts the top-nav shell and renders the memories panel', async () => {
+  it('mounts the workspace shell (sidebar + memory list, no nav pills)', async () => {
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
@@ -72,8 +81,10 @@ describe('App shell', () => {
     expect(html).toContain('记忆')
     expect(html).toContain('新建记忆')
     expect(html).toContain('标签')
-    // The ops tab was removed: the overview now opens as a dialog by clicking the top-bar title
-    expect(html).not.toContain('运维')
+    // The old page-switcher pills are gone; the workspace with its sidebar is the whole body
+    expect(wrapper.find('nav').exists()).toBe(false)
+    expect(wrapper.find('.am-tags-sidebar').exists()).toBe(true)
+    expect(wrapper.find('.am-memory-card, .am-list').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -150,13 +161,13 @@ describe('App shell', () => {
     expect(dialogOpen(wrapper)).toBe(false)
     expect(wrapper.find('.identity-btn').exists()).toBe(true)
     expect(wrapper.find('.identity-btn').text()).toContain('匿名访问')
-    // Read-only anonymous: content panels render as usual, the admin tab is hidden (no admin capability)
-    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
+    // Read-only anonymous: content renders as usual, the admin trigger is hidden (no admin capability)
+    expect(adminButton(wrapper).exists()).toBe(false)
     expect(wrapper.html()).toContain('新建记忆')
     wrapper.unmount()
   })
 
-  it('shows the admin tab with its management panel only for admin identities', async () => {
+  it('opens the management dialog from the admin button only for admin identities', async () => {
     const adminWho = { name: 'admin', mode: 'token' as const, permissions: adminCaps }
     vi.stubGlobal(
       'fetch',
@@ -174,18 +185,31 @@ describe('App shell', () => {
           return Promise.resolve(jsonResponse({ instructions: null, auth_required: false }))
         }
         if (u.includes('/api/tags')) return Promise.resolve(jsonResponse({ tags: [] }))
+        if (u.includes('/api/stats')) {
+          return Promise.resolve(jsonResponse({ path: '/tmp/m.db', memories: 0, tags: 0, file_size: 0 }))
+        }
         return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
       }),
     )
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
-    // Admin identity: all three tabs present, the admin panel is mounted (identity table visible)
-    expect(navLabels(wrapper)).toEqual(['记忆', '标签', '管理'])
-    expect(wrapper.html()).toContain('Token 鉴权')
+    // Admin identity: the trigger exists, but no admin requests are made before it is used
+    expect(adminButton(wrapper).exists()).toBe(true)
+    const countIdentitiesCalls = () =>
+      vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).includes('/api/identities')).length
+    expect(countIdentitiesCalls()).toBe(0)
+
+    await adminButton(wrapper).trigger('click')
+    await flushPromises()
+    await flushPromises()
+    const adminDialog = wrapper.find('.admin-dialog')
+    expect(adminDialog.exists()).toBe(true)
+    expect(countIdentitiesCalls()).toBeGreaterThan(0)
+    expect(adminDialog.text()).toContain('Token 鉴权')
     wrapper.unmount()
 
-    // Read-only identity: the admin tab is hidden and the admin panel is not mounted (not even in the DOM)
+    // Read-only identity: no admin trigger, and the admin panel is not mounted (not even in the DOM)
     const viewerWho = { name: 'viewer', mode: 'token' as const, permissions: viewerCaps }
     vi.stubGlobal(
       'fetch',
@@ -197,12 +221,12 @@ describe('App shell', () => {
     const viewer = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
-    expect(navLabels(viewer)).toEqual(['记忆', '标签'])
+    expect(adminButton(viewer).exists()).toBe(false)
     expect(viewer.html()).not.toContain('Token 鉴权')
     viewer.unmount()
   })
 
-  it('drops the admin tab when switching to a read-only stored identity', async () => {
+  it('drops the admin trigger when switching to a read-only stored identity', async () => {
     const identities = [
       { name: 'admin', token: 'tok-admin', permissions: adminCaps },
       { name: 'viewer', token: 'tok-viewer', permissions: viewerCaps },
@@ -226,9 +250,9 @@ describe('App shell', () => {
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
-    expect(navLabels(wrapper)).toContain('管理')
+    expect(adminButton(wrapper).exists()).toBe(true)
 
-    // Open the identity dropdown and switch to viewer: the admin tab disappears with it (dropdown menus teleport to body)
+    // Open the identity dropdown and switch to viewer: the admin trigger disappears with it (dropdown menus teleport to body)
     await wrapper.find('.identity-btn').trigger('click')
     await flushPromises()
     const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
@@ -240,7 +264,7 @@ describe('App shell', () => {
     viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     await flushPromises()
-    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
+    expect(adminButton(wrapper).exists()).toBe(false)
     expect(wrapper.find('.identity-btn').text()).toContain('viewer')
     wrapper.unmount()
   })
@@ -295,7 +319,7 @@ describe('App shell', () => {
     // el-dialog's close transition never truly finishes in happy-dom (display:none never lands),
     // so assert the component state driving the dialog instead
     expect(dialogOpen(wrapper)).toBe(false)
-    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
+    expect(adminButton(wrapper).exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -329,11 +353,9 @@ describe('App shell', () => {
     await flushPromises()
     expect(wrapper.find('.identity-btn').text()).toContain('admin')
 
-    // A panel request gets 401 -> authFetch broadcasts UNAUTHORIZED_EVENT -> the invalid identity is removed and the token dialog pops
+    // A workspace request gets 401 -> authFetch broadcasts UNAUTHORIZED_EVENT -> the invalid identity is removed and the token dialog pops
     revoked = true
-    await wrapper.findAll('nav button')[1].trigger('click')
-    await flushPromises()
-    await flushPromises()
+    await triggerWorkspaceRequest(wrapper)
 
     expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
     expect(wrapper.find('.identity-btn').exists()).toBe(true)
@@ -387,7 +409,7 @@ describe('App shell', () => {
 
     expect(JSON.parse(localStorage.getItem('agent-memory-identities')!)).toEqual({ viewer: 'tok-viewer' })
     expect(wrapper.find('.identity-btn').text()).toContain('viewer')
-    expect(navLabels(wrapper)).toEqual(['记忆', '标签'])
+    expect(adminButton(wrapper).exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -426,31 +448,65 @@ describe('App shell', () => {
     )
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
-    // No prefetching of admin data while the identity is not ready
+    // No admin requests while the identity is not ready (the workspace only reads memories/tags)
     expect(identityCalls.length).toBe(0)
     resolveWhoAmI(jsonWithJson({ name: 'admin', mode: 'token', permissions: adminCaps }))
     await flushPromises()
     await flushPromises()
-    // Regression: loading must happen once admin is ready (onMounted previously checked only once, leaving the panel stuck empty forever)
+    // The workspace is ready but must still not prefetch admin data — that waits for the dialog
+    expect(identityCalls.length).toBe(0)
+    await adminButton(wrapper).trigger('click')
+    await flushPromises()
+    await flushPromises()
+    // Opening the management dialog is what triggers the admin data load
     expect(identityCalls.length).toBeGreaterThan(0)
     wrapper.unmount()
   })
 
-  it('refreshes the target panel data when switching tabs', async () => {
+  it('refreshes the workspace when switching identities so stale data never lingers', async () => {
+    const identities = [
+      { name: 'admin', token: 'tok-admin', permissions: adminCaps },
+      { name: 'viewer', token: 'tok-viewer', permissions: viewerCaps },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        const auth = String(new Headers(init?.headers).get('Authorization') ?? '')
+        if (u.includes('/api/whoami')) {
+          const name = auth.includes('tok-admin') ? 'admin' : auth.includes('tok-viewer') ? 'viewer' : ''
+          if (!name) return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve('') })
+          const identity = identities.find((i) => i.name === name)!
+          return Promise.resolve(jsonWithJson({ name, mode: 'token', permissions: identity.permissions }))
+        }
+        return Promise.resolve(jsonResponse({ total: 0, memories: [] }))
+      }),
+    )
+    localStorage.setItem('agent-memory-identities', JSON.stringify({ admin: 'tok-admin', viewer: 'tok-viewer' }))
+    localStorage.setItem('agent-memory-identity', 'admin')
     const wrapper = mount(App, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
     const fetchMock = vi.mocked(globalThis.fetch)
-    const countTagsCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/tags')).length
-    const before = countTagsCalls()
+    const countWorkspaceCalls = () =>
+      fetchMock.mock.calls.filter((c) => {
+        const u = String(c[0])
+        return u.startsWith('/api/memories') || u.startsWith('/api/tags')
+      }).length
+    const before = countWorkspaceCalls()
     expect(before).toBeGreaterThan(0)
-    const navButtons = wrapper.findAll('nav button')
-    await navButtons[1].trigger('click')
+
+    // Regression: the workspace is permanently mounted and never remounts, so an identity switch
+    // must refresh it explicitly (previously stale data was shown indefinitely)
+    await wrapper.find('.identity-btn').trigger('click')
+    await flushPromises()
+    const viewerItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find((el) =>
+      el.textContent?.includes('viewer'),
+    )
+    viewerItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     await flushPromises()
-    // Regression: v-show panels stay mounted and are never remounted, so switching back to a tab
-    // must refresh explicitly (previously stale data was shown indefinitely)
-    expect(countTagsCalls()).toBeGreaterThan(before)
+    expect(countWorkspaceCalls()).toBeGreaterThan(before)
     wrapper.unmount()
   })
 })

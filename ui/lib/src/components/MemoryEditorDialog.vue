@@ -1,16 +1,59 @@
 <template>
-  <FormDialog
-    :visible="visible"
-    :title="memoryId ? t('editor.editTitle') : t('editor.createTitle')"
+  <el-dialog
+    :model-value="visible"
     :width="width"
     align-center
     append-to-body
-    :saving="saving"
-    :submit-disabled="loading"
-    @update:visible="emit('update:visible', $event)"
-    @submit="save"
+    :close-on-click-modal="!saving"
+    :close-on-press-escape="!saving"
+    :before-close="blockWhileSaving"
+    class="am-form-dialog am-form-dialog--floating"
+    @update:model-value="emit('update:visible', $event)"
   >
-    <div v-loading="loading">
+    <!-- Title row per the workspace spec: 记忆 #<id> + delete + save; the save button stays
+         disabled until the form actually differs from the loaded memory (or, when creating,
+         until summary and content are both present). The edge strips flanking the dialog
+         resize its width, the dragged edge tracking the pointer. -->
+    <template #header>
+      <div class="am-dialog-head">
+        <h3 class="am-dialog-title">
+          {{ memoryId ? t('editor.titleFmt', { id: memoryId }) : t('editor.createTitle') }}
+        </h3>
+        <div class="am-dialog-actions">
+          <el-tooltip v-if="memoryId" :content="t('common.delete')" placement="top" :enterable="false">
+            <el-button
+              type="danger"
+              circle
+              :icon="Delete"
+              :disabled="saving"
+              :aria-label="t('common.delete')"
+              @click="askDelete"
+            />
+          </el-tooltip>
+          <el-button type="primary" :loading="saving" :disabled="!canSave" @click="save">
+            {{ t('common.save') }}
+          </el-button>
+        </div>
+      </div>
+      <div
+        class="am-edge am-edge--left"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+      />
+      <div
+        class="am-edge am-edge--right"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+      />
+    </template>
+
+    <!-- label-position=top: each field's description sits on its own line above the input
+         instead of squeezing the field to the right -->
+    <el-form v-loading="loading" label-position="top" @submit.prevent>
       <el-form-item :label="t('editor.summaryLabel')">
         <el-input
           ref="summaryInput"
@@ -51,20 +94,22 @@
         />
         <MarkdownView v-else class="content-preview" :source="form.content" />
       </el-form-item>
-    </div>
-  </FormDialog>
+    </el-form>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { InputInstance } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
-import { createMemory, getMemory, updateMemory } from '../api/memories'
+import { createMemory, deleteMemory, getMemory, updateMemory } from '../api/memories'
 import type { MemoryDraft } from '../composables/useMemories'
-import FormDialog from './FormDialog.vue'
 import MarkdownView from './MarkdownView.vue'
 import MarkdownModeToggle from './MarkdownModeToggle.vue'
+import { useDialogEdgeResize } from '../composables/useDialogEdgeResize'
 import { t } from '../i18n'
 
 const props = defineProps<{
@@ -72,14 +117,18 @@ const props = defineProps<{
   /** The memory id being edited; null means creating new */
   memoryId: string | null
   tagOptions: string[]
-  /** Dialog width; the panel passes a narrower value in narrow containers */
+  /** Initial dialog width; the panel passes a narrower value in narrow containers */
   width?: string
 }>()
+
+const { onPointerDown, onPointerMove, onPointerUp } = useDialogEdgeResize()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   /** Saved successfully (create or update finished) */
   saved: []
+  /** Deleted successfully (edit mode only) */
+  deleted: []
 }>()
 
 const client = useApiClient()
@@ -91,8 +140,24 @@ const summaryInput = ref<InputInstance | null>(null)
 const loading = ref(false)
 // Content editor view: edit the source or preview the rendered Markdown
 const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
-// Original tag set while editing, converted to add/remove on save
-let originalTags: string[] = []
+// Snapshot of the loaded memory: the save button stays disabled until the form differs
+const original = ref({ summary: '', content: '', tags: [] as string[] })
+
+const dirty = computed(() => {
+  if (!props.memoryId) return false
+  const f = form.value
+  const o = original.value
+  if (f.summary !== o.summary || f.content !== o.content) return true
+  if (f.tags.length !== o.tags.length) return true
+  const before = new Set(o.tags)
+  return f.tags.some((tag) => !before.has(tag))
+})
+
+const canSave = computed(() => {
+  if (loading.value) return false
+  if (!props.memoryId) return form.value.summary.trim() !== '' && form.value.content.trim() !== ''
+  return dirty.value
+})
 
 watch(
   () => props.visible,
@@ -102,13 +167,13 @@ watch(
     contentTab.value = props.memoryId ? 'preview' : 'edit'
     // Reset optimistically so a slow fetch never shows the previously edited memory's data
     form.value = { id: null, summary: '', content: '', tags: [] }
-    originalTags = []
+    original.value = { summary: '', content: '', tags: [] }
     if (props.memoryId) {
       loading.value = true
       try {
         const full = await getMemory(client, props.memoryId)
         form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
-        originalTags = [...full.tags]
+        original.value = { summary: full.summary, content: full.content, tags: [...full.tags] }
       } catch (e: unknown) {
         toastError(e instanceof Error ? e.message : String(e))
         emit('update:visible', false)
@@ -124,12 +189,12 @@ watch(
 )
 
 async function save() {
-  if (loading.value) return
+  if (!canSave.value) return
   saving.value = true
   try {
     if (form.value.id) {
       // Editing: compute add_tags / remove_tags against the original tag set as baseline
-      const before = new Set(originalTags)
+      const before = new Set(original.value.tags)
       const after = new Set(form.value.tags)
       await updateMemory(client, form.value.id, {
         summary: form.value.summary,
@@ -155,6 +220,33 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function askDelete() {
+  if (!props.memoryId || saving.value) return
+  try {
+    await ElMessageBox.confirm(t('memories.deleteConfirm', { id: props.memoryId }), t('memories.deleteTitle'), {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  saving.value = true
+  try {
+    await deleteMemory(client, props.memoryId)
+    toastSuccess(t('memories.deleted'))
+    emit('update:visible', false)
+    emit('deleted')
+  } catch (e: unknown) {
+    toastError(e instanceof Error ? e.message : String(e))
+  } finally {
+    saving.value = false
+  }
+}
+
+// before-close fires for the X button (overlay click / ESC are already off while saving)
+function blockWhileSaving(done: () => void): void {
+  if (!saving.value) done()
 }
 </script>
 

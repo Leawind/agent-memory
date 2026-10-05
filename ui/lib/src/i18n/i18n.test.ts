@@ -29,14 +29,16 @@ describe('locale switching', () => {
   it('setMemoryUILocale switches t() output and is reactive in both languages', () => {
     setMemoryUILocale('zh')
     expect(currentMemoryUILocale()).toBe('zh')
-    expect(t('nav.memories')).toBe('记忆')
+    expect(t('memories.title')).toBe('记忆')
     setMemoryUILocale('en')
-    expect(t('nav.memories')).toBe('Memories')
+    expect(t('memories.title')).toBe('Memories')
     setMemoryUILocale('zh')
   })
 
   it('t() interpolates named params', () => {
     expect(t('memories.deleteConfirm', { id: 'm7' })).toBe('确定永久删除记忆 m7？')
+    expect(t('editor.titleFmt', { id: 'm7' })).toBe('记忆 #m7')
+    expect(t('tags.titleFmt', { name: 'rust' })).toBe('标签 #rust')
     expect(t('access.doctorFail', { count: 3 })).toBe('发现 3 个问题')
   })
 

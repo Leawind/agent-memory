@@ -7,7 +7,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import AdminPanel from './AdminPanel.vue'
 import MemoriesPanel from './MemoriesPanel.vue'
 import MemoryAdmin from './MemoryAdmin.vue'
-import TagsPanel from './TagsPanel.vue'
+import MemoryWorkspace from './MemoryWorkspace.vue'
+import TagsSidebar from './TagsSidebar.vue'
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -36,9 +37,9 @@ describe('top-level components keep a single element root (host v-show must work
     wrapper.unmount()
   })
 
-  it('TagsPanel root is the am-panel div', () => {
-    const wrapper = mount(TagsPanel)
-    expectElementRoot(wrapper, 'am-panel')
+  it('TagsSidebar root is a single element', () => {
+    const wrapper = mount(TagsSidebar)
+    expectElementRoot(wrapper, 'am-tags-sidebar')
     wrapper.unmount()
   })
 
@@ -52,6 +53,13 @@ describe('top-level components keep a single element root (host v-show must work
     const wrapper = mount(MemoryAdmin)
     await flushPromises()
     expectElementRoot(wrapper, 'memory-ui')
+    wrapper.unmount()
+  })
+
+  it('MemoryWorkspace root is the am-workspace div', async () => {
+    const wrapper = mount(MemoryWorkspace)
+    await flushPromises()
+    expectElementRoot(wrapper, 'am-workspace')
     wrapper.unmount()
   })
 })

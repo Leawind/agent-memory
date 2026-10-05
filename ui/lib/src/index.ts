@@ -12,8 +12,10 @@ export type { MemoryUILocale, MemoryUILocaleOption } from './i18n'
 
 // Components
 export { default as MemoryAdmin } from './components/MemoryAdmin.vue'
+export { default as MemoryWorkspace } from './components/MemoryWorkspace.vue'
 export { default as MemoriesPanel } from './components/MemoriesPanel.vue'
-export { default as TagsPanel } from './components/TagsPanel.vue'
+export { default as TagsSidebar } from './components/TagsSidebar.vue'
+export { default as TagDialog } from './components/TagDialog.vue'
 export { default as OpsDialog } from './components/OpsDialog.vue'
 export { default as AdminPanel } from './components/AdminPanel.vue'
 export { default as MemoryEditorDialog } from './components/MemoryEditorDialog.vue'
