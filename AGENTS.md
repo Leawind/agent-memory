@@ -57,7 +57,9 @@ src/
                  404 + -32601，通知 202，批量 400；结果信封带 resultType:"complete"，五个可缓存
                  方法带 ttlMs/cacheScope（discover 身份相关 → private/0，tools/list 静态 →
                  public/1h）；discover/initialize 同源回传自定义提示词（instructions 非空覆盖
-                 内置默认）+ 调用者身份行；工具结果文本通道必须是紧凑 JSON，structuredContent 恒附带
+                 内置默认）+ 调用者身份行；工具结果文本通道是唯一数据通道（恒为紧凑 JSON，
+                 不附 structuredContent——没有工具声明 outputSchema，双通道会被同时渲染
+                 两通道的客户端原样收两遍，纯浪费上下文）
   resources.rs   memory:// 资源面（RFC 3986 严格解析，percent 编解码标签名）：
                  memory://tags/{tag} 目录型 JSON（标签元数据 + 最近 100 条摘要，绝不带正文）、
                  memory://memories/{id} 唯一携带正文（text/markdown + lastModified 注解）；

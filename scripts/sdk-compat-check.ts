@@ -68,8 +68,12 @@ async function rpc(
   return { status: res.status, ...body }
 }
 
-function structuredOf(r: RpcOk): Record<string, unknown> | undefined {
-  return r.result?.structuredContent as Record<string, unknown> | undefined
+/** The tool-result payload: the text content block is the single data channel (compact JSON,
+ * no structuredContent beside it — clients that surface every content block would see it twice). */
+function payloadOf(r: RpcOk): Record<string, unknown> | undefined {
+  const blocks = r.result?.content as { type?: string, text?: string }[] | undefined
+  const text = blocks?.find(b => b.type === 'text')?.text
+  return text === undefined ? undefined : JSON.parse(text) as Record<string, unknown>
 }
 
 /** POST one JSON-RPC message the way a legacy (2025-06-18) client does: no `_meta`, no mirrored
@@ -220,7 +224,7 @@ try {
     },
   })
   check("tools/call memory_create", created.result?.isError !== true, JSON.stringify(created).slice(0, 120))
-  const structured = structuredOf(created) as
+  const structured = payloadOf(created) as
     | { memory?: { id?: string }, total_matches?: number, results?: { content?: unknown }[] }
     | undefined
   createdId = structured?.memory?.id ?? null
@@ -249,7 +253,7 @@ try {
   )
 
   const searched = await rpc(4, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
-  const searchedStructured = structuredOf(searched) as typeof structured
+  const searchedStructured = payloadOf(searched) as typeof structured
   check("memory_search finds it", searchedStructured?.total_matches === 1)
   check(
     "search does not leak content",
@@ -260,7 +264,7 @@ try {
   check(
     "memory_get reveals content",
     (
-      (structuredOf(got) as { memories?: { content?: string }[] } | undefined)?.memories?.[0]
+      (payloadOf(got) as { memories?: { content?: string }[] } | undefined)?.memories?.[0]
         ?.content as string | undefined
     )?.includes("2026-07-28") === true,
   )
@@ -272,7 +276,7 @@ try {
   check(
     "memory_update add_tags",
     (
-      (structuredOf(updated) as { memory?: { tags?: string[] } } | undefined)?.memory?.tags as
+      (payloadOf(updated) as { memory?: { tags?: string[] } } | undefined)?.memory?.tags as
         | string[]
         | undefined
     )?.includes("验证完成") === true,
@@ -284,7 +288,7 @@ try {
     arguments: { id: createdId, old_string: "手写 2026-07-28 客户端连接成功", new_string: "手写 2026-07-28 客户端全流程跑通" },
   })
   check("memory_edit replaces the span", edited.result?.isError !== true, JSON.stringify(edited).slice(0, 120))
-  const editStructured = structuredOf(edited) as { replaced?: number } | undefined
+  const editStructured = payloadOf(edited) as { replaced?: number } | undefined
   check("memory_edit reports the replacement count", editStructured?.replaced === 1)
   const editedMiss = await rpc(40, "tools/call", {
     name: "memory_edit",
@@ -301,14 +305,14 @@ try {
     arguments: { summary: "sdk 联调记忆：现代协议客户端可用", content: "重复内容，等待合并。" },
   })
   const dupId =
-    (structuredOf(dup) as { memory?: { id?: string } } | undefined)?.memory?.id ?? null
+    (payloadOf(dup) as { memory?: { id?: string } } | undefined)?.memory?.id ?? null
   check("near-duplicate stored (duplicate_of is advisory)", dup.result?.isError !== true && typeof dupId === "string")
   if (dupId !== null) {
     const merged = await rpc(34, "tools/call", {
       name: "memory_merge",
       arguments: { target: createdId, source: dupId },
     })
-    const mergedStructured = structuredOf(merged) as
+    const mergedStructured = payloadOf(merged) as
       | { removed?: string, memory?: { id?: string, created?: string } }
       | undefined
     check(
@@ -318,12 +322,12 @@ try {
     const gone = await rpc(35, "tools/call", { name: "memory_get", arguments: { ids: [dupId] } })
     check(
       "merged source is gone",
-      ((structuredOf(gone) as { missing?: string[] } | undefined)?.missing ?? []).includes(dupId),
+      ((payloadOf(gone) as { missing?: string[] } | undefined)?.missing ?? []).includes(dupId),
     )
   }
 
   const tagList = await rpc(36, "tools/call", { name: "tag_list", arguments: {} })
-  const conventions = (structuredOf(tagList) as { tags?: { name?: string, reserved?: boolean }[] })
+  const conventions = (payloadOf(tagList) as { tags?: { name?: string, reserved?: boolean }[] })
     ?.tags?.find((t) => t.name === "conventions")
   check("reserved tag listed with reserved flag", conventions?.reserved === true)
 
@@ -331,7 +335,7 @@ try {
     name: "tag_delete",
     arguments: { name: "sdk", mode: "purge", dry_run: true },
   })
-  const preview = structuredOf(purgePreview) as { dry_run?: boolean, memories_affected?: number } | undefined
+  const preview = payloadOf(purgePreview) as { dry_run?: boolean, memories_affected?: number } | undefined
   check(
     "tag_delete dry_run previews without deleting",
     preview?.dry_run === true && (preview?.memories_affected ?? 0) >= 1,
@@ -339,7 +343,7 @@ try {
   const stillThere = await rpc(38, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
   check(
     "dry_run deleted nothing",
-    (structuredOf(stillThere) as { total_matches?: number } | undefined)?.total_matches !== 0,
+    (payloadOf(stillThere) as { total_matches?: number } | undefined)?.total_matches !== 0,
   )
 
   // ---- Error channels
@@ -488,7 +492,7 @@ try {
 
   // ---- Stateless server: a fresh request context sees the same data (no session state)
   const again = await rpc(20, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
-  check("reconnect sees previous data (stateless server)", structuredOf(again)?.total_matches === 1)
+  check("reconnect sees previous data (stateless server)", payloadOf(again)?.total_matches === 1)
 
   const pong = await rpc(21, "ping")
   check("ping roundtrip", pong.result?.resultType === "complete")
@@ -540,7 +544,7 @@ try {
   })
   check(
     "legacy tools/call reads the same store",
-    (structuredOf(legacySearch) as { total_matches?: number } | undefined)?.total_matches === 1,
+    (payloadOf(legacySearch) as { total_matches?: number } | undefined)?.total_matches === 1,
   )
   const legacyUnknown = await legacyRpc("legacy-4", "bogus/method")
   check(

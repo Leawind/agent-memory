@@ -8,7 +8,7 @@
 use serde_json::{json, Value};
 
 use crate::common::{
-    cleanup, json_body, mcp_post, request, rpc_body, temp_db, try_request, HttpProc,
+    cleanup, json_body, mcp_post, request, rpc_body, temp_db, tool_data, try_request, HttpProc,
     MCP_PROTOCOL_VERSION,
 };
 
@@ -97,7 +97,7 @@ fn mcp_endpoint_end_to_end() {
     );
     assert!(created.get("error").is_none(), "create failed: {created}");
     assert_eq!(created["result"]["resultType"], "complete");
-    let mem_id = created["result"]["structuredContent"]["memory"]["id"]
+    let mem_id = tool_data(&created)["memory"]["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -108,9 +108,8 @@ fn mcp_endpoint_end_to_end() {
         "tools/call",
         json!({"name": "memory_search", "arguments": {"query": "记忆系统"}}),
     );
-    let results = searched["result"]["structuredContent"]["results"]
-        .as_array()
-        .unwrap();
+    let payload = tool_data(&searched);
+    let results = payload["results"].as_array().unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["id"], mem_id.as_str());
     assert!(
@@ -118,7 +117,7 @@ fn mcp_endpoint_end_to_end() {
         "search must not leak content"
     );
     // Response slimming: query is not echoed; hint only on the first page; note only when there are no results
-    let sc = &searched["result"]["structuredContent"];
+    let sc = &payload;
     assert!(sc.get("query").is_none(), "query echo must be dropped");
     assert!(sc.get("hint").is_some(), "first page carries the hint");
     assert!(sc.get("note").is_none(), "non-empty results carry no note");
@@ -128,7 +127,7 @@ fn mcp_endpoint_end_to_end() {
         "tools/call",
         json!({"name": "memory_search", "arguments": {"query": "绝对不存在的词", "offset": 10}}),
     );
-    let empty_sc = &empty["result"]["structuredContent"];
+    let empty_sc = tool_data(&empty);
     assert_eq!(empty_sc["total_matches"], 0);
     assert!(empty_sc.get("hint").is_none(), "later pages omit the hint");
     assert!(
@@ -136,7 +135,12 @@ fn mcp_endpoint_end_to_end() {
         "zero results guide the caller"
     );
 
-    // Text channel is compact JSON (indentation whitespace would waste model context)
+    // Single data channel: the compact text block carries everything, with no structuredContent
+    // echo beside it (clients that surface every content block would ingest the data twice)
+    assert!(
+        searched["result"].get("structuredContent").is_none(),
+        "no structuredContent beside the text channel"
+    );
     let text = searched["result"]["content"][0]["text"].as_str().unwrap();
     assert!(
         !text.contains('\n'),
@@ -149,12 +153,10 @@ fn mcp_endpoint_end_to_end() {
         "tools/call",
         json!({"name": "memory_get", "arguments": {"ids": [mem_id]}}),
     );
-    assert!(
-        fetched["result"]["structuredContent"]["memories"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("SQLite")
-    );
+    assert!(tool_data(&fetched)["memories"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("SQLite"));
 
     // Update content and summary (regression: the field-update path once failed entirely when the embeddings table was absent)
     let updated = mcp_rpc(
@@ -170,7 +172,7 @@ fn mcp_endpoint_end_to_end() {
         }),
     );
     assert!(updated.get("error").is_none(), "update failed: {updated}");
-    assert_eq!(updated["result"]["structuredContent"]["updated"], true);
+    assert_eq!(tool_data(&updated)["updated"], true);
 
     // memory_edit: replace a span inside the content without restating it; the response stays
     // sparse (no content echo) and the change is visible through memory_get
@@ -187,7 +189,7 @@ fn mcp_endpoint_end_to_end() {
         }),
     );
     assert!(edited.get("error").is_none(), "edit failed: {edited}");
-    let edit_sc = &edited["result"]["structuredContent"];
+    let edit_sc = tool_data(&edited);
     assert_eq!(edit_sc["replaced"], 1);
     assert!(
         edit_sc.get("content").is_none(),
@@ -200,7 +202,7 @@ fn mcp_endpoint_end_to_end() {
         json!({"name": "memory_get", "arguments": {"ids": [mem_id]}}),
     );
     assert!(
-        refetched["result"]["structuredContent"]["memories"][0]["content"]
+        tool_data(&refetched)["memories"][0]["content"]
             .as_str()
             .unwrap()
             .contains("WAL 模式"),
@@ -425,7 +427,7 @@ fn modern_protocol_request_validation() {
         ],
     );
     assert_eq!(status, 200, "{resp}");
-    assert_eq!(resp["result"]["structuredContent"]["total"], 0);
+    assert_eq!(tool_data(&resp)["total"], 0);
 
     // A null id is malformed in the modern protocol (notifications omit the id entirely)
     let (status, resp) = send(

@@ -13,6 +13,16 @@ use std::time::Duration;
 /// marker at all; see the `legacy` test module).
 pub(crate) const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 
+/// The tool-result payload carried by the text content block — the single data channel (compact
+/// JSON; the server deliberately sends no structuredContent alongside, so clients that surface
+/// every content block don't ingest the same data twice).
+pub(crate) fn tool_data(resp: &Value) -> Value {
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool result carries a text content block");
+    serde_json::from_str(text).expect("tool result text parses as JSON")
+}
+
 /// Build a modern-protocol JSON-RPC request body: injects the required `_meta` fields into params
 /// (the stateless replacement for the initialize handshake).
 pub(crate) fn rpc_body(id: Value, method: &str, params: Value) -> String {

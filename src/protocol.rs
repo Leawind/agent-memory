@@ -540,14 +540,15 @@ fn tools_call(store_path: &Path, ctx: &IdentityCtx, id: &Value, params: &Value) 
 
     match tools::execute_with_db(store_path, ctx, name, &args) {
         Ok(v) => {
-            // The text carries the same data as structuredContent; serialized compactly — a pretty-printed
-            // layout's indentation whitespace would be paid for out of the client model's context on every tool call
+            // The text block is the single data channel, serialized compactly — a pretty-printed
+            // layout's indentation whitespace would be paid for out of the client model's context
+            // on every tool call. No structuredContent alongside: no tool declares an outputSchema,
+            // and clients that surface every content block would ingest the same data twice.
             let text = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
             ok_value(
                 id,
                 json!({
                     "content": [{"type": "text", "text": text}],
-                    "structuredContent": v,
                     "resultType": "complete",
                 }),
             )
@@ -647,6 +648,15 @@ mod tests {
 
     fn request_of(line: &str) -> Value {
         serde_json::from_str(line).unwrap()
+    }
+
+    /// The tool-result payload: the text content block is the single data channel (compact JSON,
+    /// no structuredContent alongside).
+    fn tool_data(resp: &Value) -> Value {
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("tool result carries a text content block");
+        serde_json::from_str(text).expect("tool result text parses as JSON")
     }
 
     /// Execute one JSON-RPC message as a legacy client would: no `_meta` injection and no mirrored
@@ -831,7 +841,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#,
         );
         assert_eq!(status, 200);
-        assert_eq!(created["result"]["structuredContent"]["memory"]["id"], "m1");
+        assert_eq!(tool_data(&created)["memory"]["id"], "m1");
 
         let (status, read) = roundtrip_legacy(
             &store,
@@ -1181,9 +1191,11 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#,
         );
         assert_eq!(status, 200);
-        assert_eq!(created["result"]["structuredContent"]["memory"]["id"], "m1");
+        assert_eq!(tool_data(&created)["memory"]["id"], "m1");
         assert_eq!(created["result"]["resultType"], "complete");
-        // Text content and structured content carry the same data, as compact JSON (no newlines or indentation)
+        // Single data channel: the compact text block carries everything; no structuredContent
+        // doubling it (clients that surface every content block would ingest the data twice)
+        assert!(created["result"].get("structuredContent").is_none());
         let text = created["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("\"id\""));
         assert!(

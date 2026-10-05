@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 
-use crate::common::{cleanup, json_body, temp_db, try_request, HttpProc};
+use crate::common::{cleanup, json_body, temp_db, tool_data, try_request, HttpProc};
 
 /// POST one JSON-RPC message as a legacy client: no `_meta`, no mirrored headers.
 fn legacy_post(port: u16, body: &str, extra_headers: &[(&str, &str)]) -> (u16, Value) {
@@ -99,7 +99,7 @@ fn legacy_client_full_flow() {
     );
     assert_eq!(status, 200);
     assert_eq!(resp["result"]["isError"], Value::Null);
-    let id = resp["result"]["structuredContent"]["memory"]["id"].clone();
+    let id = tool_data(&resp)["memory"]["id"].clone();
 
     let (status, resp) = legacy_post(
         port,
@@ -112,7 +112,7 @@ fn legacy_client_full_flow() {
     );
     assert_eq!(status, 200);
     assert_eq!(
-        resp["result"]["structuredContent"]["memories"][0]["content"],
+        tool_data(&resp)["memories"][0]["content"],
         "written by the 2025-06-18 flow"
     );
 

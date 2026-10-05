@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 
-use crate::common::{cleanup, mcp_post, temp_db, HttpProc};
+use crate::common::{cleanup, mcp_post, temp_db, tool_data, HttpProc};
 
 /// Create a memory through the tool surface and return its id.
 fn create_memory(port: u16, summary: &str, content: &str, tags: &[&str]) -> String {
@@ -16,7 +16,7 @@ fn create_memory(port: u16, summary: &str, content: &str, tags: &[&str]) -> Stri
         }}),
         &[],
     );
-    resp["result"]["structuredContent"]["memory"]["id"]
+    tool_data(&resp)["memory"]["id"]
         .as_str()
         .unwrap()
         .to_string()
