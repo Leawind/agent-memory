@@ -892,6 +892,106 @@ mod tests {
         cleanup(&path);
     }
 
+    /// Tag set algebra (tag_expr): list and search narrow to memories whose tag set satisfies the
+    /// expression; empty string counts as absent; syntax errors and unknown tags (with a
+    /// did-you-mean hint) are Invalid; the expression ANDs with the other tag filters.
+    #[test]
+    fn tag_expr_filters_list_and_search() {
+        let path = temp_db("tag-expr");
+        for name in ["rust", "web", "notes"] {
+            call(&path, "tag_create", json!({"name": name})).unwrap();
+        }
+        // m1: rust · m2: web · m3: rust+web · m4: notes
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "one", "content": "c", "tags": ["rust"]}),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "two", "content": "c", "tags": ["web"]}),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "three", "content": "c", "tags": ["rust", "web"]}),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "four", "content": "c", "tags": ["notes"]}),
+        )
+        .unwrap();
+
+        let ids = |out: &Value| -> Vec<String> {
+            let mut got: Vec<String> = out["memories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["id"].as_str().unwrap().to_string())
+                .collect();
+            got.sort();
+            got
+        };
+
+        // The user-facing example: both rust and web, or notes → m3, m4
+        let out = call(
+            &path,
+            "memory_list",
+            json!({"tag_expr": "(rust&web)|notes"}),
+        )
+        .unwrap();
+        assert_eq!(out["total"], 2);
+        assert_eq!(ids(&out), vec!["m3".to_string(), "m4".to_string()]);
+        // Negation is the complement within each memory's tag set → m2, m4
+        let out = call(&path, "memory_list", json!({"tag_expr": "!rust"})).unwrap();
+        assert_eq!(out["total"], 2);
+        assert_eq!(ids(&out), vec!["m2".to_string(), "m4".to_string()]);
+        // ANDs with the exact-tag filter: rust ∩ web → m3 only
+        let out = call(
+            &path,
+            "memory_list",
+            json!({"tag": "rust", "tag_expr": "web"}),
+        )
+        .unwrap();
+        assert_eq!(out["total"], 1);
+        assert_eq!(ids(&out), vec!["m3".to_string()]);
+        // Empty string counts as absent
+        let out = call(&path, "memory_list", json!({"tag_expr": "   "})).unwrap();
+        assert_eq!(out["total"], 4);
+        // Quoted names carry operators and whitespace (the tag exists, so no error)
+        call(&path, "tag_create", json!({"name": "rust & life"})).unwrap();
+        let out = call(&path, "memory_list", json!({"tag_expr": "'rust & life'"})).unwrap();
+        assert_eq!(out["total"], 0);
+
+        // Syntax errors surface as Invalid with position
+        let err = call(&path, "memory_list", json!({"tag_expr": "(rust|web"})).unwrap_err();
+        assert!(err.to_string().contains("missing ')'"), "got: {err}");
+        // Unknown tag rejected with the did-you-mean hint (case-insensitive lookup)
+        let err = call(&path, "memory_list", json!({"tag_expr": "Rust"})).unwrap_err();
+        assert!(
+            err.to_string().contains("did you mean 'rust'"),
+            "got: {err}"
+        );
+
+        // search narrows its ranked candidates by the expression too: c hits all four bodies,
+        // rust & !web keeps m1 only
+        let out = call(
+            &path,
+            "memory_search",
+            json!({"query": "c", "tag_expr": "rust&!web"}),
+        )
+        .unwrap();
+        assert_eq!(out["total_matches"], 1);
+        assert_eq!(out["results"][0]["id"], "m1");
+
+        cleanup(&path);
+    }
+
     #[test]
     fn memory_list_reports_tag_state() {
         let path = temp_db("list-note");

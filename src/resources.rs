@@ -15,7 +15,7 @@
 
 use crate::auth::{Cap, IdentityCtx};
 use crate::model::{normalize_tag_name, Memory};
-use crate::store::{self, Store, TxMode};
+use crate::store::{self, ListFilter, Store, TxMode};
 use crate::util;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -101,8 +101,10 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
             // A big-but-safe page bound: conventions memories are few by design (resident rules),
             // and SQLite treats a negative LIMIT as unbounded, which `u64::MAX as i64` would yield.
             let (_, conventions) = st.list_memories(
-                Some(CONVENTIONS_TAG),
-                None,
+                ListFilter {
+                    tag: Some(CONVENTIONS_TAG),
+                    ..Default::default()
+                },
                 "updated_at",
                 false,
                 0,
@@ -224,7 +226,16 @@ fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
             return Err(ResourceError::not_found(uri));
         }
         let view = st.tag_view(name)?;
-        let (_, page) = st.list_memories(Some(name), None, "updated_at", false, 0, TAG_RESOURCE_LIMIT)?;
+        let (_, page) = st.list_memories(
+            ListFilter {
+                tag: Some(name),
+                ..Default::default()
+            },
+            "updated_at",
+            false,
+            0,
+            TAG_RESOURCE_LIMIT,
+        )?;
         let memories: Vec<Value> = page.iter().map(Memory::summary_view).collect();
         let memory_count = view["count"].clone();
         let mut doc = json!({

@@ -27,6 +27,7 @@ mod settings;
 mod tags;
 mod tx;
 
+pub use memories::ListFilter;
 pub use tx::{with_db_in, TxMode};
 
 use rusqlite::Connection;

@@ -40,6 +40,10 @@ pub const TOOL_NAMES: &[&str] = &[
     MEMORY_DELETE,
 ];
 
+/// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
+/// descriptions must not drift apart.
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Unknown tags are rejected with the closest existing name suggested. Combines with the other tag filters (all must hold). Empty string counts as absent.";
+
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
         def(
@@ -122,6 +126,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "tag": {"type": "string", "description": "Only memories carrying this exact tag."},
                     "tag_filter": {"type": "string", "description": "Only memories carrying at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tag' (both must hold)."},
+                    "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
                     "sort": {"type": "string", "enum": ["updated_at", "id"], "description": "Default: updated_at. 'id' equals creation order."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
                     "offset": {"type": "integer", "minimum": 0},
@@ -140,6 +145,7 @@ pub fn tool_definitions() -> Value {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional filter: memory must carry at least one of these tags."},
                     "tag_filter": {"type": "string", "description": "Optional filter: memory must carry at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tags' (both must hold)."},
+                    "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
                     "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (keyword + semantic) when the server has semantic search configured, otherwise plain keyword (flagged semantic: \"disabled\" in the response). 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}

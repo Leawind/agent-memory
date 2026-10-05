@@ -95,6 +95,11 @@ src/
   search.rs      关键词搜索：AND 语义（引号短语逐字相邻）、TF 封顶 + ASCII 整词加权、
                  中文子串匹配（内存内计算）、片段窗口优选；片段是纯文本原样返回（展示层
                  职责不进数据层，UI 以文本插值渲染，不走 v-html）
+  tag_expr.rs    标签集合运算：解析/求值标签布尔表达式（! > & > |，括号分组，&&/|| 别名，
+                 引号名字带转义），纯语法层；叶子名由调用方对库校验（未知名 400 + did-you-
+                 mean）。memory_list/memory_search 的 tag_expr 参数：list 求值为记忆 id
+                 集合走静态 SQL 的 json_each（ListFilter），search 在排序候选上求值收窄；
+                 与 tag/tag_filter/tags 全部 AND；空串视为无表达式
   embed.rs       语义搜索：OpenAI 兼容 /embeddings 客户端（ureq+rustls，全项目唯一出站 HTTP）、
                  向量 BLOB 编解码/余弦、RRF 混合排序、process_pending 有界批量补跑；
                  回退是硬性原则——服务不可用只降级不失败（搜索回退关键词 + semantic_fallback 标记，

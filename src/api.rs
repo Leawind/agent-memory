@@ -501,6 +501,7 @@ fn list_or_search_args(query: &str) -> Value {
         "query",
         "tag",
         "tag_filter",
+        "tag_expr",
         "sort",
         "order",
         "offset",

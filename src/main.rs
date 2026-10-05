@@ -18,6 +18,7 @@ mod resources;
 mod search;
 mod sql;
 mod store;
+mod tag_expr;
 mod tools;
 mod util;
 

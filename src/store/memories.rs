@@ -7,6 +7,16 @@ use std::collections::HashMap;
 
 use super::Store;
 
+/// The AND-composed optional filters of a list query: `tag` is one exact tag name; `tag_set` is a
+/// JSON array text of internal tag ids (the resolved regex filter); `id_set` is a JSON array text
+/// of internal memory ids (the resolved tag expression). `None` = no constraint.
+#[derive(Default)]
+pub struct ListFilter<'a> {
+    pub tag: Option<&'a str>,
+    pub tag_set: Option<&'a str>,
+    pub id_set: Option<&'a str>,
+}
+
 impl Store {
     /// Summarize entry ids that normalize to the same value as an existing memory (compared on the Rust side with consistent Unicode semantics).
     pub fn find_duplicates_by_summary(&self, summary: &str) -> Result<Vec<String>, String> {
@@ -130,28 +140,33 @@ impl Store {
         Ok(out)
     }
 
-    /// Paged browsing (optional tag filtering: `tag` is one exact tag; `tag_set` is a JSON array text of internal tag ids,
-    /// matching any of them — name → id resolution and regex filtering
-    /// are done by the caller over the full tag set beforehand),
-    /// returns (total count, current page).
+    /// Paged browsing with AND-composed optional filters (`filter.tag` is one exact tag;
+    /// `filter.tag_set` is a JSON array text of internal tag ids, matching any of them — name →
+    /// id resolution and regex filtering are done by the caller over the full tag set beforehand;
+    /// `filter.id_set` is a JSON array text of internal memory ids, the resolved memory set of a
+    /// caller-side tag expression), returns (total count, current page).
     ///
-    /// Fully static SQL (see sql/memory_list_page.sql): no filtering while `?1`/`?2` are NULL;
-    /// set filtering is expanded with json_each (SQLite's built-in JSON1); the sort column is chosen among `?3` via CASE;
-    /// `?4` carries ±1 for ascending/descending (all columns are integers).
+    /// Fully static SQL (see sql/memory_list_page.sql): no filtering while the bound filters are NULL;
+    /// set filtering is expanded with json_each (SQLite's built-in JSON1); the sort column is chosen among `?4` via CASE;
+    /// `?5` carries ±1 for ascending/descending (all columns are integers).
     /// `sort` only accepts values whitelisted by the handler.
     pub fn list_memories(
         &self,
-        tag: Option<&str>,
-        tag_set: Option<&str>,
+        filter: ListFilter<'_>,
         sort: &str,
         asc: bool,
         offset: u64,
         limit: u64,
     ) -> Result<(u64, Vec<Memory>), String> {
+        let ListFilter {
+            tag,
+            tag_set,
+            id_set,
+        } = filter;
         let dir: i64 = if asc { 1 } else { -1 };
         let total: u64 = self
             .conn
-            .query_row(sql::MEMORY_LIST_COUNT, params![tag, tag_set], |r| {
+            .query_row(sql::MEMORY_LIST_COUNT, params![tag, tag_set, id_set], |r| {
                 r.get::<_, i64>(0)
             })
             .map(|n| n as u64)
@@ -162,7 +177,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map(
-                params![tag, tag_set, sort, dir, limit as i64, offset as i64],
+                params![tag, tag_set, id_set, sort, dir, limit as i64, offset as i64],
                 |r| {
                     let created: i64 = r.get(3)?;
                     let updated: i64 = r.get(4)?;
@@ -345,23 +360,41 @@ mod tests {
             insert_with_tags(&st, &format!("s{i}"), "c", &["t1"], i);
         }
         let (total, page) = st
-            .list_memories(None, None, "updated_at", false, 0, 3)
+            .list_memories(Default::default(), "updated_at", false, 0, 3)
             .unwrap();
         assert_eq!(total, 5);
         assert_eq!(page.len(), 3);
         assert_eq!(page[0].summary, "s4");
         let (total2, page2) = st
-            .list_memories(None, None, "updated_at", false, 3, 3)
+            .list_memories(Default::default(), "updated_at", false, 3, 3)
             .unwrap();
         assert_eq!(total2, 5);
         assert_eq!(page2.len(), 2);
         let (total3, page3) = st
-            .list_memories(Some("t1"), None, "updated_at", true, 0, 200)
+            .list_memories(
+                ListFilter {
+                    tag: Some("t1"),
+                    ..Default::default()
+                },
+                "updated_at",
+                true,
+                0,
+                200,
+            )
             .unwrap();
         assert_eq!(total3, 5);
         assert_eq!(page3[0].summary, "s0");
         let (total4, _) = st
-            .list_memories(Some("t1"), None, "id", false, 0, 200)
+            .list_memories(
+                ListFilter {
+                    tag: Some("t1"),
+                    ..Default::default()
+                },
+                "id",
+                false,
+                0,
+                200,
+            )
             .unwrap();
         assert_eq!(total4, 5);
         // Tag set filtering (tag_set is JSON array text of ids, expanded with json_each; empty set = no results)
@@ -371,14 +404,25 @@ mod tests {
             json!(st.tag_ids_for_names(&owned).unwrap()).to_string()
         };
         let (total5, page5) = st
-            .list_memories(None, Some(&id_set(&["t1"])), "updated_at", false, 0, 200)
+            .list_memories(
+                ListFilter {
+                    tag_set: Some(&id_set(&["t1"])),
+                    ..Default::default()
+                },
+                "updated_at",
+                false,
+                0,
+                200,
+            )
             .unwrap();
         assert_eq!(total5, 5);
         assert!(page5.iter().all(|m| m.summary != "s-other"));
         let (total6, _) = st
             .list_memories(
-                None,
-                Some(&id_set(&["t1", "t2"])),
+                ListFilter {
+                    tag_set: Some(&id_set(&["t1", "t2"])),
+                    ..Default::default()
+                },
                 "updated_at",
                 false,
                 0,
@@ -387,14 +431,26 @@ mod tests {
             .unwrap();
         assert_eq!(total6, 6);
         let (total7, _) = st
-            .list_memories(None, Some("[]"), "updated_at", false, 0, 200)
+            .list_memories(
+                ListFilter {
+                    tag_set: Some("[]"),
+                    ..Default::default()
+                },
+                "updated_at",
+                false,
+                0,
+                200,
+            )
             .unwrap();
         assert_eq!(total7, 0);
         // Exact tag and set used together = AND
         let (total8, _) = st
             .list_memories(
-                Some("t2"),
-                Some(&id_set(&["t1"])),
+                ListFilter {
+                    tag: Some("t2"),
+                    tag_set: Some(&id_set(&["t1"])),
+                    ..Default::default()
+                },
                 "updated_at",
                 false,
                 0,
@@ -438,7 +494,7 @@ mod tests {
         let changed = st.update_memory(old, None, None, &add.ids, &[]).unwrap();
         assert!(changed);
         let (_, page) = st
-            .list_memories(None, None, "updated_at", false, 0, 10)
+            .list_memories(Default::default(), "updated_at", false, 0, 10)
             .unwrap();
         assert_eq!(page[0].summary, "fresh");
 
@@ -446,7 +502,7 @@ mod tests {
         st.update_memory(old, None, Some("rewritten"), &[], &[])
             .unwrap();
         let (_, page) = st
-            .list_memories(None, None, "updated_at", false, 0, 10)
+            .list_memories(Default::default(), "updated_at", false, 0, 10)
             .unwrap();
         assert_eq!(page[0].summary, "old");
 

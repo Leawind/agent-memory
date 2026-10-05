@@ -3,13 +3,49 @@
 use crate::auth::IdentityCtx;
 use crate::model::{normalize_id, normalize_tag_name, now, RESERVED_TAG};
 use crate::search;
-use crate::store::Store;
+use crate::store::{ListFilter, Store};
+use crate::tag_expr::{self, TagExpr};
 use crate::tools::params::{
     normalize_tag_list, opt_bool, opt_regex, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
     validate_content, validate_summary,
 };
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
+
+/// Parse and store-validate a tag expression: syntax errors and unknown leaf tags are Invalid,
+/// unknown names get the same did-you-mean hint as tag linking on writes.
+fn resolve_tag_expr(st: &Store, raw: &str) -> Result<TagExpr, ToolError> {
+    let expr = tag_expr::parse(raw).map_err(ToolError::invalid)?;
+    let mut unknown: Vec<String> = Vec::new();
+    for name in expr.tag_names() {
+        if !st.tag_exists(name).map_err(ToolError::invalid)? {
+            match st
+                .find_tag_case_insensitive(name)
+                .map_err(ToolError::invalid)?
+            {
+                Some(similar) => unknown.push(format!("'{name}' (did you mean '{similar}'?)")),
+                None => unknown.push(format!("'{name}'")),
+            }
+        }
+    }
+    if !unknown.is_empty() {
+        return Err(ToolError::invalid(format!(
+            "unknown tags in tag_expr: {} (see tag_list for available names)",
+            unknown.join(", ")
+        )));
+    }
+    Ok(expr)
+}
+
+/// Read the optional tag_expr argument: absent, empty or whitespace-only counts as no expression
+/// (the common clearing case stays lenient; a non-empty malformed expression is an error).
+fn opt_tag_expr(st: &Store, args: &Map<String, Value>) -> Result<Option<TagExpr>, ToolError> {
+    let expr = match opt_str(args, "tag_expr")? {
+        Some(raw) if !raw.trim().is_empty() => Some(resolve_tag_expr(st, &raw)?),
+        _ => None,
+    };
+    Ok(expr)
+}
 
 pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let summary = validate_summary(&req_str(args, "summary")?)?;
@@ -95,8 +131,32 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         }
         None => None,
     };
-    let (total, page) =
-        st.list_memories(tag.as_deref(), tag_set.as_deref(), sort, asc, offset, limit)?;
+    // Tag expression: resolved against the full store into a memory-id set (JSON array text),
+    // handed to the same static SQL as the other filters — all filters AND together
+    let tag_expr = opt_tag_expr(st, args)?;
+    let id_set = match &tag_expr {
+        Some(expr) => {
+            let memories = st.all_memories()?;
+            let ids: Vec<i64> = memories
+                .iter()
+                .filter(|m| expr.eval(&|n| m.tags.iter().any(|t| t == n)))
+                .filter_map(|m| Store::parse_id(&m.id))
+                .collect();
+            Some(json!(ids).to_string())
+        }
+        None => None,
+    };
+    let (total, page) = st.list_memories(
+        ListFilter {
+            tag: tag.as_deref(),
+            tag_set: tag_set.as_deref(),
+            id_set: id_set.as_deref(),
+        },
+        sort,
+        asc,
+        offset,
+        limit,
+    )?;
     let memories: Vec<Value> = page.iter().map(|m| m.summary_view()).collect();
 
     let mut out = json!({"total": total, "offset": offset, "limit": limit, "memories": memories});
@@ -126,6 +186,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
     let tag_filter = normalize_tag_list(&raw_tags)?;
     let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
+    let tag_expr = opt_tag_expr(st, args)?;
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     enum SearchMode {
@@ -197,6 +258,15 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
             semantic_fallback = !ok;
             hits
         }
+    };
+
+    // Tag expression ANDs with tags/tag_filter: narrow the ranked candidates per memory tag set
+    let hits = match &tag_expr {
+        Some(expr) => hits
+            .into_iter()
+            .filter(|h| expr.eval(&|n| memories[h.idx].tags.iter().any(|t| t == n)))
+            .collect(),
+        None => hits,
     };
 
     let total = hits.len() as u64;
