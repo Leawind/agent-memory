@@ -1,9 +1,9 @@
-// Modern-protocol compatibility check: a hand-written MCP client (2026-07-28) against the
-// agent-memory HTTP server.
+// Dual-era MCP compatibility check: hand-written clients (modern 2026-07-28 and legacy
+// 2025-06-18) against the agent-memory HTTP server.
 //
-// The official TypeScript SDK has not shipped a modern-protocol client yet (1.x speaks the
-// legacy initialize handshake, which this server deliberately rejects), so this script drives
-// the protocol by hand over fetch (Node >= 24). When an SDK v2 lands, swap the transport back.
+// Both protocol surfaces are driven by hand over fetch (Node >= 24): the modern era for its
+// per-request `_meta` + mirrored headers, the legacy era the way an official SDK 1.x client
+// speaks it (initialize handshake, no per-request metadata).
 //
 // Usage (start the server first, e.g. agent-memory serve --port 8899):
 //   node scripts/sdk-compat-check.ts            # defaults to http://127.0.0.1:8899/mcp
@@ -15,6 +15,7 @@
 const ENDPOINT = process.env.MCP_URL || "http://127.0.0.1:8899/mcp";
 const TOKEN = process.env.MCP_TOKEN;
 const PROTOCOL_VERSION = "2026-07-28";
+const LEGACY_PROTOCOL_VERSION = "2025-06-18";
 
 const failures: string[] = [];
 function check(name: string, cond: boolean, extra = ""): void {
@@ -69,6 +70,23 @@ async function rpc(
 
 function structuredOf(r: RpcOk): Record<string, unknown> | undefined {
   return r.result?.structuredContent as Record<string, unknown> | undefined
+}
+
+/** POST one JSON-RPC message the way a legacy (2025-06-18) client does: no `_meta`, no mirrored
+ * headers — the initialize handshake pins the version, nothing else is carried per request. */
+async function legacyRpc(
+  id: string | number,
+  method: string,
+  params: Record<string, unknown> = {},
+): Promise<RpcOk> {
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...authHeaders() },
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+  })
+  if (res.status === 202) return { status: 202 }
+  const body = (await res.json()) as Record<string, never>
+  return { status: res.status, ...body }
 }
 
 /**
@@ -153,8 +171,9 @@ try {
   const d = discover.result ?? {}
   check("server/discover succeeds", discover.status === 200 && d.resultType === "complete")
   check(
-    "discover lists the supported version",
-    JSON.stringify(d.supportedVersions) === JSON.stringify([PROTOCOL_VERSION]),
+    "discover lists both supported versions",
+    JSON.stringify(d.supportedVersions) ===
+      JSON.stringify([PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION]),
     JSON.stringify(d.supportedVersions),
   )
   const capabilities = d.capabilities as Record<string, Record<string, unknown>> | undefined
@@ -349,10 +368,11 @@ try {
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 10, method: "ping" }),
   })
-  const noMetaBody = (await noMeta.json()) as { error?: { code?: number } }
+  const noMetaBody = (await noMeta.json()) as { result?: { resultType?: string } }
   check(
-    "missing _meta rejected with 400 + -32602",
-    noMeta.status === 400 && noMetaBody.error?.code === -32602,
+    "meta-less request is served as a legacy client",
+    noMeta.status === 200 && noMetaBody.result?.resultType === "complete",
+    JSON.stringify(noMetaBody).slice(0, 120),
   )
   const headerMismatch = await fetch(ENDPOINT, {
     method: "POST",
@@ -374,10 +394,11 @@ try {
     "header/body version mismatch rejected with 400 + -32020",
     headerMismatch.status === 400 && mismatchBody.error?.code === -32020,
   )
-  const legacyInit = await rpc(12, "initialize", { protocolVersion: "2025-06-18" })
+  const legacyInit = await rpc(12, "initialize", { protocolVersion: LEGACY_PROTOCOL_VERSION })
   check(
-    "legacy initialize answered with -32022 naming supported versions",
-    legacyInit.status === 400 && legacyInit.error?.code === -32022,
+    "modern envelope declaring the legacy initialize is answered with the handshake",
+    legacyInit.status === 200 && legacyInit.result?.protocolVersion === LEGACY_PROTOCOL_VERSION,
+    JSON.stringify(legacyInit.result ?? legacyInit.error).slice(0, 120),
   )
   const batch = await fetch(ENDPOINT, {
     method: "POST",
@@ -471,6 +492,63 @@ try {
 
   const pong = await rpc(21, "ping")
   check("ping roundtrip", pong.result?.resultType === "complete")
+
+  // ---- Legacy era (2025-06-18): the way an official SDK 1.x client connects. Read-only calls:
+  // the data under test was created by the modern flow above, which also proves both eras share
+  // one store.
+  const init = await legacyRpc("legacy-1", "initialize", {
+    protocolVersion: LEGACY_PROTOCOL_VERSION,
+    capabilities: {},
+    clientInfo: { name: "legacy-compat-check", version: "0.0.1" },
+  })
+  const legacyResult = init.result ?? {}
+  check(
+    "legacy initialize echoes the requested version",
+    init.status === 200 && legacyResult.protocolVersion === LEGACY_PROTOCOL_VERSION,
+    JSON.stringify(legacyResult).slice(0, 160),
+  )
+  const legacyCaps = legacyResult.capabilities as Record<string, Record<string, unknown>> | undefined
+  check(
+    "legacy capabilities promise no notification channel",
+    legacyCaps?.resources?.subscribe === false && legacyCaps?.resources?.listChanged === false,
+    JSON.stringify(legacyCaps),
+  )
+  check(
+    "legacy initialize carries serverInfo at the top level",
+    (legacyResult.serverInfo as Record<string, unknown> | undefined)?.name === "agent-memory",
+  )
+  check(
+    "legacy initialize carries instructions",
+    typeof legacyResult.instructions === "string" && (legacyResult.instructions as string).length > 0,
+  )
+  const legacyInitialized = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  })
+  check("legacy notifications/initialized accepted", legacyInitialized.status === 202)
+
+  const legacyTools = await legacyRpc("legacy-2", "tools/list")
+  check(
+    "legacy tools/list works without any envelope",
+    legacyTools.status === 200 &&
+      ((legacyTools.result?.tools as { name: string }[] | undefined) ?? []).length === 12,
+  )
+  const legacySearch = await legacyRpc("legacy-3", "tools/call", {
+    name: "memory_search",
+    arguments: { query: "联调" },
+  })
+  check(
+    "legacy tools/call reads the same store",
+    (structuredOf(legacySearch) as { total_matches?: number } | undefined)?.total_matches === 1,
+  )
+  const legacyUnknown = await legacyRpc("legacy-4", "bogus/method")
+  check(
+    "legacy unknown method surfaces as 404 + -32601",
+    legacyUnknown.status === 404 && legacyUnknown.error?.code === -32601,
+  )
+  const legacyPong = await legacyRpc("legacy-5", "ping")
+  check("legacy ping roundtrip", legacyPong.status === 200)
 
   done = true
 } catch (e) {
