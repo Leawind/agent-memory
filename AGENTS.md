@@ -113,8 +113,11 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
                  点击弹 TagDialog：标题行「标签 #<名称>」+ 删除/保存（无修改禁用）；侧栏与列表间
                  分隔条可拖拽调宽（180–420px，localStorage 持久化，窄容器折叠为限高块）），右侧
                  MemoriesPanel（Modrinth 式卡片列表：摘要独占一行、标签/片段另起一行，整卡点击弹
-                 MemoryEditorDialog：标题行「记忆 #<ID>」+ 删除 + 无修改禁用保存，新建复用同一弹窗）；
-                 两侧数据联动（标签改名/删除后记忆列表与筛选下拉刷新，记忆增删后侧栏计数刷新）；
+                 MemoryEditorDialog：标题行「记忆 #<ID>」+ 删除 + 无修改禁用保存，新建复用同一弹窗；
+                 工具栏的标签过滤是表达式文本框 TagExprInput（输入 tag_expr 集合表达式，键入
+                 标签名时 token 级下拉自动补全、Enter/选中即应用、输入防抖应用；表达式
+                 localStorage 持久化；vue-i18n 消息里的 | 须写成 {'|'} 转义））；
+                 两侧数据联动（标签改名/删除后记忆列表与补全候选刷新，记忆增删后侧栏计数刷新）；
                  AdminPanel（admin 专属：身份、鉴权开关、自定义提示词、备份、体检；who prop 门控）
                  由宿主挂入弹窗或页面（show-header/title/subtitle props 裁剪），概况弹窗 OpsDialog
                  承载只读统计与版本信息（每次打开重拉），另附便捷壳 MemoryAdmin（品牌标题 +

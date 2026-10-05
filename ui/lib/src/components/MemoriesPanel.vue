@@ -24,16 +24,15 @@
             <el-button :icon="Search" @click="run(onSearch)" />
           </template>
         </el-input>
-        <el-select
-          v-model="tagFilter"
-          :placeholder="t('memories.tagFilter')"
-          clearable
-          filterable
+        <TagExprInput
+          v-model="tagExpr"
+          :tags="tagOptions"
+          :placeholder="t('memories.tagExprPlaceholder')"
+          :help="t('memories.tagExprHelp')"
           class="tag-filter"
-          @change="run(onSearch)"
-        >
-          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
-        </el-select>
+          @apply="onExprApply"
+          @update:model-value="onExprChanged"
+        />
         <el-select v-model="sortChoice" class="sort-select">
           <el-option :label="t('memories.sortUpdatedDesc')" value="updated_at:desc" />
           <el-option :label="t('memories.sortUpdatedAsc')" value="updated_at:asc" />
@@ -118,6 +117,7 @@ import { toastError } from '../toast'
 import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
+import TagExprInput from './TagExprInput.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -138,7 +138,7 @@ const emit = defineEmits<{
 
 const {
   query,
-  tagFilter,
+  tagExpr,
   mode,
   sort,
   order,
@@ -180,13 +180,27 @@ const cards = computed<MemoryCard[]>(() =>
 
 // The empty-result notice is generated locally (the server's note targets agents and is English
 // contract text, not passed through to the UI):
-// list mode = the tag has no linked memories; search mode = no hits
+// list mode = nothing satisfies the expression; search mode = no hits
 const emptyNote = computed(() => {
   if (loading.value || total.value !== 0) return ''
   if (searching.value) return t('memories.searchEmpty')
-  const tag = tagFilter.value.trim()
-  return tag ? t('memories.tagEmpty', { tag }) : ''
+  if (tagExpr.value.trim()) return t('memories.exprEmpty')
+  return ''
 })
+
+// Typing applies through a debounce (an expression is composed over several keystrokes);
+// Enter / clear / suggestion selection apply immediately
+let exprTimer: ReturnType<typeof setTimeout> | undefined
+function onExprChanged() {
+  clearTimeout(exprTimer)
+  exprTimer = setTimeout(() => {
+    void run(onSearch)
+  }, 400)
+}
+function onExprApply() {
+  clearTimeout(exprTimer)
+  void run(onSearch)
+}
 
 // Sorting: one select over the (field, direction) pair the list query takes. The old table
 // headers were sortable; the card list carries the same capability in the toolbar instead.
@@ -230,7 +244,7 @@ function onMutated() {
 
 // A permanently mounted panel cannot sense visibility itself: the host calls refresh when
 // switching back to this view to pull the latest data (tag options too: renames elsewhere
-// must reach the filter dropdown)
+// must reach the expression suggestions)
 defineExpose({
   refresh: () => {
     run(reload)
@@ -245,7 +259,8 @@ defineExpose({
   flex: 1 1 100%;
 }
 .tag-filter {
-  width: 200px;
+  flex: 1 1 240px;
+  max-width: 460px;
 }
 .sort-select {
   width: 140px;

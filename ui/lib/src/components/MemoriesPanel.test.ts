@@ -52,6 +52,7 @@ function jsonResponse(body: unknown) {
 
 describe('MemoriesPanel', () => {
   beforeEach(() => {
+    localStorage.clear()
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string | URL) => Promise.resolve(mockFetch(url))),
@@ -104,16 +105,40 @@ describe('MemoriesPanel', () => {
     const fetchMock = vi.mocked(globalThis.fetch)
     fetchMock.mockClear()
     // The select renders as an EP select; drive the ref-backed watcher through the component.
-    // Toolbar order: tag filter first, sort control second.
+    // Toolbar order: the expression box is an input (not a select), so the selects are
+    // [sort, mode].
     const selects = wrapper.findAllComponents({ name: 'ElSelect' })
     expect(selects.length).toBeGreaterThanOrEqual(2)
-    selects[1].vm.$emit('update:modelValue', 'id:asc')
+    selects[0].vm.$emit('update:modelValue', 'id:asc')
     await flushPromises()
     await flushPromises()
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
     const listCall = urls.filter((u) => u.includes('/api/memories?')).at(-1)
     expect(listCall).toContain('sort=id')
     expect(listCall).toContain('order=asc')
+    wrapper.unmount()
+  })
+
+  it('sends the tag expression as tag_expr and persists it', async () => {
+    // A persisted expression survives remounts: it rides along on the very first load
+    localStorage.setItem('agent-memory-tag-expr', '(rust&web)|notes')
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    const initialUrls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(initialUrls.some((u) => u.includes(`tag_expr=${encodeURIComponent('(rust&web)|notes')}`))).toBe(true)
+    const input = wrapper.find('.tag-filter input')
+    expect((input.element as HTMLInputElement).value).toBe('(rust&web)|notes')
+
+    // Editing applies on Enter (immediate) and re-saves storage
+    fetchMock.mockClear()
+    await input.setValue('!rust')
+    await input.trigger('keydown.enter')
+    await flushPromises()
+    await flushPromises()
+    expect(localStorage.getItem('agent-memory-tag-expr')).toBe('!rust')
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.at(-1)).toContain(`tag_expr=${encodeURIComponent('!rust')}`)
     wrapper.unmount()
   })
 })

@@ -1,7 +1,7 @@
 // Memory panel state machine: dual list/search modes, race protection, page-range fallback,
 // tag diffing.
 // Failed actions throw an Error; the panel layer shows the toast uniformly.
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useApiClient } from '../api/client'
 import { buildMemoriesQuery, isSearchMode } from '../query'
 import { useMemoryConfig } from '../config'
@@ -17,12 +17,24 @@ export interface MemoryDraft {
   tags: string[]
 }
 
+/** The tag expression survives reloads: it can be long enough that retyping is a real cost */
+const TAG_EXPR_KEY = 'agent-memory-tag-expr'
+
 export function useMemories() {
   const client = useApiClient()
   const { defaultPageSize } = useMemoryConfig()
 
   const query = ref('')
-  const tagFilter = ref('')
+  /** Tag set algebra filter, e.g. "(a&b)|c" — applies to list and search alike */
+  const tagExpr = ref(localStorage.getItem(TAG_EXPR_KEY) ?? '')
+  watch(tagExpr, (v) => {
+    try {
+      if (v) localStorage.setItem(TAG_EXPR_KEY, v)
+      else localStorage.removeItem(TAG_EXPR_KEY)
+    } catch {
+      /* storage unavailable (privacy mode etc.): filtering works, just not persisted */
+    }
+  })
   /** Search mode: auto (server decides hybrid/keyword per its config) / keyword / hybrid */
   const mode = ref<'auto' | 'keyword' | 'hybrid'>('auto')
   const sort = ref<'updated_at' | 'id'>('updated_at')
@@ -39,7 +51,7 @@ export function useMemories() {
 
   const searching = computed(() => isSearchMode(query.value))
 
-  // A change to the search term / tag filter is a new query intent: restart from page 1
+  // A change to the search term / tag expression is a new query intent: restart from page 1
   function onSearch() {
     page.value = 1
     return reload()
@@ -48,7 +60,7 @@ export function useMemories() {
   function buildQuery() {
     return buildMemoriesQuery({
       query: query.value,
-      tagFilter: tagFilter.value,
+      tagExpr: tagExpr.value,
       mode: mode.value,
       sort: sort.value,
       order: order.value,
@@ -112,7 +124,7 @@ export function useMemories() {
 
   return {
     query,
-    tagFilter,
+    tagExpr,
     mode,
     sort,
     order,

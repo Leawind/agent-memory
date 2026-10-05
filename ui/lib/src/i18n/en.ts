@@ -12,7 +12,10 @@ export default {
     subtitle: 'A memory store shared by multiple agents; content supports Markdown',
     create: 'New Memory',
     searchPlaceholder: 'Keyword search (space-separated, all must match; Chinese matches by substring)',
-    tagFilter: 'Filter by tag',
+    tagExprPlaceholder: "Filter by tag expression, e.g. (a&b){'|'}c",
+    tagExprHelp:
+      "Tag set algebra: & and (&&), {'|'} or ({'||'}), ! not, parentheses group — (a&b){'|'}c = tagged a AND b, or tagged c. Names are case-sensitive; quote names containing spaces or operators.",
+    exprEmpty: 'No memory satisfies the tag expression',
     modeAuto: 'Auto',
     modeKeyword: 'Keyword only',
     modeHybrid: 'Keyword + semantic',
@@ -25,7 +28,6 @@ export default {
     deleteTitle: 'Confirm deletion',
     deleteConfirm: 'Permanently delete memory {id}?',
     deleted: 'Deleted',
-    tagEmpty: 'Tag "{tag}" does not have any memories yet',
     searchEmpty: 'No memory matched every term; drop some terms or try broader ones',
   },
   tags: {

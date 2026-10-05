@@ -12,7 +12,10 @@ export default {
     subtitle: '多 agent 共享的记忆库，正文支持 Markdown',
     create: '新建记忆',
     searchPlaceholder: '关键词搜索（空格分隔、全部命中；中文按子串匹配）',
-    tagFilter: '按标签过滤',
+    tagExprPlaceholder: "按标签表达式过滤，如 (a&b){'|'}c",
+    tagExprHelp:
+      "标签集合运算：& 且（&&）、{'|'} 或（{'||'}）、! 非、括号分组——(a&b){'|'}c 表示同时拥有 a 和 b，或拥有 c。标签名区分大小写；含空格或运算符的名字用引号括起。",
+    exprEmpty: '没有记忆满足该标签表达式',
     modeAuto: '自动',
     modeKeyword: '仅关键词',
     modeHybrid: '关键词 + 语义',
@@ -25,7 +28,6 @@ export default {
     deleteTitle: '删除确认',
     deleteConfirm: '确定永久删除记忆 {id}？',
     deleted: '已删除',
-    tagEmpty: '标签「{tag}」目前没有关联任何记忆',
     searchEmpty: '没有记忆命中全部关键词，可减少关键词或改用更宽泛的词',
   },
   tags: {
