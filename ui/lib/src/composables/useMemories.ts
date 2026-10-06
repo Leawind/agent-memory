@@ -54,6 +54,8 @@ export function useMemories() {
   const total = ref(0)
   const loading = ref(false)
   const tagOptions = ref<string[]>([])
+  /** Tag name -> description, for hover tooltips on the memory cards' tag chips */
+  const tagDescriptions = ref<Record<string, string>>({})
 
   const searching = computed(() => isSearchMode(query.value))
 
@@ -119,7 +121,10 @@ export function useMemories() {
   async function loadTagOptions() {
     try {
       const data = (await listTags(client)) as TagListResp
-      tagOptions.value = (data.tags ?? []).map((t) => t.name)
+      const descs: Record<string, string> = {}
+      for (const tg of data.tags ?? []) if (tg.description) descs[tg.name] = tg.description
+      tagDescriptions.value = descs
+      tagOptions.value = (data.tags ?? []).map((tg) => tg.name)
     } catch {
       /* Silent: a failed tag dropdown must not block the main list */
     }
@@ -145,6 +150,7 @@ export function useMemories() {
     total,
     loading,
     tagOptions,
+    tagDescriptions,
     searching,
     onSearch,
     reload,

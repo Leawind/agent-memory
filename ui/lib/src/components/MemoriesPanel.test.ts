@@ -32,7 +32,7 @@ const searchPayload = {
     },
   ],
 }
-const tagsPayload = { tags: [{ name: 't1', count: 1 }] }
+const tagsPayload = { tags: [{ name: 't1', count: 1, description: '测试标签' }] }
 
 function mockFetch(url: string | URL) {
   const u = String(url)
@@ -139,6 +139,45 @@ describe('MemoriesPanel', () => {
     expect(localStorage.getItem('agent-memory-tag-expr')).toBe('!rust')
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
     expect(urls.at(-1)).toContain(`tag_expr=${encodeURIComponent('!rust')}`)
+    wrapper.unmount()
+  })
+
+  it('shows the tag description in a hover tooltip on the card chips', async () => {
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    await flushPromises()
+    const tooltip = wrapper.find('.card-tags').findComponent({ name: 'ElTooltip' })
+    expect(tooltip.exists()).toBe(true)
+    // The chip's tooltip carries the description from the tag list
+    expect(tooltip.props('content')).toBe('测试标签')
+    expect(tooltip.props('disabled')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('toggleTagFilter sets the expression to the tag and re-click clears it', async () => {
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+    const vm = wrapper.vm as unknown as { toggleTagFilter: (name: string) => void }
+
+    vm.toggleTagFilter('t1')
+    await flushPromises()
+    await flushPromises()
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(`tag_expr=${encodeURIComponent('t1')}`))).toBe(true)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('t1')
+    expect(localStorage.getItem('agent-memory-tag-expr')).toBe('t1')
+
+    // Clicking the already-active tag clears the filter entirely
+    fetchMock.mockClear()
+    vm.toggleTagFilter('t1')
+    await flushPromises()
+    await flushPromises()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.startsWith('/api/memories'))).toBe(true)
+    expect(urls.some((u) => u.includes('tag_expr='))).toBe(false)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
+    expect(localStorage.getItem('agent-memory-tag-expr')).toBeNull()
     wrapper.unmount()
   })
 })

@@ -1,4 +1,5 @@
-// TagsSidebar mount test: vertical tag list with descriptions, select/create emissions
+// TagsSidebar mount test: vertical tag list with descriptions, click-to-filter select,
+// hover-revealed edit affordance, active-row highlight
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import TagsSidebar from './TagsSidebar.vue'
@@ -49,6 +50,33 @@ describe('TagsSidebar', () => {
     // Sorted by count desc: rust (3) first
     await items[0].trigger('click')
     expect(wrapper.emitted('select')![0]).toEqual([{ name: 'rust', count: 3, description: '语言' }])
+    wrapper.unmount()
+  })
+
+  it('emits edit from the row affordance without selecting', async () => {
+    const wrapper = mount(TagsSidebar)
+    await flushPromises()
+    await flushPromises()
+    const first = wrapper.findAll('.sb-item')[0]
+    // The edit affordance swallows the click: it must not also act as a row (filter) click
+    await first.find('.sb-edit').trigger('click')
+    expect(wrapper.emitted('edit')![0]).toEqual([{ name: 'rust', count: 3, description: '语言' }])
+    expect(wrapper.emitted('select')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('marks the row whose tag equals the active expression', async () => {
+    const wrapper = mount(TagsSidebar, { props: { active: ' rust ' } })
+    await flushPromises()
+    await flushPromises()
+    const items = wrapper.findAll('.sb-item')
+    expect(items[0].classes()).toContain('is-active')
+    expect(items[1].classes()).not.toContain('is-active')
+
+    await wrapper.setProps({ active: 'infra' })
+    expect(items[0].classes()).not.toContain('is-active')
+    // Sorted by count desc: rust (3), convention (2), infra (1)
+    expect(items[2].classes()).toContain('is-active')
     wrapper.unmount()
   })
 

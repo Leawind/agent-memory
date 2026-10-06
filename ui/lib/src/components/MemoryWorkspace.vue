@@ -1,7 +1,7 @@
 <template>
   <div ref="rootRef" class="am-workspace" :class="{ 'is-stacked': narrow, 'is-dragging': dragging }">
     <aside class="amws-aside" :style="narrow ? undefined : { width: `${sidebarWidth}px` }">
-      <TagsSidebar ref="sidebar" @select="openTag" @create="createTag" />
+      <TagsSidebar ref="sidebar" :active="panelExpr" @select="toggleFilter" @edit="openTag" @create="createTag" />
     </aside>
 
     <!-- Drag handle between sidebar and list: adjusts the sidebar width within bounds.
@@ -22,8 +22,9 @@
       <MemoriesPanel ref="panel" @changed="refreshSidebar" />
     </div>
 
-    <!-- Tag dialog: opened from a sidebar entry (edit) or the sidebar's plus button (create);
-         every change renames/deletes tags across memories, so both sides refresh afterwards -->
+    <!-- Tag dialog: opened from a sidebar entry's edit affordance (the row's plain click
+         filters the list instead) or the sidebar's plus button (create); every change
+         renames/deletes tags across memories, so both sides refresh afterwards -->
     <TagDialog
       :visible="tagDialogVisible"
       :tag="editingTag"
@@ -35,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import type { TagView } from '../types'
 import MemoriesPanel from './MemoriesPanel.vue'
@@ -110,6 +111,14 @@ function createTag(): void {
   editingTag.value = null
   tagDialogVisible.value = true
 }
+
+// ---- Sidebar click = filter: clicking a tag narrows the list to it (clicking the active
+// one clears); the panel owns the expression, the sidebar only mirrors it for highlighting ----
+function toggleFilter(tag: TagView): void {
+  panel.value?.toggleTagFilter(tag.name)
+}
+
+const panelExpr = computed(() => panel.value?.tagExpr ?? '')
 
 // ---- Cross-side refresh: panel and sidebar stay in sync through each other's changes ----
 const sidebar = ref<InstanceType<typeof TagsSidebar> | null>(null)

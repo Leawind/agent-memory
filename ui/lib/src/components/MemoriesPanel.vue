@@ -60,7 +60,17 @@
             <!-- Snippets are plain text (server sends them unescaped); text interpolation, never v-html -->
             <span v-if="card.snippet" class="card-snippet">{{ card.snippet }}</span>
             <span class="card-tags">
-              <el-tag v-for="tag in card.tags" :key="tag" size="small">{{ tag }}</el-tag>
+              <!-- A tag chip shows its description on hover (only when one exists) -->
+              <el-tooltip
+                v-for="tag in card.tags"
+                :key="tag"
+                :content="tagDescriptions[tag]"
+                :disabled="!tagDescriptions[tag]"
+                placement="top"
+                :enterable="false"
+              >
+                <el-tag size="small">{{ tag }}</el-tag>
+              </el-tooltip>
             </span>
           </span>
           <span class="card-meta">
@@ -153,6 +163,7 @@ const {
   total,
   loading,
   tagOptions,
+  tagDescriptions,
   searching,
   onSearch,
   reload,
@@ -268,6 +279,14 @@ function onMutated() {
   emit('changed')
 }
 
+// Sidebar tag click lands here (through the workspace): the tag becomes the whole expression —
+// a click is a deliberate single-tag view, not an edit of whatever expression was typed. Clicking
+// the already-active tag clears the filter. Applied immediately: the tag is known to exist.
+function toggleTagFilter(name: string) {
+  tagExpr.value = tagExpr.value.trim() === name ? '' : name
+  run(onSearch)
+}
+
 // A permanently mounted panel cannot sense visibility itself: the host calls refresh when
 // switching back to this view to pull the latest data (tag options too: renames elsewhere
 // must reach the expression suggestions)
@@ -276,6 +295,9 @@ defineExpose({
     run(reload)
     loadTagOptions()
   },
+  toggleTagFilter,
+  // Read by the workspace so the sidebar can highlight the row matching the expression
+  tagExpr,
 })
 </script>
 

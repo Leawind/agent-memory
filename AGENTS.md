@@ -122,9 +122,12 @@ sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs �
 ui/              前端分两个 workspace 包（详见 ui/README.md）：
   ui/lib         @agent-memory/ui —— 可嵌入 Vue3 组件库（Element Plus 作 peerDependency，lib mode 构建）
                  核心是工作台 MemoryWorkspace：左侧标签侧栏 TagsSidebar（垂直列出全部标签及描述，
-                 点击弹 TagDialog：标题行「标签 #<名称>」+ 删除/保存（无修改禁用）；侧栏与列表间
+                 点击行=把过滤表达式设为该标签、再点同一行清除（活动行高亮，表达式状态在面板、
+                 经 expose 的 tagExpr 反馈给侧栏），行内悬停浮现编辑图标才弹 TagDialog：标题行
+                 「标签 #<名称>」+ 删除/保存（无修改禁用）；侧栏与列表间
                  分隔条可拖拽调宽（180–420px，localStorage 持久化，窄容器折叠为限高块）），右侧
-                 MemoriesPanel（Modrinth 式卡片列表：摘要独占一行、标签/片段另起一行，整卡点击弹
+                 MemoriesPanel（Modrinth 式卡片列表：摘要独占一行、标签/片段另起一行，卡片上的
+                 标签悬停经 tooltip 显示其描述（无描述不出 tooltip），整卡点击弹
                  MemoryEditorDialog：标题行「记忆 #<ID>」+ 删除 + 无修改禁用保存，新建复用同一弹窗；
                  正文可选——仅摘要即可保存（摘要-only 记忆正文为空串，update 传空即清空正文）；
                  工具栏的标签过滤是表达式文本框 TagExprInput（输入 tag_expr 集合表达式，键入

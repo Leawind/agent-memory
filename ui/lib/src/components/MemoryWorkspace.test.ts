@@ -1,5 +1,6 @@
-// MemoryWorkspace integration test: sidebar + memory list render side by side, the sidebar
-// opens the tag dialog (select/create), and the resizer adjusts the sidebar width within bounds.
+// MemoryWorkspace integration test: sidebar + memory list render side by side, a sidebar row
+// click narrows the list to that tag (click again clears), the edit affordance opens the tag
+// dialog (plus button creates), and the resizer adjusts the sidebar width within bounds.
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MemoryWorkspace from './MemoryWorkspace.vue'
@@ -44,11 +45,33 @@ describe('MemoryWorkspace', () => {
     wrapper.unmount()
   })
 
-  it('opens the tag dialog with the clicked tag; the plus button opens create mode', async () => {
+  it('filters the list on a row click (again to clear); the edit affordance opens the dialog', async () => {
     const wrapper = mount(MemoryWorkspace)
     await flushPromises()
     await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+
+    // Row click: the expression becomes the tag, the list refetches with it, the row highlights
     await wrapper.find('.sb-item').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(`tag_expr=${encodeURIComponent('rust')}`))).toBe(true)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('rust')
+    expect(wrapper.find('.sb-item.is-active').exists()).toBe(true)
+
+    // Clicking the active tag clears the filter
+    fetchMock.mockClear()
+    await wrapper.find('.sb-item').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.startsWith('/api/memories'))).toBe(true)
+    expect(urls.some((u) => u.includes('tag_expr='))).toBe(false)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('.sb-item.is-active').exists()).toBe(false)
+
+    // The hover-revealed edit affordance is what opens the tag dialog now
+    await wrapper.findAll('.sb-item')[0].find('.sb-edit').trigger('click')
     await flushPromises()
     const tagDialog = wrapper.findComponent({ name: 'TagDialog' })
     // The dialog received the full tag for its 标签 #<name> title and dirty baseline
@@ -73,7 +96,7 @@ describe('MemoryWorkspace', () => {
     await flushPromises()
     const fetchMock = vi.mocked(globalThis.fetch)
     fetchMock.mockClear()
-    await wrapper.find('.sb-item').trigger('click')
+    await wrapper.findAll('.sb-item')[0].find('.sb-edit').trigger('click')
     await flushPromises()
     // Save succeeds inside the dialog: the workspace must reload both sides afterwards
     const tagDialog = wrapper.findComponent({ name: 'TagDialog' })
