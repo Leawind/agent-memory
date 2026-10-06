@@ -176,7 +176,8 @@ fn rest_api_end_to_end() {
     let (status, _, _) = request(port, "GET", &format!("/api/memories/{mem_id}"), None);
     assert_eq!(status, 404);
 
-    // purging a tag also deletes its memories
+    // purging a tag also deletes its memories — preview first (the REST face must honor the
+    // dry_run query flag: ignoring it would turn a preview into a real deletion)
     let (status, _, _) = request(
         port,
         "POST",
@@ -186,6 +187,20 @@ fn rest_api_end_to_end() {
         ),
     );
     assert_eq!(status, 200);
+    let (status, body, _) = request(
+        port,
+        "DELETE",
+        &format!(
+            "/api/tags/{}?mode=purge&dry_run=true",
+            encodeURIComponent("临时")
+        ),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["memories_affected"], 1);
+    assert!(json_body(&body).get("memory_ids").is_some());
+    let (_, body, _) = request(port, "GET", "/api/stats", None);
+    assert_eq!(json_body(&body)["memories"], 1, "dry_run deleted nothing");
     let (status, body, _) = request(
         port,
         "DELETE",

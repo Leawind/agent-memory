@@ -378,7 +378,12 @@ pub fn handle(
             }
             ("DELETE", ["tags", tag_name]) => {
                 let mode = query_get(query, "mode").unwrap_or_else(|| "detach".into());
-                let args = json!({ "name": tag_name, "mode": mode });
+                let mut args = json!({ "name": tag_name, "mode": mode });
+                // The purge preview must be reachable from the REST face too — ignoring the flag
+                // here would turn an intended preview into a real, irreversible deletion
+                if query_get(query, "dry_run").is_some_and(|v| v == "true") {
+                    args["dry_run"] = json!(true);
+                }
                 tool_write(db_path, ctx, TAG_DELETE, &args)
             }
             ("GET", ["memories"]) => {
