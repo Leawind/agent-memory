@@ -207,6 +207,9 @@ function onClear() {
   flex-direction: column;
 }
 .am-expr-item {
+  /* The pop is a flex column capped by max-height: without flex:none the items shrink to fit
+     instead of overflowing into a scrollbar, squashing their text once the list gets long */
+  flex: none;
   border: none;
   background: none;
   text-align: left;
