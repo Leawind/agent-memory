@@ -99,7 +99,7 @@ fn legacy_client_full_flow() {
     );
     assert_eq!(status, 200);
     assert_eq!(resp["result"]["isError"], Value::Null);
-    let id = tool_data(&resp)["memory"]["id"].clone();
+    let id = tool_data(&resp)["id"].clone();
 
     let (status, resp) = legacy_post(
         port,

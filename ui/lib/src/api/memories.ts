@@ -1,6 +1,6 @@
 // Memory endpoints (paths map 1:1 to the server's /api/memories)
 import type { ApiClient } from './client'
-import type { MemoryFull, MemoryListResp, MemorySearchResp } from '../types'
+import type { MemoryCreateResp, MemoryFull, MemoryListResp, MemorySearchResp, MemoryUpdateResp } from '../types'
 
 /** Input for creating a memory (tags are the target set) */
 export interface MemoryCreateInput {
@@ -26,12 +26,14 @@ export function getMemory(client: ApiClient, id: string): Promise<MemoryFull> {
   return client.get<MemoryFull>(`/api/memories/${encodeURIComponent(id)}`)
 }
 
-export function createMemory(client: ApiClient, input: MemoryCreateInput): Promise<MemoryFull> {
-  return client.post<MemoryFull>('/api/memories', input)
+/** Create is echo-free: only the new id, timestamp and sparse classifications come back */
+export function createMemory(client: ApiClient, input: MemoryCreateInput): Promise<MemoryCreateResp> {
+  return client.post<MemoryCreateResp>('/api/memories', input)
 }
 
-export function updateMemory(client: ApiClient, id: string, input: MemoryUpdateInput): Promise<MemoryFull> {
-  return client.put<MemoryFull>(`/api/memories/${encodeURIComponent(id)}`, input)
+/** Update is echo-free: only the changed flag and sparse tag classifications come back */
+export function updateMemory(client: ApiClient, id: string, input: MemoryUpdateInput): Promise<MemoryUpdateResp> {
+  return client.put<MemoryUpdateResp>(`/api/memories/${encodeURIComponent(id)}`, input)
 }
 
 export function deleteMemory(client: ApiClient, id: string): Promise<void> {

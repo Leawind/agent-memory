@@ -314,7 +314,7 @@ fn ensure_vector(db_path: &Path, id: i64) {
 /// fallback semantics: no configuration, no vector yet (service down), or any read failure leaves
 /// the result untouched, because the hint is a companion to the write, never a gate on it.
 pub fn dedup_hint(db_path: &Path, result: &mut Value) {
-    let Some(id_str) = result["memory"]["id"].as_str() else {
+    let Some(id_str) = result["id"].as_str() else {
         return;
     };
     let Some(id) = Store::parse_id(id_str) else {
@@ -565,7 +565,7 @@ mod tests {
         st.embedding_put(2, "test-model", &[0.999, 0.045]).unwrap();
         st.embedding_put(3, "test-model", &[0.0, 1.0]).unwrap();
 
-        let mut result = serde_json::json!({"memory": {"id": "m1"}});
+        let mut result = serde_json::json!({"id": "m1"});
         dedup_hint(&path, &mut result);
         let hits = result["similar_to"].as_array().expect("hint attached");
         assert_eq!(hits.len(), 1);
@@ -573,7 +573,7 @@ mod tests {
         assert!(hits[0]["similarity"].as_f64().unwrap() >= DEDUP_SIMILARITY as f64);
 
         // No vector for the created memory yet (service was down): silent no-op
-        let mut result = serde_json::json!({"memory": {"id": "m9"}});
+        let mut result = serde_json::json!({"id": "m9"});
         dedup_hint(&path, &mut result);
         assert!(result.get("similar_to").is_none());
 
@@ -583,7 +583,7 @@ mod tests {
         let st2 = Store::open(&path2).unwrap();
         st2.insert_memory("a", "body", &[], 1, 1).unwrap();
         st2.embedding_put(1, "test-model", &[1.0]).unwrap();
-        let mut result = serde_json::json!({"memory": {"id": "m1"}});
+        let mut result = serde_json::json!({"id": "m1"});
         dedup_hint(&path2, &mut result);
         assert!(result.get("similar_to").is_none());
 

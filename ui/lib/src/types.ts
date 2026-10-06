@@ -13,6 +13,23 @@ export interface MemoryFull extends MemorySummary {
   content: string
 }
 
+/** Write responses are echo-free: only facts the client cannot derive from its own request */
+export interface MemoryCreateResp {
+  id: string
+  /** Compact server-local wall clock of the write */
+  updated: string
+  tags_autocreated?: string[]
+  tags_missing_description?: string[]
+  duplicate_of?: string[]
+}
+
+export interface MemoryUpdateResp {
+  /** Whether anything actually changed */
+  updated: boolean
+  tags_autocreated?: string[]
+  tags_missing_description?: string[]
+}
+
 export interface TagView {
   name: string
   count: number

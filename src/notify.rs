@@ -260,8 +260,23 @@ pub fn capture(db_path: &Path, tool: &str, args: &Value) -> PreState {
 
 /// Fire the notifications a completed write implies (called after the transaction commits; failures
 /// are silent — notifications are best-effort companions to the write itself).
-pub fn after_write(tool: &str, args: &Value, result: &Value, pre: &PreState) {
-    let events = compute_events(tool, args, result, pre);
+///
+/// Write responses are echo-free (they never restate what the caller just sent), so the diff inputs
+/// come from the arguments, the sparse response fields that remain, and — for the written memory's
+/// final tag set — a post-commit re-read of the store.
+pub fn after_write(db_path: &Path, tool: &str, args: &Value, result: &Value, pre: &PreState) {
+    let final_tags = match tool {
+        MEMORY_CREATE | MEMORY_UPDATE | MEMORY_MERGE => {
+            let raw = match tool {
+                MEMORY_CREATE => result["id"].as_str().unwrap_or_default(),
+                MEMORY_MERGE => args["target"].as_str().unwrap_or_default(),
+                _ => args["id"].as_str().unwrap_or_default(),
+            };
+            read_memory_tags(db_path, raw)
+        }
+        _ => Vec::new(),
+    };
+    let events = compute_events(tool, args, result, pre, &final_tags);
     if events.is_empty() {
         return;
     }
@@ -297,10 +312,31 @@ pub fn after_write(tool: &str, args: &Value, result: &Value, pre: &PreState) {
     }
 }
 
+/// The written memory's tag set after the commit (echo-free responses carry no tag list, so the
+/// hook re-reads it; a failed read yields an empty set and just skips the tag-diff events).
+fn read_memory_tags(db_path: &Path, raw_id: &str) -> Vec<String> {
+    let id = crate::store::Store::parse_id(&crate::model::normalize_id(raw_id));
+    crate::store::with_db_in(db_path, crate::store::TxMode::ReadOnly, |st| {
+        let found = match id {
+            Some(id) => st.get_memories(&[id])?.0,
+            None => Vec::new(),
+        };
+        Ok::<_, String>(found.first().map(|m| m.tags.clone()).unwrap_or_default())
+    })
+    .unwrap_or_default()
+}
+
 /// Compute the change events a completed write implies. The rules mirror the resource surface:
 /// list_changed only when the catalog's membership changes, updated only where the read result of
-/// that exact URI changes.
-fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> Vec<Event> {
+/// that exact URI changes. `final_tags` is the written memory's post-commit tag set (empty for
+/// tools where it does not apply).
+fn compute_events(
+    tool: &str,
+    args: &Value,
+    result: &Value,
+    pre: &PreState,
+    final_tags: &[String],
+) -> Vec<Event> {
     let mut events: Vec<Event> = Vec::new();
     fn push(events: &mut Vec<Event>, event: Event) {
         if !events.contains(&event) {
@@ -312,7 +348,9 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
         TAG_UPDATE => {
             let renamed = result["renamed"] == true;
             let description_updated = result["description_updated"] == true;
-            let final_name = result["name"].as_str().unwrap_or_default();
+            let final_name = args["new_name"]
+                .as_str()
+                .unwrap_or_else(|| args["name"].as_str().unwrap_or_default());
             if renamed {
                 push(&mut events, Event::ListChanged);
                 push(
@@ -351,35 +389,31 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
             }
             // Every tag the memory lands on gets a richer catalog, so its resource
             // read result changes (the updated vocabulary: the read result of that exact uri).
-            for tag in memory_tags(result) {
+            for tag in final_tags {
                 push(
                     &mut events,
-                    Event::Updated(resources::tag_resource_uri(&tag)),
+                    Event::Updated(resources::tag_resource_uri(tag)),
                 );
             }
-            if memory_tags(result).iter().any(|t| t == RESERVED_TAG) {
+            if final_tags.iter().any(|t| t == RESERVED_TAG) {
                 push(&mut events, Event::ListChanged);
                 push(
                     &mut events,
                     Event::Updated(resources::memory_resource_uri(
-                        result["memory"]["id"].as_str().unwrap_or_default(),
+                        result["id"].as_str().unwrap_or_default(),
                     )),
                 );
             }
         }
         MEMORY_UPDATE => {
-            let id = result["memory"]["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
+            let id = crate::model::normalize_id(args["id"].as_str().unwrap_or_default());
             if args.get("summary").is_some() || args.get("content").is_some() {
                 push(
                     &mut events,
                     Event::Updated(resources::memory_resource_uri(&id)),
                 );
             }
-            let final_tags = memory_tags(result);
-            for tag in &final_tags {
+            for tag in final_tags {
                 if !pre.old_tags.contains(tag) {
                     push(
                         &mut events,
@@ -404,10 +438,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
         MEMORY_EDIT => {
             // Content replaced in place: only that memory resource's read result moves (tags are
             // untouched, so no catalog nor membership event)
-            let id = result["memory"]["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
+            let id = crate::model::normalize_id(args["id"].as_str().unwrap_or_default());
             push(
                 &mut events,
                 Event::Updated(resources::memory_resource_uri(&id)),
@@ -416,17 +447,13 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
         MEMORY_MERGE => {
             // The target is rewritten (merged content, possibly summary) and gains the source's
             // tags; the source is deleted outright. Same event shapes as memory_update on the
-            // target plus memory_delete on the source.
-            let id = result["memory"]["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
+            // target plus memory_delete on the source. Both ids are the caller's own arguments.
+            let id = crate::model::normalize_id(args["target"].as_str().unwrap_or_default());
             push(
                 &mut events,
                 Event::Updated(resources::memory_resource_uri(&id)),
             );
-            let final_tags = memory_tags(result);
-            for tag in &final_tags {
+            for tag in final_tags {
                 if !pre.old_tags.contains(tag) {
                     push(
                         &mut events,
@@ -440,12 +467,13 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 // The resident-convention set gained a member
                 push(&mut events, Event::ListChanged);
             }
-            if let Some(removed) = result["removed"].as_str() {
+            let removed = crate::model::normalize_id(args["source"].as_str().unwrap_or_default());
+            if !removed.is_empty() {
                 push(
                     &mut events,
-                    Event::Updated(resources::memory_resource_uri(removed)),
+                    Event::Updated(resources::memory_resource_uri(&removed)),
                 );
-                if let Some(source_tags) = pre.tags_by_id.get(removed) {
+                if let Some(source_tags) = pre.tags_by_id.get(&removed) {
                     for tag in source_tags {
                         // The source's entry leaves every catalog it appeared in (the target may
                         // still carry the tag, but the catalog's content changed either way)
@@ -501,25 +529,23 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
     events
 }
 
-fn memory_tags(result: &Value) -> Vec<String> {
-    result["memory"]["tags"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    fn events_for(tool: &str, args: Value, result: Value, pre: &PreState) -> Vec<Event> {
-        compute_events(tool, &args, &result, pre)
+    fn events_for(
+        tool: &str,
+        args: Value,
+        result: Value,
+        pre: &PreState,
+        final_tags: &[String],
+    ) -> Vec<Event> {
+        compute_events(tool, &args, &result, pre, final_tags)
+    }
+
+    fn tags(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
     }
 
     #[test]
@@ -529,8 +555,9 @@ mod tests {
             events_for(
                 "tag_create",
                 json!({}),
-                json!({"created": true}),
-                &PreState::default()
+                json!({}),
+                &PreState::default(),
+                &[]
             ),
             vec![Event::ListChanged]
         );
@@ -540,19 +567,22 @@ mod tests {
                 "tag_delete",
                 json!({"name": "rust"}),
                 json!({}),
-                &PreState::default()
+                &PreState::default(),
+                &[]
             ),
             vec![
                 Event::ListChanged,
                 Event::Updated("memory://tags/rust".into())
             ]
         );
-        // tag_update rename: membership changes (uri changes) + old and new resources move
+        // tag_update rename: membership changes (uri changes) + old and new resources move;
+        // the final name comes from the arguments (the response no longer carries it)
         let evs = events_for(
             "tag_update",
-            json!({"name": "rust"}),
-            json!({"renamed": true, "description_updated": false, "name": "lang"}),
+            json!({"name": "rust", "new_name": "lang"}),
+            json!({"renamed": true, "description_updated": false}),
             &PreState::default(),
+            &[],
         );
         assert_eq!(
             evs,
@@ -567,19 +597,12 @@ mod tests {
             events_for(
                 "tag_update",
                 json!({"name": "rust"}),
-                json!({"renamed": false, "description_updated": true, "name": "rust"}),
-                &PreState::default()
+                json!({"renamed": false, "description_updated": true}),
+                &PreState::default(),
+                &[]
             ),
             vec![Event::Updated("memory://tags/rust".into())]
         );
-        // Percent-encoding of non-ASCII tag names in uris
-        let evs = events_for(
-            "tag_create",
-            json!({}),
-            json!({"tag": {"name": "项目"}}),
-            &PreState::default(),
-        );
-        assert_eq!(evs, vec![Event::ListChanged]);
     }
 
     #[test]
@@ -589,8 +612,9 @@ mod tests {
             events_for(
                 "memory_create",
                 json!({}),
-                json!({"memory": {"id": "m1", "tags": ["a"]}, "tags_autocreated": ["a"], "tags_reused": []}),
+                json!({"id": "m1", "tags_autocreated": ["a"]}),
                 &PreState::default(),
+                &tags(&["a"]),
             ),
             vec![Event::ListChanged, Event::Updated("memory://tags/a".into())]
         );
@@ -598,8 +622,9 @@ mod tests {
         let evs = events_for(
             "memory_create",
             json!({}),
-            json!({"memory": {"id": "m1", "tags": ["a"]}, "tags_autocreated": [], "tags_reused": ["a"]}),
+            json!({"id": "m1"}),
             &PreState::default(),
+            &tags(&["a"]),
         );
         assert_eq!(evs, vec![Event::Updated("memory://tags/a".into())]);
         // Convention member: the convention tag resource updated, catalog changes
@@ -607,8 +632,9 @@ mod tests {
         let evs = events_for(
             "memory_create",
             json!({}),
-            json!({"memory": {"id": "m2", "tags": ["convention"]}, "tags_autocreated": [], "tags_reused": ["convention"]}),
+            json!({"id": "m2"}),
             &PreState::default(),
+            &tags(&["convention"]),
         );
         assert_eq!(
             evs,
@@ -627,12 +653,13 @@ mod tests {
             tags_by_id: HashMap::new(),
         };
         // Body change + tags a→b: memory resource updated, both tag resources updated, convention
-        // membership dropped → list_changed
+        // membership dropped → list_changed. The id comes from the arguments (echo-free response).
         let evs = events_for(
             "memory_update",
             json!({"id": "m1", "content": "new body"}),
-            json!({"memory": {"id": "m1", "tags": ["b"]}}),
+            json!({"updated": true}),
             &pre,
+            &tags(&["b"]),
         );
         assert_eq!(
             evs,
@@ -652,16 +679,18 @@ mod tests {
         let evs = events_for(
             "memory_update",
             json!({"id": "m1", "add_tags": ["b"]}),
-            json!({"memory": {"id": "m1", "tags": ["a", "b"]}}),
+            json!({"updated": true, "tags_autocreated": ["b"]}),
             &pre,
+            &tags(&["a", "b"]),
         );
         assert_eq!(evs, vec![Event::Updated("memory://tags/b".into())]);
         // No-op updates notify nobody
         let evs = events_for(
             "memory_update",
             json!({"id": "m1"}),
-            json!({"updated": false, "memory": {"id": "m1", "tags": ["a"]}}),
+            json!({"updated": false}),
             &pre,
+            &tags(&["a"]),
         );
         assert!(evs.is_empty());
     }
@@ -672,8 +701,9 @@ mod tests {
         let evs = events_for(
             "memory_edit",
             json!({"id": "m1", "old_string": "a", "new_string": "b"}),
-            json!({"replaced": 1, "memory": {"id": "m1", "tags": ["a"]}}),
+            json!({"replaced": 1}),
             &PreState::default(),
+            &[],
         );
         assert_eq!(evs, vec![Event::Updated("memory://memories/m1".into())]);
     }
@@ -692,6 +722,7 @@ mod tests {
             json!({"ids": ["m1", "m2"]}),
             json!({"deleted": ["m1", "m2"], "missing": []}),
             &pre,
+            &[],
         );
         assert_eq!(
             evs,
@@ -717,12 +748,14 @@ mod tests {
         };
         // Target m1 gains tag b (its content is merged); source m2 (tagged b + convention) dies:
         // its memory resource goes, its tags' catalogs shrink, and the resident-convention set
-        // loses a member (list_changed)
+        // loses a member (list_changed). Both ids come from the arguments; the target's final
+        // tag set is re-read from the store by the hook.
         let evs = events_for(
             "memory_merge",
             json!({"target": "m1", "source": "m2"}),
-            json!({"merged": true, "memory": {"id": "m1", "tags": ["a", "b"]}, "removed": "m2"}),
+            json!({}),
             &pre,
+            &tags(&["a", "b"]),
         );
         assert_eq!(
             evs,
@@ -804,11 +837,13 @@ mod tests {
         let (rx, _handle) = open(job);
         let _ack = read_message(&rx);
 
-        // A tag_create reaches the list_changed subscriber
+        // A tag_create reaches the list_changed subscriber (tag tools never touch the store
+        // re-read, so a dummy db path suffices)
         after_write(
+            Path::new("."),
             "tag_create",
             &json!({}),
-            &json!({"created": true}),
+            &json!({}),
             &PreState::default(),
         );
         let message = read_until(&rx, "notifications/resources/list_changed");
@@ -819,12 +854,14 @@ mod tests {
         // Deleting an unwatched tag produces only a list_changed (skipped by the read-until);
         // deleting the watched tag delivers the updated event with its uri
         after_write(
+            Path::new("."),
             "tag_delete",
             &json!({"name": "unwatched"}),
             &json!({}),
             &PreState::default(),
         );
         after_write(
+            Path::new("."),
             "tag_delete",
             &json!({"name": watched}),
             &json!({}),

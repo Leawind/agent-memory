@@ -844,7 +844,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#,
         );
         assert_eq!(status, 200);
-        assert_eq!(tool_data(&created)["memory"]["id"], "m1");
+        assert_eq!(tool_data(&created)["id"], "m1");
 
         let (status, read) = roundtrip_legacy(
             &store,
@@ -1194,7 +1194,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"}}}"#,
         );
         assert_eq!(status, 200);
-        assert_eq!(tool_data(&created)["memory"]["id"], "m1");
+        assert_eq!(tool_data(&created)["id"], "m1");
         assert_eq!(created["result"]["resultType"], "complete");
         // Single data channel: the compact text block carries everything; no structuredContent
         // doubling it (clients that surface every content block would ingest the data twice)

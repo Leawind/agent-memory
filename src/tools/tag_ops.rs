@@ -15,8 +15,9 @@ pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     st.tag_create(&name, &description)?;
     // Non-blocking hint: when a tag differing only in case already exists, remind the agent to keep the taxonomy
     // from fragmenting (e.g. "rust" and "Rust" coexisting). Whether to merge is the agent's call, via tag_update.
-    // No "created": true echo — a non-error result already means success.
-    let mut out = json!({"tag": st.tag_view(&name)?});
+    // Echo-free: name and description were just stated by the caller, so a clean create answers
+    // with an empty object — only the case-variant hint carries news.
+    let mut out = json!({});
     if let Some(existing) = st.find_tag_case_insensitive(&name)? {
         out["similar_existing"] = json!(existing);
         out["note"] = json!(format!(
@@ -80,12 +81,11 @@ pub fn tag_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     }
     let (renamed, description_updated) =
         st.tag_update(&name, new_name.as_deref(), description.as_deref())?;
-    let final_name = new_name.unwrap_or_else(|| name.clone());
+    // Echo-free: the final name and description are the caller's own inputs (name / new_name /
+    // description) — only the which-parts-actually-changed flags are news
     Ok(json!({
-        "name": final_name,
         "renamed": renamed,
         "description_updated": description_updated,
-        "tag": st.tag_view(&final_name)?,
     }))
 }
 
@@ -108,32 +108,23 @@ pub fn tag_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     }
     // Preview before impact: purge deletes irreversibly, so the caller can price it first
     // (count for both modes, plus the exact ids that would die under purge).
+    // Echo-free throughout: the tag name and mode are the caller's own arguments.
     if dry_run {
         let ids = st.tag_memory_ids(&name)?;
-        return Ok(json!({
-            "dry_run": true,
-            "name": name,
-            "mode": mode,
-            "memories_affected": ids.len(),
-            "memory_ids": if mode == "purge" { json!(ids) } else { Value::Null },
-        }));
+        let mut out = json!({ "memories_affected": ids.len() });
+        if mode == "purge" {
+            out["memory_ids"] = json!(ids);
+        }
+        return Ok(out);
     }
     match mode {
         "detach" => {
             let memories_updated = st.tag_delete_detach(&name)?;
-            Ok(json!({
-                "deleted_tag": name,
-                "mode": "detach",
-                "memories_updated": memories_updated,
-            }))
+            Ok(json!({ "memories_updated": memories_updated }))
         }
         _ => {
             let memories_deleted = st.tag_delete_purge(&name)?;
-            Ok(json!({
-                "deleted_tag": name,
-                "mode": "purge",
-                "memories_deleted": memories_deleted,
-            }))
+            Ok(json!({ "memories_deleted": memories_deleted }))
         }
     }
 }

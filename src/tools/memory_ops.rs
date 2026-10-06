@@ -66,19 +66,21 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
     let duplicate_of = st.find_duplicates_by_summary(&summary)?;
 
-    let id = st.insert_memory(&summary, &content, &linkage.ids, now(), now())?;
-    let view = memory_view(st, id)?;
-    // Sparse response: the three-way tag-link classification (created / reused /
-    // reused-but-missing-description, sparing a follow-up tag_list) and the duplicate hint attach
-    // only when non-empty — the common case (all tags known, nothing duplicated) carries zero
-    // scaffold tokens
-    let mut out = json!({ "memory": view });
+    let ts = now();
+    let id = st.insert_memory(&summary, &content, &linkage.ids, ts, ts)?;
+    // Echo-free response: the caller just stated summary/content/tags, so none of them come back —
+    // only the facts it cannot derive (id, server timestamp) plus the sparse write companions
+    // (three-way tag-link classification minus the derivable reused set, duplicate hints), each
+    // attached only when non-empty. The common case (all tags known, nothing duplicated) carries
+    // zero scaffold tokens.
+    let mut out = json!({
+        "id": Store::format_id(id),
+        "updated": crate::util::format_local_compact(ts),
+    });
     if !linkage.autocreated.is_empty() {
         out["tags_autocreated"] = json!(linkage.autocreated);
     }
-    if !linkage.reused.is_empty() {
-        out["tags_reused"] = json!(linkage.reused);
-    }
+    // tags_reused is deliberately absent: it is exactly the input minus these two lists
     if !linkage.missing_description.is_empty() {
         out["tags_missing_description"] = json!(linkage.missing_description);
     }
@@ -377,15 +379,16 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         &remove_ids,
     )?;
 
-    let mut out = json!({"updated": changed, "memory": memory_view(st, id)?});
+    // Echo-free: no view of the stored memory — summary/content/tag names were just stated by the
+    // caller, and inspecting current state is a read's job (memory_get). Only the "did anything
+    // actually change" flag plus the sparse write companions (same classification as memory_create)
+    let mut out = json!({"updated": changed});
     // Same three-way classification as memory_create: attached per-array, only when non-empty
     if let Some(linkage) = linkage_opt {
         if !linkage.autocreated.is_empty() {
             out["tags_autocreated"] = json!(linkage.autocreated);
         }
-        if !linkage.reused.is_empty() {
-            out["tags_reused"] = json!(linkage.reused);
-        }
+        // tags_reused is deliberately absent: it is exactly the input minus these two lists
         if !linkage.missing_description.is_empty() {
             out["tags_missing_description"] = json!(linkage.missing_description);
         }
@@ -475,9 +478,10 @@ pub fn memory_edit(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         .map_err(|e| ToolError::invalid(format!("edit rejected, nothing was changed: {e}")))?;
     st.update_memory(id, None, Some(&updated), &[], &[])?;
 
+    // Echo-free: the caller computed the replacement itself, so the resulting content and the
+    // untouched summary/tags are all known — only the replacement count is reported
     let mut out = json!({
         "replaced": if replace_all { count } else { 1 },
-        "memory": memory_view(st, id)?,
     });
     let refs = id_like_tokens(&[&new_string]);
     if !refs.is_empty() {
@@ -604,18 +608,14 @@ pub fn memory_merge(
         )));
     }
 
-    let view = memory_view(st, target_id)?;
+    // Echo-free: the surviving id and the absorbed id are the caller's own arguments (target /
+    // source), the union tag set is readable via memory_get — only the id-reference reports carry
+    // facts the caller cannot derive. A clean merge therefore answers with an empty object.
     // Id-reference hygiene: the absorbed id dies here — surviving memories mentioning it (the
-    // target included: its merged content may carry such a mention) are reported; explicit
-    // replacement content gets the same id-shaped-token warning as create/update
+    // target included: its merged content may carry such a mention) are reported.
     let memories = st.all_memories()?;
     let inbound = inbound_references(&memories, &raw_source, "");
-    // No "merged": true echo - a non-error result already means success
-    let mut out = json!({
-        "memory": view,
-        "removed": raw_source.as_str(),
-        "content_appended": explicit_content.is_none(),
-    });
+    let mut out = json!({});
     if !inbound.is_empty() {
         out["referenced_by"] = json!(inbound
             .iter()
@@ -737,13 +737,4 @@ fn semantic_pass(
         crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec),
         true,
     )
-}
-
-/// Fetch one memory's summary view (existence ensured; a uniform error when missing).
-fn memory_view(st: &Store, id: i64) -> Result<Value, ToolError> {
-    let (mut found, _) = st.get_memories(&[id])?;
-    found
-        .pop()
-        .map(|m| m.summary_view())
-        .ok_or_else(|| ToolError::not_found(format!("memory '{}' not found", Store::format_id(id))))
 }

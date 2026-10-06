@@ -240,12 +240,20 @@ try {
     },
   })
   check("tools/call memory_create", created.result?.isError !== true, JSON.stringify(created).slice(0, 120))
-  const structured = payloadOf(created) as { memory?: { id?: string } } | undefined
-  createdId = structured?.memory?.id ?? null
+  // Echo-free contract: the create response carries only the new id + timestamp plus sparse
+  // classifications — never the summary/tags/content just stated
+  const structured = payloadOf(created) as
+    | { id?: string; summary?: string; tags?: string[]; content?: string }
+    | undefined
+  createdId = structured?.id ?? null
   check(
     "create returns structured id",
     typeof createdId === "string" && createdId.startsWith("m"),
     createdId ?? "",
+  )
+  check(
+    "create response echoes nothing",
+    structured?.summary === undefined && structured?.tags === undefined && structured?.content === undefined,
   )
   if (createdId === null) throw new Error("create did not return an id")
 
@@ -287,12 +295,18 @@ try {
     name: "memory_update",
     arguments: { id: createdId, add_tags: ["验证完成"], create_missing_tags: true },
   })
+  // Echo-free: the update response only flags what happened; the tag set is verified by a read
+  const updatedStructured = payloadOf(updated) as { updated?: boolean } | undefined
+  check("memory_update reports a change", updatedStructured?.updated === true)
+  const afterUpdate = await rpc(41, "tools/call", {
+    name: "memory_get",
+    arguments: { ids: [createdId] },
+  })
   check(
     "memory_update add_tags",
     (
-      (payloadOf(updated) as { memory?: { tags?: string[] } } | undefined)?.memory?.tags as
-        | string[]
-        | undefined
+      (payloadOf(afterUpdate) as { memories?: { tags?: string[] }[] } | undefined)?.memories?.[0]
+        ?.tags as string[] | undefined
     )?.includes("验证完成") === true,
   )
 
@@ -319,19 +333,19 @@ try {
     arguments: { summary: "sdk 联调记忆：现代协议客户端可用", content: "重复内容，等待合并。" },
   })
   const dupId =
-    (payloadOf(dup) as { memory?: { id?: string } } | undefined)?.memory?.id ?? null
+    (payloadOf(dup) as { id?: string } | undefined)?.id ?? null
   check("near-duplicate stored (duplicate_of is advisory)", dup.result?.isError !== true && typeof dupId === "string")
   if (dupId !== null) {
     const merged = await rpc(34, "tools/call", {
       name: "memory_merge",
       arguments: { target: createdId, source: dupId },
     })
-    const mergedStructured = payloadOf(merged) as
-      | { removed?: string, memory?: { id?: string, created?: string } }
-      | undefined
+    // Echo-free: a clean merge answers with an empty object; the effect is verified by a read
+    const mergedStructured = payloadOf(merged) as Record<string, unknown> | undefined
     check(
-      "memory_merge keeps the target and removes the source",
-      mergedStructured?.removed === dupId && mergedStructured?.memory?.id === createdId,
+      "memory_merge answers echo-free",
+      mergedStructured !== undefined && Object.keys(mergedStructured).length === 0,
+      JSON.stringify(mergedStructured ?? {}),
     )
     const gone = await rpc(35, "tools/call", { name: "memory_get", arguments: { ids: [dupId] } })
     check(
@@ -355,10 +369,10 @@ try {
     name: "tag_delete",
     arguments: { name: "sdk", mode: "purge", dry_run: true },
   })
-  const preview = payloadOf(purgePreview) as { dry_run?: boolean, memories_affected?: number } | undefined
+  const preview = payloadOf(purgePreview) as { memories_affected?: number } | undefined
   check(
     "tag_delete dry_run previews without deleting",
-    preview?.dry_run === true && (preview?.memories_affected ?? 0) >= 1,
+    (preview?.memories_affected ?? 0) >= 1,
   )
   const stillThere = await rpc(38, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
   check(

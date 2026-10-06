@@ -110,7 +110,7 @@ pub fn execute_with_db(
         }
         crate::embed::after_write(db_path);
     }
-    crate::notify::after_write(name, args, &out, &pre);
+    crate::notify::after_write(db_path, name, args, &out, &pre);
     Ok(out)
 }
 
@@ -294,12 +294,14 @@ mod tests {
             }),
         )
         .unwrap();
-        let id = created["memory"]["id"].as_str().unwrap().to_string();
+        let id = created["id"].as_str().unwrap().to_string();
         assert_eq!(created["tags_autocreated"].as_array().unwrap().len(), 2);
-        // Sparse response: empty classifications are omitted outright
-        assert!(created.get("tags_reused").is_none());
+        // Sparse, echo-free response: no view of what was just stated, empty classifications omitted
+        assert!(created.get("summary").is_none());
+        assert!(created.get("tags").is_none());
         assert!(created.get("tags_missing_description").is_none());
         assert!(created.get("duplicate_of").is_none());
+        assert!(created.get("tags_reused").is_none());
 
         // Search hits, with no content leaked (first layer of progressive disclosure)
         let found = call(&path, "memory_search", json!({"query": "borrow"})).unwrap();
@@ -329,7 +331,9 @@ mod tests {
             json!({"id": id, "add_tags": ["study"], "remove_tags": ["notes"], "create_missing_tags": true}),
         )
         .unwrap();
-        assert_eq!(upd["memory"]["tags"].as_array().unwrap().len(), 2);
+        // The final tag set is no longer echoed: verify the add/remove landed via memory_get
+        let got = call(&path, "memory_get", json!({"ids": [id]})).unwrap();
+        assert_eq!(got["memories"][0]["tags"].as_array().unwrap().len(), 2);
         // The three-way classification only describes tags passed to add_tags this time (rust is not in the list, so not classified)
         assert_eq!(upd["tags_autocreated"], json!(["study"]));
         assert!(upd.get("tags_reused").is_none());
@@ -374,7 +378,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first["tags_autocreated"], json!(["fresh"]));
-        assert_eq!(first["tags_reused"], json!(["described"]));
+        // Echo-free: reused tags are not restated — "described" has a description, so it appears
+        // in neither classification list
         assert!(first.get("tags_missing_description").is_none());
 
         // Second call reuses everything; fresh was auto-created last time with an empty description → named hint
@@ -385,7 +390,6 @@ mod tests {
         )
         .unwrap();
         assert!(second.get("tags_autocreated").is_none());
-        assert_eq!(second["tags_reused"], json!(["described", "fresh"]));
         assert_eq!(second["tags_missing_description"], json!(["fresh"]));
 
         cleanup(&path);
@@ -457,7 +461,9 @@ mod tests {
         .unwrap();
         assert_eq!(upd["renamed"], true);
         assert_eq!(upd["description_updated"], true);
-        assert_eq!(upd["name"], "lang");
+        // Echo-free: the response carries only the changed flags
+        assert!(upd.get("name").is_none());
+        assert!(upd.get("tag").is_none());
         let tl = call(&path, "tag_list", json!({})).unwrap();
         let tags = tl["tags"].as_array().unwrap();
         let lang = tags
@@ -529,13 +535,13 @@ mod tests {
         )
         .unwrap();
 
+        // A dry_run preview is told apart by its shape (memories_affected), not by an echoed flag
         let preview = call(
             &path,
             "tag_delete",
             json!({"name": "x", "mode": "purge", "dry_run": true}),
         )
         .unwrap();
-        assert_eq!(preview["dry_run"], true);
         assert_eq!(preview["memories_affected"], 2);
         let ids = preview["memory_ids"].as_array().unwrap();
         assert_eq!(ids.len(), 2);
@@ -558,7 +564,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(preview["memories_affected"], 2);
-        assert!(preview["memory_ids"].is_null());
+        assert!(preview.get("memory_ids").is_none());
 
         cleanup(&path);
     }
@@ -782,7 +788,7 @@ mod tests {
             json!({"summary": "alpha", "content": "see m2 for details"}),
         )
         .unwrap();
-        assert_eq!(warned["memory"]["id"], "m1");
+        assert_eq!(warned["id"], "m1");
         let note = warned["note"].as_str().unwrap();
         assert!(
             note.contains("m2") && note.contains("unstable"),
@@ -877,7 +883,6 @@ mod tests {
             json!({"target": "m5", "source": "m4"}),
         )
         .unwrap();
-        assert_eq!(merged["removed"], "m4");
         let refs = merged["referenced_by"].as_array().unwrap();
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0]["id"], "m5");
@@ -1111,7 +1116,15 @@ mod tests {
         .unwrap();
         assert_eq!(d["renamed"], false);
         assert_eq!(d["description_updated"], true);
-        assert_eq!(d["tag"]["description"], "the language");
+        // Echo-free: verify the stored description via tag_list, not the update response
+        let tl = call(&path, "tag_list", json!({})).unwrap();
+        let rust = tl["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "Rust")
+            .expect("tag listed");
+        assert_eq!(rust["description"], "the language");
 
         // After a rename, creating any other case-spelled variant: the hint must trigger (exactly the anti-fragmentation scenario)
         let back = call(&path, "tag_create", json!({"name": "rust"})).unwrap();
@@ -1288,7 +1301,7 @@ mod tests {
             json!({"summary": "rule", "content": "c", "tags": [RESERVED_TAG]}),
         )
         .unwrap();
-        let id = created["memory"]["id"].as_str().unwrap().to_string();
+        let id = created["id"].as_str().unwrap().to_string();
         let err = call_as(
             &path,
             &writer,
@@ -1316,7 +1329,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok["updated"], true);
-        assert_eq!(ok["memory"]["tags"], json!(["notes"]), "admin detach works");
+        assert_eq!(ok["updated"], true, "admin detach works");
 
         cleanup(&path);
     }
@@ -1465,7 +1478,7 @@ mod tests {
             json!({"summary": "Deploy runbook", "content": "step one", "tags": ["ops"], "create_missing_tags": true}),
         )
         .unwrap();
-        let target = first["memory"]["id"].as_str().unwrap().to_string();
+        let target = first["id"].as_str().unwrap().to_string();
         // The create echo is a summary view (no content, no created field): the creation time is
         // read back through the full view, which is exactly where the contract exposes it
         let target_created = call(&path, "memory_get", json!({"ids": [target]})).unwrap()
@@ -1479,7 +1492,7 @@ mod tests {
             json!({"summary": "deploy runbook v2", "content": "step two", "tags": ["ops", "release"], "create_missing_tags": true}),
         )
         .unwrap();
-        let source = second["memory"]["id"].as_str().unwrap().to_string();
+        let source = second["id"].as_str().unwrap().to_string();
 
         let merged = call(
             &path,
@@ -1487,16 +1500,19 @@ mod tests {
             json!({"target": target, "source": source}),
         )
         .unwrap();
-        assert_eq!(merged["removed"], source.as_str());
-        assert_eq!(merged["memory"]["id"], target.as_str());
+        // Echo-free: a clean merge answers with an empty object (both ids are the caller's own
+        // arguments); the effects are verified through reads
+        assert_eq!(merged, json!({}));
         let after = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
         assert_eq!(
             after["memories"][0]["created"], target_created,
             "creation time survives the merge"
         );
-        assert_eq!(merged["content_appended"], true);
-        let tags = merged["memory"]["tags"].as_array().unwrap();
-        assert_eq!(tags.len(), 2, "tags union: {merged}");
+        assert_eq!(
+            after["memories"][0]["tags"].as_array().unwrap().len(),
+            2,
+            "tags union: {after}"
+        );
 
         // Content was appended, the source is gone
         let got = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
@@ -1512,17 +1528,17 @@ mod tests {
             json!({"summary": "another duplicate", "content": "more"}),
         )
         .unwrap();
-        let source2 = third["memory"]["id"].as_str().unwrap().to_string();
+        let source2 = third["id"].as_str().unwrap().to_string();
         let merged = call(
             &path,
             "memory_merge",
             json!({"target": target, "source": source2, "summary": "Deploy runbook (unified)", "content": "unified body"}),
         )
         .unwrap();
-        assert_eq!(merged["content_appended"], false);
-        assert_eq!(merged["memory"]["summary"], "Deploy runbook (unified)");
+        assert_eq!(merged, json!({}));
         let got = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
         assert_eq!(got["memories"][0]["content"], "unified body");
+        assert_eq!(got["memories"][0]["summary"], "Deploy runbook (unified)");
 
         // Misuse: self-merge, malformed ids, missing ids
         let err = call(
@@ -1559,7 +1575,7 @@ mod tests {
         let both = [Cap::Update, Cap::Delete];
         let mk = |summary: &str, tags: Value| {
             call(&path, "memory_create", json!({"summary": summary, "content": "c", "tags": tags, "create_missing_tags": true}))
-                .unwrap()["memory"]["id"]
+                .unwrap()["id"]
                 .as_str()
                 .unwrap()
                 .to_string()
@@ -1610,7 +1626,10 @@ mod tests {
             json!({"target": conv, "source": other}),
         )
         .unwrap();
-        assert_eq!(ok["removed"], other.as_str());
+        assert_eq!(ok, json!({}));
+        // The absorbed id no longer resolves
+        let gone = call(&path, "memory_get", json!({"ids": [other]})).unwrap();
+        assert_eq!(gone["missing"].as_array().unwrap().len(), 1);
 
         cleanup(&path);
     }
@@ -1849,7 +1868,7 @@ mod tests {
             json!({"summary": "rule", "content": "always lint", "tags": [RESERVED_TAG], "create_missing_tags": true}),
         )
         .unwrap();
-        let id = created["memory"]["id"].as_str().unwrap().to_string();
+        let id = created["id"].as_str().unwrap().to_string();
 
         let ok = call_as(
             &path,
@@ -1902,7 +1921,7 @@ mod tests {
             json!({"summary": "first", "content": "one", "tags": []}),
         )
         .unwrap();
-        let id = c["memory"]["id"].as_str().unwrap().to_string();
+        let id = c["id"].as_str().unwrap().to_string();
         // Every call reopens the database; the id counter must carry on
         let c2 = call(
             &path,
@@ -1910,7 +1929,7 @@ mod tests {
             json!({"summary": "second", "content": "two", "tags": []}),
         )
         .unwrap();
-        assert_ne!(c2["memory"]["id"].as_str().unwrap(), id);
+        assert_ne!(c2["id"].as_str().unwrap(), id);
         cleanup(&path);
     }
 }

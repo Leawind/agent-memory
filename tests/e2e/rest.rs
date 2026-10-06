@@ -63,7 +63,7 @@ fn rest_api_end_to_end() {
         Some(r#"{"new_name": "项目A", "description": "改名后的描述"}"#),
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(json_body(&body)["name"], "项目A");
+    // Echo-free: the response carries only the changed flags
     assert_eq!(json_body(&body)["renamed"], true);
     assert_eq!(json_body(&body)["description_updated"], true);
 
@@ -77,10 +77,7 @@ fn rest_api_end_to_end() {
         ),
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    let mem_id = json_body(&body)["memory"]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let mem_id = json_body(&body)["id"].as_str().unwrap().to_string();
 
     let (status, body, _) = request(port, "GET", "/api/memories?limit=10", None);
     assert_eq!(status, 200);

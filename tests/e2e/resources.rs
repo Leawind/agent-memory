@@ -16,10 +16,7 @@ fn create_memory(port: u16, summary: &str, content: &str, tags: &[&str]) -> Stri
         }}),
         &[],
     );
-    tool_data(&resp)["memory"]["id"]
-        .as_str()
-        .unwrap()
-        .to_string()
+    tool_data(&resp)["id"].as_str().unwrap().to_string()
 }
 
 #[test]

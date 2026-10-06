@@ -154,10 +154,9 @@ pub fn handle(
                     {
                         return Err(ToolError::not_found(format!("identity '{name}' not found")));
                     }
-                    st.identity_view(name)
-                        .map_err(ToolError::from)?
-                        .map(|view| (200, view))
-                        .ok_or_else(|| ToolError::not_found(format!("identity '{name}' not found")))
+                    // Echo-free like the other write endpoints: the permissions were just stated
+                    // by the caller — the refreshed row comes from the list the UI reloads
+                    Ok((200, json!({ "saved": true })))
                 })
             }
             ("DELETE", ["identities", name]) => {
@@ -486,7 +485,7 @@ fn tool_write(
     if crate::embed::needs_backfill(tool) {
         crate::embed::after_write(db_path);
     }
-    crate::notify::after_write(tool, args, &out.1, &pre);
+    crate::notify::after_write(db_path, tool, args, &out.1, &pre);
     Ok(out)
 }
 
@@ -757,7 +756,8 @@ mod tests {
             br#"{"permissions": {"admin": true, "read": true}}"#,
         );
         assert_eq!(status, 200, "{v}");
-        assert_eq!(v["permissions"]["admin"], true);
+        // Echo-free: the saved ack replaces the view (the refreshed row comes from the list)
+        assert_eq!(v["saved"], true);
         // Nonexistent identity → 404
         let (status, _) = handle(
             &db,

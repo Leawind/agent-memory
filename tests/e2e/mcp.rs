@@ -103,10 +103,7 @@ fn mcp_endpoint_end_to_end() {
     );
     assert!(created.get("error").is_none(), "create failed: {created}");
     assert_eq!(created["result"]["resultType"], "complete");
-    let mem_id = tool_data(&created)["memory"]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let mem_id = tool_data(&created)["id"].as_str().unwrap().to_string();
 
     let searched = mcp_rpc(
         port,
