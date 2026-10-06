@@ -58,40 +58,25 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
-/// Tag filtering (`tag_filter` exact-tag OR + `tag_regex` regex OR, the two combined by AND;
-/// both omitted = no filtering). Shared by the keyword pass and the semantic vector pass so both recall channels honor
-/// the same filter semantics — semantic recall must not bypass the caller's filters.
-pub fn passes_tag_filters(
-    m: &Memory,
-    tag_filter: &[String],
-    tag_regex: Option<&regex::Regex>,
-) -> bool {
-    if !tag_filter.is_empty() && !tag_filter.iter().any(|t| m.tags.iter().any(|x| x == t)) {
-        return false;
+/// Tag filtering by `tag_regex` (OR over the memory's tag names; omitted = no filtering). Shared
+/// by the keyword pass and the semantic vector pass so both recall channels honor the same filter
+/// semantics — semantic recall must not bypass the caller's filters.
+pub fn passes_tag_filter(m: &Memory, tag_regex: Option<&regex::Regex>) -> bool {
+    match tag_regex {
+        Some(re) => m.tags.iter().any(|t| re.is_match(t)),
+        None => true,
     }
-    if let Some(re) = tag_regex {
-        if !m.tags.iter().any(|t| re.is_match(t)) {
-            return false;
-        }
-    }
-    true
 }
 
-/// `tag_filter`: OR semantics over exact tags; `tag_regex`: passes when any tag name matches the regex
-/// (AND-ed with tag_filter; both omitted = no filtering).
-pub fn run(
-    memories: &[Memory],
-    query: &str,
-    tag_filter: &[String],
-    tag_regex: Option<&regex::Regex>,
-) -> Vec<Hit> {
+/// `tag_regex`: passes when any tag name matches the regex (omitted = no filtering).
+pub fn run(memories: &[Memory], query: &str, tag_regex: Option<&regex::Regex>) -> Vec<Hit> {
     let terms = parse_query(query);
     if terms.is_empty() {
         return Vec::new();
     }
     let mut hits = Vec::new();
     for (idx, m) in memories.iter().enumerate() {
-        if !passes_tag_filters(m, tag_filter, tag_regex) {
+        if !passes_tag_filter(m, tag_regex) {
             continue;
         }
         let lc_summary = m.summary.to_lowercase();
@@ -354,34 +339,24 @@ mod tests {
             5,
         );
         let b = mem("m2", &[], "unrelated", "the borrow checker is strict", 9);
-        let hits = run(&[a, b], "borrow rust", &[], None);
+        let hits = run(&[a, b], "borrow rust", None);
         // Only memories hit by both terms are returned; m1 (tag + title double hit) should rank ahead of m2 (content hit only).
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
     }
 
-    #[test]
-    fn tag_filter_restricts() {
-        let a = mem("m1", &["rust"], "has keyword here", "x", 1);
-        let b = mem("m2", &["other"], "has keyword here", "x", 2);
-        let hits = run(&[a, b], "keyword", &["rust".to_string()], None);
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].idx, 0);
-    }
-
-    /// tag_regex: passes when any tag name matches the regex; AND-ed with the exact tag_filter.
+    /// tag_regex: passes when any tag name matches the regex.
     #[test]
     fn tag_regex_restricts() {
         let a = mem("m1", &["proj/alpha"], "has keyword here", "x", 1);
         let b = mem("m2", &["misc"], "has keyword here", "x", 2);
         let re = regex::Regex::new("^proj/").unwrap();
-        let hits = run(&[a.clone(), b], "keyword", &[], Some(&re));
+        let hits = run(&[a.clone(), b.clone()], "keyword", Some(&re));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
-        // AND semantics when stacked with exact filtering
-        let b2 = mem("m2", &["other"], "has keyword here", "x", 2);
-        let hits = run(&[a, b2], "keyword", &["misc".to_string()], Some(&re));
-        assert!(hits.is_empty());
+        // No regex = no tag filtering
+        let hits = run(&[a, b], "keyword", None);
+        assert_eq!(hits.len(), 2);
     }
 
     /// Characters whose lowercase form changes length (U+0130 "İ" → "i̇") must not misalign the snippet window:
@@ -391,7 +366,7 @@ mod tests {
         // "İ" grows from 2 to 3 bytes when lowercased: the old implementation's offset mapping was off by 1 byte
         let content = format!("İ{}TARGET{}", "前".repeat(60), "后".repeat(60));
         let a = mem("m1", &[], "s", &content, 1);
-        let hits = run(&[a], "target", &[], None);
+        let hits = run(&[a], "target", None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(sn.starts_with('…') && sn.ends_with('…'));
@@ -430,19 +405,19 @@ mod tests {
             "Rust 的借用检查器会在编译期阻止数据竞争。",
             1,
         );
-        let hits = run(std::slice::from_ref(&a), "借用检查器", &[], None);
+        let hits = run(std::slice::from_ref(&a), "借用检查器", None);
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("借用检查器"));
 
         // AND semantics: a nonexistent term yields no results
-        let hits = run(&[a], "借用检查器 完全不存在的词", &[], None);
+        let hits = run(&[a], "借用检查器 完全不存在的词", None);
         assert_eq!(hits.len(), 0);
     }
 
     #[test]
     fn case_insensitive_ascii() {
         let a = mem("m1", &[], "Config Loading", "uses Serde for JSON", 1);
-        let hits = run(&[a], "serde json", &[], None);
+        let hits = run(&[a], "serde json", None);
         assert_eq!(hits.len(), 1);
     }
 
@@ -450,7 +425,7 @@ mod tests {
     fn snippet_window_and_ellipses() {
         let long = format!("{}TARGET{}", "前".repeat(200), "后".repeat(200));
         let a = mem("m1", &[], "s", &long, 1);
-        let hits = run(&[a], "target", &[], None);
+        let hits = run(&[a], "target", None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(sn.starts_with('…') && sn.ends_with('…'));
@@ -458,14 +433,14 @@ mod tests {
 
         // Falls back to the start when there are no content hits
         let b = mem("m2", &[], "TARGET in summary", "short", 1);
-        let hits = run(&[b], "target", &[], None);
+        let hits = run(&[b], "target", None);
         assert_eq!(hits[0].snippet, "short");
     }
 
     #[test]
     fn empty_query_returns_nothing() {
         let a = mem("m1", &[], "s", "c", 1);
-        assert!(run(&[a], "   ", &[], None).is_empty());
+        assert!(run(&[a], "   ", None).is_empty());
     }
 
     #[test]
@@ -473,7 +448,7 @@ mod tests {
         // Both hit "rust": the one with 3 content occurrences should rank ahead of the one with just 1
         let a = mem("m1", &[], "s", "rust rust rust and more rust mentions", 1);
         let b = mem("m2", &[], "s", "rust once", 1);
-        let hits = run(&[b, a], "rust", &[], None);
+        let hits = run(&[b, a], "rust", None);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].idx, 1, "m1 (3+ content hits) must rank first");
     }
@@ -483,7 +458,7 @@ mod tests {
         // Searching "age": whole-word hit m1 should rank ahead of substring collateral ("message") m2
         let a = mem("m1", &[], "s", "storage age limits apply here", 1);
         let b = mem("m2", &[], "message summary here", "s", 1);
-        let hits = run(&[b, a], "age", &[], None);
+        let hits = run(&[b, a], "age", None);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].idx, 0, "word-bounded hit must rank first");
     }
@@ -497,14 +472,13 @@ mod tests {
         let hits = run(
             &[adjacent.clone(), separated.clone()],
             "\"borrow checker\"",
-            &[],
             None,
         );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
 
         // Without quotes it reverts to AND semantics: each term hitting anywhere is enough, so both are returned
-        let hits = run(&[adjacent, separated], "borrow checker", &[], None);
+        let hits = run(&[adjacent, separated], "borrow checker", None);
         assert_eq!(hits.len(), 2);
     }
 
@@ -519,7 +493,7 @@ mod tests {
             "x".repeat(10)
         );
         let a = mem("m1", &[], "s", &content, 1);
-        let hits = run(std::slice::from_ref(&a), "alpha beta", &[], None);
+        let hits = run(std::slice::from_ref(&a), "alpha beta", None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         assert!(
@@ -537,7 +511,7 @@ mod tests {
             "hello <img src=x onerror=alert(1)> & \"quotes\" world",
             1,
         );
-        let hits = run(std::slice::from_ref(&a), "img", &[], None);
+        let hits = run(std::slice::from_ref(&a), "img", None);
         assert_eq!(hits.len(), 1);
         let sn = &hits[0].snippet;
         // Snippets are data, not markup: raw text goes out verbatim and the display layer

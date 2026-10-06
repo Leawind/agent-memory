@@ -664,11 +664,11 @@ mod tests {
                 .contains("matched no tags"),
             "got: {ml_empty}"
         );
-        // Used together with an exact tag = AND
+        // Used together with a tag expression = AND
         let ml_and = call(
             &path,
             "memory_list",
-            json!({"tag": "misc", "tag_filter": "^proj/"}),
+            json!({"tag_filter": "^proj/", "tag_expr": "misc"}),
         )
         .unwrap();
         assert_eq!(ml_and["total"], 0);
@@ -951,11 +951,11 @@ mod tests {
         let out = call(&path, "memory_list", json!({"tag_expr": "!rust"})).unwrap();
         assert_eq!(out["total"], 2);
         assert_eq!(ids(&out), vec!["m2".to_string(), "m4".to_string()]);
-        // ANDs with the exact-tag filter: rust ∩ web → m3 only
+        // ANDs with the regex filter: rust ∩ web → m3 only
         let out = call(
             &path,
             "memory_list",
-            json!({"tag": "rust", "tag_expr": "web"}),
+            json!({"tag_filter": "^rust$", "tag_expr": "web"}),
         )
         .unwrap();
         assert_eq!(out["total"], 1);
@@ -1053,16 +1053,21 @@ mod tests {
         cleanup(&path);
     }
 
+    /// The single-tag and tag-array filter parameters were folded into tag_expr (a leaf / an OR
+    /// chain express both); the schema-derived unknown-parameter guard must now reject them so
+    /// there is exactly one way to filter by tags.
     #[test]
-    fn memory_list_reports_tag_state() {
-        let path = temp_db("list-note");
-        call(&path, "tag_create", json!({"name": "empty-tag"})).unwrap();
-        // Tag does not exist
-        let missing = call(&path, "memory_list", json!({"tag": "nope"})).unwrap();
-        assert!(missing["note"].as_str().unwrap().contains("does not exist"));
-        // Tag exists but is empty
-        let empty = call(&path, "memory_list", json!({"tag": "empty-tag"})).unwrap();
-        assert!(empty["note"].as_str().unwrap().contains("no memories"));
+    fn retired_tag_filter_params_are_rejected() {
+        let path = temp_db("retired-params");
+        let err = call(&path, "memory_list", json!({"tag": "rust"})).unwrap_err();
+        assert!(err.to_string().contains("'tag'"), "got: {err}");
+        let err = call(
+            &path,
+            "memory_search",
+            json!({"query": "x", "tags": ["rust"]}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("'tags'"), "got: {err}");
 
         cleanup(&path);
     }

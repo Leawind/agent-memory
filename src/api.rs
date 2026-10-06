@@ -499,21 +499,16 @@ fn list_or_search_args(query: &str) -> Value {
     let mut args = Map::new();
     for key in [
         "query",
-        "tag",
         "tag_filter",
         "tag_expr",
         "sort",
         "order",
         "offset",
         "limit",
-        "tags",
         "mode",
     ] {
         if let Some(v) = query_get(query, key) {
-            let value = if key == "tags" {
-                // Comma-separated multi-tag filter
-                Value::Array(v.split(',').map(|s| json!(s)).collect())
-            } else if key == "offset" || key == "limit" {
+            let value = if key == "offset" || key == "limit" {
                 match v.parse::<u64>() {
                     Ok(n) => json!(n),
                     Err(_) => continue,
@@ -568,16 +563,18 @@ mod tests {
 
     #[test]
     fn list_args_maps_query_params() {
-        let args = list_or_search_args("query=rust&limit=5&offset=2&tags=a,b");
+        let args = list_or_search_args("query=rust&limit=5&offset=2&tag_expr=%28a%26b%29%7Cc");
         assert_eq!(args["query"], "rust");
         assert_eq!(args["limit"], 5);
         assert_eq!(args["offset"], 2);
-        assert_eq!(args["tags"][0], "a");
-        assert_eq!(args["tags"][1], "b");
-        let list_args = list_or_search_args("tag=x&sort=created_at&order=asc");
-        assert_eq!(list_args["tag"], "x");
-        assert_eq!(list_args["sort"], "created_at");
-        assert_eq!(list_args["order"], "asc");
+        assert_eq!(args["tag_expr"], "(a&b)|c");
+        // The retired tag/tags query parameters are no longer forwarded: tag filtering has one
+        // syntax (tag_expr), unknown parameters are rejected at the tool boundary
+        let legacy = list_or_search_args("tag=x&tags=a,b&sort=created_at&order=asc");
+        assert!(legacy.get("tag").is_none());
+        assert!(legacy.get("tags").is_none());
+        assert_eq!(legacy["sort"], "created_at");
+        assert_eq!(legacy["order"], "asc");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Memory management: CRUD, browsing and search (the carrier of progressive disclosure).
 
 use crate::auth::IdentityCtx;
-use crate::model::{normalize_id, normalize_tag_name, now, RESERVED_TAG};
+use crate::model::{normalize_id, now, RESERVED_TAG};
 use crate::search;
 use crate::store::{ListFilter, Store};
 use crate::tag_expr::{self, TagExpr};
@@ -93,10 +93,6 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 }
 
 pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
-    let tag = match opt_str(args, "tag")? {
-        Some(t) => Some(normalize_tag_name(&t)?),
-        None => None,
-    };
     let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let sort_opt = opt_str(args, "sort")?;
     // 'id' is the creation order (ids are monotonic at insert), so there is no separate
@@ -152,7 +148,7 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     };
     let (total, page) = st.list_memories(
         ListFilter {
-            tag: tag.as_deref(),
+            tag: None,
             tag_set: tag_set.as_deref(),
             id_set: id_set.as_deref(),
         },
@@ -164,13 +160,6 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let memories: Vec<Value> = page.iter().map(|m| m.summary_view()).collect();
 
     let mut out = json!({"total": total, "offset": offset, "limit": limit, "memories": memories});
-    if let Some(t) = &tag {
-        if !st.tag_exists(t)? {
-            out["note"] = json!(format!("tag '{}' does not exist yet; see tag_list", t));
-        } else if total == 0 {
-            out["note"] = json!(format!("tag '{}' exists but currently has no memories", t));
-        }
-    }
     if let Some(re) = &tag_re {
         if tag_names.as_ref().is_none_or(|n| n.is_empty()) {
             out["note"] = json!(format!(
@@ -187,8 +176,6 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     if query.trim().is_empty() {
         return Err(ToolError::invalid("query must not be empty"));
     }
-    let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
-    let tag_filter = normalize_tag_list(&raw_tags)?;
     let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let tag_expr = opt_tag_expr(st, args)?;
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
@@ -210,7 +197,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     };
 
     let memories = st.all_memories()?;
-    let keyword_hits = search::run(&memories, &query, &tag_filter, tag_re.as_ref());
+    let keyword_hits = search::run(&memories, &query, tag_re.as_ref());
 
     // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
     // Embedding service unavailable (timeout/error/database read failure) → fall back to the keyword pass and flag it,
@@ -229,15 +216,8 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                 keyword_hits
             }
             Some(cfg) => {
-                let (hits, ok) = semantic_pass(
-                    st,
-                    cfg,
-                    &memories,
-                    keyword_hits,
-                    &query,
-                    &tag_filter,
-                    tag_re.as_ref(),
-                );
+                let (hits, ok) =
+                    semantic_pass(st, cfg, &memories, keyword_hits, &query, tag_re.as_ref());
                 used_hybrid = ok;
                 semantic_fallback = !ok;
                 hits
@@ -249,22 +229,15 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                     "mode 'hybrid' requires semantic search to be enabled and configured (embedding settings in the admin UI)",
                 ));
             };
-            let (hits, ok) = semantic_pass(
-                st,
-                cfg,
-                &memories,
-                keyword_hits,
-                &query,
-                &tag_filter,
-                tag_re.as_ref(),
-            );
+            let (hits, ok) =
+                semantic_pass(st, cfg, &memories, keyword_hits, &query, tag_re.as_ref());
             used_hybrid = ok;
             semantic_fallback = !ok;
             hits
         }
     };
 
-    // Tag expression ANDs with tags/tag_filter: narrow the ranked candidates per memory tag set
+    // Tag expression ANDs with tag_filter: narrow the ranked candidates per memory tag set
     let hits = match &tag_expr {
         Some(expr) => hits
             .into_iter()
@@ -763,7 +736,6 @@ fn semantic_pass(
     memories: &[crate::model::Memory],
     keyword_hits: Vec<search::Hit>,
     query: &str,
-    tag_filter: &[String],
     tag_re: Option<&regex::Regex>,
 ) -> (Vec<search::Hit>, bool) {
     let table = match st.embeddings_active(&cfg.model) {
@@ -788,14 +760,7 @@ fn semantic_pass(
         return (keyword_hits, false);
     };
     (
-        crate::embed::hybrid_hits(
-            memories,
-            keyword_hits,
-            &table,
-            &query_vec,
-            tag_filter,
-            tag_re,
-        ),
+        crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec, tag_re),
         true,
     )
 }

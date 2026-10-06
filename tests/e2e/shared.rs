@@ -33,7 +33,7 @@ fn two_server_processes_share_one_db() {
         Some(r#"{"new_name": "shared-tag"}"#),
     );
     assert_eq!(status, 200);
-    let (status, body, _) = request(a.port, "GET", "/api/memories?tag=shared-tag", None);
+    let (status, body, _) = request(a.port, "GET", "/api/memories?tag_expr=shared-tag", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total"], 1);
 
