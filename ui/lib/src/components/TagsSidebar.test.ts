@@ -8,7 +8,7 @@ const tagsPayload = {
     { name: 'rust', count: 3, description: '语言' },
     // Undescribed tags omit description entirely (sparse agent-facing shape)
     { name: 'infra', count: 1 },
-    { name: 'conventions', count: 2, description: '常驻约定', reserved: true },
+    { name: 'convention', count: 2, description: '常驻约定', reserved: true },
   ],
 }
 
@@ -32,7 +32,7 @@ describe('TagsSidebar', () => {
     expect(html).toContain('rust')
     expect(html).toContain('语言')
     expect(html).toContain('infra')
-    expect(html).toContain('conventions')
+    expect(html).toContain('convention')
     // Reserved badge is surfaced on the reserved tag
     expect(html).toContain('保留')
     // Header count reflects the tag total

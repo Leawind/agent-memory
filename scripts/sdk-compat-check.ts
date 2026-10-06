@@ -342,13 +342,13 @@ try {
 
   const tagList = await rpc(36, "tools/call", { name: "tag_list", arguments: {} })
   // Line format: `<count> <[*]name>[: <description>]` — the reserved flag is the `*` before the name
-  const conventionsLine = (textOf(tagList) ?? "")
+  const conventionLine = (textOf(tagList) ?? "")
     .split("\n")
-    .find((l) => /^\d+ \*conventions(:|$)/.test(l))
+    .find((l) => /^\d+ \*convention(:|$)/.test(l))
   check(
     "reserved tag listed with reserved flag",
-    conventionsLine !== undefined,
-    conventionsLine ?? "(conventions row missing)",
+    conventionLine !== undefined,
+    conventionLine ?? "(convention row missing)",
   )
 
   const purgePreview = await rpc(37, "tools/call", {

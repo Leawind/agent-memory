@@ -395,9 +395,9 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                     );
                 }
             }
-            let had_conventions = pre.old_tags.iter().any(|t| t == RESERVED_TAG);
-            let has_conventions = final_tags.iter().any(|t| t == RESERVED_TAG);
-            if had_conventions != has_conventions {
+            let had_convention = pre.old_tags.iter().any(|t| t == RESERVED_TAG);
+            let has_convention = final_tags.iter().any(|t| t == RESERVED_TAG);
+            if had_convention != has_convention {
                 push(&mut events, Event::ListChanged);
             }
         }
@@ -437,7 +437,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
             if final_tags.iter().any(|t| t == RESERVED_TAG)
                 && !pre.old_tags.iter().any(|t| t == RESERVED_TAG)
             {
-                // The resident-conventions set gained a member
+                // The resident-convention set gained a member
                 push(&mut events, Event::ListChanged);
             }
             if let Some(removed) = result["removed"].as_str() {
@@ -454,7 +454,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                             Event::Updated(resources::tag_resource_uri(tag)),
                         );
                         if tag == RESERVED_TAG {
-                            // ...and the resident-conventions set lost a member
+                            // ...and the resident-convention set lost a member
                             push(&mut events, Event::ListChanged);
                         }
                     }
@@ -463,7 +463,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
         }
         MEMORY_DELETE => {
             let mut affected_tags: Vec<String> = Vec::new();
-            let mut conventions_gone = false;
+            let mut convention_gone = false;
             for id in result["deleted"]
                 .as_array()
                 .map(|a| a.as_slice())
@@ -478,7 +478,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                 if let Some(tags) = id.as_str().and_then(|i| pre.tags_by_id.get(i)) {
                     for tag in tags {
                         if tag == RESERVED_TAG {
-                            conventions_gone = true;
+                            convention_gone = true;
                         }
                         if !affected_tags.contains(tag) {
                             affected_tags.push(tag.clone());
@@ -492,7 +492,7 @@ fn compute_events(tool: &str, args: &Value, result: &Value, pre: &PreState) -> V
                     Event::Updated(resources::tag_resource_uri(&tag)),
                 );
             }
-            if conventions_gone {
+            if convention_gone {
                 push(&mut events, Event::ListChanged);
             }
         }
@@ -602,18 +602,18 @@ mod tests {
             &PreState::default(),
         );
         assert_eq!(evs, vec![Event::Updated("memory://tags/a".into())]);
-        // Conventions member: the conventions tag resource updated, catalog changes
+        // Convention member: the convention tag resource updated, catalog changes
         // AND the memory resource is born
         let evs = events_for(
             "memory_create",
             json!({}),
-            json!({"memory": {"id": "m2", "tags": ["conventions"]}, "tags_autocreated": [], "tags_reused": ["conventions"]}),
+            json!({"memory": {"id": "m2", "tags": ["convention"]}, "tags_autocreated": [], "tags_reused": ["convention"]}),
             &PreState::default(),
         );
         assert_eq!(
             evs,
             vec![
-                Event::Updated("memory://tags/conventions".into()),
+                Event::Updated("memory://tags/convention".into()),
                 Event::ListChanged,
                 Event::Updated("memory://memories/m2".into())
             ]
@@ -623,10 +623,10 @@ mod tests {
     #[test]
     fn memory_update_events_use_the_tag_diff() {
         let pre = PreState {
-            old_tags: vec!["a".into(), "conventions".into()],
+            old_tags: vec!["a".into(), "convention".into()],
             tags_by_id: HashMap::new(),
         };
-        // Body change + tags a→b: memory resource updated, both tag resources updated, conventions
+        // Body change + tags a→b: memory resource updated, both tag resources updated, convention
         // membership dropped → list_changed
         let evs = events_for(
             "memory_update",
@@ -640,11 +640,11 @@ mod tests {
                 Event::Updated("memory://memories/m1".into()),
                 Event::Updated("memory://tags/b".into()),
                 Event::Updated("memory://tags/a".into()),
-                Event::Updated("memory://tags/conventions".into()),
+                Event::Updated("memory://tags/convention".into()),
                 Event::ListChanged
             ]
         );
-        // Tag-only change, no conventions involved: no memory-resource update, no list_changed
+        // Tag-only change, no convention involved: no memory-resource update, no list_changed
         let pre = PreState {
             old_tags: vec!["a".into()],
             tags_by_id: HashMap::new(),
@@ -684,7 +684,7 @@ mod tests {
             old_tags: vec![],
             tags_by_id: HashMap::from([
                 ("m1".into(), vec!["a".into(), "shared".into()]),
-                ("m2".into(), vec!["shared".into(), "conventions".into()]),
+                ("m2".into(), vec!["shared".into(), "convention".into()]),
             ]),
         };
         let evs = events_for(
@@ -700,7 +700,7 @@ mod tests {
                 Event::Updated("memory://memories/m2".into()),
                 Event::Updated("memory://tags/a".into()),
                 Event::Updated("memory://tags/shared".into()),
-                Event::Updated("memory://tags/conventions".into()),
+                Event::Updated("memory://tags/convention".into()),
                 Event::ListChanged
             ]
         );
@@ -712,11 +712,11 @@ mod tests {
             old_tags: vec!["a".into()],
             tags_by_id: HashMap::from([
                 ("m1".into(), vec!["a".into()]),
-                ("m2".into(), vec!["b".into(), "conventions".into()]),
+                ("m2".into(), vec!["b".into(), "convention".into()]),
             ]),
         };
-        // Target m1 gains tag b (its content is merged); source m2 (tagged b + conventions) dies:
-        // its memory resource goes, its tags' catalogs shrink, and the resident-conventions set
+        // Target m1 gains tag b (its content is merged); source m2 (tagged b + convention) dies:
+        // its memory resource goes, its tags' catalogs shrink, and the resident-convention set
         // loses a member (list_changed)
         let evs = events_for(
             "memory_merge",
@@ -730,7 +730,7 @@ mod tests {
                 Event::Updated("memory://memories/m1".into()),
                 Event::Updated("memory://tags/b".into()),
                 Event::Updated("memory://memories/m2".into()),
-                Event::Updated("memory://tags/conventions".into()),
+                Event::Updated("memory://tags/convention".into()),
                 Event::ListChanged
             ]
         );

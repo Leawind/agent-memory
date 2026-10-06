@@ -20,14 +20,14 @@ pub const MAX_IDENTITY_NAME_CHARS: usize = 100;
 /// served by both the modern discover and the legacy initialize).
 pub const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 
-/// The reserved tag marking operator-curated standing rules ("resident conventions"): memories
+/// The reserved tag marking operator-curated standing rules (the "resident convention"): memories
 /// carrying it are exposed as resources in their own right, and the tag itself can never be
 /// renamed or deleted. Attaching it to / detaching it from memories requires the admin capability
 /// (guarded centrally in `tools::execute`).
-pub const RESERVED_TAG: &str = "conventions";
+pub const RESERVED_TAG: &str = "convention";
 /// Description reported for the reserved tag when it is listed before anyone created it
 /// (the synthesized `tag_list` row); once created, the tag's own description wins.
-pub const RESERVED_TAG_DESCRIPTION: &str = "Reserved tag: anchors the operator-curated resident conventions (exposed as memory:// resources). It cannot be renamed or deleted, and attaching it to memories requires the 'admin' permission.";
+pub const RESERVED_TAG_DESCRIPTION: &str = "Reserved tag: anchors the operator-curated resident convention (exposed as memory:// resources). It cannot be renamed or deleted, and attaching it to memories requires the 'admin' permission.";
 
 #[derive(Clone, Debug)]
 pub struct Memory {

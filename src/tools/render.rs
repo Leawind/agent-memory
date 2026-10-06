@@ -205,13 +205,13 @@ mod tests {
         let v = json!({"tags": [
             {"count": 3, "description": "参考知识", "name": "doc"},
             {"count": 1, "name": "git"},
-            {"count": 0, "reserved": true, "name": "conventions", "description": "Reserved tag: anchors"},
+            {"count": 0, "reserved": true, "name": "convention", "description": "Reserved tag: anchors"},
         ]});
         assert_eq!(
             tool_text(TAG_LIST, &v),
             "3 doc: 参考知识\n\
              1 git\n\
-             0 *conventions: Reserved tag: anchors\n"
+             0 *convention: Reserved tag: anchors\n"
         );
     }
 

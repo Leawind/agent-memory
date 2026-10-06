@@ -81,7 +81,7 @@ describe('TagDialog', () => {
   })
 
   it('reserved tags: name locked, no delete button, description still editable', async () => {
-    const wrapper = await openDialog({ name: 'conventions', count: 2, description: '常驻约定', reserved: true })
+    const wrapper = await openDialog({ name: 'convention', count: 2, description: '常驻约定', reserved: true })
     expect(nameInput().disabled).toBe(true)
     expect(deleteButton()).toBeNull()
     await new DOMWrapper(descTextarea()).setValue('改描述')

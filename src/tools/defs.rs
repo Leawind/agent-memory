@@ -62,7 +62,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_LIST,
-            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'conventions' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
+            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
@@ -200,7 +200,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_MERGE,
-            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'conventions' additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired.",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired.",
             json!({
                 "type": "object",
                 "properties": {

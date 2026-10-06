@@ -569,7 +569,7 @@ pub fn memory_merge(
 
     // Reserved-tag rule, data-dependent edition: the arguments name no tags, so the entry guard
     // cannot see this — merging unions the tags onto the target (an attach when the source carries
-    // conventions) and deletes a resident memory when the source is one. Both are admin-only moves.
+    // the convention) and deletes a resident memory when the source is one. Both are admin-only moves.
     let touches_reserved = target
         .tags
         .iter()
@@ -577,7 +577,7 @@ pub fn memory_merge(
         .any(|t| t == RESERVED_TAG);
     if touches_reserved && !ctx.can(crate::auth::Cap::Admin) {
         return Err(ToolError::forbidden(format!(
-            "merging memories that carry the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+            "merging memories that carry the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (the resident convention is operator-curated)"
         )));
     }
 

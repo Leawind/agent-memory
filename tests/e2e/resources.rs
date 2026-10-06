@@ -29,7 +29,7 @@ fn resources_end_to_end() {
     let server = HttpProc::start(&db, "resources");
     let port = server.port;
 
-    // Seed: two plain tags plus one resident conventions memory
+    // Seed: two plain tags plus one resident convention memory
     let plain_id = create_memory(
         port,
         "Borrow checker notes",
@@ -40,7 +40,7 @@ fn resources_end_to_end() {
         port,
         "Commit rules",
         "Summary in one line; tags lowercase.",
-        &["conventions"],
+        &["convention"],
     );
 
     // resources/templates/list: the two memory:// templates, publicly cacheable
@@ -56,14 +56,14 @@ fn resources_end_to_end() {
         "memory://memories/{id}"
     );
 
-    // resources/list: one entry per tag + one per conventions memory; no content anywhere
+    // resources/list: one entry per tag + one per convention memory; no content anywhere
     let (status, listing) = mcp_post(port, json!(3), "resources/list", json!({}), &[]);
     assert_eq!(status, 200);
     assert_eq!(listing["result"]["resultType"], "complete");
     assert_eq!(listing["result"]["ttlMs"], 30_000);
     assert_eq!(listing["result"]["cacheScope"], "private");
     let resources = listing["result"]["resources"].as_array().unwrap();
-    // 3 tags (conventions auto-created) + 1 conventions memory
+    // 3 tags (convention auto-created) + 1 convention memory
     assert_eq!(resources.len(), 4);
     let rust = resources
         .iter()
@@ -77,7 +77,7 @@ fn resources_end_to_end() {
     let conv = resources
         .iter()
         .find(|r| r["uri"] == format!("memory://memories/{conv_id}"))
-        .expect("conventions memory listed");
+        .expect("convention memory listed");
     assert_eq!(conv["name"], "Commit rules");
     assert_eq!(conv["annotations"]["priority"], 1.0);
     assert_eq!(conv["annotations"]["audience"], json!(["assistant"]));

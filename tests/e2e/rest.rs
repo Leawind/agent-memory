@@ -37,7 +37,7 @@ fn rest_api_end_to_end() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|t| t["name"] == "conventions")
+        .find(|t| t["name"] == "convention")
         .expect("reserved tag listed");
     assert_eq!(conv["reserved"], true);
     assert_eq!(conv["count"], 0);

@@ -29,7 +29,7 @@ pub use defs::{
 };
 pub use render::tool_text;
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools and prefer singular tag names ('convention', not 'conventions'). The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -141,19 +141,19 @@ pub fn execute(
         defs::MEMORY_UPDATE => memory_ops::memory_update(st, map),
         defs::MEMORY_EDIT => memory_ops::memory_edit(st, map),
         // The merge needs the identity for the data-dependent reserved-tag check (its arguments
-        // name no tags; only the loaded memories reveal whether conventions is involved)
+        // name no tags; only the loaded memories reveal whether the convention is involved)
         defs::MEMORY_MERGE => memory_ops::memory_merge(st, ctx, map),
         defs::MEMORY_DELETE => memory_ops::memory_delete(st, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
 }
 
-/// Reserved-tag guards for 'conventions' (the resident conventions, also surfaced as resources).
+/// Reserved-tag guards for 'convention' (the resident convention, also surfaced as resources).
 /// Checked here at the entry with the identity context at hand, so the MCP face and the REST face
 /// (which reuses tools::execute) enforce identical rules:
 /// - the tag itself can never be renamed or deleted (hard rule, admins included);
 /// - creating it and attaching it to / detaching it from memories requires the admin capability,
-///   keeping the operator-curated conventions out of agents' reach.
+///   keeping the operator-curated convention out of agents' reach.
 fn reserved_tag_guard(
     ctx: &IdentityCtx,
     name: &str,
@@ -175,7 +175,7 @@ fn reserved_tag_guard(
         defs::TAG_CREATE => {
             if raw_tag(args, "name").as_deref() == Some(RESERVED_TAG) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
-                    "'{RESERVED_TAG}' is a reserved tag; creating it requires the 'admin' permission (it anchors the operator-curated conventions)"
+                    "'{RESERVED_TAG}' is a reserved tag; creating it requires the 'admin' permission (it anchors the operator-curated convention)"
                 )));
             }
         }
@@ -186,14 +186,14 @@ fn reserved_tag_guard(
             }
             if targets.into_iter().flatten().any(|t| t == RESERVED_TAG) {
                 return Err(ToolError::invalid(format!(
-                    "'{RESERVED_TAG}' is a reserved tag: it anchors the resident conventions and cannot be renamed or deleted"
+                    "'{RESERVED_TAG}' is a reserved tag: it anchors the resident convention and cannot be renamed or deleted"
                 )));
             }
         }
         defs::MEMORY_CREATE => {
             if involves_reserved(args, &["tags"]) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
-                    "attaching the reserved tag '{RESERVED_TAG}' to a memory requires the 'admin' permission (conventions are operator-curated)"
+                    "attaching the reserved tag '{RESERVED_TAG}' to a memory requires the 'admin' permission (the resident convention is operator-curated)"
                 )));
             }
         }
@@ -201,7 +201,7 @@ fn reserved_tag_guard(
             if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) =>
         {
             return Err(ToolError::forbidden(format!(
-                "attaching or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (conventions are operator-curated)"
+                "attaching or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (the resident convention is operator-curated)"
             )));
         }
         _ => {}
@@ -1214,10 +1214,10 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Reserved-tag rules for 'conventions': the tag itself can never be renamed or deleted
+    /// Reserved-tag rules for 'convention': the tag itself can never be renamed or deleted
     /// (admins included); creating it and attaching/detaching it on memories requires admin.
     #[test]
-    fn reserved_conventions_tag_is_guarded() {
+    fn reserved_convention_tag_is_guarded() {
         use crate::model::RESERVED_TAG;
         let path = temp_db("reserved-tag");
 
@@ -1311,7 +1311,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
 
-        // Admin CAN write conventions memories and manage other tags freely
+        // Admin CAN write convention memories and manage other tags freely
         let ok = call_as(
             &path,
             &admin_caps,
@@ -1353,7 +1353,7 @@ mod tests {
         let filtered = call(&path, "tag_list", json!({"filter": "^nomatch"})).unwrap();
         assert_eq!(filtered["tags"].as_array().unwrap().len(), 0);
 
-        // Once created, the real row replaces the placeholder (admin creates conventions + one other)
+        // Once created, the real row replaces the placeholder (admin creates convention + one other)
         let admin_caps = Cap::ALL;
         call_as(
             &path,
@@ -1369,7 +1369,7 @@ mod tests {
         let conv = rows
             .iter()
             .find(|t| t["name"] == RESERVED_TAG)
-            .expect("conventions listed");
+            .expect("convention listed");
         assert_eq!(conv["reserved"], true);
         assert_eq!(conv["description"], "house rules", "real description wins");
         let other = rows.iter().find(|t| t["name"] == "rust").unwrap();
@@ -1831,13 +1831,13 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Editing a conventions memory's body follows memory_update's rule: content rewrites need only
+    /// Editing a convention memory's body follows memory_update's rule: content rewrites need only
     /// the update permission (the reserved-tag guard covers attaching/detaching, not editing).
     #[test]
-    fn memory_edit_on_conventions_content_needs_no_admin() {
+    fn memory_edit_on_convention_content_needs_no_admin() {
         use crate::auth::Cap;
         use crate::model::RESERVED_TAG;
-        let path = temp_db("memory-edit-conventions");
+        let path = temp_db("memory-edit-convention");
         let created = call_as(
             &path,
             &Cap::ALL,

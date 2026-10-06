@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { tagExprReady } from './tagExprGuard.js'
 
-const TAGS = ['rust', 'web', 'notes', 'conventions', 'rust & life']
+const TAGS = ['rust', 'web', 'notes', 'convention', 'rust & life']
 
 describe('tagExprReady', () => {
   it('accepts complete expressions over known tags', () => {

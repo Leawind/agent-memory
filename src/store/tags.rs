@@ -253,7 +253,7 @@ impl Store {
 
 /// Sparse agent-facing shape: tokens are the currency, so keys carrying no information are
 /// dropped outright — undescribed tags omit `description`, and `reserved` appears only when
-/// true (everything except 'conventions'). Timestamps are not exposed at all: they cost
+/// true (everything except 'convention'). Timestamps are not exposed at all: they cost
 /// several tokens per row and rarely change what the agent does next.
 fn row_to_tag_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let name: String = r.get(0)?;

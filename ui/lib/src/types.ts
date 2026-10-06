@@ -18,7 +18,7 @@ export interface TagView {
   count: number
   /** Omitted when the tag has no description */
   description?: string
-  /** Present (true) only on the reserved tag (conventions), which can be neither renamed nor deleted; the panel hides those actions */
+  /** Present (true) only on the reserved tag (convention), which can be neither renamed nor deleted; the panel hides those actions */
   reserved?: true
 }
 

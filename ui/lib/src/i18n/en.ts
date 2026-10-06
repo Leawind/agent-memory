@@ -38,7 +38,7 @@ export default {
     none: 'No tags yet',
     reserved: 'Reserved',
     reservedHint:
-      'Reserved tag: anchors the operator-curated resident conventions. It can be neither renamed nor deleted; attaching it to memories requires the admin permission',
+      'Reserved tag: anchors the operator-curated resident convention. It can be neither renamed nor deleted; attaching it to memories requires the admin permission',
     nameLabel: 'Name (unique, ≤100 characters; renaming updates every memory referencing it)',
     namePlaceholder: 'e.g. rust, project, workflow',
     descLabel: 'Description (optional, ≤512 characters)',

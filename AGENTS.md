@@ -77,7 +77,7 @@ src/
                  list_changed（resources/list 成员变），写前 capture 读 diff 所需旧标签
   tools/mod.rs   工具入口：execute_with_db（单事务 + 事务外 embed/notify 钩子），分发，未知参数校验
                  （从 schema 派生），入口集中执行 ctx.require(defs::required_cap(name)) 权限守卫 +
-                 保留标签守卫（conventions：改名/删除绝对禁止，创建/挂摘需 Admin；REST 面复用 execute 自动一致）
+                 保留标签守卫（convention：改名/删除绝对禁止，创建/挂摘需 Admin；REST 面复用 execute 自动一致）
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
   tools/render.rs  MCP 面文本渲染：三个列表工具按 defs.rs 描述的行语法出紧凑行格式（一行一记录，
                  名字按需引号包裹、正文类字段换行转义字面 \n），形状不符回落 JSON 序列化；
@@ -188,7 +188,8 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    `_meta` 声明现代版本走严格校验，声明 legacy 版本或缺 `_meta` 走 legacy 面（声明了不支持的
    版本则 -32022，data.supported 同时列出两代）。通知（无 id）两代同语义：202 免检。新增协议
    能力默认只进现代面；往 legacy 面加东西前先论证旧客户端确实需要。常驻约定 = 保留标签
-   `conventions` 下的记忆（settings 的 conventions 键已废弃）：该标签不可改名/删除，创建与
+   `convention`（单数；内置提示词约定标签名用单数形式）下的记忆（settings 的 conventions 键
+   已废弃）：该标签不可改名/删除，创建与
    挂/摘需 Admin 能力；同时以 memory:// 资源暴露，写入前先读。id 边界格式严格为 `"m{n}"`——
    normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。

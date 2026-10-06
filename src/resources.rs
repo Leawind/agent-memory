@@ -7,22 +7,18 @@
 //!   level 2); the only resource that reveals a body.
 //!
 //! `resources/list` walks the catalog: one entry per tag plus one entry per resident convention
-//! memory (the reserved `conventions` tag), paged 50 at a time with an opaque base64 offset cursor.
+//! memory (the reserved `convention` tag), paged 50 at a time with an opaque base64 offset cursor.
 //!
 //! Authorization uses a filtering-mask semantic, as the spec allows resource sets to vary by
 //! authorization: a caller without the read capability sees an empty list, and reads answer the
 //! regular "not found" invalid-params error (never a permission error that would reveal existence).
 
 use crate::auth::{Cap, IdentityCtx};
-use crate::model::{normalize_tag_name, Memory};
+use crate::model::{normalize_tag_name, Memory, RESERVED_TAG};
 use crate::store::{self, ListFilter, Store, TxMode};
 use crate::util;
 use serde_json::{json, Value};
 use std::path::Path;
-
-/// The reserved tag whose memories surface as individual resources in `resources/list`
-/// (shared with the tool layer's reserved-tag guards).
-pub use crate::model::RESERVED_TAG as CONVENTIONS_TAG;
 
 /// Entries per `resources/list` page.
 const LIST_PAGE_SIZE: usize = 50;
@@ -97,12 +93,12 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
                 .into_iter()
                 .filter_map(|t| tag_entry(&t))
                 .collect();
-            // Resident conventions surface individually so hosts can pin and subscribe to them.
-            // A big-but-safe page bound: conventions memories are few by design (resident rules),
+            // The resident convention surfaces individually so hosts can pin and subscribe to it.
+            // A big-but-safe page bound: convention memories are few by design (resident rules),
             // and SQLite treats a negative LIMIT as unbounded, which `u64::MAX as i64` would yield.
-            let (_, conventions) = st.list_memories(
+            let (_, convention_memories) = st.list_memories(
                 ListFilter {
-                    tag: Some(CONVENTIONS_TAG),
+                    tag: Some(RESERVED_TAG),
                     ..Default::default()
                 },
                 "updated_at",
@@ -110,7 +106,10 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
                 0,
                 1_000_000,
             )?;
-            let conv: Vec<Value> = conventions.iter().filter_map(memory_entry).collect();
+            let conv: Vec<Value> = convention_memories
+                .iter()
+                .filter_map(memory_entry)
+                .collect();
             entries.extend(conv);
             Ok(entries)
         },
@@ -337,7 +336,7 @@ fn memory_entry(memory: &Memory) -> Option<Value> {
         "name": memory.summary,
         "mimeType": "text/markdown",
         "annotations": {
-            // Resident conventions are directed at agents (hosts may pin them)
+            // The resident convention is directed at agents (hosts may pin it)
             "audience": ["assistant"],
             "priority": 1.0,
         },
@@ -422,7 +421,7 @@ mod tests {
                 10,
                 20,
             )?;
-            let conv_ids = st.link_tags(&[CONVENTIONS_TAG.into()], true)?.ids;
+            let conv_ids = st.link_tags(&[RESERVED_TAG.into()], true)?.ids;
             st.insert_memory(
                 "Commit rules",
                 "Summary in one line; tags lowercase.",
@@ -544,14 +543,14 @@ mod tests {
     }
 
     #[test]
-    fn list_walks_tags_and_conventions_with_pagination() {
+    fn list_walks_tags_and_convention_with_pagination() {
         let path = temp_db("list");
         cleanup(&path);
         seed(&path);
         let first = list(&path, &open_ctx(), None).unwrap();
         assert_eq!(first["resultType"], "complete");
         assert_eq!(first["cacheScope"], "private");
-        // link_tags auto-created the conventions tag, so: 3 tags + 1 conventions memory
+        // link_tags auto-created the convention tag, so: 3 tags + 1 convention memory
         let resources = first["resources"].as_array().unwrap();
         assert_eq!(resources.len(), 4);
         assert_eq!(first.get("nextCursor"), None);
@@ -575,9 +574,9 @@ mod tests {
         // Catalog entries never carry content
         assert!(conv.get("text").is_none());
 
-        // Page size honored: seed more conventions memories than one page holds
+        // Page size honored: seed more convention memories than one page holds
         store::with_db_in(&path, TxMode::Write, |st| -> Result<(), String> {
-            let ids = st.link_tags(&[CONVENTIONS_TAG.into()], true)?.ids;
+            let ids = st.link_tags(&[RESERVED_TAG.into()], true)?.ids;
             for i in 0..60 {
                 st.insert_memory(&format!("conv {i}"), "body", &ids, i as u64, i as u64)?;
             }
