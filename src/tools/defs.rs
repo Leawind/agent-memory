@@ -52,7 +52,7 @@ pub fn tool_definitions() -> Value {
             json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Unique tag name (trimmed, 1-100 chars, case-sensitive, any language)."},
+                    "name": {"type": "string", "description": "Unique tag name (trimmed, 1-100 chars, case-sensitive, any language). Format: only letters, digits, '_', '-' and '.' (no spaces, quotes or expression operators), starting with a letter, digit or '_'."},
                     "description": {"type": "string", "description": "Optional: what this tag groups (max 512 chars)."}
                 },
                 "required": ["name"],
@@ -110,7 +110,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true."},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true. Format: only letters, digits, '_', '-' and '.'."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description."}
                 },
                 "required": ["summary"],

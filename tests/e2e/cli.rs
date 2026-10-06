@@ -30,7 +30,8 @@ fn cli_subcommands_work() {
     assert!(out.status.success(), "stats failed: {:?}", out.status);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("memories: 1"), "stats output: {stdout}");
-    assert!(stdout.contains("tags: 1"), "stats output: {stdout}");
+    // "cli" + the always-present reserved fixture
+    assert!(stdout.contains("tags: 2"), "stats output: {stdout}");
 
     // doctor: clean db -> exit code 0
     let out = run_cli(&["doctor", "--db", &db_s]);
@@ -117,7 +118,8 @@ fn export_import_roundtrip_via_cli() {
     let (status, body, _) = request(server.port, "GET", "/api/stats", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["memories"], 2);
-    assert_eq!(json_body(&body)["tags"], 2);
+    // tag甲 + tag乙 + the always-present reserved fixture
+    assert_eq!(json_body(&body)["tags"], 3);
     drop(server);
 
     // Non-empty target db -> a second import is rejected

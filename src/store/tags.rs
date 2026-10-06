@@ -249,6 +249,19 @@ impl Store {
         }
         Ok(ids)
     }
+
+    /// Count tags excluding the reserved one: the reserved tag is a permanent fixture seeded at
+    /// open, so "does the store hold any user-created tag" must not count it (import's
+    /// fresh-database check is the caller that cares).
+    pub fn tag_count_unreserved(&self) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                sql::TAG_COUNT_UNRESERVED,
+                [crate::model::RESERVED_TAG],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Sparse agent-facing shape: tokens are the currency, so keys carrying no information are

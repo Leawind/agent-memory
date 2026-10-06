@@ -442,10 +442,9 @@ mod tests {
         assert!(
             matches!(parse_uri("memory://tags/%E9%A1%B9%E7%9B%AE"), Ok(Target::Tag(n)) if n == "项目")
         );
-        // Encoded slash stays one segment
-        assert!(
-            matches!(parse_uri("memory://tags/proj%2Falpha"), Ok(Target::Tag(n)) if n == "proj/alpha")
-        );
+        // Encoded slash stays one segment, but '/' is not a valid tag-name character anymore
+        // (tag-name format): the decoded name fails normalization, so the URI is rejected
+        assert!(parse_uri("memory://tags/proj%2Falpha").is_err());
         // Invalid shapes
         for bad in [
             "file:///etc/passwd",

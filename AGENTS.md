@@ -102,18 +102,21 @@ src/
                  职责不进数据层，UI 以文本插值渲染，不走 v-html）
   tag_expr.rs    标签集合运算：解析/求值标签布尔表达式（! > & > |，括号分组，&&/|| 别名，
                  引号名字带转义），纯语法层；叶子名由调用方对库校验（未知名 400 + did-you-
-                 mean）。/…/ 正则原子：词首定界（bare 词内的 / 保持字面，proj/alpha 仍是
-                 一个标签名），\/ 转义定界符其余反斜杠序列透传，默认区分大小写（(?i) 内联
-                 开启），任一标签名命中即算；eval 接收记忆标签集切片。memory_list/
+                 mean）。/…/ 正则原子：词首定界（bare 词内的 / 保持字面），\/ 转义定界符
+                 其余反斜杠序列透传，默认区分大小写（(?i) 内联开启），任一标签名命中即算；
+                 eval 接收记忆标签集切片。memory_list/
                  memory_search 的 tag_expr 参数：list 求值为记忆 id 集合走静态 SQL 的
                  json_each（ListFilter），search 在排序候选上求值收窄；空串视为无表达式。
                  tag/tag_filter/tags 独立过滤参数均已删除——单标签=叶子、多标签 OR=并集、
-                 正则=/…/ 原子，全是表达式的子集，标签过滤只剩 tag_expr 一种语法
+                 正则=/…/ 原子，全是表达式的子集，标签过滤只剩 tag_expr 一种语法。
+                 标签名有格式规范（见 model.rs）：字母/数字/_-+. 起首字母数字或下划线，
+                 表达式里无需引号也不会与运算符冲突（引号语法仅为解析层保留）
   embed.rs       语义搜索：OpenAI 兼容 /embeddings 客户端（ureq+rustls，全项目唯一出站 HTTP）、
                  向量 BLOB 编解码/余弦、RRF 混合排序、process_pending 有界批量补跑；
                  回退是硬性原则——服务不可用只降级不失败（搜索回退关键词 + semantic_fallback 标记，
                  写入静默留待补跑）；embedding 调用一律在数据库事务之外
-  model.rs       纯数据模型：Memory / id·标签名·身份名归一化 / API 限制常量
+  model.rs       纯数据模型：Memory / id·标签名（格式规范：Unicode 字母数字 + _-. ，起首
+                 字母/数字/下划线；单数约定进内置提示词）·身份名归一化 / API 限制常量
 migrations/      Schema 迁移脚本（NUM-NAME.sql），build.rs 编译期生成 MIGRATIONS 数组
 sql/             业务 SQL（每条语句一个文件，文件名 ↔ sql.rs 常量，同步测试把守）
 ui/              前端分两个 workspace 包（详见 ui/README.md）：
@@ -189,8 +192,9 @@ ui/              前端分两个 workspace 包（详见 ui/README.md）：
    版本则 -32022，data.supported 同时列出两代）。通知（无 id）两代同语义：202 免检。新增协议
    能力默认只进现代面；往 legacy 面加东西前先论证旧客户端确实需要。常驻约定 = 保留标签
    `convention`（单数；内置提示词约定标签名用单数形式）下的记忆（settings 的 conventions 键
-   已废弃）：该标签不可改名/删除，创建与
-   挂/摘需 Admin 能力；同时以 memory:// 资源暴露，写入前先读。id 边界格式严格为 `"m{n}"`——
+   已废弃）：该标签行在 open 时播种（INSERT OR IGNORE，恒存在——tag_expr 校验/资源读/导入
+   都不依赖 Admin 是否创建过；导入复用播种行，导出照常携带）；不可改名/删除，挂/摘需
+   Admin 能力；同时以 memory:// 资源暴露，写入前先读。id 边界格式严格为 `"m{n}"`——
    normalize_id 只去空白，parse_id 拒绝省略 m 前缀的裸数字。
 7. **时间戳边界**：模型层用 u64 秒；SQL 绑定用 i64（rusqlite 不支持 u64），读取后转回。
 8. **仓库只有源码，构建产物一律不入库**：`ui/dist`、`ui/lib/dist`（连同 target/、

@@ -29,7 +29,7 @@ pub use defs::{
 };
 pub use render::tool_text;
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools and prefer singular tag names ('convention', not 'conventions'). The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name only carries letters, digits, '_', '-' and '.' — no spaces or expression operators. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -617,15 +617,18 @@ mod tests {
 
     /// Tag regex filtering: tag_list's own `filter` param (case-insensitive), and the regex
     /// atoms of memory_list / memory_search's tag_expr (case-sensitive, (?i) opts in).
+    /// Regex atoms match whole tag names by pattern — names themselves cannot contain '/'
+    /// (tag-name format), so the delimiter never needs escaping inside a pattern here.
     #[test]
     fn regex_filters_on_tags_and_memories() {
         let path = temp_db("regex-filter");
-        call(&path, "tag_create", json!({"name": "proj/alpha"})).unwrap();
+        call(&path, "tag_create", json!({"name": "proj-alpha"})).unwrap();
+        call(&path, "tag_create", json!({"name": "proj-beta"})).unwrap();
         call(&path, "tag_create", json!({"name": "misc"})).unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "alpha note", "content": "c", "tags": ["proj/alpha"]}),
+            json!({"summary": "alpha note", "content": "c", "tags": ["proj-alpha"]}),
         )
         .unwrap();
         call(
@@ -636,12 +639,12 @@ mod tests {
         .unwrap();
 
         // tag_list filter: unanchored substring matching, ^...$ anchors the full name
-        let tl = call(&path, "tag_list", json!({"filter": "^proj/"})).unwrap();
-        assert_eq!(tl["tags"][0]["name"], "proj/alpha");
+        let tl = call(&path, "tag_list", json!({"filter": "^proj-"})).unwrap();
+        assert_eq!(tl["tags"].as_array().unwrap().len(), 2);
         // Case-insensitive, mirroring content search's case folding: case variants in the
         // taxonomy must not split the filters either
-        let up = call(&path, "tag_list", json!({"filter": "^PROJ/"})).unwrap();
-        assert_eq!(up["tags"].as_array().unwrap().len(), 1);
+        let up = call(&path, "tag_list", json!({"filter": "^PROJ-"})).unwrap();
+        assert_eq!(up["tags"].as_array().unwrap().len(), 2);
         let none = call(&path, "tag_list", json!({"filter": "zzz"})).unwrap();
         assert_eq!(none["tags"].as_array().unwrap().len(), 0);
         // Invalid regex → Invalid (400 kind)
@@ -651,29 +654,28 @@ mod tests {
             "got: {err}"
         );
 
-        // memory_list regex atom (the delimiter slash is escaped as \/): the total counts
-        // only matching memories
-        let ml = call(&path, "memory_list", json!({"tag_expr": "/^proj\\//"})).unwrap();
+        // memory_list regex atom: the total counts only matching memories
+        let ml = call(&path, "memory_list", json!({"tag_expr": "/^proj-/"})).unwrap();
         assert_eq!(ml["total"], 1);
         assert_eq!(ml["memories"][0]["summary"], "alpha note");
         // Case-sensitive by default; (?i) opts in
-        let ml = call(&path, "memory_list", json!({"tag_expr": "/^PROJ\\//"})).unwrap();
+        let ml = call(&path, "memory_list", json!({"tag_expr": "/^PROJ-/"})).unwrap();
         assert_eq!(ml["total"], 0);
-        let ml = call(&path, "memory_list", json!({"tag_expr": "/(?i)^proj\\//"})).unwrap();
+        let ml = call(&path, "memory_list", json!({"tag_expr": "/(?i)^proj-/"})).unwrap();
         assert_eq!(ml["total"], 1);
         // A regex matching nothing filters everything out, silently (dynamic matching has no
         // did-you-mean candidate to offer)
         let ml_empty = call(&path, "memory_list", json!({"tag_expr": "/zzz/"})).unwrap();
         assert_eq!(ml_empty["total"], 0);
         // Regex atom AND tag name = AND
-        let ml_and = call(&path, "memory_list", json!({"tag_expr": "/^proj\\//&misc"})).unwrap();
+        let ml_and = call(&path, "memory_list", json!({"tag_expr": "/^proj-/&misc"})).unwrap();
         assert_eq!(ml_and["total"], 0);
 
         // memory_search regex atom narrows the ranked candidates
         let ms = call(
             &path,
             "memory_search",
-            json!({"query": "note", "tag_expr": "/^proj\\//"}),
+            json!({"query": "note", "tag_expr": "/^proj-/"}),
         )
         .unwrap();
         assert_eq!(ms["total_matches"], 1);
@@ -954,10 +956,10 @@ mod tests {
         // Empty string counts as absent
         let out = call(&path, "memory_list", json!({"tag_expr": "   "})).unwrap();
         assert_eq!(out["total"], 4);
-        // Quoted names carry operators and whitespace (the tag exists, so no error)
-        call(&path, "tag_create", json!({"name": "rust & life"})).unwrap();
-        let out = call(&path, "memory_list", json!({"tag_expr": "'rust & life'"})).unwrap();
-        assert_eq!(out["total"], 0);
+        // Names that would need quoting (whitespace/operators) are rejected at creation by the
+        // tag-name format — in practice tag_expr never has to disambiguate such names
+        let err = call(&path, "tag_create", json!({"name": "rust & life"})).unwrap_err();
+        assert!(err.to_string().contains("invalid tag name"), "got: {err}");
 
         // Syntax errors surface as Invalid with position
         let err = call(&path, "memory_list", json!({"tag_expr": "(rust|web"})).unwrap_err();
@@ -1246,7 +1248,7 @@ mod tests {
             "got: {err}"
         );
         // Forbidden happens before any side effect: no tag, no memory (the one row is the
-        // always-listed reserved placeholder, not a side effect)
+        // seeded reserved tag, not a side effect)
         assert_eq!(
             call(&path, "tag_list", json!({})).unwrap()["tags"]
                 .as_array()
@@ -1256,14 +1258,8 @@ mod tests {
         );
 
         // Renaming/deleting the reserved tag is refused outright — even to a full admin
+        // (the row already exists from seeding; tag_create would just conflict)
         let admin_caps = Cap::ALL;
-        call_as(
-            &path,
-            &admin_caps,
-            "tag_create",
-            json!({"name": RESERVED_TAG}),
-        )
-        .unwrap();
         for tool in ["tag_update", "tag_delete"] {
             let mut args = json!({"name": RESERVED_TAG});
             if tool == "tag_update" {
@@ -1325,9 +1321,8 @@ mod tests {
         cleanup(&path);
     }
 
-    /// The reserved tag is discoverable through tag_list: flagged on its real row, and synthesized
-    /// (zero memories, builtin description) before anyone created it — discoverability must not
-    /// depend on having first crashed into a guard error.
+    /// The reserved tag is discoverable through tag_list: a real row seeded at open, flagged
+    /// reserved, with the builtin description — no admin action needed for discoverability.
     #[test]
     fn tag_list_always_surfaces_the_reserved_tag() {
         use crate::model::RESERVED_TAG;
@@ -1335,7 +1330,7 @@ mod tests {
 
         let listed = call(&path, "tag_list", json!({})).unwrap();
         let rows = listed["tags"].as_array().unwrap();
-        assert_eq!(rows.len(), 1, "only the synthesized reserved row");
+        assert_eq!(rows.len(), 1, "only the seeded reserved row");
         assert_eq!(rows[0]["name"], RESERVED_TAG);
         assert_eq!(rows[0]["reserved"], true);
         assert_eq!(rows[0]["count"], 0);
@@ -1344,25 +1339,34 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("Reserved"),
-            "synthesized row carries the builtin description"
+            "seeded row carries the builtin description"
         );
 
-        // The regex filter applies to the synthesized row like any other name
+        // The regex filter applies to the seeded row like any other name
         let filtered = call(&path, "tag_list", json!({"filter": "^conv"})).unwrap();
         assert_eq!(filtered["tags"].as_array().unwrap().len(), 1);
         let filtered = call(&path, "tag_list", json!({"filter": "^nomatch"})).unwrap();
         assert_eq!(filtered["tags"].as_array().unwrap().len(), 0);
 
-        // Once created, the real row replaces the placeholder (admin creates convention + one other)
+        // Creating it again is a plain conflict (the row exists), and renaming it is guarded;
+        // the row is used as-is: attaching it (admin) bumps its count like any other tag
         let admin_caps = Cap::ALL;
-        call_as(
+        let err = call_as(
             &path,
             &admin_caps,
             "tag_create",
             json!({"name": RESERVED_TAG, "description": "house rules"}),
         )
-        .unwrap();
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Invalid(_)), "got: {err:?}");
         call_as(&path, &admin_caps, "tag_create", json!({"name": "rust"})).unwrap();
+        call_as(
+            &path,
+            &admin_caps,
+            "memory_create",
+            json!({"summary": "rule", "content": "c", "tags": [RESERVED_TAG]}),
+        )
+        .unwrap();
         let listed = call(&path, "tag_list", json!({})).unwrap();
         let rows = listed["tags"].as_array().unwrap();
         assert_eq!(rows.len(), 2);
@@ -1371,7 +1375,7 @@ mod tests {
             .find(|t| t["name"] == RESERVED_TAG)
             .expect("convention listed");
         assert_eq!(conv["reserved"], true);
-        assert_eq!(conv["description"], "house rules", "real description wins");
+        assert_eq!(conv["count"], 1, "attachment counts on the seeded row");
         let other = rows.iter().find(|t| t["name"] == "rust").unwrap();
         // Sparse reserved flag: present (true) only on the reserved tag
         assert!(other.get("reserved").is_none());

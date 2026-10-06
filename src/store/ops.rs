@@ -274,8 +274,10 @@ impl Store {
     /// Returns (memories imported, tags imported).
     pub fn import_dump(&self, dump: &Value) -> Result<(usize, usize), String> {
         let empty = self.stats()?;
-        if empty["memories"].as_u64().unwrap_or(0) != 0 || empty["tags"].as_u64().unwrap_or(0) != 0
-        {
+        // The reserved tag is a permanent fixture seeded at open, not user data: a fresh
+        // database always carries exactly that one row, so it does not block import.
+        let unreserved_tags = self.tag_count_unreserved()?;
+        if empty["memories"].as_u64().unwrap_or(0) != 0 || unreserved_tags != 0 {
             return Err(
                 "target database is not empty; import refuses to merge -- point --db at a fresh database".into(),
             );
@@ -311,6 +313,7 @@ impl Store {
         // with a export tag id → new database id mapping for translating memory references.
         let mut tag_id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
         let mut seen_names = HashSet::with_capacity(tags.len());
+        let mut created_tags = 0usize;
         for (key, t) in tags {
             let name = t
                 .get("name")
@@ -326,12 +329,22 @@ impl Store {
                 "tag description",
                 crate::model::MAX_TAG_DESC_CHARS,
             )?;
-            self.tag_create(&name, &description)?;
-            let id = self
-                .tag_ids_for_names(std::slice::from_ref(&name))?
-                .into_iter()
-                .next()
-                .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?;
+            // The reserved tag is seeded at open in every database, so the dump's row always
+            // collides: reuse the seeded row as-is (its builtin description cannot be
+            // customized) and keep only genuinely created rows in the import count.
+            let id = if name == crate::model::RESERVED_TAG {
+                self.tag_ids_for_names(std::slice::from_ref(&name))?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
+            } else {
+                self.tag_create(&name, &description)?;
+                created_tags += 1;
+                self.tag_ids_for_names(std::slice::from_ref(&name))?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
+            };
             tag_id_by_key.insert(key.as_str(), id);
         }
 
@@ -370,7 +383,7 @@ impl Store {
             }
             self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
         }
-        Ok((memories.len(), tags.len()))
+        Ok((memories.len(), created_tags))
     }
 }
 
@@ -659,7 +672,8 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("unknown tag id '3'"), "got: {err}");
         let st = Store::open(&path).unwrap();
-        assert_eq!(st.stats().unwrap()["tags"], 0, "tags must roll back");
+        // Only the seeded reserved tag remains — the import's own tags rolled back
+        assert_eq!(st.tag_count_unreserved().unwrap(), 0, "tags must roll back");
         assert_eq!(st.stats().unwrap()["memories"], 0);
         cleanup(&path);
     }

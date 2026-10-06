@@ -79,7 +79,10 @@ pub fn normalize_id(raw: &str) -> String {
     raw.trim().to_string()
 }
 
-/// Tag name normalization: trim surrounding whitespace and cap length.
+/// Tag name normalization: trim surrounding whitespace, cap length, and enforce the tag-name
+/// format. Names are tag_expr atoms — the format keeps expression parsing unambiguous (no
+/// quoting needed, no collisions with operators/quotes/regex delimiters): Unicode letters and
+/// numbers (CJK included) plus `_`, `-` and `.`, starting with a letter, number or `_`.
 pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     let t = raw.trim();
     if t.is_empty() {
@@ -88,6 +91,15 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     if t.chars().count() > MAX_TAG_NAME_CHARS {
         return Err(format!(
             "tag name is too long (max {MAX_TAG_NAME_CHARS} characters)"
+        ));
+    }
+    let valid = t.chars().enumerate().all(|(i, c)| match i {
+        0 => c.is_alphanumeric() || c == '_',
+        _ => c.is_alphanumeric() || matches!(c, '_' | '-' | '.'),
+    });
+    if !valid {
+        return Err(format!(
+            "invalid tag name '{t}': use letters, digits, '_', '-' and '.' only, starting with a letter or digit (no spaces, quotes or expression operators)"
         ));
     }
     Ok(t.to_string())
@@ -127,6 +139,38 @@ mod tests {
         assert!(normalize_tag_name(&"x".repeat(MAX_TAG_NAME_CHARS + 1)).is_err());
         assert!(normalize_tag_name(&"x".repeat(MAX_TAG_NAME_CHARS)).is_ok());
         assert!(normalize_tag_name("中文标签").is_ok());
+    }
+
+    #[test]
+    fn tag_name_format_is_enforced() {
+        // The tag_expr atom charset: letters/digits (Unicode included), '_' '-' '.', no spaces,
+        // quotes, operators or the regex delimiter; must start with a letter, digit or '_'
+        for ok in [
+            "rust",
+            "_private",
+            "v1.2",
+            "multi-hyphen_underscore.ok",
+            "方案-A.1",
+        ] {
+            assert!(normalize_tag_name(ok).is_ok(), "{ok} should be valid");
+        }
+        for bad in [
+            "rust & life", // expression operator with spaces
+            "a&b",         // glued operator
+            "a|b",
+            "!not",
+            "(paren)",
+            "a/b", // regex delimiter
+            "has space",
+            "quo\"te",
+            "quo'te",
+            ",",
+            "-leading",
+            ".leading",
+            "/leading",
+        ] {
+            assert!(normalize_tag_name(bad).is_err(), "{bad} should be invalid");
+        }
     }
 
     #[test]

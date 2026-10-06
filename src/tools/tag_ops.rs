@@ -33,22 +33,9 @@ pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolErro
     if let Some(re) = &filter {
         tags.retain(|t| re.is_match(t["name"].as_str().unwrap_or_default()));
     }
-    // The reserved tag must be discoverable even before it exists: without a row there is no way
-    // to learn it exists except by crashing into a guard error. Synthesize it (filter applies to
-    // it like any other name), then restore the documented browse order (count desc, name asc).
-    let re_match = |name: &str| filter.as_ref().is_none_or(|re| re.is_match(name));
-    if re_match(crate::model::RESERVED_TAG)
-        && !tags
-            .iter()
-            .any(|t| t["name"].as_str() == Some(crate::model::RESERVED_TAG))
-    {
-        tags.push(json!({
-            "name": crate::model::RESERVED_TAG,
-            "count": 0,
-            "reserved": true,
-            "description": crate::model::RESERVED_TAG_DESCRIPTION,
-        }));
-    }
+    // The reserved tag always has a row (seeded at open), so it flows through like any other
+    // name — the filter applies to it unchanged. Restore the documented browse order
+    // (count desc, name asc).
     fn sort_key(v: &Value) -> (u64, &str) {
         (
             v["count"].as_u64().unwrap_or(0),

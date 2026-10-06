@@ -71,8 +71,14 @@ mod tests {
             0,
             "rollback must remove the memory"
         );
+        // Only the seeded reserved tag remains: the transaction's own tag rolled back
         assert_eq!(
             st.stats().unwrap()["tags"],
+            1,
+            "rollback must remove the tag"
+        );
+        assert_eq!(
+            st.tag_count_unreserved().unwrap(),
             0,
             "rollback must remove the tag"
         );

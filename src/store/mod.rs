@@ -36,6 +36,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use crate::sql;
+
 const BUSY_TIMEOUT_MS: u64 = 5000;
 
 // Schema migrations embedded from the `migrations/` directory at build time
@@ -89,6 +91,18 @@ impl Store {
             .map_err(|e| format!("cannot enable foreign keys: {e}"))?;
         migrate::run_migrations(&conn)?;
         verify_schema(&conn)?;
+        // The reserved tag is a permanent fixture of the store: seed it at open so existence
+        // checks (tag_expr validation, did-you-mean, resource reads) never depend on whether
+        // an admin has created it yet. INSERT OR IGNORE keeps admin-customized rows intact.
+        conn.execute(
+            sql::TAG_SEED_RESERVED,
+            rusqlite::params![
+                crate::model::RESERVED_TAG,
+                crate::model::RESERVED_TAG_DESCRIPTION,
+                crate::model::now() as i64
+            ],
+        )
+        .map_err(|e| format!("cannot seed the reserved tag: {e}"))?;
         Ok(Store {
             path: normalize_path(path),
             conn,
