@@ -1,1 +1,1 @@
-SELECT id, summary, content FROM memories
+SELECT id, summary FROM memories

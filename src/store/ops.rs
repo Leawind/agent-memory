@@ -69,30 +69,21 @@ impl Store {
                 ));
             }
         }
-        // Empty titles / empty content
+        // Empty summaries (content is optional: summary-only memories are a normal shape, not a hazard)
         let rows = self
             .conn
             .prepare(sql::HYGIENE_MEMORIES)
             .map_err(|e| e.to_string())?
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        for (id, summary, content) in rows {
+        for (id, summary) in rows {
             if summary.trim().is_empty() {
                 issues.push(format!(
                     "memory {} has an empty summary",
                     Self::format_id(id)
                 ));
-            }
-            if content.trim().is_empty() {
-                issues.push(format!("memory {} has empty content", Self::format_id(id)));
             }
         }
         // Semantic search coverage: when enabled and memories lack vectors for the current model, suggest a backfill.
@@ -476,6 +467,14 @@ mod tests {
                 [],
             )
             .unwrap();
+        // Summary-only memories (empty content) are a normal shape and must not be flagged
+        st.conn
+            .execute(
+                "INSERT INTO memories(id, summary, content, created_at, updated_at) \
+                 VALUES (2, 'summary only', '', 1, 1)",
+                [],
+            )
+            .unwrap();
         let issues = st.hygiene_issues().unwrap().join("\n");
         assert!(issues.contains("999"), "missing orphan: {issues}");
         assert!(
@@ -487,6 +486,10 @@ mod tests {
             "missing case: {issues}"
         );
         assert!(issues.contains("empty summary"), "missing empty: {issues}");
+        assert!(
+            !issues.contains("empty content"),
+            "summary-only memory must not be flagged: {issues}"
+        );
         cleanup(&path);
     }
 
