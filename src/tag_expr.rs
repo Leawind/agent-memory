@@ -9,36 +9,48 @@
 //! or      := and ("|" | "||" and)*
 //! and     := unary ("&" | "&&" unary)*
 //! unary   := ("!" unary) | primary
-//! primary := "(" expr ")" | tag
+//! primary := "(" expr ")" | tag | regex
 //! tag     := quoted | bare
 //! quoted  := '"' (escape | char)* '"' | "'" (escape | char)* "'"
 //! bare    := 1+ chars outside whitespace, parentheses, "&|!", quotes
+//! regex   := "/" (escape | char)* "/"
 //! ```
 //!
+//! A regex atom passes when ANY of the memory's tag names matches (Rust regex syntax, case
+//! sensitive by default — inline flags like `(?i)` work). A `/` opens a regex only at a token
+//! boundary; inside a bare word it stays literal, so `proj/alpha` is still one tag name. Inside
+//! a regex, `\/` escapes the delimiter and every other backslash sequence passes through to the
+//! regex engine untouched (`\d`, `\\`, ...).
+//!
 //! Parsing is pure syntax; leaf names are validated against the store by the caller (unknown
-//! names are an error with a did-you-mean hint, mirroring tag linking on writes).
+//! names are an error with a did-you-mean hint, mirroring tag linking on writes). Regex atoms
+//! carry no names and match dynamically.
 
-/// A parsed expression: one node per operator, leaves are tag names.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A parsed expression: one node per operator, leaves are tag names or compiled regexes.
+#[derive(Debug, Clone)]
 pub enum TagExpr {
     Tag(String),
+    Regex(Box<regex::Regex>),
     Not(Box<TagExpr>),
     All(Box<TagExpr>, Box<TagExpr>),
     Any(Box<TagExpr>, Box<TagExpr>),
 }
 
 impl TagExpr {
-    /// Evaluate against one memory's tag set: `has` answers "does this memory carry the tag?".
-    pub fn eval(&self, has: &impl Fn(&str) -> bool) -> bool {
+    /// Evaluate against one memory's tag set: a leaf passes when the set carries the name, a
+    /// regex when any name in the set matches.
+    pub fn eval(&self, tags: &[String]) -> bool {
         match self {
-            TagExpr::Tag(name) => has(name),
-            TagExpr::Not(inner) => !inner.eval(has),
-            TagExpr::All(a, b) => a.eval(has) && b.eval(has),
-            TagExpr::Any(a, b) => a.eval(has) || b.eval(has),
+            TagExpr::Tag(name) => tags.iter().any(|t| t == name),
+            TagExpr::Regex(re) => tags.iter().any(|t| re.is_match(t)),
+            TagExpr::Not(inner) => !inner.eval(tags),
+            TagExpr::All(a, b) => a.eval(tags) && b.eval(tags),
+            TagExpr::Any(a, b) => a.eval(tags) || b.eval(tags),
         }
     }
 
     /// Leaf tag names in first-appearance order, deduplicated (for store-side existence checks).
+    /// Regex atoms match dynamically and contribute none.
     pub fn tag_names(&self) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
         self.collect_names(&mut out);
@@ -52,6 +64,7 @@ impl TagExpr {
                     out.push(name);
                 }
             }
+            TagExpr::Regex(_) => {}
             TagExpr::Not(inner) => inner.collect_names(out),
             TagExpr::All(a, b) | TagExpr::Any(a, b) => {
                 a.collect_names(out);
@@ -69,6 +82,7 @@ enum Tok {
     Pipe,
     Bang,
     Tag(String),
+    Regex(String),
 }
 
 /// Parse an expression; errors carry the char position (1-based) of the offending token.
@@ -143,6 +157,53 @@ fn tokenize(input: &str) -> Result<Vec<(Tok, usize)>, String> {
                 out.push((Tok::Tag(name), pos));
             }
             c if c.is_whitespace() => {}
+            '/' => {
+                // A slash at a token boundary opens a regex atom; inside a bare word (handled
+                // below) it stays literal, so 'proj/alpha' still parses as one tag name
+                i += 1; // skip the opening delimiter
+                let mut pattern = String::new();
+                let mut closed = false;
+                while i < chars.len() {
+                    let ch = chars[i];
+                    if ch == '\\' {
+                        // Only '\/' escapes the delimiter; every other backslash sequence
+                        // (including '\\') passes through verbatim to the regex engine
+                        match chars.get(i + 1) {
+                            Some('/') => {
+                                pattern.push('/');
+                                i += 2;
+                            }
+                            Some(&next) => {
+                                pattern.push('\\');
+                                pattern.push(next);
+                                i += 2;
+                            }
+                            None => {
+                                pattern.push('\\');
+                                i += 1;
+                            }
+                        }
+                        continue;
+                    }
+                    if ch == '/' {
+                        // Stop ON the closing delimiter; the outer loop's i += 1 steps past it
+                        // (same convention as the quoted-name arm)
+                        closed = true;
+                        break;
+                    }
+                    pattern.push(ch);
+                    i += 1;
+                }
+                if !closed {
+                    return Err(format!(
+                        "unterminated regular expression starting at position {pos}"
+                    ));
+                }
+                if pattern.is_empty() {
+                    return Err(format!("empty regular expression at position {pos}"));
+                }
+                out.push((Tok::Regex(pattern), pos));
+            }
             _ => {
                 let mut name = String::new();
                 while i < chars.len() {
@@ -170,6 +231,7 @@ fn describe(tok: &Tok) -> String {
         Tok::Pipe => "'|'".to_string(),
         Tok::Bang => "'!'".to_string(),
         Tok::Tag(name) => format!("tag '{name}'"),
+        Tok::Regex(pattern) => format!("regular expression '/{pattern}/'"),
     }
 }
 
@@ -219,9 +281,9 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<TagExpr, String> {
-        let (tok, pos) = self
-            .next()
-            .ok_or_else(|| "unexpected end of expression: a tag or '(' was expected".to_string())?;
+        let (tok, pos) = self.next().ok_or_else(|| {
+            "unexpected end of expression: a tag, regex or '(' was expected".to_string()
+        })?;
         match tok {
             Tok::LParen => {
                 if matches!(self.peek(), Some((Tok::RParen, _))) {
@@ -234,8 +296,14 @@ impl Parser {
                 }
             }
             Tok::Tag(name) => Ok(TagExpr::Tag(name)),
+            Tok::Regex(pattern) => {
+                let re = regex::Regex::new(&pattern).map_err(|e| {
+                    format!("invalid regular expression '/{pattern}/' at position {pos}: {e}")
+                })?;
+                Ok(TagExpr::Regex(Box::new(re)))
+            }
             other => Err(format!(
-                "unexpected {} at position {pos}: a tag or '(' was expected",
+                "unexpected {} at position {pos}: a tag, regex or '(' was expected",
                 describe(&other)
             )),
         }
@@ -247,9 +315,37 @@ mod tests {
     use super::*;
 
     fn eval(expr: &str, tags: &[&str]) -> bool {
+        let owned: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
         parse(expr)
             .unwrap_or_else(|e| panic!("parse '{expr}' failed: {e}"))
-            .eval(&|n| tags.contains(&n))
+            .eval(&owned)
+    }
+
+    /// Evaluate two expressions over every sample tag set and require identical results —
+    /// the precedence checks (which used tree equality before regex atoms carried compiled
+    /// engines with no Eq).
+    fn eval_equivalent(a: &str, b: &str) {
+        let samples: Vec<Vec<&str>> = vec![
+            vec![],
+            vec!["a"],
+            vec!["b"],
+            vec!["c"],
+            vec!["d"],
+            vec!["a", "b"],
+            vec!["b", "c"],
+            vec!["a", "b", "c"],
+            vec!["a", "d"],
+        ];
+        for tags in &samples {
+            let owned: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+            let left = parse(a)
+                .unwrap_or_else(|e| panic!("parse '{a}' failed: {e}"))
+                .eval(&owned);
+            let right = parse(b)
+                .unwrap_or_else(|e| panic!("parse '{b}' failed: {e}"))
+                .eval(&owned);
+            assert_eq!(left, right, "mismatch on tags {tags:?}");
+        }
     }
 
     #[test]
@@ -259,16 +355,16 @@ mod tests {
         assert!(eval("(a&b)|c", &["c"]));
         assert!(!eval("(a&b)|c", &["a"]));
         // & binds tighter than |
-        assert_eq!(parse("a|b&c").unwrap(), parse("a|(b&c)").unwrap());
-        assert_eq!(parse("a&b|c&d").unwrap(), parse("(a&b)|(c&d)").unwrap());
+        eval_equivalent("a|b&c", "a|(b&c)");
+        eval_equivalent("a&b|c&d", "(a&b)|(c&d)");
         // ! binds tighter than &
-        assert_eq!(parse("!a&b").unwrap(), parse("(!a)&b").unwrap());
+        eval_equivalent("!a&b", "(!a)&b");
         assert!(eval("!a&b", &["b"]));
         assert!(!eval("!a&b", &["a", "b"]));
         // Double-character aliases spell the same operators
-        assert_eq!(parse("a&&b||c").unwrap(), parse("(a&b)|c").unwrap());
+        eval_equivalent("a&&b||c", "(a&b)|c");
         // Chains flatten into left-associative trees
-        assert_eq!(parse("a&b&c").unwrap(), parse("(a&b)&c").unwrap());
+        eval_equivalent("a&b&c", "(a&b)&c");
         assert!(eval("!!a", &["a"]));
     }
 
@@ -283,6 +379,47 @@ mod tests {
         // Unterminated or empty quotes are syntax errors
         assert!(parse("'rust").is_err());
         assert!(parse("''").is_err());
+    }
+
+    /// Regex atoms: pass when ANY of the memory's tag names matches; a slash opens a regex only
+    /// at a token boundary, so slashes inside bare words stay literal tag characters.
+    #[test]
+    fn regex_atoms() {
+        assert!(eval("/^proj/", &["proj/alpha"]));
+        assert!(!eval("/^proj/", &["web"]));
+        // Any-tag OR: one matching name suffices
+        assert!(eval("/^proj/", &["web", "proj/beta"]));
+        // Composes with the algebra like any other operand
+        assert!(eval("/^proj/&!misc", &["proj/alpha"]));
+        assert!(!eval("/^proj/&!misc", &["proj/alpha", "misc"]));
+        assert!(eval("a|/b+/", &["bbb"]));
+        assert!(eval("x&/^项目/", &["x", "项目 管理"]));
+        // Escaped delimiter matches a literal slash; other backslash sequences reach the engine
+        assert!(eval("/a\\/b/", &["a/b"]));
+        assert!(eval("/\\d/", &["v2-x"]));
+        assert!(!eval("/\\d/", &["no-digits"]));
+        // Case-sensitive by default; inline flags opt into case folding
+        assert!(!eval("/rust/", &["RUST"]));
+        assert!(eval("/(?i)rust/", &["RUST"]));
+        // A slash inside a bare word stays a tag character (one leaf, not a regex)
+        let expr = parse("proj/alpha").unwrap();
+        assert_eq!(expr.tag_names(), vec!["proj/alpha"]);
+        // Unterminated, empty and invalid regexes carry positions
+        let err = parse("/abc").unwrap_err();
+        assert!(
+            err.contains("unterminated regular expression starting at position 1"),
+            "got: {err}"
+        );
+        let err = parse("a&//").unwrap_err();
+        assert!(
+            err.contains("empty regular expression at position 3"),
+            "got: {err}"
+        );
+        let err = parse("/([/").unwrap_err();
+        assert!(
+            err.contains("invalid regular expression '/([/' at position 1"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -310,6 +447,8 @@ mod tests {
     fn leaf_names_are_unique_in_order() {
         let expr = parse("b&(a|b)&!c").unwrap();
         assert_eq!(expr.tag_names(), vec!["b", "a", "c"]);
+        // Regex atoms match dynamically: no literal leaves
+        assert_eq!(parse("/^x/&a").unwrap().tag_names(), vec!["a"]);
     }
 
     #[test]

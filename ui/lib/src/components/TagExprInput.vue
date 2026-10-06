@@ -65,6 +65,8 @@ const inputRef = ref<{ input?: HTMLInputElement } | null>(null)
 const open = ref(false)
 const active = ref(0)
 const token = ref('')
+/** True while completing the body of a /regex/ atom: no tag suggestions there */
+const regexBody = ref(false)
 /** Focus on an empty box lists the whole taxonomy as a starting point */
 const showAll = ref(false)
 
@@ -74,19 +76,23 @@ function caret(): number {
   return el?.selectionStart ?? props.modelValue?.length ?? 0
 }
 
-/** The tag-name span around the caret, plus its opening quote (if any) for re-closing. */
-function currentToken(value: string, at: number): { start: number; end: number; quote: string } | null {
+/** The tag-name span around the caret, plus the delimiter right before it (quote for re-closing,
+ * slash for regex-mode detection). */
+function currentToken(value: string, at: number): { start: number; end: number; quote: string; prev: string } | null {
   const delims = new Set([' ', '\t', '(', ')', '&', '|', '!', '"', "'"])
   let start = at
   while (start > 0 && !delims.has(value[start - 1]!)) start--
   if (start >= at) return null
-  const before = start > 0 ? value[start - 1]! : ''
-  const quote = before === '"' || before === "'" ? before : ''
-  return { start, end: at, quote }
+  const prev = start > 0 ? value[start - 1]! : ''
+  const quote = prev === '"' || prev === "'" ? prev : ''
+  return { start, end: at, quote, prev }
 }
 
 const items = computed(() => {
   if (showAll.value) return props.tags
+  // Inside a regex atom (the token itself starts with '/', or the delimiter before it is the
+  // slash that opened one) the word is a pattern, not a tag name: no suggestions
+  if (token.value.startsWith('/') || regexBody.value) return []
   const q = token.value.toLowerCase()
   if (!q) return []
   const starts: string[] = []
@@ -105,6 +111,7 @@ function onInput(value: string) {
   showAll.value = false
   const tok = currentToken(value, caret())
   token.value = tok ? value.slice(tok.start, tok.end) : ''
+  regexBody.value = tok ? tok.prev === '/' : false
   active.value = 0
   open.value = items.value.length > 0
 }

@@ -75,6 +75,31 @@ export function tagExprReady(expr: string, knownTags: string[]): boolean {
       expectOperand = false
       continue
     }
+    if (c === '/') {
+      // A slash at a token boundary opens a regex atom (mirrors the server tokenizer); scan to
+      // the closing delimiter, letting every backslash pair pass through — unterminated = still
+      // typing. Regexes match dynamically, so no known-name check applies.
+      if (!expectOperand) return false
+      i++
+      let closed = false
+      while (i < chars.length) {
+        const ch = chars[i]!
+        if (ch === '\\') {
+          if (chars[i + 1] !== undefined) i += 2
+          else i++
+          continue
+        }
+        if (ch === '/') {
+          closed = true
+          i++
+          break
+        }
+        i++
+      }
+      if (!closed) return false
+      expectOperand = false
+      continue
+    }
     // Bare word: a run of non-delimiter characters
     if (!expectOperand) return false
     let name = ''

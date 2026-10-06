@@ -498,14 +498,7 @@ fn bad_request(e: ToolError) -> (u16, Value) {
 fn list_or_search_args(query: &str) -> Value {
     let mut args = Map::new();
     for key in [
-        "query",
-        "tag_filter",
-        "tag_expr",
-        "sort",
-        "order",
-        "offset",
-        "limit",
-        "mode",
+        "query", "tag_expr", "sort", "order", "offset", "limit", "mode",
     ] {
         if let Some(v) = query_get(query, key) {
             let value = if key == "offset" || key == "limit" {

@@ -98,13 +98,13 @@ fn rest_api_end_to_end() {
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["total"], 1);
 
-    // Memory tag regex filter: match / ANDed with a tag expression yields empty
+    // Memory tag regex atom: match / ANDed with a name yields empty
     let (status, body, _) = request(
         port,
         "GET",
         &format!(
-            "/api/memories?tag_filter={}&limit=10",
-            encodeURIComponent("^项目")
+            "/api/memories?tag_expr={}&limit=10",
+            encodeURIComponent("/^项目/")
         ),
         None,
     );
@@ -114,9 +114,8 @@ fn rest_api_end_to_end() {
         port,
         "GET",
         &format!(
-            "/api/memories?tag_expr={}&tag_filter={}&limit=10",
-            encodeURIComponent("偏好"),
-            encodeURIComponent("^外观")
+            "/api/memories?tag_expr={}&limit=10",
+            encodeURIComponent("偏好&/^外观/")
         ),
         None,
     );

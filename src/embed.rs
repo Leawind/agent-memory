@@ -9,7 +9,6 @@
 
 use crate::search::{self, Hit};
 use crate::store::{Store, TxMode};
-use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -369,13 +368,13 @@ pub fn hybrid_hits(
     keyword_hits: Vec<Hit>,
     table: &HashMap<i64, Vec<f32>>,
     query_vec: &[f32],
-    tag_regex: Option<&Regex>,
 ) -> Vec<Hit> {
-    // Vector pass: through the same tag filtering (matching the keyword pass's recall semantics), ranked by cosine descending
+    // Vector pass: every memory with a stored vector and positive cosine is a candidate,
+    // ranked by cosine descending (tag filtering narrows the fused hits one layer up, so
+    // both recall channels stay symmetric)
     let mut vector_ranked: Vec<(usize, f32)> = memories
         .iter()
         .enumerate()
-        .filter(|(_, m)| search::passes_tag_filter(m, tag_regex))
         .filter_map(|(idx, m)| {
             let id = Store::parse_id(&m.id).unwrap_or(0);
             table.get(&id).map(|v| (idx, cosine(query_vec, v)))
@@ -482,14 +481,14 @@ mod tests {
             mem(1, "token hashing", "sha256 of tokens"),
             mem(2, "密码保存", "哈希存储"),
         ];
-        let keyword_hits = search::run(&memories, "hashing", None);
+        let keyword_hits = search::run(&memories, "hashing");
         assert_eq!(keyword_hits.len(), 1);
 
         let mut table = HashMap::new();
         table.insert(1i64, unit(4, 0)); // same direction as the query
         table.insert(2i64, unit(4, 1)); // orthogonal to the query (similarity 0, never enters)
 
-        let hits = hybrid_hits(&memories, keyword_hits, &table, &unit(4, 0), None);
+        let hits = hybrid_hits(&memories, keyword_hits, &table, &unit(4, 0));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
 
@@ -497,8 +496,8 @@ mod tests {
         let tilted: Vec<f32> = vec![0.9, 0.1, 0.0, 0.0];
         let mut table2 = table.clone();
         table2.insert(2i64, tilted);
-        let keyword_hits = search::run(&memories, "hashing", None);
-        let hits = hybrid_hits(&memories, keyword_hits, &table2, &unit(4, 0), None);
+        let keyword_hits = search::run(&memories, "hashing");
+        let hits = hybrid_hits(&memories, keyword_hits, &table2, &unit(4, 0));
         assert_eq!(hits.len(), 2);
         assert_eq!(
             hits[0].idx, 0,
@@ -507,22 +506,6 @@ mod tests {
         assert_eq!(hits[1].idx, 1);
         // Vector-only hits take the fallback snippet (start of content), plain text
         assert!(hits[1].snippet.contains("哈希存储"));
-    }
-
-    /// The vector pass honors the same tag filtering as the keyword pass.
-    #[test]
-    fn hybrid_respects_tag_filters() {
-        let mut a = mem(1, "alpha", "a");
-        a.tags = vec!["keep".to_string()];
-        let mut b = mem(2, "beta", "b");
-        b.tags = vec!["other".to_string()];
-        let mut table = HashMap::new();
-        table.insert(1i64, unit(2, 0));
-        table.insert(2i64, unit(2, 0));
-        let re = regex::Regex::new("^keep$").unwrap();
-        let hits = hybrid_hits(&[a, b], Vec::new(), &table, &unit(2, 0), Some(&re));
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].idx, 0);
     }
 
     /// Fusion when keyword and vector rankings conflict: an item ranking high on both channels must beat either channel's top single-channel item.
@@ -547,7 +530,7 @@ mod tests {
         table.insert(2i64, vec![0.95, 0.31]);
         table.insert(3i64, vec![0.9, 0.44]);
         table.insert(1i64, vec![0.5, 0.87]);
-        let hits = hybrid_hits(&[a, b, c], vec![k1, k2], &table, &[1.0, 0.0], None);
+        let hits = hybrid_hits(&[a, b, c], vec![k1, k2], &table, &[1.0, 0.0]);
         let order: Vec<usize> = hits.iter().map(|h| h.idx).collect();
         assert_eq!(
             order,

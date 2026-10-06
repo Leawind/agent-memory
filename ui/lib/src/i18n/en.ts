@@ -14,7 +14,7 @@ export default {
     searchPlaceholder: 'Keyword search (space-separated, all must match; Chinese matches by substring)',
     tagExprPlaceholder: "Filter by tag expression, e.g. (a&b){'|'}c",
     tagExprHelp:
-      "Tag set algebra: & and (&&), {'|'} or ({'||'}), ! not, parentheses group — (a&b){'|'}c = tagged a AND b, or tagged c. Names are case-sensitive; quote names containing spaces or operators.",
+      "Tag set algebra: & and (&&), {'|'} or ({'||'}), ! not, parentheses group — (a&b){'|'}c = tagged a AND b, or tagged c. /regex/ matches tag names (any hit counts, e.g. /^project/, case-sensitive). Names are case-sensitive; quote names containing spaces or operators.",
     exprEmpty: 'No memory satisfies the tag expression',
     modeAuto: 'Auto',
     modeKeyword: 'Keyword only',

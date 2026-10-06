@@ -42,7 +42,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Unknown tags are rejected with the closest existing name suggested. Combinable with 'tag_filter' (both must hold). Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
@@ -124,7 +124,6 @@ pub fn tool_definitions() -> Value {
             json!({
                 "type": "object",
                 "properties": {
-                    "tag_filter": {"type": "string", "description": "Only memories carrying at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tag_expr' (both must hold)."},
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
                     "sort": {"type": "string", "enum": ["updated_at", "id"], "description": "Default: updated_at. 'id' equals creation order."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
@@ -142,7 +141,6 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
-                    "tag_filter": {"type": "string", "description": "Optional filter: memory must carry at least one tag whose name matches this regular expression (match anywhere; ^...$ anchors; case-insensitive; Rust regex syntax). Combinable with 'tag_expr' (both must hold)."},
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
                     "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (keyword + semantic) when the server has semantic search configured, otherwise plain keyword (flagged semantic: \"disabled\" in the response). 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},

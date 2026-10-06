@@ -49,4 +49,18 @@ describe('tagExprReady', () => {
     expect(tagExprReady("'nope'", TAGS)).toBe(false)
     expect(tagExprReady("'rust & life'", TAGS)).toBe(true)
   })
+
+  it('regex atoms: unterminated waits, closed passes regardless of matching names', () => {
+    // Still typing the pattern
+    expect(tagExprReady('rust&/pro', TAGS)).toBe(false)
+    // Closed regex is dynamic — no known-name requirement
+    expect(tagExprReady('rust&/proj/', TAGS)).toBe(true)
+    expect(tagExprReady('/^proj/', TAGS)).toBe(true)
+    expect(tagExprReady('/^proj/&!web', TAGS)).toBe(true)
+    expect(tagExprReady('rust|/zzz-nothing-matches/', TAGS)).toBe(true)
+    // Escaped delimiter does not close the atom; a slash inside a bare word is literal
+    expect(tagExprReady('/a\\/b', TAGS)).toBe(false)
+    expect(tagExprReady('/a\\/b/', TAGS)).toBe(true)
+    expect(tagExprReady('proj/alpha', TAGS)).toBe(false) // unknown tag
+  })
 })

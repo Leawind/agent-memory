@@ -612,8 +612,8 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Tag regex filtering: tag_list's filter, memory_list / memory_search's
-    /// tag_filter (invalid regex errors, AND-ed with exact filtering, zero-hit note).
+    /// Tag regex filtering: tag_list's own `filter` param (case-insensitive), and the regex
+    /// atoms of memory_list / memory_search's tag_expr (case-sensitive, (?i) opts in).
     #[test]
     fn regex_filters_on_tags_and_memories() {
         let path = temp_db("regex-filter");
@@ -639,8 +639,6 @@ mod tests {
         // taxonomy must not split the filters either
         let up = call(&path, "tag_list", json!({"filter": "^PROJ/"})).unwrap();
         assert_eq!(up["tags"].as_array().unwrap().len(), 1);
-        let ml = call(&path, "memory_list", json!({"tag_filter": "MISC"})).unwrap();
-        assert_eq!(ml["total"], 1);
         let none = call(&path, "tag_list", json!({"filter": "zzz"})).unwrap();
         assert_eq!(none["tags"].as_array().unwrap().len(), 0);
         // Invalid regex → Invalid (400 kind)
@@ -650,34 +648,29 @@ mod tests {
             "got: {err}"
         );
 
-        // memory_list tag_filter: the total counts only matching memories
-        let ml = call(&path, "memory_list", json!({"tag_filter": "^proj/"})).unwrap();
+        // memory_list regex atom (the delimiter slash is escaped as \/): the total counts
+        // only matching memories
+        let ml = call(&path, "memory_list", json!({"tag_expr": "/^proj\\//"})).unwrap();
         assert_eq!(ml["total"], 1);
         assert_eq!(ml["memories"][0]["summary"], "alpha note");
-        // Regex matched no tags → note hint
-        let ml_empty = call(&path, "memory_list", json!({"tag_filter": "zzz"})).unwrap();
+        // Case-sensitive by default; (?i) opts in
+        let ml = call(&path, "memory_list", json!({"tag_expr": "/^PROJ\\//"})).unwrap();
+        assert_eq!(ml["total"], 0);
+        let ml = call(&path, "memory_list", json!({"tag_expr": "/(?i)^proj\\//"})).unwrap();
+        assert_eq!(ml["total"], 1);
+        // A regex matching nothing filters everything out, silently (dynamic matching has no
+        // did-you-mean candidate to offer)
+        let ml_empty = call(&path, "memory_list", json!({"tag_expr": "/zzz/"})).unwrap();
         assert_eq!(ml_empty["total"], 0);
-        assert!(
-            ml_empty["note"]
-                .as_str()
-                .unwrap()
-                .contains("matched no tags"),
-            "got: {ml_empty}"
-        );
-        // Used together with a tag expression = AND
-        let ml_and = call(
-            &path,
-            "memory_list",
-            json!({"tag_filter": "^proj/", "tag_expr": "misc"}),
-        )
-        .unwrap();
+        // Regex atom AND tag name = AND
+        let ml_and = call(&path, "memory_list", json!({"tag_expr": "/^proj\\//&misc"})).unwrap();
         assert_eq!(ml_and["total"], 0);
 
-        // memory_search tag_filter
+        // memory_search regex atom narrows the ranked candidates
         let ms = call(
             &path,
             "memory_search",
-            json!({"query": "note", "tag_filter": "^proj/"}),
+            json!({"query": "note", "tag_expr": "/^proj\\//"}),
         )
         .unwrap();
         assert_eq!(ms["total_matches"], 1);
@@ -951,13 +944,8 @@ mod tests {
         let out = call(&path, "memory_list", json!({"tag_expr": "!rust"})).unwrap();
         assert_eq!(out["total"], 2);
         assert_eq!(ids(&out), vec!["m2".to_string(), "m4".to_string()]);
-        // ANDs with the regex filter: rust ∩ web → m3 only
-        let out = call(
-            &path,
-            "memory_list",
-            json!({"tag_filter": "^rust$", "tag_expr": "web"}),
-        )
-        .unwrap();
+        // ANDs with a regex atom: rust ∩ web → m3 only
+        let out = call(&path, "memory_list", json!({"tag_expr": "/^rust$/&web"})).unwrap();
         assert_eq!(out["total"], 1);
         assert_eq!(ids(&out), vec!["m3".to_string()]);
         // Empty string counts as absent
@@ -1053,9 +1041,9 @@ mod tests {
         cleanup(&path);
     }
 
-    /// The single-tag and tag-array filter parameters were folded into tag_expr (a leaf / an OR
-    /// chain express both); the schema-derived unknown-parameter guard must now reject them so
-    /// there is exactly one way to filter by tags.
+    /// The single-tag, tag-array and regex filter parameters were folded into tag_expr (a leaf /
+    /// an OR chain / a slash-delimited atom express all three); the schema-derived unknown-
+    /// parameter guard must now reject them so there is exactly one way to filter by tags.
     #[test]
     fn retired_tag_filter_params_are_rejected() {
         let path = temp_db("retired-params");
@@ -1068,6 +1056,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("'tags'"), "got: {err}");
+        let err = call(&path, "memory_list", json!({"tag_filter": "^rust"})).unwrap_err();
+        assert!(err.to_string().contains("'tag_filter'"), "got: {err}");
 
         cleanup(&path);
     }

@@ -6,7 +6,7 @@ use crate::search;
 use crate::store::{ListFilter, Store};
 use crate::tag_expr::{self, TagExpr};
 use crate::tools::params::{
-    normalize_tag_list, opt_bool, opt_regex, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
+    normalize_tag_list, opt_bool, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
     validate_content, validate_summary,
 };
 use crate::tools::ToolError;
@@ -93,7 +93,6 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 }
 
 pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
-    let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let sort_opt = opt_str(args, "sort")?;
     // 'id' is the creation order (ids are monotonic at insert), so there is no separate
     // created_at sort key — and the summary rows do not carry a creation timestamp at all
@@ -118,28 +117,16 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     let limit = opt_u64(args, "limit")?.unwrap_or(20).clamp(1, 200);
 
-    // The regex is first resolved over the full tag set into a set of tag names, then translated into internal id sets
-    // (SQL has no regex capability; expanding with json_each keeps the SQL static)
-    let tag_names = match &tag_re {
-        Some(re) => Some(st.tag_names_matching(re)?),
-        None => None,
-    };
-    let tag_set = match &tag_names {
-        Some(names) => {
-            let ids = st.tag_ids_for_names(names)?;
-            Some(json!(ids).to_string())
-        }
-        None => None,
-    };
     // Tag expression: resolved against the full store into a memory-id set (JSON array text),
-    // handed to the same static SQL as the other filters — all filters AND together
+    // handed to the same static SQL as the exact-tag filter — both AND together. Regex atoms
+    // evaluate per memory tag set right here (SQL has no regex capability).
     let tag_expr = opt_tag_expr(st, args)?;
     let id_set = match &tag_expr {
         Some(expr) => {
             let memories = st.all_memories()?;
             let ids: Vec<i64> = memories
                 .iter()
-                .filter(|m| expr.eval(&|n| m.tags.iter().any(|t| t == n)))
+                .filter(|m| expr.eval(&m.tags))
                 .filter_map(|m| Store::parse_id(&m.id))
                 .collect();
             Some(json!(ids).to_string())
@@ -149,7 +136,6 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     let (total, page) = st.list_memories(
         ListFilter {
             tag: None,
-            tag_set: tag_set.as_deref(),
             id_set: id_set.as_deref(),
         },
         sort,
@@ -159,16 +145,7 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     )?;
     let memories: Vec<Value> = page.iter().map(|m| m.summary_view()).collect();
 
-    let mut out = json!({"total": total, "offset": offset, "limit": limit, "memories": memories});
-    if let Some(re) = &tag_re {
-        if tag_names.as_ref().is_none_or(|n| n.is_empty()) {
-            out["note"] = json!(format!(
-                "tag_filter '{}' matched no tags; see tag_list for available names",
-                re.as_str()
-            ));
-        }
-    }
-    Ok(out)
+    Ok(json!({"total": total, "offset": offset, "limit": limit, "memories": memories}))
 }
 
 pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -176,7 +153,6 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     if query.trim().is_empty() {
         return Err(ToolError::invalid("query must not be empty"));
     }
-    let tag_re = opt_regex(args, "tag_filter").map_err(ToolError::invalid)?;
     let tag_expr = opt_tag_expr(st, args)?;
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
@@ -197,7 +173,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     };
 
     let memories = st.all_memories()?;
-    let keyword_hits = search::run(&memories, &query, tag_re.as_ref());
+    let keyword_hits = search::run(&memories, &query);
 
     // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
     // Embedding service unavailable (timeout/error/database read failure) → fall back to the keyword pass and flag it,
@@ -216,8 +192,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                 keyword_hits
             }
             Some(cfg) => {
-                let (hits, ok) =
-                    semantic_pass(st, cfg, &memories, keyword_hits, &query, tag_re.as_ref());
+                let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query);
                 used_hybrid = ok;
                 semantic_fallback = !ok;
                 hits
@@ -229,19 +204,19 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                     "mode 'hybrid' requires semantic search to be enabled and configured (embedding settings in the admin UI)",
                 ));
             };
-            let (hits, ok) =
-                semantic_pass(st, cfg, &memories, keyword_hits, &query, tag_re.as_ref());
+            let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query);
             used_hybrid = ok;
             semantic_fallback = !ok;
             hits
         }
     };
 
-    // Tag expression ANDs with tag_filter: narrow the ranked candidates per memory tag set
+    // The tag expression (leaves, regex atoms and operators alike) narrows the ranked
+    // candidates per memory tag set — including the vector-only hits the fusion introduced
     let hits = match &tag_expr {
         Some(expr) => hits
             .into_iter()
-            .filter(|h| expr.eval(&|n| memories[h.idx].tags.iter().any(|t| t == n)))
+            .filter(|h| expr.eval(&memories[h.idx].tags))
             .collect(),
         None => hits,
     };
@@ -736,7 +711,6 @@ fn semantic_pass(
     memories: &[crate::model::Memory],
     keyword_hits: Vec<search::Hit>,
     query: &str,
-    tag_re: Option<&regex::Regex>,
 ) -> (Vec<search::Hit>, bool) {
     let table = match st.embeddings_active(&cfg.model) {
         Ok(t) => t,
@@ -760,7 +734,7 @@ fn semantic_pass(
         return (keyword_hits, false);
     };
     (
-        crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec, tag_re),
+        crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec),
         true,
     )
 }

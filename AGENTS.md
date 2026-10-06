@@ -97,11 +97,13 @@ src/
                  职责不进数据层，UI 以文本插值渲染，不走 v-html）
   tag_expr.rs    标签集合运算：解析/求值标签布尔表达式（! > & > |，括号分组，&&/|| 别名，
                  引号名字带转义），纯语法层；叶子名由调用方对库校验（未知名 400 + did-you-
-                 mean）。memory_list/memory_search 的 tag_expr 参数：list 求值为记忆 id
-                 集合走静态 SQL 的 json_each（ListFilter），search 在排序候选上求值收窄；
-                 与 tag_filter AND；空串视为无表达式。tag/tags 独立过滤参数已删除——
-                 单标签=叶子、多标签 OR=并集均为表达式子集，只留 tag_expr 与 tag_filter
-                 （正则，表达式不可表达）两条过滤途径
+                 mean）。/…/ 正则原子：词首定界（bare 词内的 / 保持字面，proj/alpha 仍是
+                 一个标签名），\/ 转义定界符其余反斜杠序列透传，默认区分大小写（(?i) 内联
+                 开启），任一标签名命中即算；eval 接收记忆标签集切片。memory_list/
+                 memory_search 的 tag_expr 参数：list 求值为记忆 id 集合走静态 SQL 的
+                 json_each（ListFilter），search 在排序候选上求值收窄；空串视为无表达式。
+                 tag/tag_filter/tags 独立过滤参数均已删除——单标签=叶子、多标签 OR=并集、
+                 正则=/…/ 原子，全是表达式的子集，标签过滤只剩 tag_expr 一种语法
   embed.rs       语义搜索：OpenAI 兼容 /embeddings 客户端（ureq+rustls，全项目唯一出站 HTTP）、
                  向量 BLOB 编解码/余弦、RRF 混合排序、process_pending 有界批量补跑；
                  回退是硬性原则——服务不可用只降级不失败（搜索回退关键词 + semantic_fallback 标记，

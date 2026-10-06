@@ -7,13 +7,12 @@ use std::collections::HashMap;
 
 use super::Store;
 
-/// The AND-composed optional filters of a list query: `tag` is one exact tag name; `tag_set` is a
-/// JSON array text of internal tag ids (the resolved regex filter); `id_set` is a JSON array text
-/// of internal memory ids (the resolved tag expression). `None` = no constraint.
+/// The AND-composed optional filters of a list query: `tag` is one exact tag name (internal use:
+/// the memory:// resource face); `id_set` is a JSON array text of internal memory ids (the
+/// resolved tag expression, regex atoms included). `None` = no constraint.
 #[derive(Default)]
 pub struct ListFilter<'a> {
     pub tag: Option<&'a str>,
-    pub tag_set: Option<&'a str>,
     pub id_set: Option<&'a str>,
 }
 
@@ -141,14 +140,12 @@ impl Store {
     }
 
     /// Paged browsing with AND-composed optional filters (`filter.tag` is one exact tag;
-    /// `filter.tag_set` is a JSON array text of internal tag ids, matching any of them — name →
-    /// id resolution and regex filtering are done by the caller over the full tag set beforehand;
     /// `filter.id_set` is a JSON array text of internal memory ids, the resolved memory set of a
     /// caller-side tag expression), returns (total count, current page).
     ///
     /// Fully static SQL (see sql/memory_list_page.sql): no filtering while the bound filters are NULL;
-    /// set filtering is expanded with json_each (SQLite's built-in JSON1); the sort column is chosen among `?4` via CASE;
-    /// `?5` carries ±1 for ascending/descending (all columns are integers).
+    /// id-set filtering is expanded with json_each (SQLite's built-in JSON1); the sort column is chosen among `?3` via CASE;
+    /// `?4` carries ±1 for ascending/descending (all columns are integers).
     /// `sort` only accepts values whitelisted by the handler.
     pub fn list_memories(
         &self,
@@ -158,15 +155,11 @@ impl Store {
         offset: u64,
         limit: u64,
     ) -> Result<(u64, Vec<Memory>), String> {
-        let ListFilter {
-            tag,
-            tag_set,
-            id_set,
-        } = filter;
+        let ListFilter { tag, id_set } = filter;
         let dir: i64 = if asc { 1 } else { -1 };
         let total: u64 = self
             .conn
-            .query_row(sql::MEMORY_LIST_COUNT, params![tag, tag_set, id_set], |r| {
+            .query_row(sql::MEMORY_LIST_COUNT, params![tag, id_set], |r| {
                 r.get::<_, i64>(0)
             })
             .map(|n| n as u64)
@@ -177,7 +170,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map(
-                params![tag, tag_set, id_set, sort, dir, limit as i64, offset as i64],
+                params![tag, id_set, sort, dir, limit as i64, offset as i64],
                 |r| {
                     let created: i64 = r.get(3)?;
                     let updated: i64 = r.get(4)?;
@@ -397,16 +390,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total4, 5);
-        // Tag set filtering (tag_set is JSON array text of ids, expanded with json_each; empty set = no results)
+        // Id-set filtering (id_set is JSON array text of memory ids, expanded with json_each; empty set = no results)
         insert_with_tags(&st, "s-other", "c", &["t2"], 9);
-        let id_set = |names: &[&str]| {
-            let owned: Vec<String> = names.iter().map(|t| t.to_string()).collect();
-            json!(st.tag_ids_for_names(&owned).unwrap()).to_string()
-        };
+        let id_set_raw = |ids: &[i64]| json!(ids).to_string();
+        let five_ids = [1i64, 2, 3, 4, 5];
         let (total5, page5) = st
             .list_memories(
                 ListFilter {
-                    tag_set: Some(&id_set(&["t1"])),
+                    id_set: Some(&id_set_raw(&five_ids)),
                     ..Default::default()
                 },
                 "updated_at",
@@ -420,7 +411,7 @@ mod tests {
         let (total6, _) = st
             .list_memories(
                 ListFilter {
-                    tag_set: Some(&id_set(&["t1", "t2"])),
+                    id_set: Some(&id_set_raw(&[1, 2, 3, 4, 5, 6])),
                     ..Default::default()
                 },
                 "updated_at",
@@ -433,7 +424,7 @@ mod tests {
         let (total7, _) = st
             .list_memories(
                 ListFilter {
-                    tag_set: Some("[]"),
+                    id_set: Some("[]"),
                     ..Default::default()
                 },
                 "updated_at",
@@ -443,13 +434,12 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total7, 0);
-        // Exact tag and set used together = AND
+        // Exact tag and id-set used together = AND (id 6 carries t2, so the intersection is {m6})
         let (total8, _) = st
             .list_memories(
                 ListFilter {
                     tag: Some("t2"),
-                    tag_set: Some(&id_set(&["t1"])),
-                    ..Default::default()
+                    id_set: Some(&id_set_raw(&[6])),
                 },
                 "updated_at",
                 false,
@@ -457,7 +447,7 @@ mod tests {
                 200,
             )
             .unwrap();
-        assert_eq!(total8, 0);
+        assert_eq!(total8, 1);
         cleanup(&path);
     }
 

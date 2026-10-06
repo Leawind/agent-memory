@@ -27,29 +27,6 @@ impl Store {
         }
     }
 
-    /// Existing tag names matching the regex (returned as stored, for tag_set filtering via json_each).
-    pub fn tag_names_matching(&self, re: &regex::Regex) -> Result<Vec<String>, String> {
-        let mut st = self
-            .conn
-            .prepare(sql::TAG_ALL_NAMES)
-            .map_err(|e| e.to_string())?;
-        let rows = st
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?;
-        rows.filter_map(|r| {
-            let n = match r {
-                Ok(n) => n,
-                Err(e) => return Some(Err(e.to_string())),
-            };
-            if re.is_match(&n) {
-                Some(Ok(n))
-            } else {
-                None
-            }
-        })
-        .collect()
-    }
-
     /// Find existing tags differing from the given name only in case (compared on the Rust side with consistent Unicode semantics).
     pub fn find_tag_case_insensitive(&self, name: &str) -> Result<Option<String>, String> {
         let mut st = self
