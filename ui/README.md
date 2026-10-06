@@ -2,22 +2,14 @@
 
 前端拆成两个 pnpm workspace 包（lockfile 在仓库根目录）：
 
-- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库。核心是工作台 `MemoryWorkspace`：
-  左侧标签侧栏 `TagsSidebar`（垂直列出全部标签及其描述，点击弹出标签编辑弹窗 `TagDialog`，
-  标题行 `标签 #<名称>` + 删除/保存；可拖拽的分隔条在上下限内调整侧栏宽度并持久化），
-  右侧记忆面板 `MemoriesPanel`（Modrinth 式卡片列表：摘要在前独占一行，标签与搜索片段
-  另起一行，整卡点击弹出记忆弹窗 `MemoryEditorDialog`，标题行 `记忆 #<ID>` + 删除 +
-  无修改禁用的保存；新建复用同一弹窗）。`AdminPanel`（admin 专属：身份、鉴权开关、
-  自定义提示词、备份、体检，经 `who` prop 门控）按宿主需要挂入弹窗或页面；概况弹窗
-  `OpsDialog` 承载只读统计与版本信息（每次打开重拉）；另附便捷壳 `MemoryAdmin`
-  （品牌标题 + 工作台，标题点击弹概况）与弹层组件（`FormDialog`、Markdown 视图），
-  供其他 Vue3 系统作为组件集成。
-- **`ui/app` → `@agent-memory/app`**：独立站点薄壳（Modrinth 风格顶栏 + 主题/语言切换 +
-  多身份令牌下拉），页面主体即工作台（标签侧栏 + 记忆列表）；顶栏语言控件右侧有管理按钮
-  （仅 admin 能力身份可见），点击弹出管理窗口（内嵌 AdminPanel）；点击顶栏标题弹出服务
-  概况（OpsDialog）。
-  构建产物输出到 `ui/dist/`（不入库），由 Rust 侧 rust-embed
-  编译期嵌入二进制；dist 缺失时 build.rs 落占位页兜底。
+- **`ui/lib` → `@agent-memory/ui`**：可嵌入的 Vue3 组件库——工作台 `MemoryWorkspace`
+  （标签侧栏 + 记忆列表 + 编辑弹窗，两侧数据联动）、管理面板 `AdminPanel`、概况弹窗
+  `OpsDialog`、便捷壳 `MemoryAdmin` 及配套弹层，供其他 Vue3 系统作为组件集成。
+- **`ui/app` → `@agent-memory/app`**：独立站点薄壳（顶栏 + 主题/语言切换 + 多身份令牌
+  管理），页面主体即工作台。构建产物输出 `ui/dist/`（不入库），由 rust-embed 编译期
+  嵌入二进制；dist 缺失时 build.rs 落占位页兜底。
+
+组件行为细节以代码与测试为准，本文件只写集成契约与约定。
 
 ## 组件库集成指南
 
