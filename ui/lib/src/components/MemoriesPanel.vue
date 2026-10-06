@@ -13,15 +13,16 @@
 
       <div class="am-toolbar">
         <el-input
-          v-model="query"
+          :model-value="query"
           :placeholder="t('memories.searchPlaceholder')"
           clearable
           class="search"
-          @keyup.enter="run(onSearch)"
-          @clear="run(onSearch)"
+          @update:model-value="onQueryInput"
+          @keyup.enter="applySearchNow"
+          @clear="applySearchNow"
         >
           <template #append>
-            <el-button :icon="Search" @click="run(onSearch)" />
+            <el-button :icon="Search" @click="applySearchNow" />
           </template>
         </el-input>
         <TagExprInput
@@ -72,7 +73,7 @@
         </button>
       </div>
 
-      <div class="am-pager" v-if="!searching">
+      <div class="am-pager" v-if="!showSearchResults">
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
@@ -147,6 +148,7 @@ const {
   pageSize,
   rows,
   searchResults,
+  showSearchResults,
   note,
   total,
   loading,
@@ -157,7 +159,9 @@ const {
   loadTagOptions,
 } = useMemories()
 
-// Unified card shape across list rows and search hits (search adds snippet + score)
+// Unified card shape across list rows and search hits (search adds snippet + score).
+// The view follows the settled mode: while a search intent has no data yet (typing, or the
+// request in flight) the last settled cards stay on screen instead of flashing empty.
 interface MemoryCard {
   id: string
   summary: string
@@ -167,7 +171,7 @@ interface MemoryCard {
   score?: number
 }
 const cards = computed<MemoryCard[]>(() =>
-  searching.value
+  searching.value && showSearchResults.value
     ? searchResults.value.map((r) => ({
         id: r.id,
         summary: r.summary,
@@ -181,13 +185,30 @@ const cards = computed<MemoryCard[]>(() =>
 
 // The empty-result notice is generated locally (the server's note targets agents and is English
 // contract text, not passed through to the UI):
-// list mode = nothing satisfies the expression; search mode = no hits
+// list mode = nothing satisfies the expression; search mode = no hits (only once the search has
+// actually settled — before that the previous view is still on screen, so saying "no hits" would
+// describe a query that has not run)
 const emptyNote = computed(() => {
   if (loading.value || total.value !== 0) return ''
-  if (searching.value) return t('memories.searchEmpty')
+  if (searching.value) return showSearchResults.value ? t('memories.searchEmpty') : ''
   if (tagExpr.value.trim()) return t('memories.exprEmpty')
   return ''
 })
+
+// Typing applies through a debounce (a search term is composed over several keystrokes), the
+// same contract as the tag expression box; Enter / clear / the magnifier apply immediately.
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+function onQueryInput(v: string) {
+  query.value = v
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    void run(onSearch)
+  }, 400)
+}
+function applySearchNow() {
+  clearTimeout(searchTimer)
+  void run(onSearch)
+}
 
 // Typing applies through a debounce (an expression is composed over several keystrokes);
 // Enter / clear / suggestion selection apply immediately. The debounced path is gated on

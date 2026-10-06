@@ -43,6 +43,12 @@ export function useMemories() {
   const pageSize = ref(defaultPageSize)
   const rows = ref<MemorySummary[]>([])
   const searchResults = ref<SearchResult[]>([])
+  /**
+   * Whether the view is currently settled on search results: false while a search intent has
+   * not produced data yet (typing, or the in-flight request), so the card list keeps showing
+   * the last settled view instead of flashing an empty list between keystrokes.
+   */
+  const showSearchResults = ref(false)
   /** Semantic fallback notice: non-empty when a hybrid request fell back to keyword search because the embedding service was unavailable (told explicitly, never silently) */
   const note = ref('')
   const total = ref(0)
@@ -88,6 +94,7 @@ export function useMemories() {
         // When a hybrid request fell back to keyword search because the embedding service was
         // unavailable, say so explicitly (never silently)
         note.value = data.semantic_fallback ? t('memories.semanticFallback') : ''
+        showSearchResults.value = true
       } else {
         const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`)) as MemoryListResp
         if (seq !== requestSeq) return
@@ -102,6 +109,7 @@ export function useMemories() {
         rows.value = data.memories ?? []
         total.value = data.total ?? 0
         note.value = ''
+        showSearchResults.value = false
       }
     } finally {
       if (seq === requestSeq) loading.value = false
@@ -132,6 +140,7 @@ export function useMemories() {
     pageSize,
     rows,
     searchResults,
+    showSearchResults,
     note,
     total,
     loading,
