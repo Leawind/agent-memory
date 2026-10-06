@@ -31,6 +31,12 @@ fn mcp_rpc(port: u16, id: Value, method: &str, params: Value) -> Value {
     resp
 }
 
+/// The raw text block of a successful tools/call (the single data channel). For the three list
+/// tools this is the line format; for everything else compact JSON.
+fn result_text(resp: &Value) -> &str {
+    resp["result"]["content"][0]["text"].as_str().unwrap()
+}
+
 #[test]
 fn mcp_endpoint_end_to_end() {
     let db = temp_db("mcp");
@@ -108,43 +114,81 @@ fn mcp_endpoint_end_to_end() {
         "tools/call",
         json!({"name": "memory_search", "arguments": {"query": "记忆系统"}}),
     );
-    let payload = tool_data(&searched);
-    let results = payload["results"].as_array().unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0]["id"], mem_id.as_str());
-    assert!(
-        results[0].get("content").is_none(),
-        "search must not leak content"
+    // List tools render the token-frugal line format: header, then flag lines, then one row per
+    // hit with an indented snippet continuation. The grammar leaves no column for content — the
+    // progressive-disclosure boundary is structural, so pinning the shape pins the boundary.
+    let text = result_text(&searched);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0], "total_matches: 1 | offset: 0 | returned: 1 | mode: keyword",
+        "search header: {text}"
     );
-    // Response slimming: query is not echoed; hint only on the first page; note only when there are no results
-    let sc = &payload;
-    assert!(sc.get("query").is_none(), "query echo must be dropped");
-    assert!(sc.get("hint").is_some(), "first page carries the hint");
-    assert!(sc.get("note").is_none(), "non-empty results carry no note");
+    assert_eq!(
+        lines[1], "semantic: disabled",
+        "unconfigured semantic search is stated, not inferred: {text}"
+    );
+    assert!(
+        lines[2].starts_with("hint: "),
+        "first page carries the hint: {text}"
+    );
+    assert_eq!(lines.len(), 5, "one row plus its snippet only: {text}");
+    // Row grammar: <id> [<tags>] <updated> <score> <summary>
+    let row = lines[3];
+    let rest = row
+        .strip_prefix(mem_id.as_str())
+        .unwrap_or_else(|| panic!("row must start with the memory id {mem_id}: {row}"));
+    let close = rest
+        .find(']')
+        .unwrap_or_else(|| panic!("row must carry a tags column: {row}"));
+    let tags = &rest[..close];
+    assert!(
+        tags.contains("项目") && tags.contains("rust"),
+        "tags column: {row}"
+    );
+    let after = &rest[close + 2..]; // skip "] "
+    assert_eq!(
+        &after[4..5],
+        "-",
+        "updated column is the compact timestamp: {row}"
+    );
+    let (score, summary) = after[17..].split_once(' ').unwrap();
+    assert!(score.parse::<u64>().is_ok(), "score column: {row}");
+    assert_eq!(
+        summary, "项目使用 Rust 实现 agent 记忆系统",
+        "summary column: {row}"
+    );
+    assert!(
+        lines[4].starts_with("  > "),
+        "snippet rides its own indented line: {text}"
+    );
     let empty = mcp_rpc(
         port,
         json!(5),
         "tools/call",
         json!({"name": "memory_search", "arguments": {"query": "绝对不存在的词", "offset": 10}}),
     );
-    let empty_sc = tool_data(&empty);
-    assert_eq!(empty_sc["total_matches"], 0);
-    assert!(empty_sc.get("hint").is_none(), "later pages omit the hint");
+    let empty_text = result_text(&empty);
     assert!(
-        empty_sc.get("note").is_some(),
-        "zero results guide the caller"
+        empty_text.starts_with(
+            "total_matches: 0 | offset: 10 | returned: 0 | mode: keyword\nsemantic: disabled\nnote: "
+        ),
+        "empty search: {empty_text}"
+    );
+    assert!(
+        !empty_text.contains("\nhint: "),
+        "later pages omit the hint"
     );
 
-    // Single data channel: the compact text block carries everything, with no structuredContent
-    // echo beside it (clients that surface every content block would ingest the data twice)
+    // Single data channel: no structuredContent echo beside the text block (clients that surface
+    // every content block would ingest the data twice). List tools are multi-line; every other
+    // tool stays compact JSON.
     assert!(
         searched["result"].get("structuredContent").is_none(),
         "no structuredContent beside the text channel"
     );
-    let text = searched["result"]["content"][0]["text"].as_str().unwrap();
     assert!(
-        !text.contains('\n'),
-        "tool result text must be compact JSON"
+        !result_text(&created).contains('\n'),
+        "non-list tool results stay compact JSON"
     );
 
     let fetched = mcp_rpc(
@@ -427,7 +471,11 @@ fn modern_protocol_request_validation() {
         ],
     );
     assert_eq!(status, 200, "{resp}");
-    assert_eq!(tool_data(&resp)["total"], 0);
+    let list_text = resp["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        list_text.starts_with("total: 0 | offset: 0\n"),
+        "empty list renders as a header-only line format: {list_text}"
+    );
 
     // A null id is malformed in the modern protocol (notifications omit the id entirely)
     let (status, resp) = send(

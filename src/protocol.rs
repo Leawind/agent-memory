@@ -540,11 +540,14 @@ fn tools_call(store_path: &Path, ctx: &IdentityCtx, id: &Value, params: &Value) 
 
     match tools::execute_with_db(store_path, ctx, name, &args) {
         Ok(v) => {
-            // The text block is the single data channel, serialized compactly — a pretty-printed
-            // layout's indentation whitespace would be paid for out of the client model's context
-            // on every tool call. No structuredContent alongside: no tool declares an outputSchema,
-            // and clients that surface every content block would ingest the same data twice.
-            let text = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
+            // The text block is the single data channel. The three list tools render as a compact
+            // line format (per-record JSON scaffolding — key names, quotes, braces — would be paid
+            // out of the caller's context on every call); everything else serializes compactly, a
+            // pretty-printed layout's indentation whitespace would cost the same for nothing. The
+            // REST face keeps the structured JSON for the admin UI. No structuredContent alongside:
+            // no tool declares an outputSchema, and clients that surface every content block would
+            // ingest the same data twice.
+            let text = tools::tool_text(name, &v);
             ok_value(
                 id,
                 json!({

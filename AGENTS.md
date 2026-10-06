@@ -57,8 +57,10 @@ src/
                  404 + -32601，通知 202，批量 400；结果信封带 resultType:"complete"，五个可缓存
                  方法带 ttlMs/cacheScope（discover 身份相关 → private/0，tools/list 静态 →
                  public/1h）；discover/initialize 同源回传自定义提示词（instructions 非空覆盖
-                 内置默认）+ 调用者身份行；工具结果文本通道是唯一数据通道（恒为紧凑 JSON，
-                 不附 structuredContent——没有工具声明 outputSchema，双通道会被同时渲染
+                 内置默认）+ 调用者身份行；工具结果文本通道是唯一数据通道（tag_list/
+                 memory_list/memory_search 经 tools/render 渲染为紧凑行格式省每记录的
+                 JSON 结构开销，其余工具恒为紧凑 JSON，REST 面一律结构化 JSON；不附
+                 structuredContent——没有工具声明 outputSchema，双通道会被同时渲染
                  两通道的客户端原样收两遍，纯浪费上下文）
   resources.rs   memory:// 资源面（RFC 3986 严格解析，percent 编解码标签名）：
                  memory://tags/{tag} 目录型 JSON（标签元数据 + 最近 100 条摘要，绝不带正文）、
@@ -77,6 +79,9 @@ src/
                  （从 schema 派生），入口集中执行 ctx.require(defs::required_cap(name)) 权限守卫 +
                  保留标签守卫（conventions：改名/删除绝对禁止，创建/挂摘需 Admin；REST 面复用 execute 自动一致）
   tools/defs.rs  工具清单 + JSON Schema（对 agent 的契约，唯一权威来源）+ 工具→能力映射 required_cap
+  tools/render.rs  MCP 面文本渲染：三个列表工具按 defs.rs 描述的行语法出紧凑行格式（一行一记录，
+                 名字按需引号包裹、正文类字段换行转义字面 \n），形状不符回落 JSON 序列化；
+                 仅 protocol.rs 的 tools_call 调用，REST 面不走此层
   tools/params.rs 参数解析/校验（值从严错报、写法从宽：单字符串可当数组）
   tools/tag_ops.rs / memory_ops.rs  业务处理器（校验在此，数据操作下沉到 store）；
                  memory_ops 承载跨记忆 id 引用卫生：写入面（create/update/edit、merge 的

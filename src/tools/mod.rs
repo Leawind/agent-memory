@@ -3,6 +3,7 @@
 //! Module layout:
 //! - `defs`    tool inventory and JSON Schema (the agent-facing contract, the single source of truth for argument validation)
 //! - `params`  argument parsing and validation helpers
+//! - `render`  MCP-face text rendering of the list tools (compact line format)
 //! - `tag_ops` tag create/read/update/delete
 //! - `memory_ops` memory CRUD, browsing and search
 //!
@@ -12,6 +13,7 @@
 mod defs;
 mod memory_ops;
 mod params;
+mod render;
 mod tag_ops;
 
 use crate::auth::{Cap, IdentityCtx};
@@ -25,6 +27,7 @@ pub use defs::{
     MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
     TOOL_NAMES,
 };
+pub use render::tool_text;
 
 pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools. The 'conventions' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 

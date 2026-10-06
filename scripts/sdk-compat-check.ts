@@ -68,12 +68,28 @@ async function rpc(
   return { status: res.status, ...body }
 }
 
-/** The tool-result payload: the text content block is the single data channel (compact JSON,
- * no structuredContent beside it — clients that surface every content block would see it twice). */
-function payloadOf(r: RpcOk): Record<string, unknown> | undefined {
+/** The raw text block of a tool result (the single data channel). */
+function textOf(r: RpcOk): string | undefined {
   const blocks = r.result?.content as { type?: string, text?: string }[] | undefined
-  const text = blocks?.find(b => b.type === 'text')?.text
-  return text === undefined ? undefined : JSON.parse(text) as Record<string, unknown>
+  return blocks?.find(b => b.type === 'text')?.text
+}
+
+/** The tool-result payload: the text content block parsed as JSON. List tools (tag_list,
+ * memory_list, memory_search) render the compact line format instead — use textOf + lineHeader. */
+function payloadOf(r: RpcOk): Record<string, unknown> | undefined {
+  const text = textOf(r)
+  return text === undefined ? undefined : (JSON.parse(text) as Record<string, unknown>)
+}
+
+/** Header line of the list-tool line format: `key: V | key: V | ...` → object. */
+function lineHeader(text: string): Record<string, string> {
+  const header = text.slice(0, text.indexOf("\n"))
+  return Object.fromEntries(
+    header.split(" | ").map((part) => {
+      const sep = part.indexOf(": ")
+      return [part.slice(0, sep), part.slice(sep + 2)]
+    }),
+  )
 }
 
 /** POST one JSON-RPC message the way a legacy (2025-06-18) client does: no `_meta`, no mirrored
@@ -224,9 +240,7 @@ try {
     },
   })
   check("tools/call memory_create", created.result?.isError !== true, JSON.stringify(created).slice(0, 120))
-  const structured = payloadOf(created) as
-    | { memory?: { id?: string }, total_matches?: number, results?: { content?: unknown }[] }
-    | undefined
+  const structured = payloadOf(created) as { memory?: { id?: string } } | undefined
   createdId = structured?.memory?.id ?? null
   check(
     "create returns structured id",
@@ -253,11 +267,11 @@ try {
   )
 
   const searched = await rpc(4, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
-  const searchedStructured = payloadOf(searched) as typeof structured
-  check("memory_search finds it", searchedStructured?.total_matches === 1)
+  const searchedText = textOf(searched) ?? ""
+  check("memory_search finds it", lineHeader(searchedText).total_matches === "1")
   check(
-    "search does not leak content",
-    searchedStructured?.results?.[0]?.content === undefined,
+    "search returns summary rows only (no content column)",
+    searchedText.split("\n").every((l) => !l.startsWith("content")),
   )
 
   const got = await rpc(5, "tools/call", { name: "memory_get", arguments: { ids: [createdId] } })
@@ -327,9 +341,15 @@ try {
   }
 
   const tagList = await rpc(36, "tools/call", { name: "tag_list", arguments: {} })
-  const conventions = (payloadOf(tagList) as { tags?: { name?: string, reserved?: boolean }[] })
-    ?.tags?.find((t) => t.name === "conventions")
-  check("reserved tag listed with reserved flag", conventions?.reserved === true)
+  // Line format: `<count> <[*]name>[: <description>]` — the reserved flag is the `*` before the name
+  const conventionsLine = (textOf(tagList) ?? "")
+    .split("\n")
+    .find((l) => /^\d+ \*conventions(:|$)/.test(l))
+  check(
+    "reserved tag listed with reserved flag",
+    conventionsLine !== undefined,
+    conventionsLine ?? "(conventions row missing)",
+  )
 
   const purgePreview = await rpc(37, "tools/call", {
     name: "tag_delete",
@@ -343,7 +363,7 @@ try {
   const stillThere = await rpc(38, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
   check(
     "dry_run deleted nothing",
-    (payloadOf(stillThere) as { total_matches?: number } | undefined)?.total_matches !== 0,
+    lineHeader(textOf(stillThere) ?? "").total_matches !== "0",
   )
 
   // ---- Error channels
@@ -357,9 +377,11 @@ try {
     "unknown method surfaces as 404 + -32601",
     unknownMethod.status === 404 && unknownMethod.error?.code === -32601,
   )
+  // Stale-check note: an omitted content used to be an argument error, but summary-only
+  // memories are legal now — trigger the error channel with a missing required arg instead.
   const argError = await rpc(9, "tools/call", {
     name: "memory_create",
-    arguments: { summary: "only summary" },
+    arguments: {},
   })
   check("tool argument error surfaces as isError", argError.result?.isError === true)
   const noMeta = await fetch(ENDPOINT, {
@@ -492,7 +514,7 @@ try {
 
   // ---- Stateless server: a fresh request context sees the same data (no session state)
   const again = await rpc(20, "tools/call", { name: "memory_search", arguments: { query: "联调" } })
-  check("reconnect sees previous data (stateless server)", payloadOf(again)?.total_matches === 1)
+  check("reconnect sees previous data (stateless server)", lineHeader(textOf(again) ?? "").total_matches === "1")
 
   const pong = await rpc(21, "ping")
   check("ping roundtrip", pong.result?.resultType === "complete")
@@ -544,7 +566,7 @@ try {
   })
   check(
     "legacy tools/call reads the same store",
-    (payloadOf(legacySearch) as { total_matches?: number } | undefined)?.total_matches === 1,
+    lineHeader(textOf(legacySearch) ?? "").total_matches === "1",
   )
   const legacyUnknown = await legacyRpc("legacy-4", "bogus/method")
   check(
