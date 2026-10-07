@@ -138,7 +138,7 @@
       <el-dialog
         v-model="adminVisible"
         :title="t('shell.admin')"
-        width="min(1040px, calc(100vw - 24px))"
+        width="min(1200px, calc(100vw - 24px))"
         align-center
         class="admin-dialog"
       >
@@ -476,10 +476,10 @@ body,
 body {
   background: var(--el-bg-color-page);
 }
-/* Management dialog: the admin panel is a tall stack of cards — let the body scroll instead of
-   stretching the dialog beyond the viewport */
+/* Management dialog: fixed body height so switching category tabs never shifts the nav row
+   (a content-driven height makes every tab jump); content scrolls inside instead */
 .admin-dialog .el-dialog__body {
-  max-height: calc(90vh - 110px);
+  height: min(680px, calc(90vh - 110px));
   overflow-y: auto;
 }
 /* Clamp overlay widths: fixed pixel widths (the 440px token dialog etc.) must not overflow the viewport on phones */

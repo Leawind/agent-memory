@@ -11,7 +11,6 @@
       </div>
 
       <el-alert v-if="!who" type="info" :title="t('access.needAdmin')" :closable="false" />
-      <el-alert v-else-if="who.mode === 'open'" type="warning" :title="t('access.openMode')" :closable="false" />
       <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
       <template v-if="who && isAdmin">
@@ -34,6 +33,16 @@
           </nav>
 
           <div class="admin-sections">
+            <!-- Open-mode notice: an identity/auth concern, so it lives in the access section
+                 only — a global banner would reshuffle every tab's layout on the fixed-height
+                 dialog. Stateless, so v-if (not v-show) is fine here. -->
+            <el-alert
+              v-if="who?.mode === 'open' && activeSection === 'access'"
+              type="warning"
+              :title="t('access.openMode')"
+              :closable="false"
+            />
+
             <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
             <AuthCard
               v-show="activeSection === 'access'"

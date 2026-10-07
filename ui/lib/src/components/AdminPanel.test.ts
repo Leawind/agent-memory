@@ -411,7 +411,7 @@ describe('AdminPanel', () => {
     wrapper.unmount()
   })
 
-  it('shows the open-mode notice with admin capabilities', async () => {
+  it('shows the open-mode notice only in the access section', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.resolve(jsonResponse({ identities: [] }))),
@@ -421,7 +421,13 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
+    // The notice is an identity/auth concern: it renders in the access section (the default)
     expect(wrapper.html()).toContain('开放模式')
+    // Switching to any other tab removes it entirely (v-if, not merely hidden)
+    await wrapper.findAll('.admin-nav .nav-item')[1].trigger('click')
+    expect(wrapper.text()).not.toContain('开放模式')
+    await wrapper.findAll('.admin-nav .nav-item')[0].trigger('click')
+    expect(wrapper.text()).toContain('开放模式')
     wrapper.unmount()
   })
 
