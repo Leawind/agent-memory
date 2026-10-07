@@ -194,7 +194,7 @@ export default {
     embeddingChecking: 'Testing the connection…',
     embeddingHealthy: 'Hybrid search is active: model {model}, {dim}-dimensional vectors.',
     embeddingBroken: 'Service error; search has fallen back to keyword matching:',
-    embeddingConfigure: 'Configure service',
+    embeddingRevert: 'Revert',
     embeddingCheck: 'Test connection',
     embeddingRecheck: 'Re-test',
     embeddingCoverageLine: 'Vector coverage {embedded}/{total}',

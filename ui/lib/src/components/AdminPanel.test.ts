@@ -207,7 +207,7 @@ describe('AdminPanel', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('embedding card: config form auto-opens unconfigured, saves fields only, settles parked', async () => {
+  it('embedding card: permanent config form saves fields only, settles parked', async () => {
     const settingsPuts: string[] = []
     // The mock stores what a PUT saved and returns it on GET, like the real server
     const stored: Record<string, unknown> = {}
@@ -256,9 +256,12 @@ describe('AdminPanel', () => {
     expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/embeddings/test'))).toBe(
       false,
     )
-    // Configured but switch off: the parked state, form closed
+    // Configured but switch off: the parked state, and the permanent form mirrors the saved values
     expect(wrapper.text()).toContain('已停用')
-    expect(wrapper.find('.config-form').exists()).toBe(false)
+    expect(wrapper.find('.config-form').exists()).toBe(true)
+    const configInputs = wrapper.findAll('.config-form input')
+    expect((configInputs[0].element as HTMLInputElement).value).toBe('http://svc:9/v1')
+    expect((configInputs[1].element as HTMLInputElement).value).toBe('bge-m3-x')
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })

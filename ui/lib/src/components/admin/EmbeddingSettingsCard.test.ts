@@ -77,7 +77,7 @@ beforeEach(() => {
 })
 
 describe('EmbeddingSettingsCard states', () => {
-  it('auto-opens the config form while unconfigured and keeps the switch disabled', () => {
+  it('shows the config form permanently while unconfigured and keeps the switch disabled', () => {
     const calls = recordFetch([])
     const wrapper = mountCard(
       makeProps({
@@ -126,11 +126,31 @@ describe('EmbeddingSettingsCard states', () => {
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(false)
     expect(wrapper.emitted('changed')).toHaveLength(1)
     // The parent reload feeds the saved values back as props (both URL and model: that is what
-    // makes the config complete server-side) — the card settles on the parked badge, form closed
+    // makes the config complete server-side) — the card settles on the parked badge, and the
+    // permanent form mirrors the saved values with its actions disabled again
     await wrapper.setProps({ embeddingBaseUrl: 'http://svc:9/v1', embeddingModel: 'bge-m3', embeddingApiKey: '' })
     await flushPromises()
     expect(badge(wrapper)).toBe('已停用')
-    expect(wrapper.find('.config-form').exists()).toBe(false)
+    const inputs = wrapper.findAll('.config-form input')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('http://svc:9/v1')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('bge-m3')
+    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('reverts an in-progress draft back to the server state without any request', async () => {
+    const calls = recordFetch([])
+    const wrapper = mountCard()
+    await fillInput(wrapper, 1, 'edited-model')
+    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '还原')!
+      .trigger('click')
+    const inputs = wrapper.findAll('.config-form input')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('bge-m3')
+    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(calls).toHaveLength(0)
     wrapper.unmount()
   })
 
@@ -197,10 +217,6 @@ describe('EmbeddingSettingsCard states', () => {
         stats: { embedding: { ...COVERAGE, model: 'old-model', embedded: 3 } },
       }),
     )
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === '配置服务')!
-      .trigger('click')
     await fillInput(wrapper, 1, 'new-model')
     expect(wrapper.text()).toContain('更换模型会使现有 3 条向量失效')
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
@@ -213,10 +229,10 @@ describe('EmbeddingSettingsCard states', () => {
       embedding_model: 'new-model',
       embedding_api_key: 'key',
     })
-    // Enabled: the save is followed by a probe, and success closes the form
+    // Enabled: the save is followed by a probe; the permanent form stays with its actions idle
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(true)
     expect(badge(wrapper)).toBe('已生效')
-    expect(wrapper.find('.config-form').exists()).toBe(false)
+    expect(wrapper.find('.config-form').exists()).toBe(true)
     wrapper.unmount()
   })
 

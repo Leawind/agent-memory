@@ -2,8 +2,8 @@
   <!-- Status-first card: the card mirrors the server's own state machine
        (effective config = switch on AND base_url AND model; health = a probe; coverage =
        embedded/(embedded+pending) for the current model) instead of presenting a permanent
-       form. The form is a task: it opens from "配置服务" (auto-open while unconfigured) and
-       closes once a save probes healthy. -->
+       form. The three-field config form is always visible — no expand/collapse dance; the
+       save button only wakes up once the draft differs from the server state. -->
   <el-card shadow="never">
     <template #header>
       <div class="card-header">
@@ -41,9 +41,6 @@
         </template>
       </span>
       <span class="state-actions">
-        <el-button v-if="configured && !configuring" size="small" @click="openConfig">
-          {{ t('access.embeddingConfigure') }}
-        </el-button>
         <el-button
           v-if="state === 'untested' || state === 'healthy' || state === 'broken'"
           size="small"
@@ -76,10 +73,9 @@
       </template>
     </div>
 
-    <!-- Configuration task: seeded from the server state on open; saving commits the three
-         fields, then (when enabled) immediately probes so the badge reflects reality. It opens
-         by itself while unconfigured — there, configuring IS the primary flow. -->
-    <el-form v-if="configuring || state === 'unconfigured'" label-position="top" class="config-form" @submit.prevent>
+    <!-- Configuration: always visible, seeded from the server state; saving commits the three
+         fields, then (when enabled) immediately probes so the badge reflects reality. -->
+    <el-form label-position="top" class="config-form" @submit.prevent>
       <el-form-item :label="t('access.embeddingBaseUrl')">
         <el-input v-model="draft.baseUrl" :placeholder="t('access.embeddingBaseUrlPlaceholder')" />
       </el-form-item>
@@ -104,7 +100,7 @@
         <el-button :disabled="!dirty" :loading="saving" type="primary" @click="save">
           {{ t('access.embeddingSaveTest') }}
         </el-button>
-        <el-button v-if="configured" @click="closeConfig">{{ t('common.cancel') }}</el-button>
+        <el-button :disabled="!dirty" @click="revert">{{ t('access.embeddingRevert') }}</el-button>
       </div>
     </el-form>
   </el-card>
@@ -207,20 +203,24 @@ async function check(): Promise<EmbedTestResp | null> {
   }
 }
 
-// ---- Configuration task ----
-const configuring = ref(false)
+// ---- Configuration form (always visible) ----
 const saving = ref(false)
 const draft = reactive({ baseUrl: '', model: '', apiKey: '' })
 // Baseline the draft diffs against: the values currently stored server-side
 const saved = ref({ baseUrl: '', model: '', apiKey: '' })
 
-// Keep fields in sync while the form is closed (a config edit elsewhere or a reload must not
-// be swallowed; the auto-open unconfigured form must show the server's current values).
-// While configuring, the operator's draft owns the fields.
+const dirty = computed(
+  () =>
+    draft.baseUrl !== saved.value.baseUrl || draft.model !== saved.value.model || draft.apiKey !== saved.value.apiKey,
+)
+
+// Keep fields in sync while the draft is clean (a config edit elsewhere or a reload must not
+// be swallowed). An in-progress edit (dirty) owns the fields instead: a background refresh
+// triggered by another card must not clobber what the operator is typing.
 watch(
   () => [props.embeddingBaseUrl, props.embeddingModel, props.embeddingApiKey] as const,
   ([u, m, k]) => {
-    if (configuring.value) return
+    if (dirty.value) return
     saved.value = { baseUrl: u, model: m, apiKey: k }
     draft.baseUrl = u
     draft.model = m
@@ -229,22 +229,12 @@ watch(
   { immediate: true },
 )
 
-function openConfig(): void {
+function revert(): void {
   draft.baseUrl = props.embeddingBaseUrl
   draft.model = props.embeddingModel
   draft.apiKey = props.embeddingApiKey
   saved.value = { baseUrl: props.embeddingBaseUrl, model: props.embeddingModel, apiKey: props.embeddingApiKey }
-  configuring.value = true
 }
-
-function closeConfig(): void {
-  configuring.value = false
-}
-
-const dirty = computed(
-  () =>
-    draft.baseUrl !== saved.value.baseUrl || draft.model !== saved.value.model || draft.apiKey !== saved.value.apiKey,
-)
 
 const modelChanged = computed(() => draft.model.trim() !== saved.value.model.trim())
 
@@ -265,11 +255,8 @@ async function save(): Promise<void> {
     lastTest.value = null
     if (props.embeddingEnabled) {
       // The operator expects "works?" answered now: probe right after committing
-      const result = await check()
-      if (result?.ok) configuring.value = false
-      // Stay open on failure: the badge carries the reason, the form is the fix loop
-    } else {
-      configuring.value = false // parked: nothing to probe
+      await check()
+      // A failed probe keeps the badge red with the reason verbatim; the form stays to fix it
     }
   } finally {
     saving.value = false

@@ -187,7 +187,7 @@ export default {
     embeddingChecking: '正在检测连接…',
     embeddingHealthy: '混合搜索已生效：模型 {model}，向量 {dim} 维。',
     embeddingBroken: '服务异常，搜索已自动回退关键词：',
-    embeddingConfigure: '配置服务',
+    embeddingRevert: '还原',
     embeddingCheck: '检测连接',
     embeddingRecheck: '重新检测',
     embeddingCoverageLine: '向量覆盖 {embedded}/{total}',
