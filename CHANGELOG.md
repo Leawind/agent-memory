@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **工具**：`memory_search` hybrid 模式先按余弦截断语义通道（约 2×limit、下限 20）再做 RRF 融合，`total_matches` 不再恒等于库总量；hybrid 时响应新增 `keyword_matches` 行，标明多少命中来自字面关键词、多少仅由语义通道带入
 - **schema（破坏性）**：标签改用内部自增 id 关联记忆；基线迁移改写，旧库不兼容，打开时做 schema 指纹校验、不符即拒绝（按提示 export/import 迁移）
 - **工具（破坏性）**：`tag_rename` 更名 `tag_update`；响应全面去噪——空字段整个省略、恒真布尔删除；摘要不再携带 `created_at`
 - **工具**：对模型暴露的时间戳改为本地墙钟的紧凑人读格式（存储与导出仍是 epoch 秒）；标签视图字段瘦身

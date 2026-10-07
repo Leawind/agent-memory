@@ -176,6 +176,15 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     let memories = st.all_memories()?;
     let keyword_hits = search::run(&memories, &query);
+    // Ids of the keyword channel's hits, for the keyword_matches report below (the semantic pass
+    // consumes the hits themselves). The keyword channel is AND-limited so every hit survives fusion;
+    // after tag filtering each surviving hit is still in the fused list.
+    let keyword_idx: std::collections::HashSet<usize> =
+        keyword_hits.iter().map(|h| h.idx).collect();
+    // The semantic channel's candidate cap: the top vector candidates by cosine, scaled to how much
+    // the caller reads (without it the vector channel pulls in every stored vector and total_matches
+    // degenerates to the store size)
+    let vector_k = (limit as usize * 2).max(20);
 
     // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
     // Embedding service unavailable (timeout/error/database read failure) → fall back to the keyword pass and flag it,
@@ -194,7 +203,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                 keyword_hits
             }
             Some(cfg) => {
-                let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query);
+                let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query, vector_k);
                 used_hybrid = ok;
                 semantic_fallback = !ok;
                 hits
@@ -206,7 +215,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                     "mode 'hybrid' requires semantic search to be enabled and configured (embedding settings in the admin UI)",
                 ));
             };
-            let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query);
+            let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query, vector_k);
             used_hybrid = ok;
             semantic_fallback = !ok;
             hits
@@ -224,6 +233,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     };
 
     let total = hits.len() as u64;
+    let keyword_matches = hits.iter().filter(|h| keyword_idx.contains(&h.idx)).count() as u64;
     let results: Vec<Value> = hits
         .iter()
         .skip(offset as usize)
@@ -253,6 +263,10 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     }
     if semantic_disabled {
         out["semantic"] = json!("disabled");
+    }
+    // Only hybrid fuses two channels; in keyword mode the count would just duplicate total_matches
+    if used_hybrid {
+        out["keyword_matches"] = json!(keyword_matches);
     }
     // Progressive-disclosure guidance is carried only on the first page; by paging, the client has already read it, saving repeated context overhead
     if offset == 0 {
@@ -711,6 +725,7 @@ fn semantic_pass(
     memories: &[crate::model::Memory],
     keyword_hits: Vec<search::Hit>,
     query: &str,
+    vector_k: usize,
 ) -> (Vec<search::Hit>, bool) {
     let table = match st.embeddings_active(&cfg.model) {
         Ok(t) => t,
@@ -734,7 +749,7 @@ fn semantic_pass(
         return (keyword_hits, false);
     };
     (
-        crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec),
+        crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec, vector_k),
         true,
     )
 }

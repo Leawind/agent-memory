@@ -80,6 +80,11 @@ fn render_memory_search(v: &Value) -> Option<String> {
     let mut out = format!(
         "total_matches: {total} | offset: {offset} | returned: {returned} | mode: {mode}\n"
     );
+    if let Some(km) = v.get("keyword_matches").and_then(Value::as_u64) {
+        out.push_str("keyword_matches: ");
+        out.push_str(&km.to_string());
+        out.push('\n');
+    }
     if v.get("semantic_fallback")
         .and_then(Value::as_bool)
         .unwrap_or(false)
@@ -281,6 +286,19 @@ mod tests {
                 "m7 [doc] 2026-10-05 18:23 0.031 summ\n",
                 "  > …summ…\n",
             )
+        );
+    }
+
+    #[test]
+    fn memory_search_keyword_matches_line() {
+        let v = json!({
+            "total_matches": 5, "keyword_matches": 2, "offset": 0, "returned": 5, "mode": "hybrid",
+            "results": [],
+        });
+        assert_eq!(
+            tool_text(MEMORY_SEARCH, &v),
+            "total_matches: 5 | offset: 0 | returned: 5 | mode: hybrid\n\
+             keyword_matches: 2\n"
         );
     }
 

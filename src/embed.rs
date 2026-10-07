@@ -363,11 +363,17 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
 /// Each channel contributes `1/(K+rank)` by rank, which naturally sidesteps the incomparable units of "keyword TF scores"
 /// versus "cosine values". Vector-only hits (zero keyword hits but semantically close) are introduced by this function
 /// — exactly the point of semantic search; their snippets take the fallback path from the start of the content.
+///
+/// The vector channel is capped at `vector_k` candidates (top cosine) before fusion: the keyword channel is already
+/// self-limited by its all-terms AND, but without a cap the vector channel would pull in every stored vector, making
+/// `total_matches` equal the store size and burying the head of the ranking in a noise tail. `vector_k` derives from
+/// the caller's `limit` (roughly twice it, floored) so the cap scales with how much the caller actually reads.
 pub fn hybrid_hits(
     memories: &[crate::model::Memory],
     keyword_hits: Vec<Hit>,
     table: &HashMap<i64, Vec<f32>>,
     query_vec: &[f32],
+    vector_k: usize,
 ) -> Vec<Hit> {
     // Vector pass: every memory with a stored vector and positive cosine is a candidate,
     // ranked by cosine descending (tag filtering narrows the fused hits one layer up, so
@@ -382,6 +388,7 @@ pub fn hybrid_hits(
         .filter(|(_, score)| *score > 0.0)
         .collect();
     vector_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    vector_ranked.truncate(vector_k);
 
     let mut fused: HashMap<usize, f64> = HashMap::new();
     let mut keyword_snippets: HashMap<usize, &str> = HashMap::new();
@@ -488,7 +495,7 @@ mod tests {
         table.insert(1i64, unit(4, 0)); // same direction as the query
         table.insert(2i64, unit(4, 1)); // orthogonal to the query (similarity 0, never enters)
 
-        let hits = hybrid_hits(&memories, keyword_hits, &table, &unit(4, 0));
+        let hits = hybrid_hits(&memories, keyword_hits, &table, &unit(4, 0), usize::MAX);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
 
@@ -497,7 +504,7 @@ mod tests {
         let mut table2 = table.clone();
         table2.insert(2i64, tilted);
         let keyword_hits = search::run(&memories, "hashing");
-        let hits = hybrid_hits(&memories, keyword_hits, &table2, &unit(4, 0));
+        let hits = hybrid_hits(&memories, keyword_hits, &table2, &unit(4, 0), usize::MAX);
         assert_eq!(hits.len(), 2);
         assert_eq!(
             hits[0].idx, 0,
@@ -530,12 +537,70 @@ mod tests {
         table.insert(2i64, vec![0.95, 0.31]);
         table.insert(3i64, vec![0.9, 0.44]);
         table.insert(1i64, vec![0.5, 0.87]);
-        let hits = hybrid_hits(&[a, b, c], vec![k1, k2], &table, &[1.0, 0.0]);
+        let hits = hybrid_hits(&[a, b, c], vec![k1, k2], &table, &[1.0, 0.0], usize::MAX);
         let order: Vec<usize> = hits.iter().map(|h| h.idx).collect();
         assert_eq!(
             order,
             vec![1, 0, 2],
             "b, ranked on both channels, should beat a, the keyword-only leader"
+        );
+    }
+
+    /// The semantic channel is capped at `vector_k` candidates: only the highest-cosine memories
+    /// enter the fusion, so total_matches stays bounded no matter how large the store grows.
+    #[test]
+    fn hybrid_caps_vector_channel() {
+        let memories: Vec<Memory> = (0..6).map(|i| mem(i + 1, "s", "c")).collect();
+        let mut table = HashMap::new();
+        // Vectors tilted progressively further from the query: cosine descends with i, so m1 is
+        // the top candidate and m6 the weakest
+        for i in 0..6usize {
+            table.insert((i + 1) as i64, vec![1.0, i as f32]);
+        }
+        let hits = hybrid_hits(&memories, Vec::new(), &table, &[1.0, 0.0], 3);
+        assert_eq!(hits.len(), 3);
+        let ids: Vec<&str> = hits.iter().map(|h| memories[h.idx].id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["m1", "m2", "m3"],
+            "only the top-3 cosine candidates survive the cap"
+        );
+    }
+
+    /// The cap trims the vector channel only: keyword hits are already AND-limited and must all
+    /// survive fusion even when they outnumber vector_k.
+    #[test]
+    fn vector_cap_never_truncates_keyword_hits() {
+        let memories: Vec<Memory> = (0..4).map(|i| mem(i + 1, "s", "c")).collect();
+        let keyword_hits = vec![
+            Hit {
+                idx: 0,
+                score: 10,
+                snippet: "sa".into(),
+            },
+            Hit {
+                idx: 1,
+                score: 5,
+                snippet: "sb".into(),
+            },
+            Hit {
+                idx: 2,
+                score: 3,
+                snippet: "sc".into(),
+            },
+        ];
+        let mut table = HashMap::new();
+        table.insert(4i64, vec![1.0, 0.0]);
+        let hits = hybrid_hits(&memories, keyword_hits, &table, &[1.0, 0.0], 1);
+        let ids: std::collections::HashSet<usize> = hits.iter().map(|h| h.idx).collect();
+        assert!(
+            ids.is_superset(&[0usize, 1, 2].into_iter().collect()),
+            "all three keyword hits survive a vector_k of 1"
+        );
+        assert_eq!(
+            hits.len(),
+            4,
+            "3 keyword hits + at most 1 vector candidate (the cap) — not the whole table"
         );
     }
 
