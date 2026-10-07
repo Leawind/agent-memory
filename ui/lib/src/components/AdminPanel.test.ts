@@ -112,6 +112,28 @@ describe('AdminPanel', () => {
     wrapper.unmount()
   })
 
+  it('category nav switches the visible section while every card stays mounted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) => Promise.resolve(jsonResponse({}))),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    const items = wrapper.findAll('.admin-nav .nav-item')
+    expect(items.map((i) => i.text())).toEqual(['身份与访问', '语义搜索', '自定义提示词', '备份导入导出', '数据体检'])
+    // v-show toggles inline display: exactly the active section's card is visible
+    const displays = () => wrapper.findAll('.admin-sections .el-card').map((c) => c.element.style.display)
+    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none'])
+    await items[4].trigger('click')
+    expect(displays()).toEqual(['none', 'none', 'none', 'none', ''])
+    await items[1].trigger('click')
+    expect(displays()).toEqual(['none', '', 'none', 'none', 'none'])
+    wrapper.unmount()
+  })
+
   // The save row's "save" coexists with the identically named dialog button; find the card's one only
   function promptCardSave(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll('button').filter((b) => b.text() === '保存' && !b.element.closest('.el-dialog'))[0]

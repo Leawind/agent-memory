@@ -107,6 +107,11 @@ export default {
   access: {
     title: 'Admin',
     subtitle: 'Identities & access, backup import/export, data checks, and custom prompts (admin only)',
+    navAccess: 'Identities & access',
+    navEmbedding: 'Semantic search',
+    navPrompt: 'Custom instructions',
+    navBackup: 'Backup & restore',
+    navDoctor: 'Health check',
     needAdmin: 'Admin permission is required to manage identities and settings',
     openMode:
       'Open mode: the auth switch is off and all requests are unauthenticated, only suitable for personal local deployments. Before enabling, create an admin identity below and save its token; once the switch is on, every /mcp and /api request must carry a valid token.',

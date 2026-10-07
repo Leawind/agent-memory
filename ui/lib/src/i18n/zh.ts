@@ -104,6 +104,11 @@ export default {
   access: {
     title: '管理',
     subtitle: '身份与访问、备份导入导出、数据体检与自定义提示词（admin 专属）',
+    navAccess: '身份与访问',
+    navEmbedding: '语义搜索',
+    navPrompt: '自定义提示词',
+    navBackup: '备份导入导出',
+    navDoctor: '数据体检',
     needAdmin: '需要 admin 权限才能管理身份与设置',
     openMode:
       '开放模式：鉴权开关未开启，所有请求免鉴权，仅适合个人本地部署。启用鉴权前，先在下方创建管理员身份并保存其 token；开启开关后，所有 /mcp 与 /api 请求必须携带有效 token。',

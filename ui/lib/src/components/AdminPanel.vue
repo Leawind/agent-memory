@@ -15,37 +15,65 @@
       <el-alert v-else-if="!isAdmin" type="info" :title="t('access.needAdmin')" :closable="false" />
 
       <template v-if="who && isAdmin">
-        <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
-        <AuthCard
-          :auth-required="authRequired"
-          :has-admin-identity="hasAdminIdentity"
-          :anonymous-permissions="anonymousPermissions"
-          :identities="identities"
-          :compact="compact"
-          @changed="load"
-          @saved="load"
-          @create="formDialog?.openCreate()"
-          @edit="formDialog?.openEdit($event)"
-          @delete="askDelete"
-          @reset-token="askResetToken"
-        />
+        <!-- Category nav on the left, one card per section on the right (DeepSeek-settings
+             style). Sections stay mounted via v-show so each card's own state (probe results,
+             doctor findings, in-progress drafts) survives switching back and forth. -->
+        <div class="admin-layout" :class="{ 'is-compact': compact }">
+          <nav class="admin-nav">
+            <button
+              v-for="cat in categories"
+              :key="cat.id"
+              type="button"
+              class="nav-item"
+              :class="{ 'is-active': activeSection === cat.id }"
+              @click="activeSection = cat.id"
+            >
+              <el-icon :size="16"><component :is="cat.icon" /></el-icon>
+              <span>{{ t(cat.labelKey) }}</span>
+            </button>
+          </nav>
 
-        <!-- Semantic search config and vector coverage share a card (the former standalone coverage card at the bottom was merged in) -->
-        <EmbeddingSettingsCard
-          :embedding-enabled="embeddingEnabled"
-          :embedding-base-url="embeddingBaseUrl"
-          :embedding-model="embeddingModel"
-          :embedding-api-key="embeddingApiKey"
-          :stats="stats"
-          :compact="compact"
-          @changed="load"
-        />
+          <div class="admin-sections">
+            <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
+            <AuthCard
+              v-show="activeSection === 'access'"
+              :auth-required="authRequired"
+              :has-admin-identity="hasAdminIdentity"
+              :anonymous-permissions="anonymousPermissions"
+              :identities="identities"
+              :compact="compact"
+              @changed="load"
+              @saved="load"
+              @create="formDialog?.openCreate()"
+              @edit="formDialog?.openEdit($event)"
+              @delete="askDelete"
+              @reset-token="askResetToken"
+            />
 
-        <PromptSettingsCard :instructions="instructions" :default-instructions="defaultInstructions" @saved="load" />
+            <!-- Semantic search config and vector coverage share a card (the former standalone coverage card at the bottom was merged in) -->
+            <EmbeddingSettingsCard
+              v-show="activeSection === 'embedding'"
+              :embedding-enabled="embeddingEnabled"
+              :embedding-base-url="embeddingBaseUrl"
+              :embedding-model="embeddingModel"
+              :embedding-api-key="embeddingApiKey"
+              :stats="stats"
+              :compact="compact"
+              @changed="load"
+            />
 
-        <BackupCard />
+            <PromptSettingsCard
+              v-show="activeSection === 'prompt'"
+              :instructions="instructions"
+              :default-instructions="defaultInstructions"
+              @saved="load"
+            />
 
-        <DoctorCard />
+            <BackupCard v-show="activeSection === 'backup'" />
+
+            <DoctorCard v-show="activeSection === 'doctor'" />
+          </div>
+        </div>
       </template>
 
       <!-- Create / edit identity; the parent refreshes the list on success -->
@@ -58,10 +86,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
-import { InfoFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, FirstAidKit, FolderOpened, InfoFilled, Search, User } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { useApiClient } from '../api/client'
 import { useContainerWidth } from '../composables/useContainerWidth'
@@ -109,8 +137,21 @@ const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === t
 const stats = ref<import('../types').StatsInfo | null>(null)
 
 const rootRef = ref<HTMLElement | null>(null)
-// In compact mode (<960px) the created-at column is hidden and dialogs widen to 96%
+// In compact mode (<960px) the nav folds into a horizontal pill row and the created-at column is hidden
 const { compact } = useContainerWidth(rootRef)
+
+// ---- Category nav: one entry per settings card; the sections themselves stay mounted ----
+type SectionId = 'access' | 'embedding' | 'prompt' | 'backup' | 'doctor'
+
+const categories: Array<{ id: SectionId; labelKey: string; icon: Component }> = [
+  { id: 'access', labelKey: 'access.navAccess', icon: User },
+  { id: 'embedding', labelKey: 'access.navEmbedding', icon: Search },
+  { id: 'prompt', labelKey: 'access.navPrompt', icon: ChatDotRound },
+  { id: 'backup', labelKey: 'access.navBackup', icon: FolderOpened },
+  { id: 'doctor', labelKey: 'access.navDoctor', icon: FirstAidKit },
+]
+
+const activeSection = ref<SectionId>('access')
 
 async function load(): Promise<void> {
   await run(async () => {
@@ -211,5 +252,68 @@ async function askResetToken(row: IdentityRow): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* Sidebar + sections: a DeepSeek-settings-style category nav on the left, the active card on
+   the right. Cards keep their internal state across switches (v-show, not v-if). */
+.admin-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.admin-nav {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 172px;
+  position: sticky;
+  top: 12px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-item:hover {
+  background: var(--el-fill-color);
+}
+.nav-item.is-active {
+  background: var(--el-fill-color-dark);
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+.admin-sections {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Compact containers: the nav folds into a wrapping pill row above the active section */
+.admin-layout.is-compact {
+  flex-direction: column;
+}
+.is-compact .admin-nav {
+  flex-direction: row;
+  flex-wrap: wrap;
+  width: auto;
+  position: static;
+}
+.is-compact .nav-item {
+  width: auto;
+  padding: 7px 12px;
 }
 </style>
