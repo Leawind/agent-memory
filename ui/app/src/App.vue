@@ -479,7 +479,7 @@ body {
 /* Management dialog: fixed body height so switching category tabs never shifts the nav row
    (a content-driven height makes every tab jump); content scrolls inside instead */
 .admin-dialog .el-dialog__body {
-  height: min(680px, calc(90vh - 110px));
+  height: min(840px, calc(90vh - 72px));
   overflow-y: auto;
 }
 /* Clamp overlay widths: fixed pixel widths (the 440px token dialog etc.) must not overflow the viewport on phones */

@@ -311,9 +311,12 @@ async function askResetToken(row: IdentityRow): Promise<void> {
   gap: 16px;
 }
 
-/* Compact containers: the nav folds into a wrapping pill row above the active section */
+/* Compact containers: the nav folds into a wrapping pill row above the active section.
+   flex-start (the row layout's top alignment) must become stretch here — in a column flex
+   container it would shrink the sections to content width instead of filling the panel. */
 .admin-layout.is-compact {
   flex-direction: column;
+  align-items: stretch;
 }
 .is-compact .admin-nav {
   flex-direction: row;

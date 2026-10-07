@@ -151,8 +151,12 @@ html.dark {
  * Control-convention fixes (theme-layer responsibility: the 8/10px large radii above
  * are for cards/pills): checkboxes must stay square - a 14px checkbox with an 8px
  * radius is nearly circular; button text is centered explicitly on both axes rather
- * than relying on library defaults.
+ * than relying on library defaults. el-card ships its own 4px radius that ignores the
+ * large-radius tokens above, so the card corner is restated here to match.
  */
+.el-card {
+  border-radius: 12px;
+}
 .el-checkbox__inner {
   border-radius: 2px;
 }
