@@ -1,84 +1,122 @@
 <template>
-  <!-- Semantic search config: OpenAI-compatible /embeddings (cloud or local Ollama); falls back to keyword search automatically when the service is unavailable.
-       Vector coverage and backfill live in this card too (the former standalone card at the bottom was removed): config and coverage on one screen, visible once enabled -->
+  <!-- Status-first card: the card mirrors the server's own state machine
+       (effective config = switch on AND base_url AND model; health = a probe; coverage =
+       embedded/(embedded+pending) for the current model) instead of presenting a permanent
+       form. The form is a task: it opens from "配置服务" (auto-open while unconfigured) and
+       closes once a save probes healthy. -->
   <el-card shadow="never">
-    <template #header>{{ t('access.embeddingTitle') }}</template>
-    <el-alert :title="t('access.embeddingHint')" type="info" show-icon :closable="false" class="settings-hint" />
-    <div class="enable-row">
-      <span class="enable-label">{{ t('access.embeddingEnabledLabel') }}</span>
-      <el-switch v-model="enabled" />
-      <span class="enable-hint">{{ t('access.embeddingEnabledHint') }}</span>
-    </div>
-    <el-form label-position="top" @submit.prevent>
-      <el-form-item :label="t('access.embeddingBaseUrl')">
-        <el-input v-model="baseUrl" :placeholder="t('access.embeddingBaseUrlPlaceholder')" />
-      </el-form-item>
-      <el-form-item :label="t('access.embeddingModelLabel')">
-        <el-input v-model="model" placeholder="BAAI/bge-m3 / bge-m3 / nomic-embed-text" />
-      </el-form-item>
-      <el-form-item :label="t('access.embeddingApiKeyLabel')">
-        <el-input v-model="apiKey" show-password :placeholder="t('access.embeddingApiKeyPlaceholder')" />
-      </el-form-item>
-    </el-form>
-    <div class="save-row">
-      <el-button type="primary" :loading="saving" :disabled="!dirty" @click="saveAndTest">
-        {{ t('access.embeddingSaveTest') }}
-      </el-button>
-    </div>
-    <el-alert
-      v-if="test?.ok"
-      :title="t('access.embeddingTestOk', { dim: test.dim ?? 0, ms: test.elapsed_ms ?? 0 })"
-      type="success"
-      show-icon
-      :closable="false"
-      class="settings-hint"
-    />
-    <el-alert
-      v-else-if="test && !test.ok"
-      :title="t('access.embeddingTestFail', { error: test.error ?? '' })"
-      type="error"
-      show-icon
-      :closable="false"
-      class="settings-hint"
-    />
+    <template #header>
+      <div class="card-header">
+        <span>{{ t('access.embeddingTitle') }}</span>
+        <el-tag :type="badgeType" size="small">{{ t(badgeKey) }}</el-tag>
+      </div>
+    </template>
 
-    <!-- Vector coverage and backfill (admin endpoints; the button loops until nothing is pending): stats fetched with the parent's load, not rendered while disabled -->
-    <template v-if="coverage">
-      <el-divider class="coverage-divider" />
-      <div class="coverage-header">
-        <span class="coverage-title">{{ t('access.embeddingCoverageTitle') }}</span>
-        <el-button size="small" :icon="Refresh" :loading="backfilling" @click="runBackfill">
+    <!-- Intent switch first: effective immediately (PUT on change), disabled until the service
+         is configured — an intent without config has nothing to enable. The state line names
+         the state and, when broken, carries the server's reason verbatim. -->
+    <div class="state-row">
+      <el-tooltip :disabled="configured" :content="t('access.embeddingNotConfigured')" placement="top">
+        <el-switch
+          :model-value="embeddingEnabled"
+          :loading="toggling"
+          :disabled="!configured"
+          :aria-label="t('access.embeddingEnabledLabel')"
+          @change="onToggle"
+        />
+      </el-tooltip>
+      <span class="state-line" :class="{ 'is-broken': state === 'broken' }">
+        <template v-if="state === 'unconfigured'">{{ t('access.embeddingPitch') }}</template>
+        <template v-else-if="state === 'parked'">{{ t('access.embeddingParked') }}</template>
+        <template v-else-if="state === 'testing'">{{ t('access.embeddingChecking') }}</template>
+        <template v-else-if="state === 'untested'">
+          {{ t('access.embeddingUntested', { model: embeddingModel.trim() }) }}
+        </template>
+        <template v-else-if="state === 'healthy'">
+          {{ t('access.embeddingHealthy', { model: embeddingModel.trim(), dim: lastTest?.dim ?? 0 }) }}
+        </template>
+        <template v-else>
+          {{ t('access.embeddingBroken') }}
+          <code class="broken-err">{{ lastTest?.error }}</code>
+        </template>
+      </span>
+      <span class="state-actions">
+        <el-button v-if="configured && !configuring" size="small" @click="openConfig">
+          {{ t('access.embeddingConfigure') }}
+        </el-button>
+        <el-button
+          v-if="state === 'untested' || state === 'healthy' || state === 'broken'"
+          size="small"
+          :loading="testing"
+          @click="check"
+        >
+          {{ state === 'untested' ? t('access.embeddingCheck') : t('access.embeddingRecheck') }}
+        </el-button>
+      </span>
+    </div>
+
+    <!-- Vector coverage (only meaningful when the config is effective server-side). While a
+         backfill drains, live progress replaces the static counts. -->
+    <div v-if="coverage" class="coverage-row">
+      <template v-if="progress">
+        <span class="coverage-text">{{ t('access.embeddingBackfilling', progress) }}</span>
+        <el-progress
+          class="coverage-bar"
+          :percentage="progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 100"
+          :stroke-width="8"
+        />
+      </template>
+      <template v-else>
+        <span class="coverage-text">
+          {{ t('access.embeddingCoverageLine', { embedded: coverage.embedded ?? 0, total: coverageTotal }) }}
+        </span>
+        <el-button v-if="(coverage.pending ?? 0) > 0" size="small" :loading="backfilling" @click="runBackfill">
           {{ t('access.runBackfill') }}
         </el-button>
-      </div>
-      <el-descriptions size="small" :column="compact ? 1 : 2">
-        <el-descriptions-item :label="t('access.embeddingModel')">
-          <code class="coverage-model">{{ coverage.model ?? '—' }}</code>
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('access.embeddingCoverage')">
-          {{ coverage.embedded ?? 0 }} / {{ coverageTotal }}
-        </el-descriptions-item>
-      </el-descriptions>
+      </template>
+    </div>
+
+    <!-- Configuration task: seeded from the server state on open; saving commits the three
+         fields, then (when enabled) immediately probes so the badge reflects reality. It opens
+         by itself while unconfigured — there, configuring IS the primary flow. -->
+    <el-form v-if="configuring || state === 'unconfigured'" label-position="top" class="config-form" @submit.prevent>
+      <el-form-item :label="t('access.embeddingBaseUrl')">
+        <el-input v-model="draft.baseUrl" :placeholder="t('access.embeddingBaseUrlPlaceholder')" />
+      </el-form-item>
+      <el-form-item :label="t('access.embeddingModelLabel')">
+        <el-input v-model="draft.model" placeholder="BAAI/bge-m3 / bge-m3 / nomic-embed-text" />
+      </el-form-item>
+      <el-form-item :label="t('access.embeddingApiKeyLabel')">
+        <el-input v-model="draft.apiKey" show-password :placeholder="t('access.embeddingApiKeyPlaceholder')" />
+      </el-form-item>
+      <!-- Vectors are keyed by model: a switch orphans every stored vector until backfilled.
+           Say the cost up front, with the count that will be invalidated. -->
       <el-alert
-        v-if="(coverage.pending ?? 0) > 0"
-        :title="t('access.embeddingPending', { count: coverage.pending })"
+        v-if="modelChanged && vectorCount > 0"
+        :title="t('access.embeddingModelChangeWarn', { count: vectorCount })"
         type="warning"
         show-icon
         :closable="false"
         class="settings-hint"
       />
-    </template>
+      <p class="form-hint">{{ t('access.embeddingFormHint') }}</p>
+      <div class="form-actions">
+        <el-button :disabled="!dirty" :loading="saving" type="primary" @click="save">
+          {{ t('access.embeddingSaveTest') }}
+        </el-button>
+        <el-button v-if="configured" @click="closeConfig">{{ t('common.cancel') }}</el-button>
+      </div>
+    </el-form>
   </el-card>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { toastSuccess } from '../../toast'
 import { useAdmin } from '../../composables/useAdmin'
-import type { EmbeddingCoverage } from '../../types'
+import type { EmbedTestResp } from '../../types'
 import { run } from './caps'
 
 const props = defineProps<{
@@ -86,127 +124,246 @@ const props = defineProps<{
   embeddingBaseUrl: string
   embeddingModel: string
   embeddingApiKey: string
-  /** Vector coverage stats (fetched by the parent's load); the coverage section is hidden when not enabled or not loaded */
+  /** Stats fetched by the parent's load: the server's own view of effectivity + coverage */
   stats: import('../../types').StatsInfo | null
-  /** In compact mode (<960px) the coverage descriptions list renders in a single column */
+  /** In compact mode (<960px) the coverage progress bar narrows */
   compact: boolean
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
 
-// Local editing state, refreshed when the parent loads
-const enabled = ref(props.embeddingEnabled)
-const baseUrl = ref(props.embeddingBaseUrl)
-const model = ref(props.embeddingModel)
-const apiKey = ref(props.embeddingApiKey)
-watch(
-  () => [props.embeddingEnabled, props.embeddingBaseUrl, props.embeddingModel, props.embeddingApiKey] as const,
-  ([e, u, m, k]) => {
-    enabled.value = e
-    baseUrl.value = u
-    model.value = m
-    apiKey.value = k
-  },
-)
-
-// A save re-sends the whole config and re-tests the connection: only meaningful when something
-// actually differs from the server state the props mirror (the parent reloads after each save,
-// which re-syncs the local draft and settles the button back to disabled)
-const dirty = computed(
-  () =>
-    enabled.value !== props.embeddingEnabled ||
-    baseUrl.value !== props.embeddingBaseUrl ||
-    model.value !== props.embeddingModel ||
-    apiKey.value !== props.embeddingApiKey,
-)
-
-// Only show the coverage section when the service is enabled (also not rendered while stats are
-// unloaded, avoiding a flash of "not enabled")
-const coverage = computed<EmbeddingCoverage | undefined>(() =>
-  props.stats?.embedding?.enabled ? props.stats.embedding : undefined,
-)
-// Coverage denominator = embedded + pending backfill
-const coverageTotal = computed(() => (coverage.value?.embedded ?? 0) + (coverage.value?.pending ?? 0))
-
 const api = useApiClient()
 const { backfilling, backfill } = useAdmin()
-const saving = ref(false)
-// run returns undefined on failure (already toasted); test must accommodate three states:
-// null = not tested, undefined = test failed, object = result
-const test = ref<null | undefined | { ok: boolean; dim?: number; elapsed_ms?: number; error?: string }>(null)
 
-// After saving, immediately run a connectivity test with the server-side config; `changed` makes
-// the parent refetch the stats so the coverage section updates right away
-async function saveAndTest(): Promise<void> {
-  if (!dirty.value) return
-  saving.value = true
-  test.value = null
+// ---- State: mirror the server, derive everything from props + the last probe ----
+type CardState = 'unconfigured' | 'parked' | 'testing' | 'untested' | 'healthy' | 'broken'
+
+const testing = ref(false)
+const lastTest = ref<EmbedTestResp | null>(null)
+
+// The server embeds only when the switch is on AND base_url AND model are set
+const configured = computed(() => props.embeddingBaseUrl.trim() !== '' && props.embeddingModel.trim() !== '')
+
+const state = computed<CardState>(() => {
+  if (!configured.value) return 'unconfigured'
+  if (!props.embeddingEnabled) return 'parked'
+  if (testing.value) return 'testing'
+  if (!lastTest.value) return 'untested'
+  return lastTest.value.ok ? 'healthy' : 'broken'
+})
+
+const badgeKey = computed(
+  () =>
+    ({
+      unconfigured: 'access.embeddingBadgeUnconfigured',
+      parked: 'access.embeddingBadgeParked',
+      testing: 'access.embeddingBadgeTesting',
+      untested: 'access.embeddingBadgeUntested',
+      healthy: 'access.embeddingBadgeHealthy',
+      broken: 'access.embeddingBadgeBroken',
+    })[state.value],
+)
+const badgeType = computed(
+  () =>
+    ({
+      unconfigured: 'info',
+      parked: 'info',
+      testing: 'warning',
+      untested: 'warning',
+      healthy: 'success',
+      broken: 'danger',
+    })[state.value] as 'info' | 'warning' | 'success' | 'danger',
+)
+
+// Coverage comes from the server's effective config (stats), not from the raw switch
+const coverage = computed(() => (props.stats?.embedding?.enabled ? props.stats.embedding : undefined))
+const coverageTotal = computed(() => (coverage.value?.embedded ?? 0) + (coverage.value?.pending ?? 0))
+const vectorCount = computed(() => coverage.value?.embedded ?? 0)
+
+// ---- Intent switch: immediate PUT; a failed PUT is toasted by run() and the switch stays put ----
+const toggling = ref(false)
+
+async function onToggle(value: boolean | string | number): Promise<void> {
+  toggling.value = true
   try {
-    const saved = await run(() =>
+    const ok = await run(() => api.put('/api/settings', { embedding_enabled: value === true }))
+    if (ok === undefined) return
+    lastTest.value = null // the probe result belonged to the previous on/off state
+    emit('changed')
+  } finally {
+    toggling.value = false
+  }
+}
+
+// ---- Probe: always tests the server's saved config (that is the endpoint's contract) ----
+async function check(): Promise<EmbedTestResp | null> {
+  testing.value = true
+  try {
+    const out = await run(() => api.post<EmbedTestResp>('/api/embeddings/test', {}))
+    if (out) lastTest.value = out
+    return out ?? null
+  } finally {
+    testing.value = false
+  }
+}
+
+// ---- Configuration task ----
+const configuring = ref(false)
+const saving = ref(false)
+const draft = reactive({ baseUrl: '', model: '', apiKey: '' })
+// Baseline the draft diffs against: the values currently stored server-side
+const saved = ref({ baseUrl: '', model: '', apiKey: '' })
+
+// Keep fields in sync while the form is closed (a config edit elsewhere or a reload must not
+// be swallowed; the auto-open unconfigured form must show the server's current values).
+// While configuring, the operator's draft owns the fields.
+watch(
+  () => [props.embeddingBaseUrl, props.embeddingModel, props.embeddingApiKey] as const,
+  ([u, m, k]) => {
+    if (configuring.value) return
+    saved.value = { baseUrl: u, model: m, apiKey: k }
+    draft.baseUrl = u
+    draft.model = m
+    draft.apiKey = k
+  },
+  { immediate: true },
+)
+
+function openConfig(): void {
+  draft.baseUrl = props.embeddingBaseUrl
+  draft.model = props.embeddingModel
+  draft.apiKey = props.embeddingApiKey
+  saved.value = { baseUrl: props.embeddingBaseUrl, model: props.embeddingModel, apiKey: props.embeddingApiKey }
+  configuring.value = true
+}
+
+function closeConfig(): void {
+  configuring.value = false
+}
+
+const dirty = computed(
+  () =>
+    draft.baseUrl !== saved.value.baseUrl || draft.model !== saved.value.model || draft.apiKey !== saved.value.apiKey,
+)
+
+const modelChanged = computed(() => draft.model.trim() !== saved.value.model.trim())
+
+async function save(): Promise<void> {
+  if (!dirty.value || saving.value) return
+  saving.value = true
+  try {
+    const ok = await run(() =>
       api.put('/api/settings', {
-        embedding_enabled: enabled.value,
-        embedding_base_url: baseUrl.value,
-        embedding_model: model.value,
-        embedding_api_key: apiKey.value,
+        embedding_base_url: draft.baseUrl,
+        embedding_model: draft.model,
+        embedding_api_key: draft.apiKey,
       }),
     )
-    if (saved === undefined) return // save failure already toasted
-    toastSuccess(t('access.saved'))
+    if (ok === undefined) return
+    saved.value = { baseUrl: draft.baseUrl, model: draft.model, apiKey: draft.apiKey }
     emit('changed')
-    if (!enabled.value) return // no test needed when disabled
-    test.value = await run(() => api.post('/api/embeddings/test', {}))
+    lastTest.value = null
+    if (props.embeddingEnabled) {
+      // The operator expects "works?" answered now: probe right after committing
+      const result = await check()
+      if (result?.ok) configuring.value = false
+      // Stay open on failure: the badge carries the reason, the form is the fix loop
+    } else {
+      configuring.value = false // parked: nothing to probe
+    }
   } finally {
     saving.value = false
   }
 }
 
-/** Give result feedback after the backfill finishes (0 processed still counts as success — there was nothing pending) and trigger the parent to refresh coverage */
+// ---- Backfill: the admin endpoint drains one small batch per call and reports remaining;
+// loop it and surface real progress instead of a bare spinner ----
+const progress = ref<{ done: number; total: number } | null>(null)
+
 async function runBackfill(): Promise<void> {
-  const total = await run(backfill)
-  if (total === undefined) return
-  emit('changed')
-  if (total === 0) toastSuccess(t('access.embeddingUpToDate'))
-  else toastSuccess(t('access.embeddingDone', { count: total }))
+  try {
+    // run() toasts a failed run and returns undefined; coverage refreshes either way
+    const total = await run(() =>
+      backfill((done, totalCount) => {
+        progress.value = { done, total: totalCount }
+      }),
+    )
+    if (total !== undefined) {
+      if (total === 0) toastSuccess(t('access.embeddingUpToDate'))
+      else toastSuccess(t('access.embeddingDone', { count: total }))
+    }
+  } finally {
+    progress.value = null
+    emit('changed') // refresh coverage even when the run failed mid-way
+  }
 }
 </script>
 
 <style scoped>
-.enable-row {
+.card-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+}
+.settings-hint {
+  margin-top: 4px;
+}
+
+.state-row {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
-  margin-bottom: 18px;
 }
-.enable-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
+.state-line {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--el-text-color-regular);
+  min-width: 0;
 }
-.enable-hint {
+.state-line.is-broken {
+  color: var(--el-color-danger);
+}
+.broken-err {
+  display: block;
   font-size: 12px;
+  word-break: break-all;
   color: var(--el-text-color-secondary);
 }
-.save-row {
-  margin-top: 12px;
+.state-actions {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.coverage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.coverage-text {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.coverage-bar {
+  flex: 1;
+  max-width: 260px;
+}
+
+.config-form {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.form-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+}
+.form-actions {
   display: flex;
   justify-content: flex-end;
-}
-.coverage-divider {
-  margin: 20px 0 16px;
-}
-.coverage-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.coverage-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-}
-.coverage-model {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 </style>

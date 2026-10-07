@@ -100,11 +100,12 @@ describe('AdminPanel', () => {
     expect(createBtn).toBeTruthy()
     expect(createBtn!.element.closest('.el-card__header')).toBeNull()
     expect(createBtn!.element.closest('.el-card__body')).toBeTruthy()
-    // Semantic search is a single card: config + vector coverage section share it; no second card with the same name
-    expect(html.match(/语义搜索（embedding）/g)).toHaveLength(1)
-    expect(html).toContain('向量覆盖率')
+    // Semantic search card: status-first (unconfigured with the config form auto-open),
+    // coverage line driven by the server's effective config in stats
+    expect(html).toContain('语义搜索')
+    expect(html).toContain('未配置')
+    expect(html).toContain('向量覆盖 3/4')
     expect(html).toContain('补跑向量化')
-    expect(html).toContain('1 条记忆缺最新向量')
     // Missing-key fallback no longer appears (vue-i18n echoes the key itself when missing)
     expect(html).not.toContain('access.embedding')
     expect(html).not.toContain('access.identityCard')
@@ -206,10 +207,9 @@ describe('AdminPanel', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('gates the embedding save on config changes', async () => {
+  it('embedding card: config form auto-opens unconfigured, saves fields only, settles parked', async () => {
     const settingsPuts: string[] = []
-    // The mock stores what a PUT saved and returns it on GET, like the real server: the reload
-    // after a save must reflect the new config for the button to settle back to disabled
+    // The mock stores what a PUT saved and returns it on GET, like the real server
     const stored: Record<string, unknown> = {}
     vi.stubGlobal(
       'fetch',
@@ -231,30 +231,34 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存并测试连接')!
-    expect(saveBtn).toBeTruthy()
-    // Unchanged config: a save-and-test would be a no-op, the button is disabled
-    expect(saveBtn.attributes('disabled')).toBeDefined()
-    // Filling a field enables it; the PUT carries every config key
+    // Nothing configured: the form is the primary flow, the switch is out of business
     const modelInput = wrapper
       .findAll('input')
       .find((i) => i.attributes('placeholder') === 'BAAI/bge-m3 / bge-m3 / nomic-embed-text')!
+    expect(modelInput).toBeTruthy()
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存并检测')!
+    expect(saveBtn.attributes('disabled')).toBeDefined()
+    // The server only counts base_url AND model together as configured: fill both
+    await wrapper
+      .findAll('input')
+      .find((i) => i.attributes('placeholder') === 'https://api.siliconflow.cn/v1 或 http://127.0.0.1:11434/v1')!
+      .setValue('http://svc:9/v1')
     await modelInput.setValue('bge-m3-x')
     expect(saveBtn.attributes('disabled')).toBeUndefined()
     await saveBtn.trigger('click')
     await flushPromises()
-    expect(settingsPuts).toEqual([
-      JSON.stringify({
-        embedding_enabled: false,
-        embedding_base_url: '',
-        embedding_model: 'bge-m3-x',
-        embedding_api_key: '',
-      }),
-    ])
-    // The parent reloads after the save: the draft re-syncs to the server state and the
-    // button settles back to disabled
     await flushPromises()
-    expect(saveBtn.attributes('disabled')).toBeDefined()
+    // The intent switch is not the form's business: the PUT carries the three fields only,
+    // and with the switch off no probe runs (the server rejects tests of non-effective config)
+    expect(settingsPuts).toEqual([
+      JSON.stringify({ embedding_base_url: 'http://svc:9/v1', embedding_model: 'bge-m3-x', embedding_api_key: '' }),
+    ])
+    expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/embeddings/test'))).toBe(
+      false,
+    )
+    // Configured but switch off: the parked state, form closed
+    expect(wrapper.text()).toContain('已停用')
+    expect(wrapper.find('.config-form').exists()).toBe(false)
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })

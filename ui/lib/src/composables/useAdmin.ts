@@ -62,21 +62,24 @@ export function useAdmin() {
   /**
    * Loop backfilling semantic search vectors until the queue drains (a small batch per request;
    * bounded server-side, serial on the frontend).
+   * `onProgress` reports cumulative done and the estimated total after each batch, so callers
+   * can show real progress instead of a bare spinner.
    * Returns the total number backfilled; unconfigured / server errors are thrown directly,
    * toasted at the panel layer.
    */
-  async function backfill(): Promise<number> {
+  async function backfill(onProgress?: (done: number, total: number) => void): Promise<number> {
     backfilling.value = true
     try {
-      let total = 0
+      let done = 0
       for (;;) {
         const out = await backfillEmbeddings(client)
         if (!out.configured) throw new Error(t('access.embeddingNotConfigured'))
         if (out.error) throw new Error(out.error)
-        total += out.processed ?? 0
+        done += out.processed ?? 0
+        onProgress?.(done, done + (out.remaining ?? 0))
         if ((out.processed ?? 0) === 0) break
       }
-      return total
+      return done
     } finally {
       backfilling.value = false
     }
