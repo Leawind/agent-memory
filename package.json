@@ -7,10 +7,11 @@
     "build": "cross-env GOMAXPROCS=4 pnpm --filter @agent-memory/ui run build && cross-env GOMAXPROCS=2 pnpm --filter @agent-memory/app run build",
     "test": "pnpm --filter @agent-memory/ui run test && pnpm --filter @agent-memory/app run test",
     "typecheck": "pnpm -r run typecheck",
-    "format": "pnpm --filter @agent-memory/ui run format && pnpm --filter @agent-memory/app run format",
-    "format:check": "pnpm --filter @agent-memory/ui run format:check && pnpm --filter @agent-memory/app run format:check"
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "cross-env": "^10.1.0"
+    "cross-env": "^10.1.0",
+    "prettier": "^3.9.9"
   }
 }

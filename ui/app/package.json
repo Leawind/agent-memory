@@ -9,9 +9,7 @@
     "dev:live": "vite --mode live",
     "build": "vite build",
     "test": "vitest run",
-    "typecheck": "vue-tsc --noEmit",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@agent-memory/ui": "workspace:^",
@@ -23,7 +21,6 @@
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^20.14.5",
-    "prettier": "^3.9.9",
     "typescript": "^5.8.3",
     "vite": "^6.0.0",
     "vitest": "^5.0.1",

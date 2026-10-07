@@ -42,7 +42,7 @@ import { MemoryWorkspace, provideMemoryUI } from '@agent-memory/ui'
 // 任意祖先组件注入一次即可；全部字段可省略（默认同源根路径部署）
 provideMemoryUI({
   baseUrl: 'http://127.0.0.1:8899', // API 前缀，默认 ''
-  fetch: myAuthedFetch,             // 可选：注入带鉴权头/拦截器的 fetch，默认 globalThis.fetch
+  fetch: myAuthedFetch, // 可选：注入带鉴权头/拦截器的 fetch，默认 globalThis.fetch
   defaultPageSize: 20,
 })
 </script>
@@ -66,7 +66,7 @@ provideMemoryUI({
 
 ## 常用命令
 
-根目录一次 `pnpm install`；以下经根脚本转发到两个 ui workspace：
+根目录一次 `pnpm install`；以下命令在仓库根目录执行（`format` 覆盖包括本文件在内的全部非 Rust 源）：
 
 ```bash
 pnpm build        # 先 lib 后 app（改完前端必须跑）

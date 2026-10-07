@@ -1,13 +1,13 @@
 {
-  "name": "agent-memory-protocol-compat", 
-  "private": true, 
+  "name": "agent-memory-protocol-compat",
+  "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit"
-  }, 
+  },
   "devDependencies": {
-    "@types/node": "^26.6.2", 
+    "@types/node": "^26.6.2",
     "typescript": "^5.8.3"
-  }, 
-  "type": "module", 
+  },
+  "type": "module",
   "description": "MCP 2026-07-28 modern protocol compatibility check (hand-written client; dev-only, not part of the build)"
 }
