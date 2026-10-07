@@ -21,6 +21,14 @@ export interface MemoryCreateResp {
   tags_autocreated?: string[]
   tags_missing_description?: string[]
   duplicate_of?: string[]
+  /** Semantic near-duplicates (advisory): cosine >= the server threshold, best first */
+  similar_to?: Array<{ id: string; similarity: number }>
+}
+
+export interface MemoryMergeResp {
+  /** Memories still mentioning the absorbed id (those references now dangle) */
+  referenced_by?: Array<{ id: string; summary: string }>
+  note?: string
 }
 
 export interface MemoryUpdateResp {
@@ -62,6 +70,8 @@ export interface SearchResult {
 
 export interface MemorySearchResp {
   total_matches: number
+  /** Hybrid only: how many matches are literal keyword hits (the rest entered via the semantic channel) */
+  keyword_matches?: number
   offset: number
   returned: number
   /** The search mode actually used: hybrid (keyword + semantic) or keyword */

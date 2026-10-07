@@ -263,10 +263,14 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
 
 /// Whether a tool's committed write changes memory content and thereby invalidates vectors: the
 /// single predicate both server faces (MCP / REST) use to decide whether a write triggers the
-/// backfill hook.
+/// backfill hook. Merge rewrites the target's content (its vector was invalidated in the store
+/// layer) and cascade-deletes the source's row, so it belongs here exactly like an update.
 pub fn needs_backfill(tool: &str) -> bool {
-    use crate::tools::{MEMORY_CREATE, MEMORY_EDIT, MEMORY_UPDATE};
-    matches!(tool, MEMORY_CREATE | MEMORY_EDIT | MEMORY_UPDATE)
+    use crate::tools::{MEMORY_CREATE, MEMORY_EDIT, MEMORY_MERGE, MEMORY_UPDATE};
+    matches!(
+        tool,
+        MEMORY_CREATE | MEMORY_EDIT | MEMORY_MERGE | MEMORY_UPDATE
+    )
 }
 
 /// Single-flight guard for the background backfill worker: at most one drain loop runs at a time,

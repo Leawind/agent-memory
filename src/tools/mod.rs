@@ -98,6 +98,22 @@ pub fn execute_with_db(
     // The notification diff needs the state before the write (outside any transaction).
     let pre = crate::notify::capture(db_path, name, args);
     let mut out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
+    after_commit(db_path, name, args, &mut out, pre);
+    Ok(out)
+}
+
+/// The post-commit hook sequence, shared by every server face (MCP `execute_with_db`, REST
+/// `tool_write`): semantic near-duplicate hints for creates → embedding backfill for
+/// memory-content writes → change notifications. The sequence deliberately lives in exactly
+/// one place — a face that re-implements it silently diverges (the REST face once skipped
+/// the dedup hint this way, so UI-created memories never got `similar_to`).
+pub fn after_commit(
+    db_path: &Path,
+    name: &str,
+    args: &Value,
+    out: &mut Value,
+    pre: crate::notify::PreState,
+) {
     // Embedding runs after the transaction commits (network calls never enter transactions): when the embedding
     // service is unavailable the tool degrades silently, results are unaffected, and vectors are left for backfill.
     // A successful create then gets a semantic near-duplicate scan attached to its result (advisory, fallback-safe).
@@ -106,12 +122,11 @@ pub fn execute_with_db(
         // embeds that one text synchronously (bounded by the query timeout); everything else
         // drains on a background thread and never delays the response.
         if name == defs::MEMORY_CREATE {
-            crate::embed::dedup_hint(db_path, &mut out);
+            crate::embed::dedup_hint(db_path, out);
         }
         crate::embed::after_write(db_path);
     }
-    crate::notify::after_write(db_path, name, args, &out, &pre);
-    Ok(out)
+    crate::notify::after_write(db_path, name, args, out, &pre);
 }
 
 pub fn execute(

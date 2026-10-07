@@ -131,4 +131,79 @@ describe('MemoryEditorDialog', () => {
     expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false])
     wrapper.unmount()
   })
+
+  /** Route fetch by URL substring + method for create/merge flows */
+  function routeFetch(routes: Array<{ match: string; method?: string; body: unknown }>) {
+    vi.mocked(globalThis.fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = String(init?.method ?? 'GET').toUpperCase()
+      for (const r of routes) {
+        if (url.includes(r.match) && (r.method === undefined || method === r.method)) {
+          return Promise.resolve(jsonResponse(r.body))
+        }
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('creating: a similar_to hint offers the merge; accepting absorbs the new memory', async () => {
+    routeFetch([
+      {
+        match: '/api/memories',
+        method: 'POST',
+        body: { id: 'm9', updated: 'x', similar_to: [{ id: 'm3', similarity: 0.92 }] },
+      },
+      { match: '/api/memories/merge', method: 'POST', body: {} },
+    ])
+    const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => Promise.resolve(true) as never)
+    const wrapper = await openDialog(null)
+    await new DOMWrapper(summaryInput()).setValue('新摘要')
+    await saveButton().click()
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+    expect(confirmSpy).toHaveBeenCalled()
+    const mergeCall = vi.mocked(globalThis.fetch).mock.calls.find((c) => String(c[0]).includes('/api/memories/merge'))
+    expect(mergeCall).toBeTruthy()
+    expect(JSON.parse(String(mergeCall![1]?.body))).toEqual({ target: 'm3', source: 'm9' })
+    // The list refresh carries the final state (the merged-away memory is gone)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false])
+    wrapper.unmount()
+  })
+
+  it('creating: declining the merge hint keeps both memories', async () => {
+    routeFetch([{ match: '/api/memories', method: 'POST', body: { id: 'm9', updated: 'x', duplicate_of: ['m3'] } }])
+    const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => Promise.reject('cancel') as never)
+    const wrapper = await openDialog(null)
+    await new DOMWrapper(summaryInput()).setValue('新摘要')
+    await saveButton().click()
+    await flushPromises()
+    await flushPromises()
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/memories/merge'))).toBe(false)
+    // Kept: the saved refresh still fires (the list must gain the new memory)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('the title-row merge button prompts for a source id and merges into the edited memory', async () => {
+    routeFetch([{ match: '/api/memories/merge', method: 'POST', body: {} }])
+    const promptSpy = vi
+      .spyOn(ElMessageBox, 'prompt')
+      .mockImplementation(() => Promise.resolve({ value: 'm12' }) as never)
+    const wrapper = await openDialog('m7')
+    const mergeButton = dialogEl().querySelector('.am-dialog-head .el-button[aria-label*="合并"]') as HTMLButtonElement
+    expect(mergeButton).toBeTruthy()
+    await mergeButton.click()
+    await flushPromises()
+    await flushPromises()
+    expect(promptSpy).toHaveBeenCalled()
+    const mergeCall = vi.mocked(globalThis.fetch).mock.calls.find((c) => String(c[0]).includes('/api/memories/merge'))
+    expect(mergeCall).toBeTruthy()
+    expect(JSON.parse(String(mergeCall![1]?.body))).toEqual({ target: 'm7', source: 'm12' })
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false])
+    wrapper.unmount()
+  })
 })

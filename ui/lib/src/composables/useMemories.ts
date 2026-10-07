@@ -52,6 +52,9 @@ export function useMemories() {
   /** Semantic fallback notice: non-empty when a hybrid request fell back to keyword search because the embedding service was unavailable (told explicitly, never silently) */
   const note = ref('')
   const total = ref(0)
+  /** Hybrid only: how many of the settled search's matches are literal keyword hits
+   * (undefined = not reported — keyword mode, or the response predates the field) */
+  const keywordMatches = ref<number | undefined>(undefined)
   const loading = ref(false)
   const tagOptions = ref<string[]>([])
   /** Tag name -> description, for hover tooltips on the memory cards' tag chips */
@@ -93,6 +96,7 @@ export function useMemories() {
         // Snippets are plain text from the server and are rendered via text interpolation — never v-html
         searchResults.value = data.results ?? []
         total.value = data.total_matches ?? 0
+        keywordMatches.value = data.keyword_matches
         // When a hybrid request fell back to keyword search because the embedding service was
         // unavailable, say so explicitly (never silently)
         note.value = data.semantic_fallback ? t('memories.semanticFallback') : ''
@@ -111,6 +115,7 @@ export function useMemories() {
         rows.value = data.memories ?? []
         total.value = data.total ?? 0
         note.value = ''
+        keywordMatches.value = undefined
         showSearchResults.value = false
       }
     } finally {
@@ -148,6 +153,7 @@ export function useMemories() {
     showSearchResults,
     note,
     total,
+    keywordMatches,
     loading,
     tagOptions,
     tagDescriptions,

@@ -31,6 +31,15 @@
               @click="askDelete"
             />
           </el-tooltip>
+          <el-tooltip v-if="memoryId" :content="t('editor.mergeAnotherTip')" placement="top" :enterable="false">
+            <el-button
+              circle
+              :icon="Connection"
+              :disabled="saving"
+              :aria-label="t('editor.mergeAnotherTip')"
+              @click="askMerge"
+            />
+          </el-tooltip>
           <el-button type="primary" :loading="saving" :disabled="!canSave" @click="save">
             {{ t('common.save') }}
           </el-button>
@@ -103,10 +112,11 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import type { InputInstance } from 'element-plus'
 import { ElMessageBox } from 'element-plus'
-import { Delete } from '@element-plus/icons-vue'
+import { Connection, Delete } from '@element-plus/icons-vue'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
-import { createMemory, deleteMemory, getMemory, updateMemory } from '../api/memories'
+import { createMemory, deleteMemory, getMemory, mergeMemory, updateMemory } from '../api/memories'
+import type { MemoryCreateResp } from '../types'
 import type { MemoryDraft } from '../composables/useMemories'
 import MarkdownView from './MarkdownView.vue'
 import MarkdownModeToggle from './MarkdownModeToggle.vue'
@@ -207,15 +217,92 @@ async function save() {
       })
       toastSuccess(t('editor.updated'))
     } else {
-      await createMemory(client, {
+      const resp = await createMemory(client, {
         summary: form.value.summary,
         content: form.value.content,
         tags: form.value.tags,
         create_missing_tags: true,
       })
       toastSuccess(t('editor.created'))
+      // The server's dedup hints (exact + semantic near-duplicates) are actionable here: offer
+      // the merge right where the duplicate was born. Closing the dialog first — the confirm
+      // box is append-to-body and outlives it. The saved refresh fires only after the merge
+      // decision, so the list reflects the final state (merged away or kept).
+      emit('update:visible', false)
+      await offerMerge(resp)
+      emit('saved')
+      return
     }
     emit('update:visible', false)
+    emit('saved')
+  } catch (e: unknown) {
+    toastError(e instanceof Error ? e.message : String(e))
+  } finally {
+    saving.value = false
+  }
+}
+
+/** Exact (duplicate_of) and semantic (similar_to) duplicates the create surfaced: offer a
+ * one-click merge into the best match — the just-created memory becomes the absorbed source,
+ * so the duplicate it was modelled on keeps its id and creation time. */
+async function offerMerge(resp: MemoryCreateResp): Promise<void> {
+  const dupes = resp.duplicate_of ?? []
+  const similar = resp.similar_to ?? []
+  if (dupes.length === 0 && similar.length === 0) return
+  const target = dupes[0] ?? similar[0].id
+  const list = [
+    ...dupes.map((id) => `${id} (${t('editor.mergeExact')})`),
+    ...similar.map((s) => `${s.id} (${t('editor.mergeSimilarFmt', { sim: s.similarity })})`),
+  ].join(', ')
+  try {
+    await ElMessageBox.confirm(t('editor.mergeConfirmFmt', { list }), t('editor.mergeConfirmTitle'), {
+      confirmButtonText: t('editor.mergeInto'),
+      cancelButtonText: t('editor.mergeKeepBoth'),
+      type: 'warning',
+    })
+  } catch {
+    return // keep both
+  }
+  try {
+    await mergeMemory(client, target, resp.id)
+    toastSuccess(t('editor.mergedToast', { source: resp.id, target }))
+  } catch (e: unknown) {
+    toastError(e instanceof Error ? e.message : String(e))
+  }
+}
+
+/** Manual merge entry (MCP memory_merge parity): absorb another memory into the one being
+ * edited. The source is picked by id — hint lists and the list panel are where ids come from. */
+async function askMerge() {
+  if (!props.memoryId || saving.value) return
+  let source: string
+  try {
+    const res = await ElMessageBox.prompt(
+      t('editor.mergePromptMessage', { id: props.memoryId }),
+      t('editor.mergePromptTitle'),
+      {
+        inputPattern: /^m\d+$/,
+        inputErrorMessage: t('editor.mergePromptError'),
+        inputPlaceholder: t('editor.mergePromptPlaceholder'),
+        confirmButtonText: t('editor.mergeInto'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      },
+    )
+    source = res.value.trim()
+  } catch {
+    return
+  }
+  if (source === props.memoryId) {
+    toastError(t('editor.mergeSelfError'))
+    return
+  }
+  saving.value = true
+  try {
+    await mergeMemory(client, props.memoryId, source)
+    toastSuccess(t('editor.mergedToast', { source, target: props.memoryId }))
+    emit('update:visible', false)
+    // The panel treats saved and deleted alike (reload + tags): the source vanished from it
     emit('saved')
   } catch (e: unknown) {
     toastError(e instanceof Error ? e.message : String(e))

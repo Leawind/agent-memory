@@ -95,6 +95,11 @@
         />
       </div>
       <div class="am-pager" v-else>
+        <!-- Hybrid searches report how many hits are literal keyword matches: the rest entered
+             via the semantic channel and are looser hits worth eyeing with suspicion -->
+        <span v-if="keywordMatches !== undefined" class="search-km">
+          {{ t('memories.keywordHitsFmt', { k: keywordMatches, n: total }) }}
+        </span>
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
@@ -161,6 +166,7 @@ const {
   showSearchResults,
   note,
   total,
+  keywordMatches,
   loading,
   tagOptions,
   tagDescriptions,
@@ -398,5 +404,16 @@ defineExpose({
 .card-id {
   font-family: var(--el-font-family-mono, ui-monospace, monospace);
   color: var(--el-text-color-placeholder);
+}
+.am-pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.search-km {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 </style>

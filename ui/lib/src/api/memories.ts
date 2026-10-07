@@ -1,6 +1,13 @@
 // Memory endpoints (paths map 1:1 to the server's /api/memories)
 import type { ApiClient } from './client'
-import type { MemoryCreateResp, MemoryFull, MemoryListResp, MemorySearchResp, MemoryUpdateResp } from '../types'
+import type {
+  MemoryCreateResp,
+  MemoryFull,
+  MemoryListResp,
+  MemoryMergeResp,
+  MemorySearchResp,
+  MemoryUpdateResp,
+} from '../types'
 
 /** Input for creating a memory (tags are the target set) */
 export interface MemoryCreateInput {
@@ -38,6 +45,12 @@ export function updateMemory(client: ApiClient, id: string, input: MemoryUpdateI
 
 export function deleteMemory(client: ApiClient, id: string): Promise<void> {
   return client.del(`/api/memories/${encodeURIComponent(id)}`)
+}
+
+/** Merge absorbs `source` into `target`: source is deleted, target keeps its id. Echo-free:
+ * a clean merge answers with an empty object (only reference reports carry facts). */
+export function mergeMemory(client: ApiClient, target: string, source: string): Promise<MemoryMergeResp> {
+  return client.post('/api/memories/merge', { target, source })
 }
 
 export function fetchMemoriesPage(client: ApiClient, queryString: string): Promise<MemoryListResp | MemorySearchResp> {

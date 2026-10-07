@@ -18,8 +18,8 @@ use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
-    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_SEARCH,
-    MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
+    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_MERGE,
+    MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -427,6 +427,13 @@ pub fn handle(
                 };
                 tool_write(db_path, ctx, MEMORY_CREATE, &Value::Object(args))
             }
+            ("POST", ["memories", "merge"]) => {
+                let args = match args_from_body() {
+                    Ok(m) => m,
+                    Err(e) => return Ok(bad_request(e)),
+                };
+                tool_write(db_path, ctx, MEMORY_MERGE, &Value::Object(args))
+            }
             ("GET", ["memories", mem_id]) => store::with_db_in(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] })).map(|v| {
                     let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
@@ -497,9 +504,8 @@ pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// One write-tool call on the REST face, carrying the same post-commit hook sequence as the MCP
-/// path (`execute_with_db`): capture the pre-write state → single transaction → embedding
-/// backfill for memory-content writes → change notifications. Routes only assemble the
-/// arguments and, where the REST surface demands it, adjust the returned status.
+/// path (`execute_with_db` — literally: the shared `tools::after_commit`). Routes only assemble
+/// the arguments and, where the REST surface demands it, adjust the returned status.
 fn tool_write(
     db_path: &Path,
     ctx: &IdentityCtx,
@@ -507,14 +513,11 @@ fn tool_write(
     args: &Value,
 ) -> Result<(u16, Value), ToolError> {
     let pre = crate::notify::capture(db_path, tool, args);
-    let out = store::with_db_in(db_path, TxMode::Write, |st| {
-        tools::execute(st, ctx, tool, args).map(|v| (200, v))
+    let mut out = store::with_db_in(db_path, TxMode::Write, |st| {
+        tools::execute(st, ctx, tool, args)
     })?;
-    if crate::embed::needs_backfill(tool) {
-        crate::embed::after_write(db_path);
-    }
-    crate::notify::after_write(db_path, tool, args, &out.1, &pre);
-    Ok(out)
+    tools::after_commit(db_path, tool, args, &mut out, pre);
+    Ok((200, out))
 }
 
 fn bad_request(e: ToolError) -> (u16, Value) {

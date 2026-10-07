@@ -501,3 +501,97 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
     drop(server);
     cleanup(&db);
 }
+
+/// The REST create face carries the same dedup hints as MCP (`similar_to` via the shared write
+/// hook): a second memory in the same mock bucket (cosine 1.0 >= threshold) is flagged, and the
+/// merge route goes through the same handler as the MCP tool.
+#[test]
+fn rest_create_reports_similar_to_and_merge_route_works() {
+    let db = temp_db("semantic-rest-dedup");
+    cleanup(&db);
+    let (mock_port, _seen) = spawn_mock_embedding();
+    let server = HttpProc::start(&db, "semantic-rest-dedup");
+    let port = server.port;
+    put_settings(
+        port,
+        json!({
+            "embedding_enabled": true,
+            "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+            "embedding_model": "mock-embed"
+        }),
+    );
+
+    let create = |summary: &str, content: &str| {
+        let (status, resp, _) = request(
+            port,
+            "POST",
+            "/api/memories",
+            Some(
+                &serde_json::to_string(&json!({ "summary": summary, "content": content })).unwrap(),
+            ),
+        );
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+        json_body(&resp)
+    };
+
+    // Two memories landing in the same mock bucket: cosine 1.0, over the dedup threshold.
+    // The bucket must be computed over the full embedded text (summary + body), not just the
+    // summary — that is what the service actually receives.
+    let target = mock_bucket(&mock_memory_text("dedup probe one", "original body"));
+    let twin_content = (0..10000)
+        .map(|i| format!("filler {i}"))
+        .find(|c| mock_bucket(&mock_memory_text("dedup probe two", c)) == target)
+        .expect("必须能找到同桶正文");
+    let first = create("dedup probe one", "original body");
+    assert!(first
+        .get("similar_to")
+        .is_none_or(|v| v.as_array().is_some_and(|a| a.is_empty())));
+    // The first memory's vector lands via the background worker; the dedup scan of the second
+    // create reads stored embeddings, so wait for the coverage to settle before creating it
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (_, body, _) = request(port, "GET", "/api/stats", None);
+        let emb = &json_body(&body)["embedding"];
+        if emb["embedded"].as_u64() == Some(1) && emb["pending"].as_u64() == Some(0) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "first memory was never embedded: {emb}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let second = create("dedup probe two", &twin_content);
+    let similar = second["similar_to"]
+        .as_array()
+        .expect("similar_to must be present");
+    assert_eq!(similar.len(), 1);
+    assert_eq!(similar[0]["id"], first["id"]);
+    assert!(
+        similar[0]["similarity"].as_f64().unwrap_or(0.0) >= 0.9,
+        "same-bucket mock vectors are cosine 1.0"
+    );
+
+    // The merge route shares the MCP handler: source absorbed, target keeps its id
+    let target_id = first["id"].as_str().unwrap();
+    let source_id = second["id"].as_str().unwrap();
+    let (status, resp, _) = request(
+        port,
+        "POST",
+        "/api/memories/merge",
+        Some(&serde_json::to_string(&json!({ "target": target_id, "source": source_id })).unwrap()),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+    let (status, _, _) = request(port, "GET", &format!("/api/memories/{source_id}"), None);
+    assert_eq!(status, 404, "the source must be gone");
+    let (status, body, _) = request(port, "GET", &format!("/api/memories/{target_id}"), None);
+    assert_eq!(status, 200);
+    let merged = json_body(&body);
+    assert!(
+        merged["content"].as_str().unwrap().contains(&twin_content),
+        "the target content must carry the absorbed body"
+    );
+
+    drop(server);
+    cleanup(&db);
+}
