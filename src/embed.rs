@@ -4,6 +4,13 @@
 //! "failure": the search path falls back to pure keywords on timeout/error; the write path just leaves vectors pending backfill,
 //! since the memory itself is already saved; with no configuration, every entry point is a zero-cost pass-through.
 //!
+//! Several embedding services can be configured at once (an ordered candidate list in settings, each
+//! independently enabled). At runtime the first candidate whose actual call succeeds wins; a failure
+//! moves the attempt to the next candidate, so a restarting or partially down local service degrades
+//! instead of breaking. Each candidate's vectors are keyed by its own identity (`vector_key`), so the
+//! caches of all configured models coexist in the embeddings table and per-model backfill/delete is a
+//! pure bookkeeping operation.
+//!
 //! Network calls always happen outside database transactions (guaranteed by callers): holding an IMMEDIATE lock across
 //! network I/O in a write transaction is a forbidden deadlock shape, and stretching a read-only snapshot serves no purpose either.
 
@@ -12,6 +19,7 @@ use crate::store::{Store, TxMode};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Embedding service configuration (an OpenAI-compatible `/embeddings` endpoint: cloud APIs and
@@ -57,6 +65,151 @@ impl EmbedConfig {
     }
 }
 
+/// One configured embedding candidate (an element of the ordered `embedding_models` settings
+/// list). Carries the raw settings fields so the admin UI can round-trip them verbatim; the
+/// operational view is `config` (usable only when enabled and fully specified).
+#[derive(Clone, Debug)]
+pub struct EmbedEntry {
+    pub enabled: bool,
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub query_prefix: Option<String>,
+    pub passage_prefix: Option<String>,
+    /// Per-candidate cosine floor: baselines are model-specific (bge-family ~0.4, OpenAI-3
+    /// ~0.2), so the floor travels with the model instead of being one global knob. None = the
+    /// built-in default (`DEFAULT_MIN_SIMILARITY`).
+    pub min_similarity: Option<f32>,
+}
+
+impl EmbedEntry {
+    /// Lenient parse of one settings-array element: wrong inner types normalize to their
+    /// defaults instead of failing (the REST layer validates on write; this only guards
+    /// hand-edited databases). Order in the array is the failover priority.
+    pub fn from_json(v: &Value) -> Option<EmbedEntry> {
+        let obj = v.as_object()?;
+        let string = |key: &str| {
+            obj.get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|s| !s.is_empty())
+        };
+        Some(EmbedEntry {
+            enabled: obj.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+            base_url: string("base_url").unwrap_or_default(),
+            model: string("model").unwrap_or_default(),
+            api_key: string("api_key"),
+            query_prefix: string("query_prefix"),
+            passage_prefix: string("passage_prefix"),
+            min_similarity: obj
+                .get("min_similarity")
+                .and_then(Value::as_f64)
+                .map(|f| f as f32)
+                .filter(|f| (0.0..=1.0).contains(f)),
+        })
+    }
+
+    /// Canonical JSON for the settings round-trip (GET → UI → PUT). The floor is rounded to
+    /// three decimals: f32 → f64 conversion noise (0.45 → 0.44999998...) is meaningless at
+    /// hint precision and would make every GET→PUT cycle churn the stored value.
+    pub fn to_json(&self) -> Value {
+        json!({
+            "enabled": self.enabled,
+            "base_url": self.base_url,
+            "model": self.model,
+            "api_key": self.api_key,
+            "query_prefix": self.query_prefix,
+            "passage_prefix": self.passage_prefix,
+            "min_similarity": self
+                .min_similarity
+                .map(|f| (f as f64 * 1000.0).round() / 1000.0),
+        })
+    }
+
+    /// The operational view: usable only when enabled and base_url / model are both non-empty.
+    pub fn usable(&self) -> Option<EmbedConfig> {
+        if !self.enabled || self.base_url.trim().is_empty() || self.model.trim().is_empty() {
+            return None;
+        }
+        Some(EmbedConfig {
+            base_url: self.base_url.trim().to_string(),
+            model: self.model.trim().to_string(),
+            api_key: self.api_key.clone(),
+            query_prefix: self.query_prefix.clone(),
+            passage_prefix: self.passage_prefix.clone(),
+            min_similarity: self.min_similarity.unwrap_or(DEFAULT_MIN_SIMILARITY),
+        })
+    }
+
+    /// This candidate's vector identity (its slice of the embeddings cache), enabled or not —
+    /// a disabled model's cache still exists and is still manageable. The model name is trimmed
+    /// exactly like in `usable`, so both views produce the same identity.
+    pub fn vector_key(&self) -> String {
+        EmbedConfig {
+            base_url: String::new(),
+            model: self.model.trim().to_string(),
+            api_key: None,
+            query_prefix: self.query_prefix.clone(),
+            passage_prefix: self.passage_prefix.clone(),
+            min_similarity: 0.0,
+        }
+        .vector_key()
+    }
+}
+
+/// Runtime selection among the configured candidates: try them in priority order (starting from
+/// the last candidate that actually answered — a dead first choice must not tax every later call
+/// with its connect timeout), and hand the first one whose real call succeeds to the caller. The
+/// probe IS the caller's operation: no extra health-check traffic, and "available" means "the
+/// actual embedding just worked", not merely "the port is open".
+pub struct Failover {
+    preferred: AtomicUsize,
+}
+
+impl Failover {
+    pub const fn new() -> Self {
+        Failover {
+            preferred: AtomicUsize::new(0),
+        }
+    }
+
+    /// Run `op` against the first candidate that succeeds. Every failed attempt is logged (with
+    /// its position) and the next candidate takes over; only when all fail does the last error
+    /// surface. The sticky preferred index is a hint: a list edit merely makes it fall back to
+    /// priority order (it is clamped, and a stale success index costs one failed attempt at most).
+    pub fn first_available<'a, C, T>(
+        &self,
+        configs: &'a [C],
+        mut op: impl FnMut(&C) -> Result<T, String>,
+    ) -> Result<(usize, &'a C, T), String> {
+        if configs.is_empty() {
+            return Err("no candidate service is configured".to_string());
+        }
+        let start = self
+            .preferred
+            .load(Ordering::Relaxed)
+            .min(configs.len() - 1);
+        let mut last_err = String::new();
+        for offset in 0..configs.len() {
+            let idx = (start + offset) % configs.len();
+            match op(&configs[idx]) {
+                Ok(value) => {
+                    self.preferred.store(idx, Ordering::Relaxed);
+                    return Ok((idx, &configs[idx], value));
+                }
+                Err(e) => {
+                    eprintln!("embedding candidate #{idx} failed, trying the next: {e}");
+                    last_err = e;
+                }
+            }
+        }
+        Err(last_err)
+    }
+}
+
+/// Selection state for the embedding candidate list (shared by search / write hook / backfill).
+pub static EMBED_FAILOVER: Failover = Failover::new();
+
 /// Timeout for query embedding (the search path): give up when it expires and fall back to keyword search.
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 /// Timeout for batch embedding (the write hook / backfill).
@@ -72,8 +225,8 @@ const RRF_K: f64 = 60.0;
 
 /// Default floor for the semantic recall channel: vector candidates below this cosine never
 /// enter the fusion. Deliberately conservative — baselines are model-specific (bge-family
-/// unrelated pairs score ~0.4, OpenAI text-embedding-3 ~0.2) — and configurable via the
-/// `embedding_min_similarity` setting; 0 disables the floor entirely.
+/// unrelated pairs score ~0.4, OpenAI text-embedding-3 ~0.2) — and configurable per model via
+/// the entry's `min_similarity` field; 0 disables the floor entirely.
 pub const DEFAULT_MIN_SIMILARITY: f32 = 0.30;
 
 /// The memory text sent to the embedding service: title + blank line + content (truncated).
@@ -221,52 +374,63 @@ impl EmbedOutcome {
     }
 }
 
-/// Backfill one batch for memories missing vectors (or whose vector model is stale): read config and the pending list (read-only transaction)
-/// → call the embedding service (outside transactions) → write vectors and count what is left (one write transaction —
-/// the same connection serves both, so a full pass opens two databases, not three).
-pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
+/// Backfill one batch for the given candidate's identity: read the pending list (read-only transaction)
+/// → call the embedding service (outside transactions) → write vectors and count what is left (one write
+/// transaction — the same connection serves both, so a full pass opens two databases, not three).
+/// `Err` means "this candidate could not do the work" (service or storage failure) — the failover
+/// wrapper treats it as a reason to try the next candidate.
+pub fn process_pending_for(
+    db_path: &Path,
+    batch: usize,
+    cfg: &EmbedConfig,
+) -> Result<EmbedOutcome, String> {
     let batch = batch.clamp(1, MAX_BATCH);
-    let (cfg, pending) = match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        let Some(cfg) = st.embedding_config()? else {
-            return Ok(None);
-        };
-        let pending = st.embedding_pending_batch(&cfg.vector_key(), batch)?;
-        Ok::<_, String>(Some((cfg, pending)))
-    }) {
-        Ok(Some(pair)) => pair,
-        Ok(None) => return EmbedOutcome::NotConfigured,
-        Err(e) => return EmbedOutcome::Failed(format!("cannot read database: {e}")),
-    };
+    let pending = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+        st.embedding_pending_batch(&cfg.vector_key(), batch)
+    })?;
     if pending.is_empty() {
-        return EmbedOutcome::Processed {
+        return Ok(EmbedOutcome::Processed {
             processed: 0,
             remaining: 0,
-        };
+        });
     }
 
     let texts: Vec<String> = pending
         .iter()
-        .map(|(_, summary, content)| embed_passage_text(&cfg, summary, content))
+        .map(|(_, summary, content)| embed_passage_text(cfg, summary, content))
         .collect();
-    let vectors = match embed_texts(&cfg, &texts, BATCH_TIMEOUT) {
-        Ok(v) => v,
-        Err(e) => return EmbedOutcome::Failed(e),
-    };
+    let vectors = embed_texts(cfg, &texts, BATCH_TIMEOUT)?;
 
     // Storing and counting share one write transaction: the count sees this batch's puts, so the
     // reported remaining is identical to a post-commit recount
-    match crate::store::with_db_in(db_path, TxMode::Write, |st| {
+    let remaining = crate::store::with_db_in(db_path, TxMode::Write, |st| {
         for ((id, _, _), vec) in pending.iter().zip(&vectors) {
             st.embedding_put(*id, &cfg.vector_key(), vec)?;
         }
-        let remaining = st.embedding_pending_count(&cfg.vector_key())?;
-        Ok::<_, String>(remaining)
-    }) {
-        Ok(remaining) => EmbedOutcome::Processed {
-            processed: pending.len(),
-            remaining,
-        },
-        Err(e) => EmbedOutcome::Failed(format!("cannot store embeddings: {e}")),
+        st.embedding_pending_count(&cfg.vector_key())
+    })?;
+    Ok(EmbedOutcome::Processed {
+        processed: pending.len(),
+        remaining,
+    })
+}
+
+/// Backfill one batch for the highest-priority candidate that can do the work (the write hook and
+/// the default admin/CLI backfill run through here). The explicit per-model variant
+/// (`process_pending_for` + a resolved candidate) serves the cache-management surface.
+pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
+    let batch = batch.clamp(1, MAX_BATCH);
+    let configs =
+        match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| st.embedding_configs()) {
+            Ok(configs) => configs,
+            Err(e) => return EmbedOutcome::Failed(format!("cannot read database: {e}")),
+        };
+    if configs.is_empty() {
+        return EmbedOutcome::NotConfigured;
+    }
+    match EMBED_FAILOVER.first_available(&configs, |cfg| process_pending_for(db_path, batch, cfg)) {
+        Ok((_, _, outcome)) => outcome,
+        Err(e) => EmbedOutcome::Failed(e),
     }
 }
 
@@ -284,7 +448,7 @@ pub fn needs_backfill(tool: &str) -> bool {
 
 /// Single-flight guard for the background backfill worker: at most one drain loop runs at a time,
 /// so a burst of writes cannot pile up threads.
-static BACKFILL_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BACKFILL_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// The write path's hook point (called after a memory-write transaction commits, on both server
 /// faces). The backfill runs on a background thread: the memory is already saved, so a slow or
@@ -316,71 +480,45 @@ pub fn after_write(db_path: &Path) {
     });
 }
 
+// `use std::sync::atomic::AtomicBool` is spelled out at the top; the static above needs the type only.
+
 /// Cosine similarity at which a stored memory counts as a near-duplicate of a freshly created one.
 /// Advisory threshold: false positives cost a harmless hint, misses cost nothing (the exact-summary
 /// duplicate_of check runs regardless).
 pub const DEDUP_SIMILARITY: f32 = 0.90;
 
-/// The create-time dedup hint needs the new memory's vector to be deterministic, but the queue now
-/// drains on a background thread — so the hint embeds its own text while the vector is still
-/// pending. Every failure degrades silently: the hint is advisory, and the vector stays queued for
-/// the backfill.
-fn ensure_vector(db_path: &Path, id: i64) {
+/// Make sure the memory has a vector under the given candidate's identity, embedding it
+/// synchronously if pending. Every failure is an Err for the failover wrapper (the hint is
+/// advisory and degrades silently upstream; the vector stays queued for the backfill).
+fn ensure_vector_for(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<(), String> {
     let loaded = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        let Some(cfg) = st.embedding_config()? else {
-            return Ok(None);
-        };
         let Some(row) = st.embedding_pending_for(&cfg.vector_key(), id)? else {
-            return Ok(None); // vector already stored (or the memory is gone)
+            return Ok(None); // vector already stored under this identity (or the memory is gone)
         };
-        Ok::<_, String>(Some((cfg, row)))
-    });
-    let (cfg, (_, summary, content)) = match loaded {
-        Ok(Some(pair)) => pair,
-        Ok(None) => return,
-        Err(e) => {
-            eprintln!("semantic duplicate hint skipped: {e}");
-            return;
-        }
+        Ok::<_, String>(Some(row))
+    })?;
+    let Some((_, summary, content)) = loaded else {
+        return Ok(());
     };
     let vectors = embed_texts(
-        &cfg,
-        &[embed_passage_text(&cfg, &summary, &content)],
+        cfg,
+        &[embed_passage_text(cfg, &summary, &content)],
         QUERY_TIMEOUT,
-    );
-    match vectors {
-        Ok(v) if !v.is_empty() => {
-            let stored = crate::store::with_db_in(db_path, TxMode::Write, |st| {
-                st.embedding_put(id, &cfg.vector_key(), &v[0])
-            });
-            if let Err(e) = stored {
-                eprintln!("semantic duplicate hint skipped: cannot store vector: {e}");
-            }
-        }
-        Ok(_) => {}
-        Err(e) => eprintln!(
-            "embedding the created memory for the dedup hint failed (the memory itself is saved; the vector stays queued for backfill): {e}"
-        ),
-    }
+    )?;
+    let Some(vec) = vectors.into_iter().next() else {
+        return Ok(());
+    };
+    crate::store::with_db_in(db_path, TxMode::Write, |st| {
+        st.embedding_put(id, &cfg.vector_key(), &vec)
+    })
 }
 
-/// After a memory_create commits and its vector was backfilled, scan stored embeddings for
-/// near-duplicates of the new memory and attach them as `similar_to` hints on the tool result —
-/// closing the loop the way `duplicate_of` does for exact summaries, but for paraphrases. Pure
-/// fallback semantics: no configuration, no vector yet (service down), or any read failure leaves
-/// the result untouched, because the hint is a companion to the write, never a gate on it.
-pub fn dedup_hint(db_path: &Path, result: &mut Value) {
-    let Some(id_str) = result["id"].as_str() else {
-        return;
-    };
-    let Some(id) = Store::parse_id(id_str) else {
-        return;
-    };
-    ensure_vector(db_path, id);
-    let run = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        let Some(cfg) = st.embedding_config()? else {
-            return Ok(Vec::new());
-        };
+/// The near-duplicate scan for one candidate: make sure the new memory has a vector under this
+/// candidate's identity, then scan the identity's stored vectors. The whole scan is the failover
+/// unit — a candidate that cannot embed falls through to the next one wholesale.
+fn dedup_scan(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<Vec<Value>, String> {
+    ensure_vector_for(db_path, id, cfg)?;
+    crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
         let table = st.embeddings_active(&cfg.vector_key())?;
         let Some(mine) = table.get(&id) else {
             return Ok(Vec::new());
@@ -404,9 +542,32 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
             })
             .collect();
         Ok::<_, String>(hits)
-    });
-    match run {
-        Ok(hits) if !hits.is_empty() => {
+    })
+}
+
+/// After a memory_create commits and its vector was backfilled, scan stored embeddings for
+/// near-duplicates of the new memory and attach them as `similar_to` hints on the tool result —
+/// closing the loop the way `duplicate_of` does for exact summaries, but for paraphrases. Pure
+/// fallback semantics: no configuration, no vector yet (service down), or any read failure leaves
+/// the result untouched, because the hint is a companion to the write, never a gate on it.
+pub fn dedup_hint(db_path: &Path, result: &mut Value) {
+    let Some(id_str) = result["id"].as_str() else {
+        return;
+    };
+    let Some(id) = Store::parse_id(id_str) else {
+        return;
+    };
+    let configs =
+        match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| st.embedding_configs()) {
+            Ok(configs) if !configs.is_empty() => configs,
+            Ok(_) => return,
+            Err(e) => {
+                eprintln!("semantic duplicate hint skipped: {e}");
+                return;
+            }
+        };
+    match EMBED_FAILOVER.first_available(&configs, |cfg| dedup_scan(db_path, id, cfg)) {
+        Ok((_, _, hits)) if !hits.is_empty() => {
             result["similar_to"] = Value::Array(hits);
         }
         Ok(_) => {}
@@ -616,6 +777,109 @@ mod tests {
         );
     }
 
+    /// Entry parsing (settings array elements): defaults applied leniently, disabled or
+    /// incomplete entries excluded from the operational pool but preserved for the round-trip,
+    /// and the vector identity follows model + prefixes exactly like a raw config.
+    #[test]
+    fn entry_parsing_lenient_defaults_and_usable_view() {
+        let full = EmbedEntry::from_json(&json!({
+            "enabled": false,
+            "base_url": " http://x/v1 ",
+            "model": " e5 ",
+            "api_key": "sk",
+            "query_prefix": "query: ",
+            "passage_prefix": "passage: ",
+            "min_similarity": 0.45,
+        }))
+        .expect("full entry parses");
+        assert!(!full.enabled);
+        assert_eq!(full.vector_key(), "e5|q=query: |p=passage: ");
+        assert!(full.usable().is_none(), "disabled = not operational");
+        // The usable view is the operational config (trimmed), enabled via the entry
+        let enabled = EmbedEntry {
+            enabled: true,
+            ..full
+        };
+        let cfg = enabled.usable().expect("enabled + complete = usable");
+        assert_eq!(cfg.base_url, "http://x/v1", "trimmed");
+        assert_eq!(cfg.min_similarity, 0.45);
+
+        // Minimal entry: enabled by default, floor defaults, unusable while fields are blank
+        let bare = EmbedEntry::from_json(&json!({})).expect("empty object still parses");
+        assert!(bare.enabled);
+        assert_eq!(bare.base_url, "");
+        assert_eq!(bare.min_similarity, None);
+        assert!(bare.usable().is_none(), "blank base_url/model = not usable");
+
+        // Wrong inner types normalize instead of failing; out-of-range floors fall back to default
+        let odd = EmbedEntry::from_json(&json!({
+            "base_url": "http://x", "model": "m", "enabled": "yes", "min_similarity": 7.0,
+        }))
+        .expect("lenient parse");
+        let usable = odd.usable().expect("model+url present = usable");
+        assert!((usable.min_similarity - DEFAULT_MIN_SIMILARITY).abs() < 1e-6);
+
+        // Round-trip: to_json carries every raw field back (min_similarity None stays null)
+        let round = EmbedEntry::from_json(&odd.to_json()).expect("round-trip parses");
+        assert_eq!(round.model, "m");
+        assert_eq!(round.min_similarity, None);
+    }
+
+    /// The candidate failover: priority order wins when everything works, the first healthy
+    /// candidate takes over when an earlier one fails, and the sticky hint survives across calls
+    /// (while tolerating list edits by clamping).
+    #[test]
+    fn failover_tries_candidates_in_priority_order() {
+        let failover = Failover::new();
+        let configs = [
+            cfg("a", None, None),
+            cfg("b", None, None),
+            cfg("c", None, None),
+        ];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let a_down = std::cell::Cell::new(false);
+        let probe = |c: &EmbedConfig| {
+            calls.borrow_mut().push(c.model.clone());
+            if c.model == "a" && a_down.get() {
+                Err("a is down".to_string())
+            } else {
+                Ok(c.model.clone())
+            }
+        };
+
+        // First call: a (priority head) answers
+        let (idx, _, value) = failover.first_available(&configs, probe).unwrap();
+        assert_eq!((idx, value.as_str()), (0, "a"));
+
+        // Head goes down: b takes over, and becomes the sticky choice
+        a_down.set(true);
+        let (idx, _, _) = failover.first_available(&configs, probe).unwrap();
+        assert_eq!(idx, 1);
+
+        // Next call starts at the sticky b (the still-dead a is never probed again)
+        calls.borrow_mut().clear();
+        let (idx, _, _) = failover.first_available(&configs, probe).unwrap();
+        assert_eq!(idx, 1);
+        assert!(
+            !calls.borrow().iter().any(|m| m == "a"),
+            "sticky skips the dead head: {:?}",
+            calls.borrow()
+        );
+
+        // All candidates failing surfaces the last error
+        let err = failover
+            .first_available(&configs, |_| Err::<String, _>("down".into()))
+            .unwrap_err();
+        assert_eq!(err, "down");
+
+        // An edited (shrunken) list: the stale sticky index is clamped, no panic
+        let small = [cfg("x", None, None)];
+        let (idx, _, _) = failover
+            .first_available(&small, |c| Ok(c.model.clone()))
+            .unwrap();
+        assert_eq!(idx, 0);
+    }
+
     /// Paraphrased recall: the keyword pass only hits m1, while the vector pass also brings in the semantically close m2,
     /// and m1 (hit by both channels) ranks ahead of m2 (vector only).
     #[test]
@@ -772,12 +1036,11 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         // Configure semantic search (the hint reads the same settings the search path does)
-        st.settings_put(Store::SETTING_EMBEDDING_ENABLED, "true")
-            .unwrap();
-        st.settings_put(Store::SETTING_EMBEDDING_BASE_URL, "http://127.0.0.1:9")
-            .unwrap();
-        st.settings_put(Store::SETTING_EMBEDDING_MODEL, "test-model")
-            .unwrap();
+        st.settings_put(
+            crate::store::Store::SETTING_EMBEDDING_MODELS,
+            r#"[{"base_url": "http://127.0.0.1:9", "model": "test-model"}]"#,
+        )
+        .unwrap();
 
         // m2 is a near-duplicate of m1 (similarity 1), m3 is unrelated
         st.insert_memory("a", "body a", &[], 1, 1).unwrap();

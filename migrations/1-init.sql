@@ -53,16 +53,19 @@ CREATE TABLE IF NOT EXISTS identities (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_token_hash ON identities(token_hash);
 
 -- memory_embeddings：语义搜索的向量缓存（派生数据，可随时用补跑重建）。
--- 一条记忆一行；model 指纹标记向量来源模型——与 settings 里的活跃模型
--- 不一致的行视为缺失（换模型 = 全量待补跑）。vec 为 f32 小端字节序列。
--- 外键级联：删除记忆时向量随之消失。
+-- 每条记忆 × 每个向量身份一行：model 列存向量身份指纹（模型名 + 指令前缀，
+-- 见 embed::vector_key），不同模型/前缀的缓存互不覆盖、可共存，由运行时
+-- 选中的身份决定使用哪一份。正文变更时按 memory_id 整体失效（所有身份的
+-- 缓存同时作废，各自补跑）。vec 为 f32 小端字节序列。
+-- 外键级联：删除记忆时该记忆的全部向量随之消失。
 
 CREATE TABLE IF NOT EXISTS memory_embeddings (
-    memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     model TEXT NOT NULL,
     dim INTEGER NOT NULL,
     vec BLOB NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (memory_id, model)
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model ON memory_embeddings(model);
@@ -70,8 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model ON memory_embeddings(mode
 -- settings：键值设置表。key = 'instructions' 存自定义 initialize 提示词；
 -- key = 'auth_required' 存 token 鉴权开关（"true"/"false"，缺省关闭——
 -- 鉴权边界由显式开关决定，与是否已创建身份无关）。
--- key = 'embedding_*' 存语义搜索配置（enabled 开关、OpenAI 兼容端点的
--- base_url / model / api_key；api_key 为服务端秘密，明文存放于本表）。
+-- key = 'embedding_models' / 'rerank_models' 存语义搜索与重排的模型配置
+-- （有序 JSON 数组，每项含 enabled 开关与 OpenAI 兼容端点的 base_url / model /
+-- api_key；api_key 为服务端秘密，明文存放于本表）。
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

@@ -73,11 +73,16 @@ enum Command {
         path: PathBuf,
     },
     /// Batch backfill embeddings for memories missing vectors (rebuilds the derived data
-    /// behind semantic search; export/import does not carry vectors, so run this once after restoring a database)
+    /// behind semantic search; export/import does not carry vectors, so run this once after restoring a database).
+    /// --model targets one cache identity (see `agent-memory stats` or the admin UI); without it
+    /// the highest-priority available candidate's cache is drained.
     EmbedBackfill {
         /// Number of items per batch
         #[arg(long, default_value_t = embed::MAX_BATCH)]
         batch: usize,
+        /// Cache identity key to backfill (defaults to the active candidate's)
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Manage tokens (no account system: the token is the identity; day-to-day management happens in the Web UI)
     Token {
@@ -120,7 +125,9 @@ fn run(cli: Cli) -> i32 {
         Command::Doctor => cmd_doctor(&db_path),
         Command::Export { path } => cmd_export(&db_path, &path),
         Command::Import { path } => cmd_import(&db_path, &path),
-        Command::EmbedBackfill { batch } => cmd_embed_backfill(&db_path, batch),
+        Command::EmbedBackfill { batch, model } => {
+            cmd_embed_backfill(&db_path, batch, model.as_deref())
+        }
         Command::Token { command } => match command {
             TokenCommand::Reset { name } => cmd_token_reset(&db_path, name.as_deref()),
         },
@@ -193,10 +200,35 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
 }
 
 /// `embed-backfill`: loop until the pending queue drains or a failure occurs. Results go to stdout, progress/diagnostics to stderr.
-fn cmd_embed_backfill(db_path: &std::path::Path, batch: usize) -> i32 {
+/// `model` selects a specific cache identity; without it the active candidate's cache is drained.
+fn cmd_embed_backfill(db_path: &std::path::Path, batch: usize, model: Option<&str>) -> i32 {
+    // Explicit identity: resolve it to a configured candidate first (a cache that matches no
+    // enabled entry can only be deleted, not backfilled)
+    let explicit = match model {
+        Some(key) => match read_db(db_path, |st| {
+            Ok(st
+                .embedding_entries()?
+                .into_iter()
+                .find(|e| e.vector_key() == key)
+                .and_then(|e| e.usable()))
+        }) {
+            Ok(Some(cfg)) => Some(cfg),
+            Ok(None) => {
+                eprintln!("no enabled embedding entry matches cache key '{key}'");
+                return 1;
+            }
+            Err(code) => return code,
+        },
+        None => None,
+    };
     let mut total = 0usize;
     loop {
-        match embed::process_pending(db_path, batch) {
+        let outcome = match &explicit {
+            Some(cfg) => embed::process_pending_for(db_path, batch, cfg)
+                .unwrap_or_else(embed::EmbedOutcome::Failed),
+            None => embed::process_pending(db_path, batch),
+        };
+        match outcome {
             embed::EmbedOutcome::NotConfigured => {
                 eprintln!("semantic search is not enabled/configured (embedding settings)");
                 return 1;
@@ -256,6 +288,20 @@ fn cmd_stats(db_path: &std::path::Path) -> i32 {
                 "embeddings: {} embedded, {} pending (model {})",
                 emb["embedded"], emb["pending"], emb["model"]
             );
+            for m in emb["models"].as_array().unwrap_or(&Vec::new()) {
+                println!(
+                    "  - {} [key {}]: {} embedded, {} pending{}",
+                    m["model"].as_str().unwrap_or("?"),
+                    m["key"].as_str().unwrap_or("?"),
+                    m["embedded"].as_u64().unwrap_or(0),
+                    m["pending"].as_u64().unwrap_or(0),
+                    if m["enabled"].as_bool().unwrap_or(false) {
+                        ""
+                    } else {
+                        ", disabled"
+                    }
+                );
+            }
         } else {
             println!("embeddings: disabled");
         }

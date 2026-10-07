@@ -76,67 +76,37 @@ impl Store {
         }
     }
 
-    pub const SETTING_EMBEDDING_ENABLED: &'static str = "embedding_enabled";
-    pub const SETTING_EMBEDDING_BASE_URL: &'static str = "embedding_base_url";
-    pub const SETTING_EMBEDDING_MODEL: &'static str = "embedding_model";
-    pub const SETTING_EMBEDDING_API_KEY: &'static str = "embedding_api_key";
-    pub const SETTING_EMBEDDING_QUERY_PREFIX: &'static str = "embedding_query_prefix";
-    pub const SETTING_EMBEDDING_PASSAGE_PREFIX: &'static str = "embedding_passage_prefix";
-    pub const SETTING_EMBEDDING_MIN_SIMILARITY: &'static str = "embedding_min_similarity";
+    /// The ordered embedding candidate list (one JSON array, canonical form written by the REST
+    /// layer via `EmbedEntry::to_json`). Array order is the failover priority; each entry carries
+    /// its own enabled switch, endpoint credentials, instruction prefixes and cosine floor.
+    pub const SETTING_EMBEDDING_MODELS: &'static str = "embedding_models";
 
-    /// Semantic search switch (an explicit boolean key of the same kind as auth_required).
-    pub fn embedding_enabled(&self) -> Result<bool, String> {
-        Ok(self
-            .settings_get(Self::SETTING_EMBEDDING_ENABLED)?
-            .as_deref()
-            == Some("true"))
+    /// All configured embedding candidates, in priority order (disabled ones included — they are
+    /// listed and manageable in the admin UI, just never selected at runtime).
+    pub fn embedding_entries(&self) -> Result<Vec<crate::embed::EmbedEntry>, String> {
+        let Some(raw) = self.settings_get(Self::SETTING_EMBEDDING_MODELS)? else {
+            return Ok(Vec::new());
+        };
+        let value: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("corrupt embedding_models JSON: {e}"))?;
+        let arr = value
+            .as_array()
+            .ok_or("corrupt embedding_models: not a JSON array")?;
+        Ok(arr
+            .iter()
+            .filter_map(crate::embed::EmbedEntry::from_json)
+            .collect())
     }
 
-    /// The effective embedding configuration: usable only when the switch is on and base_url / model are both non-empty —
-    /// an incomplete configuration counts as "not configured", and every caller degrades as unavailable instead of erroring.
-    pub fn embedding_config(&self) -> Result<Option<crate::embed::EmbedConfig>, String> {
-        if !self.embedding_enabled()? {
-            return Ok(None);
-        }
-        let base_url = self
-            .settings_get(Self::SETTING_EMBEDDING_BASE_URL)?
-            .unwrap_or_default();
-        let model = self
-            .settings_get(Self::SETTING_EMBEDDING_MODEL)?
-            .unwrap_or_default();
-        if base_url.trim().is_empty() || model.trim().is_empty() {
-            return Ok(None);
-        }
-        let api_key = self
-            .settings_get(Self::SETTING_EMBEDDING_API_KEY)?
-            .filter(|s| !s.is_empty());
-        // Prefixes are applied verbatim: a trailing space is part of an E5 instruction
-        // ("query: "), so unlike base_url / model they are never trimmed — only emptied to None.
-        let query_prefix = self
-            .settings_get(Self::SETTING_EMBEDDING_QUERY_PREFIX)?
-            .filter(|s| !s.is_empty());
-        let passage_prefix = self
-            .settings_get(Self::SETTING_EMBEDDING_PASSAGE_PREFIX)?
-            .filter(|s| !s.is_empty());
-        // Cosine floor for the semantic channel. Unset/empty = the built-in default; "0" = off;
-        // unparseable values fall back to the default (the REST layer rejects them on write, so
-        // this only guards hand-edited databases). Query-time only: never part of the vector
-        // identity, changing it does not orphan stored vectors.
-        let min_similarity = self
-            .settings_get(Self::SETTING_EMBEDDING_MIN_SIMILARITY)?
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .and_then(|s| s.parse::<f32>().ok())
-            .filter(|v| *v >= 0.0 && *v <= 1.0)
-            .unwrap_or(crate::embed::DEFAULT_MIN_SIMILARITY);
-        Ok(Some(crate::embed::EmbedConfig {
-            base_url: base_url.trim().to_string(),
-            model: model.trim().to_string(),
-            api_key,
-            query_prefix,
-            passage_prefix,
-            min_similarity,
-        }))
+    /// The runtime selection pool: enabled, fully specified candidates in priority order. An
+    /// empty list means semantic search is unconfigured — every caller degrades as unavailable
+    /// instead of erroring.
+    pub fn embedding_configs(&self) -> Result<Vec<crate::embed::EmbedConfig>, String> {
+        Ok(self
+            .embedding_entries()?
+            .iter()
+            .filter_map(|e| e.usable())
+            .collect())
     }
 }
 
@@ -166,50 +136,59 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Prefix settings read back verbatim (a trailing space is part of an E5 instruction) and
-    /// empty/absent normalize to None.
+    /// The candidate list read: prefixes read back verbatim (a trailing space is part of an E5
+    /// instruction), per-entry floors apply with the built-in default, and only enabled +
+    /// complete entries enter the runtime pool while all entries stay listed.
     #[test]
-    fn embedding_prefixes_verbatim_and_empty_is_none() {
-        let path = temp_db("embedding-prefix");
+    fn embedding_entries_parse_and_filter() {
+        let path = temp_db("embedding-entries");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        for (key, value) in [
-            (Store::SETTING_EMBEDDING_ENABLED, "true"),
-            (Store::SETTING_EMBEDDING_BASE_URL, "http://x/v1"),
-            (Store::SETTING_EMBEDDING_MODEL, "e5"),
-        ] {
-            st.settings_put(key, value).unwrap();
-        }
-        let none = st.embedding_config().unwrap().unwrap();
-        assert_eq!(none.query_prefix, None);
-        assert_eq!(none.passage_prefix, None);
+        // Unset key = unconfigured
+        assert!(st.embedding_entries().unwrap().is_empty());
+        assert!(st.embedding_configs().unwrap().is_empty());
 
-        st.settings_put(Store::SETTING_EMBEDDING_QUERY_PREFIX, "query: ")
-            .unwrap();
-        st.settings_put(Store::SETTING_EMBEDDING_PASSAGE_PREFIX, "")
-            .unwrap();
-        let cfg = st.embedding_config().unwrap().unwrap();
-        // Trailing space preserved; empty string = unset
-        assert_eq!(cfg.query_prefix.as_deref(), Some("query: "));
-        assert_eq!(cfg.passage_prefix, None);
-        // Unset floor = built-in default
-        assert!((cfg.min_similarity - crate::embed::DEFAULT_MIN_SIMILARITY).abs() < 1e-6);
-
-        st.settings_put(Store::SETTING_EMBEDDING_MIN_SIMILARITY, "0.45")
-            .unwrap();
-        assert!((st.embedding_config().unwrap().unwrap().min_similarity - 0.45).abs() < 1e-6);
-        st.settings_put(Store::SETTING_EMBEDDING_MIN_SIMILARITY, "0")
-            .unwrap();
-        assert_eq!(st.embedding_config().unwrap().unwrap().min_similarity, 0.0);
-        // Unparseable (hand-edited db; the REST layer rejects these on write) = default
-        st.settings_put(Store::SETTING_EMBEDDING_MIN_SIMILARITY, "abc")
-            .unwrap();
-        assert!(
-            (st.embedding_config().unwrap().unwrap().min_similarity
-                - crate::embed::DEFAULT_MIN_SIMILARITY)
-                .abs()
-                < 1e-6
+        st.settings_put(
+            Store::SETTING_EMBEDDING_MODELS,
+            r#"[
+                {"base_url": "http://x/v1", "model": "e5", "query_prefix": "query: ", "passage_prefix": "passage: ", "min_similarity": 0.45},
+                {"base_url": "http://y/v1", "model": "m3", "enabled": false, "min_similarity": 0},
+                {"base_url": "", "model": "draft", "min_similarity": 0.2}
+            ]"#,
+        )
+        .unwrap();
+        let entries = st.embedding_entries().unwrap();
+        assert_eq!(
+            entries.len(),
+            3,
+            "disabled and incomplete entries stay listed"
         );
+
+        let e5 = entries[0].usable().unwrap();
+        // Trailing space preserved; empty string = unset
+        assert_eq!(e5.query_prefix.as_deref(), Some("query: "));
+        assert_eq!(e5.passage_prefix.as_deref(), Some("passage: "));
+        assert!((e5.min_similarity - 0.45).abs() < 1e-6);
+        assert_eq!(e5.vector_key(), "e5|q=query: |p=passage: ");
+
+        let m3 = entries[1].usable();
+        assert!(m3.is_none(), "disabled = not operational");
+        assert_eq!(entries[1].vector_key(), "m3", "identity exists regardless");
+
+        assert!(entries[2].usable().is_none(), "blank base_url = not usable");
+
+        // Runtime pool: only the one usable candidate, in priority order
+        let configs = st.embedding_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].model, "e5");
+
+        // "0" floor semantics moved into the entry: 0.0 means the floor is off
+        assert_eq!(entries[1].min_similarity, Some(0.0));
+
+        // Corrupt JSON surfaces as an error (the admin UI's problem to fix, not silently ignored)
+        st.settings_put(Store::SETTING_EMBEDDING_MODELS, "{oops")
+            .unwrap();
+        assert!(st.embedding_entries().is_err());
         cleanup(&path);
     }
 

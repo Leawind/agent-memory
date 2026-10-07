@@ -300,21 +300,22 @@ impl Store {
         )])
     }
 
-    /// Semantic search coverage: when enabled and memories lack vectors for the current model, suggest a backfill.
-    /// This is a derived-data issue rather than corruption, but it belongs here so doctor stays the single health-check entry point.
+    /// Semantic search coverage: for every enabled, fully specified candidate whose identity has
+    /// memories lacking vectors, suggest a backfill. Derived-data staleness rather than corruption,
+    /// but it belongs here so doctor stays the single health-check entry point.
     fn check_embedding_coverage(&self) -> Result<Vec<String>, String> {
-        let Some(cfg) = self.embedding_config()? else {
-            return Ok(vec![]);
-        };
-        let pending = self.embedding_pending_count(&cfg.vector_key())?;
-        if pending == 0 {
-            return Ok(vec![]);
+        let mut issues = Vec::new();
+        for cfg in self.embedding_configs()? {
+            let pending = self.embedding_pending_count(&cfg.vector_key())?;
+            if pending > 0 {
+                issues.push(format!(
+                    "{pending} memories lack up-to-date embeddings (model '{}'); \
+                     run `agent-memory embed-backfill` or use the admin UI",
+                    cfg.model
+                ));
+            }
         }
-        Ok(vec![format!(
-            "{pending} memories lack up-to-date embeddings (model '{}'); \
-             run `agent-memory embed-backfill` or use the admin UI",
-            cfg.model
-        )])
+        Ok(issues)
     }
 
     /// Data statistics (JSON form, shared by the CLI and the API).
@@ -362,18 +363,38 @@ impl Store {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        let embedding = match self.embedding_config()? {
-            Some(cfg) => {
-                let embedded = self.embedding_embedded_count(&cfg.vector_key())?;
-                let pending = self.embedding_pending_count(&cfg.vector_key())?;
-                json!({
-                    "enabled": true,
-                    "model": cfg.model,
-                    "embedded": embedded,
-                    "pending": pending,
+        // Embedding section: the head entry's numbers stay top-level for convenience (the UI and
+        // CLI read them), while `models` carries every candidate with its own cache coverage.
+        // Cache coverage is keyed by identity: two entries may share a model name and still have
+        // separate caches (instruction prefixes are part of the identity).
+        let entries = self.embedding_entries()?;
+        let configs: Vec<_> = entries.iter().filter_map(|e| e.usable()).collect();
+        let embedding = if configs.is_empty() {
+            json!({ "enabled": false })
+        } else {
+            let head = &configs[0];
+            let models: Vec<Value> = entries
+                .iter()
+                .map(|e| {
+                    let mut item = json!({
+                        "key": e.vector_key(),
+                        "model": e.model,
+                        "enabled": e.enabled,
+                    });
+                    if let Some(cfg) = e.usable() {
+                        item["embedded"] = json!(self.embedding_embedded_count(&cfg.vector_key())?);
+                        item["pending"] = json!(self.embedding_pending_count(&cfg.vector_key())?);
+                    }
+                    Ok::<_, String>(item)
                 })
-            }
-            None => json!({ "enabled": false }),
+                .collect::<Result<Vec<_>, _>>()?;
+            json!({
+                "enabled": true,
+                "model": head.model,
+                "embedded": self.embedding_embedded_count(&head.vector_key())?,
+                "pending": self.embedding_pending_count(&head.vector_key())?,
+                "models": models,
+            })
         };
         Ok(json!({
             "path": self.path.display().to_string(),

@@ -187,37 +187,57 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let vector_k = (limit as usize * 2).max(20);
 
     // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
-    // Embedding service unavailable (timeout/error/database read failure) → fall back to the keyword pass and flag it,
-    // the fallback being a promise, not an error path. Semantic search not configured at all →
+    // Embedding services all unavailable (timeout/error) → fall back to the keyword pass and flag it,
+    // the fallback being a promise, not an error. Semantic search not configured at all →
     // keyword under auto as well, flagged explicitly so the caller never has to infer the state
     // from mode + tool description.
-    let config = st.embedding_config().map_err(ToolError::invalid)?;
+    let config_result = st.embedding_configs();
     let mut used_hybrid = false;
     let mut semantic_fallback = false;
     let mut semantic_disabled = false;
+    let mut vector_model: Option<String> = None;
     let hits = match mode {
         SearchMode::Keyword => keyword_hits,
-        SearchMode::Auto => match &config {
-            None => {
+        SearchMode::Auto => match &config_result {
+            Err(e) => {
+                eprintln!(
+                    "semantic search fell back to keyword (cannot read embedding config): {e}"
+                );
+                semantic_fallback = true;
+                keyword_hits
+            }
+            Ok(configs) if configs.is_empty() => {
                 semantic_disabled = true;
                 keyword_hits
             }
-            Some(cfg) => {
-                let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query, vector_k);
+            Ok(configs) => {
+                let (hits, ok, model) =
+                    semantic_pass(st, configs, &memories, keyword_hits, &query, vector_k);
                 used_hybrid = ok;
                 semantic_fallback = !ok;
+                vector_model = model;
                 hits
             }
         },
         SearchMode::Hybrid => {
-            let Some(cfg) = &config else {
-                return Err(ToolError::invalid(
-                    "mode 'hybrid' requires semantic search to be enabled and configured (embedding settings in the admin UI)",
-                ));
+            let configs = match &config_result {
+                Ok(configs) if !configs.is_empty() => configs,
+                Ok(_) => {
+                    return Err(ToolError::invalid(
+                        "mode 'hybrid' requires semantic search to be enabled and configured (embedding settings in the admin UI)",
+                    ));
+                }
+                Err(e) => {
+                    return Err(ToolError::invalid(format!(
+                        "mode 'hybrid' could not read the embedding configuration: {e}"
+                    )));
+                }
             };
-            let (hits, ok) = semantic_pass(st, cfg, &memories, keyword_hits, &query, vector_k);
+            let (hits, ok, model) =
+                semantic_pass(st, configs, &memories, keyword_hits, &query, vector_k);
             used_hybrid = ok;
             semantic_fallback = !ok;
+            vector_model = model;
             hits
         }
     };
@@ -263,6 +283,11 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     }
     if semantic_disabled {
         out["semantic"] = json!("disabled");
+    }
+    // Which candidate actually answered the query embedding — with several configured models
+    // this is the fact a caller cannot derive from the response itself
+    if let Some(model) = &vector_model {
+        out["embedding_model"] = json!(model);
     }
     // Only hybrid fuses two channels; in keyword mode the count would just duplicate total_matches
     if used_hybrid {
@@ -717,36 +742,41 @@ fn append_note(out: &mut Value, msg: String) {
 }
 
 /// Semantic pass: query embedding + cosine ranking against stored vectors, RRF-fused with the keyword pass.
-/// Any step failing (reading vectors, embedding service timeout/error) falls back to the pure keyword pass,
-/// returning `(hits, whether hybrid really ran)` — the fallback is a normal path, not an error.
+/// The query embedding tries the configured candidates in priority order (see `embed::Failover`) and the
+/// winner's identity selects the vector table. Any step failing (reading vectors, every candidate
+/// unavailable) falls back to the pure keyword pass, returning `(hits, whether hybrid really ran, the
+/// candidate that answered)` — the fallback is a normal path, not an error.
 fn semantic_pass(
     st: &Store,
-    cfg: &crate::embed::EmbedConfig,
+    configs: &[crate::embed::EmbedConfig],
     memories: &[crate::model::Memory],
     keyword_hits: Vec<search::Hit>,
     query: &str,
     vector_k: usize,
-) -> (Vec<search::Hit>, bool) {
+) -> (Vec<search::Hit>, bool, Option<String>) {
+    let embedded = crate::embed::EMBED_FAILOVER.first_available(configs, |cfg| {
+        crate::embed::embed_texts(
+            cfg,
+            &[crate::embed::embed_query_text(cfg, query)],
+            crate::embed::QUERY_TIMEOUT,
+        )
+    });
+    let (_, cfg, query_vecs) = match embedded {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("semantic search fell back to keyword (embedding services unavailable): {e}");
+            return (keyword_hits, false, None);
+        }
+    };
+    let Some(query_vec) = query_vecs.into_iter().next() else {
+        return (keyword_hits, false, None);
+    };
     let table = match st.embeddings_active(&cfg.vector_key()) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("semantic search skipped (cannot load embeddings): {e}");
-            return (keyword_hits, false);
+            return (keyword_hits, false, None);
         }
-    };
-    let query_vecs = match crate::embed::embed_texts(
-        cfg,
-        &[crate::embed::embed_query_text(cfg, query)],
-        crate::embed::QUERY_TIMEOUT,
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("semantic search fell back to keyword (embedding service unavailable): {e}");
-            return (keyword_hits, false);
-        }
-    };
-    let Some(query_vec) = query_vecs.into_iter().next() else {
-        return (keyword_hits, false);
     };
     (
         crate::embed::hybrid_hits(
@@ -758,5 +788,6 @@ fn semantic_pass(
             cfg.min_similarity,
         ),
         true,
+        Some(cfg.model.clone()),
     )
 }

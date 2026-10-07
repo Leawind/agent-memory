@@ -218,28 +218,63 @@ fn rest_api_end_to_end() {
     let (_, body, _) = request(port, "GET", "/api/stats", None);
     assert_eq!(json_body(&body)["memories"], 0);
 
-    // The similarity floor setting: roundtrip, and garbage values are rejected at write time
+    // The ordered embedding-candidate list: canonical entries are echoed (unknown fields
+    // dropped, defaults made explicit), disabled entries may be incomplete drafts, and the
+    // validation failures come back as 400 at write time.
     let (status, _, _) = request(
         port,
         "PUT",
         "/api/settings",
-        Some(r#"{ "embedding_min_similarity": "0.45" }"#),
+        Some(
+            r#"{ "embedding_models": [
+                {"model": "e5", "base_url": "http://x/v1", "query_prefix": "query: ", "min_similarity": 0.45, "unknown_field": 1},
+                {"model": "", "base_url": "", "enabled": false}
+            ]}"#,
+        ),
     );
     assert_eq!(status, 200);
     let (_, body, _) = request(port, "GET", "/api/settings", None);
-    assert_eq!(json_body(&body)["embedding_min_similarity"], "0.45");
+    let settings = json_body(&body);
+    let models = settings["embedding_models"].as_array().unwrap();
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0]["model"], "e5");
+    assert_eq!(models[0]["base_url"], "http://x/v1");
+    assert_eq!(models[0]["query_prefix"], "query: ");
+    assert_eq!(models[0]["enabled"], true);
+    assert_eq!(models[0]["min_similarity"], 0.45);
+    assert_eq!(models[0]["passage_prefix"], serde_json::Value::Null);
+    assert!(
+        models[0].get("unknown_field").is_none(),
+        "unknown fields are dropped by the canonical form"
+    );
+    assert_eq!(models[1]["enabled"], false);
+    // Floor defaults are materialized as null (absent = built-in default)
+    assert_eq!(models[1]["min_similarity"], serde_json::Value::Null);
+
+    // Enabled entry without an endpoint -> 400
     let (status, _, _) = request(
         port,
         "PUT",
         "/api/settings",
-        Some(r#"{ "embedding_min_similarity": "abc" }"#),
+        Some(r#"{ "embedding_models": [{"model": "x"}] }"#),
     );
     assert_eq!(status, 400);
+    // Out-of-range per-entry floor -> 400
     let (status, _, _) = request(
         port,
         "PUT",
         "/api/settings",
-        Some(r#"{ "embedding_min_similarity": "3" }"#),
+        Some(
+            r#"{ "embedding_models": [{"model": "x", "base_url": "http://x", "min_similarity": 3}] }"#,
+        ),
+    );
+    assert_eq!(status, 400);
+    // Not an array -> 400
+    let (status, _, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{ "embedding_models": {"model": "x"} }"#),
     );
     assert_eq!(status, 400);
 

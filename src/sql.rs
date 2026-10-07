@@ -39,6 +39,8 @@ pub const MEMORY_SUMMARIES: &str = include_str!("../sql/memory_summaries.sql");
 
 pub const EMBEDDING_PUT: &str = include_str!("../sql/embedding_put.sql");
 pub const EMBEDDING_DELETE: &str = include_str!("../sql/embedding_delete.sql");
+pub const EMBEDDING_MODELS_LIST: &str = include_str!("../sql/embedding_models_list.sql");
+pub const EMBEDDING_DELETE_MODEL: &str = include_str!("../sql/embedding_delete_model.sql");
 pub const EMBEDDING_ACTIVE_ALL: &str = include_str!("../sql/embedding_active_all.sql");
 pub const EMBEDDING_PENDING_BATCH: &str = include_str!("../sql/embedding_pending_batch.sql");
 pub const EMBEDDING_PENDING_FOR: &str = include_str!("../sql/embedding_pending_for.sql");
@@ -132,6 +134,8 @@ mod tests {
             ("MEMORY_SUMMARIES", MEMORY_SUMMARIES),
             ("EMBEDDING_PUT", EMBEDDING_PUT),
             ("EMBEDDING_DELETE", EMBEDDING_DELETE),
+            ("EMBEDDING_MODELS_LIST", EMBEDDING_MODELS_LIST),
+            ("EMBEDDING_DELETE_MODEL", EMBEDDING_DELETE_MODEL),
             ("EMBEDDING_ACTIVE_ALL", EMBEDDING_ACTIVE_ALL),
             ("EMBEDDING_PENDING_BATCH", EMBEDDING_PENDING_BATCH),
             ("EMBEDDING_PENDING_FOR", EMBEDDING_PENDING_FOR),

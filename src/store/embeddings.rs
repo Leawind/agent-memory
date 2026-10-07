@@ -51,6 +51,29 @@ impl Store {
         Ok(out)
     }
 
+    /// Vector identities that actually have cached rows, with row counts (cache-management listing;
+    /// identities configured but never backfilled are not in the table — the caller unions them).
+    pub fn embedding_cached_models(&self) -> Result<Vec<(String, usize)>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::EMBEDDING_MODELS_LIST)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Delete every cached vector of one identity (per-model cache management); returns the row count.
+    pub fn embedding_delete_model(&self, model: &str) -> Result<usize, String> {
+        self.conn
+            .execute(sql::EMBEDDING_DELETE_MODEL, [model])
+            .map_err(|e| e.to_string())
+    }
+
     /// One pending backfill batch: memories lacking vectors for the current model, id ascending (with title and content for embedding).
     pub fn embedding_pending_batch(
         &self,

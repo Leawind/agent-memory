@@ -186,16 +186,15 @@ pub fn handle(
                         .settings_get("instructions")
                         .map_err(ToolError::from)?
                         .filter(|s| !s.is_empty());
-                    // Semantic search config is returned as-is: the endpoint is Admin-only and
+                    // The ordered model-candidate lists are returned as native arrays (canonical
+                    // entry shape via EmbedEntry::to_json): the endpoint is Admin-only and
                     // api_key and instructions are both "server secrets", no extra masking
-                    let embed = &store::Store::SETTING_EMBEDDING_BASE_URL;
-                    let base_url = st.settings_get(embed).map_err(ToolError::from)?;
-                    let model = st
-                        .settings_get(store::Store::SETTING_EMBEDDING_MODEL)
-                        .map_err(ToolError::from)?;
-                    let api_key = st
-                        .settings_get(store::Store::SETTING_EMBEDDING_API_KEY)
-                        .map_err(ToolError::from)?;
+                    let embedding_models: Vec<Value> = st
+                        .embedding_entries()
+                        .map_err(ToolError::from)?
+                        .iter()
+                        .map(|e| e.to_json())
+                        .collect();
                     Ok((
                         200,
                         json!({
@@ -207,19 +206,7 @@ pub fn handle(
                             "anonymous_permissions": st
                                 .anonymous_permissions()?
                                 .map(|p| p.to_json()),
-                            "embedding_enabled": st.embedding_enabled()?,
-                            "embedding_base_url": base_url,
-                            "embedding_model": model,
-                            "embedding_api_key": api_key,
-                            "embedding_query_prefix": st
-                                .settings_get(store::Store::SETTING_EMBEDDING_QUERY_PREFIX)
-                                .map_err(ToolError::from)?,
-                            "embedding_passage_prefix": st
-                                .settings_get(store::Store::SETTING_EMBEDDING_PASSAGE_PREFIX)
-                                .map_err(ToolError::from)?,
-                            "embedding_min_similarity": st
-                                .settings_get(store::Store::SETTING_EMBEDDING_MIN_SIMILARITY)
-                                .map_err(ToolError::from)?,
+                            "embedding_models": embedding_models,
                             // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -236,13 +223,7 @@ pub fn handle(
                     "instructions",
                     "auth_required",
                     store::Store::SETTING_ANONYMOUS_PERMISSIONS,
-                    store::Store::SETTING_EMBEDDING_ENABLED,
-                    store::Store::SETTING_EMBEDDING_BASE_URL,
-                    store::Store::SETTING_EMBEDDING_MODEL,
-                    store::Store::SETTING_EMBEDDING_API_KEY,
-                    store::Store::SETTING_EMBEDDING_QUERY_PREFIX,
-                    store::Store::SETTING_EMBEDDING_PASSAGE_PREFIX,
-                    store::Store::SETTING_EMBEDDING_MIN_SIMILARITY,
+                    store::Store::SETTING_EMBEDDING_MODELS,
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
@@ -252,10 +233,10 @@ pub fn handle(
                         ))));
                     }
                 }
-                // Boolean keys: auth_required and embedding_enabled; text items go through the String branch;
-                // anonymous_permissions is an object/null special case, collected separately
-                const BOOL_KEYS: &[&str] =
-                    &["auth_required", store::Store::SETTING_EMBEDDING_ENABLED];
+                // Boolean keys: auth_required; text items go through the String branch;
+                // anonymous_permissions is an object/null special case and the ordered model
+                // lists are arrays, each collected separately
+                const BOOL_KEYS: &[&str] = &["auth_required"];
                 let mut updates: Vec<(&str, String)> = Vec::new();
                 // Outer Some = the request carried this key; inner None = clear (anonymous rejected)
                 let mut anon_perms: Option<Option<Permissions>> = None;
@@ -276,6 +257,22 @@ pub fn handle(
                             };
                             anon_perms = Some(parsed);
                         }
+                        Some(v) if *key == store::Store::SETTING_EMBEDDING_MODELS => {
+                            // Validated + canonicalized here; the canonical JSON is what gets stored
+                            let entries = match parse_model_entries(key, v) {
+                                Ok(entries) => entries,
+                                Err(e) => return Ok(bad_request(e)),
+                            };
+                            let canonical = match serde_json::to_string(
+                                &entries.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
+                            ) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    return Ok(bad_request(ToolError::invalid(e.to_string())))
+                                }
+                            };
+                            updates.push((key, canonical));
+                        }
                         Some(v) if BOOL_KEYS.contains(key) => match v.as_bool() {
                             Some(on) => {
                                 updates.push((key, if on { "true" } else { "false" }.into()))
@@ -291,21 +288,6 @@ pub fn handle(
                                 return Ok(bad_request(ToolError::invalid(format!(
                                     "{key} is too long (max {MAX_INSTRUCTIONS_CHARS} characters)"
                                 ))));
-                            }
-                            // The similarity floor is parsed at read time: reject garbage here so
-                            // the read path's fallback-to-default never silently overrides intent
-                            if *key == store::Store::SETTING_EMBEDDING_MIN_SIMILARITY
-                                && !s.trim().is_empty()
-                            {
-                                let ok = s
-                                    .trim()
-                                    .parse::<f32>()
-                                    .is_ok_and(|v| (0.0..=1.0).contains(&v));
-                                if !ok {
-                                    return Ok(bad_request(ToolError::invalid(format!(
-                                        "{key} must be a number between 0 and 1 (0 disables the floor)"
-                                    ))));
-                                }
                             }
                             updates.push((key, s.clone()));
                         }
@@ -351,42 +333,131 @@ pub fn handle(
                 ctx.require(Cap::Admin)?;
                 // Bounded batch: each request processes a small batch and returns the remaining
                 // count, which the UI calls in a loop. Sidesteps the long-running task vs. one-transaction-per-request model conflict.
-                let batch = query_get(query, "batch")
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .unwrap_or(crate::embed::MAX_BATCH);
-                Ok((200, crate::embed::process_pending(db_path, batch).to_json()))
+                // An explicit `model_key` targets one cache identity (per-model backfill);
+                // without one the highest-priority available candidate's cache is drained.
+                let args = match args_from_body() {
+                    Ok(m) => m,
+                    Err(e) => return Ok(bad_request(e)),
+                };
+                let batch = args
+                    .get("batch")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(crate::embed::MAX_BATCH as u64) as usize;
+                let outcome = match args.get("model_key").and_then(Value::as_str) {
+                    Some(key) => {
+                        let cfg = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                            Ok::<_, String>(
+                                st.embedding_entries()?
+                                    .into_iter()
+                                    .find(|e| e.vector_key() == key)
+                                    .and_then(|e| e.usable()),
+                            )
+                        })
+                        .map_err(ToolError::from)?;
+                        match cfg {
+                            Some(cfg) => crate::embed::process_pending_for(db_path, batch, &cfg)
+                                .unwrap_or_else(crate::embed::EmbedOutcome::Failed),
+                            None => {
+                                return Ok(bad_request(ToolError::invalid(format!(
+                                    "no enabled embedding entry matches cache key '{key}' (its cache can only be deleted)"
+                                ))));
+                            }
+                        }
+                    }
+                    None => crate::embed::process_pending(db_path, batch),
+                };
+                Ok((200, outcome.to_json()))
             }
             ("POST", ["embeddings", "test"]) => {
                 ctx.require(Cap::Admin)?;
-                let cfg = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-                    st.embedding_config().map_err(ToolError::from)
+                let configs = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                    st.embedding_configs().map_err(ToolError::from)
                 })?;
-                let Some(cfg) = cfg else {
+                if configs.is_empty() {
                     return Ok(bad_request(ToolError::invalid(
-                        "semantic search is not enabled or not fully configured (embedding settings)",
+                        "no enabled, fully specified embedding entry exists (embedding settings)",
                     )));
-                };
-                let start = std::time::Instant::now();
-                match crate::embed::embed_texts(
-                    &cfg,
-                    // The probe text goes through the query side: the prefix is part of the
-                    // effective configuration being tested
-                    &[crate::embed::embed_query_text(
-                        &cfg,
-                        "connection test 连接测试",
-                    )],
-                    crate::embed::BATCH_TIMEOUT,
-                ) {
-                    Ok(vectors) => Ok((
-                        200,
-                        json!({
+                }
+                // Every enabled candidate is probed: the list is exactly what the failover loop
+                // would walk, so the UI can show per-candidate health at once
+                let mut results = Vec::with_capacity(configs.len());
+                let mut all_ok = true;
+                for cfg in &configs {
+                    let start = std::time::Instant::now();
+                    match crate::embed::embed_texts(
+                        cfg,
+                        // The probe text goes through the query side: the prefix is part of the
+                        // effective configuration being tested
+                        &[crate::embed::embed_query_text(
+                            cfg,
+                            "connection test 连接测试",
+                        )],
+                        crate::embed::BATCH_TIMEOUT,
+                    ) {
+                        Ok(vectors) => results.push(json!({
+                            "model": cfg.model,
                             "ok": true,
                             "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
                             "elapsed_ms": start.elapsed().as_millis() as u64,
-                        }),
-                    )),
-                    Err(e) => Ok((200, json!({ "ok": false, "error": e }))),
+                        })),
+                        Err(e) => {
+                            all_ok = false;
+                            results.push(json!({ "model": cfg.model, "ok": false, "error": e }));
+                        }
+                    }
                 }
+                Ok((200, json!({ "ok": all_ok, "results": results })))
+            }
+            ("GET", ["embeddings", "caches"]) => {
+                ctx.require(Cap::Admin)?;
+                store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                    let entries = st.embedding_entries().map_err(ToolError::from)?;
+                    let cached = st.embedding_cached_models().map_err(ToolError::from)?;
+                    // Union of identities with rows and identities configured (a configured but
+                    // never-backfilled model still shows up, with zero embedded)
+                    let mut keys: Vec<String> = entries.iter().map(|e| e.vector_key()).collect();
+                    for (key, _) in &cached {
+                        if !keys.contains(key) {
+                            keys.push(key.clone());
+                        }
+                    }
+                    keys.sort();
+                    let mut caches = Vec::with_capacity(keys.len());
+                    for key in keys {
+                        let embedded = cached
+                            .iter()
+                            .find(|(k, _)| *k == key)
+                            .map(|(_, n)| *n)
+                            .unwrap_or(0);
+                        caches.push(json!({
+                            "key": key,
+                            // Display convenience: the raw model name (identity suffixes stripped)
+                            "model": key.split('|').next().unwrap_or(&key),
+                            "embedded": embedded,
+                            "pending": st.embedding_pending_count(&key).map_err(ToolError::from)?,
+                            "configured": entries
+                                .iter()
+                                .any(|e| e.vector_key() == key && e.usable().is_some()),
+                        }));
+                    }
+                    Ok((200, json!({ "caches": caches })))
+                })
+            }
+            ("DELETE", ["embeddings", "caches"]) => {
+                ctx.require(Cap::Admin)?;
+                let args = match args_from_body() {
+                    Ok(m) => m,
+                    Err(e) => return Ok(bad_request(e)),
+                };
+                let Some(key) = args.get("model_key").and_then(Value::as_str) else {
+                    return Ok(bad_request(ToolError::invalid(
+                        "model_key is required (see GET /api/embeddings/caches)",
+                    )));
+                };
+                store::with_db_in(db_path, tx_mode, |st| {
+                    let deleted = st.embedding_delete_model(key).map_err(ToolError::from)?;
+                    Ok((200, json!({ "deleted": deleted })))
+                })
             }
             ("GET", ["tags"]) => {
                 let mut args = Map::new();
@@ -541,6 +612,75 @@ fn tool_write(
 
 fn bad_request(e: ToolError) -> (u16, Value) {
     (400, json!({ "error": e.message() }))
+}
+
+/// Validate and canonicalize one ordered model-candidate list from the settings PUT body.
+/// Entries must be objects; an enabled entry must carry non-empty base_url and model; the
+/// per-entry similarity floor must lie in 0..=1 (absent = built-in default). Unknown fields
+/// are dropped — the canonical entry shape is what gets stored and later echoed by GET.
+fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEntry>, ToolError> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| ToolError::invalid(format!("{key} must be an array")))?;
+    let mut entries = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let obj = item
+            .as_object()
+            .ok_or_else(|| ToolError::invalid(format!("{key}[{i}] must be an object")))?;
+        let opt_string = |field: &str| -> Result<Option<String>, ToolError> {
+            match obj.get(field) {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
+                Some(Value::String(_)) => Ok(None),
+                Some(_) => Err(ToolError::invalid(format!(
+                    "{key}[{i}].{field} must be a string"
+                ))),
+            }
+        };
+        let enabled = match obj.get("enabled") {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => {
+                return Err(ToolError::invalid(format!(
+                    "{key}[{i}].enabled must be a boolean"
+                )))
+            }
+        };
+        let base_url = opt_string("base_url")?.unwrap_or_default();
+        let model = opt_string("model")?.unwrap_or_default();
+        if enabled && (base_url.trim().is_empty() || model.trim().is_empty()) {
+            return Err(ToolError::invalid(format!(
+                "{key}[{i}]: an enabled entry needs a non-empty base_url and model"
+            )));
+        }
+        let min_similarity = match obj.get("min_similarity") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(n)) => {
+                let f = n.as_f64().unwrap_or(f64::NAN);
+                if !(0.0..=1.0).contains(&f) {
+                    return Err(ToolError::invalid(format!(
+                        "{key}[{i}].min_similarity must be a number between 0 and 1 (0 disables the floor)"
+                    )));
+                }
+                Some(f as f32)
+            }
+            Some(_) => {
+                return Err(ToolError::invalid(format!(
+                    "{key}[{i}].min_similarity must be a number or null"
+                )))
+            }
+        };
+        entries.push(crate::embed::EmbedEntry {
+            enabled,
+            base_url,
+            model,
+            api_key: opt_string("api_key")?,
+            query_prefix: opt_string("query_prefix")?,
+            passage_prefix: opt_string("passage_prefix")?,
+            min_similarity,
+        });
+    }
+    Ok(entries)
 }
 
 /// Query string of GET /api/memories → memory_list / memory_search parameters.

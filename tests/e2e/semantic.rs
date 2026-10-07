@@ -123,28 +123,32 @@ fn semantic_search_hybrid_and_fallback() {
         "{body:?}"
     );
 
-    // Configure (pointing at the mock)
+    // Configure (pointing at the mock; one enabled candidate)
     put_settings(
         port,
         json!({
-            "embedding_enabled": true,
-            "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-            "embedding_model": "mock-embed",
-            "embedding_api_key": "sk-test"
+            "embedding_models": [{
+                "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+                "model": "mock-embed",
+                "api_key": "sk-test"
+            }]
         }),
     );
     let (status, body, _) = request(port, "GET", "/api/settings", None);
     assert_eq!(status, 200);
     let settings = json_body(&body);
-    assert_eq!(settings["embedding_enabled"], true);
-    assert_eq!(settings["embedding_model"], "mock-embed");
-    assert_eq!(settings["embedding_api_key"], "sk-test");
+    let models = settings["embedding_models"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["model"], "mock-embed");
+    assert_eq!(models[0]["api_key"], "sk-test");
+    assert_eq!(models[0]["enabled"], true);
 
-    // Test-connection endpoint
+    // Test-connection endpoint: per-candidate health in one response
     let (status, body, _) = request(port, "POST", "/api/embeddings/test", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["ok"], true);
-    assert_eq!(json_body(&body)["dim"], MOCK_DIM);
+    assert_eq!(json_body(&body)["results"][0]["ok"], true);
+    assert_eq!(json_body(&body)["results"][0]["dim"], MOCK_DIM);
 
     // Two memories: m1 hits both words ("zigzag" + "marker"), m2 has zero keyword hits but shares a bucket with the query
     let query = "zigzag marker";
@@ -237,7 +241,10 @@ fn semantic_search_hybrid_and_fallback() {
     };
     put_settings(
         port,
-        json!({ "embedding_base_url": format!("http://127.0.0.1:{dead}/v1") }),
+        json!({ "embedding_models": [{
+            "base_url": format!("http://127.0.0.1:{dead}/v1"),
+            "model": "mock-embed"
+        }] }),
     );
     for mode in ["", "&mode=hybrid"] {
         let (status, body, _) = request(
@@ -279,9 +286,10 @@ fn embedding_write_fallback_then_backfill() {
     put_settings(
         port,
         json!({
-            "embedding_enabled": true,
-            "embedding_base_url": format!("http://127.0.0.1:{dead}/v1"),
-            "embedding_model": "mock-embed"
+            "embedding_models": [{
+                "base_url": format!("http://127.0.0.1:{dead}/v1"),
+                "model": "mock-embed"
+            }]
         }),
     );
 
@@ -330,13 +338,21 @@ fn embedding_write_fallback_then_backfill() {
     let out = run_cli(&["embed-backfill", "--db", &db.display().to_string()]);
     assert!(!out.status.success(), "服务不可用时补跑应报错退出");
 
-    // Service recovered: the backfill endpoint fills in (?batch controls items per batch)
+    // Service recovered: the backfill endpoint fills in ("batch" controls items per batch)
     let (mock_port, _seen) = spawn_mock_embedding();
     put_settings(
         port,
-        json!({ "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1") }),
+        json!({ "embedding_models": [{
+            "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+            "model": "mock-embed"
+        }] }),
     );
-    let (status, body, _) = request(port, "POST", "/api/embeddings/backfill?batch=8", None);
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/embeddings/backfill",
+        Some(r#"{"batch": 8}"#),
+    );
     assert_eq!(status, 200);
     let out = json_body(&body);
     assert_eq!(out["configured"], true);
@@ -411,18 +427,19 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
     put_settings(
         port,
         json!({
-            "embedding_enabled": true,
-            "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-            "embedding_model": "mock-embed",
-            "embedding_query_prefix": "q>> ",
-            "embedding_passage_prefix": "p>> "
+            "embedding_models": [{
+                "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+                "model": "mock-embed",
+                "query_prefix": "q>> ",
+                "passage_prefix": "p>> "
+            }]
         }),
     );
     // Settings roundtrip: prefixes are echoed verbatim
     let (_, body, _) = request(port, "GET", "/api/settings", None);
     let settings = json_body(&body);
-    assert_eq!(settings["embedding_query_prefix"], "q>> ");
-    assert_eq!(settings["embedding_passage_prefix"], "p>> ");
+    assert_eq!(settings["embedding_models"][0]["query_prefix"], "q>> ");
+    assert_eq!(settings["embedding_models"][0]["passage_prefix"], "p>> ");
 
     // Creating a memory leaves its vector pending (the REST write face has no synchronous
     // embedding); the write hook's background worker (or an explicit backfill) drains it:
@@ -477,7 +494,7 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
     let before = seen.lock().unwrap().len();
     let (status, body, _) = request(port, "POST", "/api/embeddings/test", None);
     assert_eq!(status, 200);
-    assert_eq!(json_body(&body)["ok"], true);
+    assert_eq!(json_body(&body)["results"][0]["ok"], true);
     let seen_now = seen.lock().unwrap().clone();
     assert!(seen_now[before..]
         .iter()
@@ -485,7 +502,15 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
 
     // Changing a prefix re-keys the vectors: coverage drops to all-pending under the new key
     // (same behavior as a model switch), while the displayed model name stays the raw model
-    put_settings(port, json!({ "embedding_passage_prefix": "p2>> " }));
+    put_settings(
+        port,
+        json!({ "embedding_models": [{
+            "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+            "model": "mock-embed",
+            "query_prefix": "q>> ",
+            "passage_prefix": "p2>> "
+        }] }),
+    );
     let (_, body, _) = request(port, "GET", "/api/stats", None);
     let emb = &json_body(&body)["embedding"];
     assert_eq!(emb["model"], "mock-embed");
@@ -502,6 +527,176 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
     cleanup(&db);
 }
 
+/// Several embedding candidates at once: their caches coexist (per-identity keys), the caches
+/// endpoint lists/backs up/deletes them per model, and a dead head candidate fails over to the
+/// next one on the actual search path (which the response names via embedding_model).
+#[test]
+fn embedding_multi_model_caches_and_failover() {
+    let db = temp_db("semantic-multi");
+    cleanup(&db);
+    let (mock_port, _seen) = spawn_mock_embedding();
+    let server = HttpProc::start(&db, "semantic-multi");
+    let port = server.port;
+
+    // Two candidates sharing one mock (it serves any model name): mock-a is the priority head
+    put_settings(
+        port,
+        json!({
+            "embedding_models": [
+                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "model": "mock-a"},
+                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "model": "mock-b"}
+            ]
+        }),
+    );
+    let (status, resp, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary": "cache probe", "content": "multi model body"}"#),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+
+    // The head candidate's cache is drained by the write hook's background worker (or an
+    // explicit nudge); the second candidate's cache stays empty but listed
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let caches = loop {
+        let _ = request(port, "POST", "/api/embeddings/backfill", None);
+        let caches = get_caches(port);
+        if find_cache(&caches, "mock-a")["embedded"] == 1 {
+            break caches;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "head candidate was never backfilled: {caches:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert_eq!(caches.len(), 2, "{caches:?}");
+    let a = find_cache(&caches, "mock-a");
+    let b = find_cache(&caches, "mock-b");
+    assert_eq!(a["pending"], 0);
+    assert_eq!(a["configured"], true);
+    assert_eq!(
+        b["embedded"], 0,
+        "the second candidate is never auto-backfilled"
+    );
+    assert_eq!(b["pending"], 1);
+    assert_eq!(b["configured"], true);
+
+    // Per-model backfill: only the targeted identity's cache fills in
+    let b_key = b["key"].as_str().unwrap();
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/embeddings/backfill",
+        Some(&serde_json::to_string(&json!({ "model_key": b_key })).unwrap()),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["processed"], 1);
+    let caches = get_caches(port);
+    assert_eq!(find_cache(&caches, "mock-b")["embedded"], 1);
+    assert_eq!(find_cache(&caches, "mock-b")["pending"], 0);
+
+    // Backfilling an identity no enabled entry matches -> 400 (deletion is the only op left)
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/embeddings/backfill",
+        Some(r#"{"model_key": "ghost-model"}"#),
+    );
+    assert_eq!(status, 400);
+    assert!(
+        json_body(&body)["error"]
+            .as_str()
+            .unwrap()
+            .contains("ghost-model"),
+        "{body:?}"
+    );
+
+    // Per-model deletion: only the targeted cache vanishes
+    let (status, body, _) = request(
+        port,
+        "DELETE",
+        "/api/embeddings/caches",
+        Some(&serde_json::to_string(&json!({ "model_key": b_key })).unwrap()),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["deleted"], 1);
+    let caches = get_caches(port);
+    assert_eq!(find_cache(&caches, "mock-b")["embedded"], 0);
+    assert_eq!(find_cache(&caches, "mock-a")["embedded"], 1);
+    // Deleting an empty identity reports zero without error
+    let (status, body, _) = request(
+        port,
+        "DELETE",
+        "/api/embeddings/caches",
+        Some(r#"{"model_key": "ghost-model"}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["deleted"], 0);
+
+    // Failover: the head candidate points at a dead port, so the actual search walks to the
+    // second candidate and names it in the response
+    let dead = {
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        l.local_addr().unwrap().port()
+    };
+    put_settings(
+        port,
+        json!({
+            "embedding_models": [
+                {"base_url": format!("http://127.0.0.1:{dead}/v1"), "model": "dead-model"},
+                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "model": "mock-b"}
+            ]
+        }),
+    );
+    let (status, body, _) = request(
+        port,
+        "GET",
+        &format!(
+            "/api/memories?query={}&mode=hybrid",
+            encodeURIComponent("cache probe")
+        ),
+        None,
+    );
+    assert_eq!(status, 200);
+    let out = json_body(&body);
+    assert_eq!(
+        out["mode"], "hybrid",
+        "failover must keep hybrid alive: {out}"
+    );
+    assert_eq!(out["embedding_model"], "mock-b");
+    // The per-candidate connection test shows both verdicts at once
+    let (status, body, _) = request(port, "POST", "/api/embeddings/test", None);
+    assert_eq!(status, 200);
+    let test = json_body(&body);
+    assert_eq!(test["ok"], false, "one candidate is down");
+    let results = test["results"].as_array().unwrap();
+    assert_eq!(results[0]["model"], "dead-model");
+    assert_eq!(results[0]["ok"], false);
+    assert_eq!(results[1]["model"], "mock-b");
+    assert_eq!(results[1]["ok"], true);
+
+    drop(server);
+    cleanup(&db);
+}
+
+fn get_caches(port: u16) -> Vec<Value> {
+    let (status, body, _) = request(port, "GET", "/api/embeddings/caches", None);
+    assert_eq!(status, 200);
+    json_body(&body)["caches"]
+        .as_array()
+        .expect("caches array")
+        .clone()
+}
+
+fn find_cache<'a>(caches: &'a [Value], model: &str) -> &'a Value {
+    caches
+        .iter()
+        .find(|c| c["model"] == model)
+        .unwrap_or_else(|| panic!("cache for {model} missing in {caches:?}"))
+}
+
 /// The REST create face carries the same dedup hints as MCP (`similar_to` via the shared write
 /// hook): a second memory in the same mock bucket (cosine 1.0 >= threshold) is flagged, and the
 /// merge route goes through the same handler as the MCP tool.
@@ -515,9 +710,10 @@ fn rest_create_reports_similar_to_and_merge_route_works() {
     put_settings(
         port,
         json!({
-            "embedding_enabled": true,
-            "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-            "embedding_model": "mock-embed"
+            "embedding_models": [{
+                "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+                "model": "mock-embed"
+            }]
         }),
     );
 
