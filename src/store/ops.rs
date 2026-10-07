@@ -306,7 +306,7 @@ impl Store {
         let Some(cfg) = self.embedding_config()? else {
             return Ok(vec![]);
         };
-        let pending = self.embedding_pending_count(&cfg.model)?;
+        let pending = self.embedding_pending_count(&cfg.vector_key())?;
         if pending == 0 {
             return Ok(vec![]);
         }
@@ -364,8 +364,8 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let embedding = match self.embedding_config()? {
             Some(cfg) => {
-                let embedded = self.embedding_embedded_count(&cfg.model)?;
-                let pending = self.embedding_pending_count(&cfg.model)?;
+                let embedded = self.embedding_embedded_count(&cfg.vector_key())?;
+                let pending = self.embedding_pending_count(&cfg.vector_key())?;
                 json!({
                     "enabled": true,
                     "model": cfg.model,

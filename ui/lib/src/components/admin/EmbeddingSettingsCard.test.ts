@@ -20,6 +20,8 @@ function makeProps(over: Partial<ConstructorParameters<typeof EmbeddingSettingsC
     embeddingBaseUrl: 'http://svc:9/v1',
     embeddingModel: 'bge-m3',
     embeddingApiKey: 'key',
+    embeddingQueryPrefix: '',
+    embeddingPassagePrefix: '',
     stats: { embedding: COVERAGE } as StatsInfo | null,
     compact: false,
     ...over,
@@ -98,7 +100,7 @@ describe('EmbeddingSettingsCard states', () => {
     wrapper.unmount()
   })
 
-  it('saves only the three config fields while disabled and settles to the parked badge', async () => {
+  it('saves only the five config fields while disabled and settles to the parked badge', async () => {
     const calls = recordFetch([
       (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
     ])
@@ -115,13 +117,15 @@ describe('EmbeddingSettingsCard states', () => {
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     await saveButton(wrapper).trigger('click')
     await flushPromises()
-    // The switch is not the form's business: the PUT carries the three fields only, and no
+    // The switch is not the form's business: the PUT carries the five config fields only, and no
     // probe runs while the switch is off (the server would reject it as not-configured)
     const put = calls.find((c) => c.method === 'PUT')!
     expect(JSON.parse(put.body!)).toEqual({
       embedding_base_url: 'http://svc:9/v1',
       embedding_model: 'bge-m3',
       embedding_api_key: '',
+      embedding_query_prefix: '',
+      embedding_passage_prefix: '',
     })
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(false)
     expect(wrapper.emitted('changed')).toHaveLength(1)
@@ -218,7 +222,7 @@ describe('EmbeddingSettingsCard states', () => {
       }),
     )
     await fillInput(wrapper, 1, 'new-model')
-    expect(wrapper.text()).toContain('更换模型会使现有 3 条向量失效')
+    expect(wrapper.text()).toContain('更换模型或指令前缀会使现有 3 条向量失效')
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     await saveButton(wrapper).trigger('click')
     await flushPromises()
@@ -228,6 +232,8 @@ describe('EmbeddingSettingsCard states', () => {
       embedding_base_url: 'http://svc:9/v1',
       embedding_model: 'new-model',
       embedding_api_key: 'key',
+      embedding_query_prefix: '',
+      embedding_passage_prefix: '',
     })
     // Enabled: the save is followed by a probe; the permanent form stays with its actions idle
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(true)

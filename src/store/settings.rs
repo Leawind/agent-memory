@@ -80,6 +80,8 @@ impl Store {
     pub const SETTING_EMBEDDING_BASE_URL: &'static str = "embedding_base_url";
     pub const SETTING_EMBEDDING_MODEL: &'static str = "embedding_model";
     pub const SETTING_EMBEDDING_API_KEY: &'static str = "embedding_api_key";
+    pub const SETTING_EMBEDDING_QUERY_PREFIX: &'static str = "embedding_query_prefix";
+    pub const SETTING_EMBEDDING_PASSAGE_PREFIX: &'static str = "embedding_passage_prefix";
 
     /// Semantic search switch (an explicit boolean key of the same kind as auth_required).
     pub fn embedding_enabled(&self) -> Result<bool, String> {
@@ -107,10 +109,20 @@ impl Store {
         let api_key = self
             .settings_get(Self::SETTING_EMBEDDING_API_KEY)?
             .filter(|s| !s.is_empty());
+        // Prefixes are applied verbatim: a trailing space is part of an E5 instruction
+        // ("query: "), so unlike base_url / model they are never trimmed — only emptied to None.
+        let query_prefix = self
+            .settings_get(Self::SETTING_EMBEDDING_QUERY_PREFIX)?
+            .filter(|s| !s.is_empty());
+        let passage_prefix = self
+            .settings_get(Self::SETTING_EMBEDDING_PASSAGE_PREFIX)?
+            .filter(|s| !s.is_empty());
         Ok(Some(crate::embed::EmbedConfig {
             base_url: base_url.trim().to_string(),
             model: model.trim().to_string(),
             api_key,
+            query_prefix,
+            passage_prefix,
         }))
     }
 }
@@ -138,6 +150,35 @@ mod tests {
             st.settings_get("instructions").unwrap().as_deref(),
             Some("v2")
         );
+        cleanup(&path);
+    }
+
+    /// Prefix settings read back verbatim (a trailing space is part of an E5 instruction) and
+    /// empty/absent normalize to None.
+    #[test]
+    fn embedding_prefixes_verbatim_and_empty_is_none() {
+        let path = temp_db("embedding-prefix");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        for (key, value) in [
+            (Store::SETTING_EMBEDDING_ENABLED, "true"),
+            (Store::SETTING_EMBEDDING_BASE_URL, "http://x/v1"),
+            (Store::SETTING_EMBEDDING_MODEL, "e5"),
+        ] {
+            st.settings_put(key, value).unwrap();
+        }
+        let none = st.embedding_config().unwrap().unwrap();
+        assert_eq!(none.query_prefix, None);
+        assert_eq!(none.passage_prefix, None);
+
+        st.settings_put(Store::SETTING_EMBEDDING_QUERY_PREFIX, "query: ")
+            .unwrap();
+        st.settings_put(Store::SETTING_EMBEDDING_PASSAGE_PREFIX, "")
+            .unwrap();
+        let cfg = st.embedding_config().unwrap().unwrap();
+        // Trailing space preserved; empty string = unset
+        assert_eq!(cfg.query_prefix.as_deref(), Some("query: "));
+        assert_eq!(cfg.passage_prefix, None);
         cleanup(&path);
     }
 

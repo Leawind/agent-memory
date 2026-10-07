@@ -211,6 +211,12 @@ pub fn handle(
                             "embedding_base_url": base_url,
                             "embedding_model": model,
                             "embedding_api_key": api_key,
+                            "embedding_query_prefix": st
+                                .settings_get(store::Store::SETTING_EMBEDDING_QUERY_PREFIX)
+                                .map_err(ToolError::from)?,
+                            "embedding_passage_prefix": st
+                                .settings_get(store::Store::SETTING_EMBEDDING_PASSAGE_PREFIX)
+                                .map_err(ToolError::from)?,
                             // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -231,6 +237,8 @@ pub fn handle(
                     store::Store::SETTING_EMBEDDING_BASE_URL,
                     store::Store::SETTING_EMBEDDING_MODEL,
                     store::Store::SETTING_EMBEDDING_API_KEY,
+                    store::Store::SETTING_EMBEDDING_QUERY_PREFIX,
+                    store::Store::SETTING_EMBEDDING_PASSAGE_PREFIX,
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
@@ -342,7 +350,12 @@ pub fn handle(
                 let start = std::time::Instant::now();
                 match crate::embed::embed_texts(
                     &cfg,
-                    &["connection test 连接测试".to_string()],
+                    // The probe text goes through the query side: the prefix is part of the
+                    // effective configuration being tested
+                    &[crate::embed::embed_query_text(
+                        &cfg,
+                        "connection test 连接测试",
+                    )],
                     crate::embed::BATCH_TIMEOUT,
                 ) {
                     Ok(vectors) => Ok((

@@ -727,7 +727,7 @@ fn semantic_pass(
     query: &str,
     vector_k: usize,
 ) -> (Vec<search::Hit>, bool) {
-    let table = match st.embeddings_active(&cfg.model) {
+    let table = match st.embeddings_active(&cfg.vector_key()) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("semantic search skipped (cannot load embeddings): {e}");
@@ -736,7 +736,7 @@ fn semantic_pass(
     };
     let query_vecs = match crate::embed::embed_texts(
         cfg,
-        &[crate::embed::embed_memory_text(query, "")],
+        &[crate::embed::embed_query_text(cfg, query)],
         crate::embed::QUERY_TIMEOUT,
     ) {
         Ok(v) => v,

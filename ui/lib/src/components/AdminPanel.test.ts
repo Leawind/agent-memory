@@ -271,10 +271,16 @@ describe('AdminPanel', () => {
     await saveBtn.trigger('click')
     await flushPromises()
     await flushPromises()
-    // The intent switch is not the form's business: the PUT carries the three fields only,
+    // The intent switch is not the form's business: the PUT carries the five config fields only,
     // and with the switch off no probe runs (the server rejects tests of non-effective config)
     expect(settingsPuts).toEqual([
-      JSON.stringify({ embedding_base_url: 'http://svc:9/v1', embedding_model: 'bge-m3-x', embedding_api_key: '' }),
+      JSON.stringify({
+        embedding_base_url: 'http://svc:9/v1',
+        embedding_model: 'bge-m3-x',
+        embedding_api_key: '',
+        embedding_query_prefix: '',
+        embedding_passage_prefix: '',
+      }),
     ])
     expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/embeddings/test'))).toBe(
       false,

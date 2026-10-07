@@ -5,6 +5,7 @@
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 
 use crate::common::{cleanup, encodeURIComponent, json_body, request, run_cli, temp_db, HttpProc};
 
@@ -22,9 +23,13 @@ fn mock_memory_text(summary: &str, content: &str) -> String {
 }
 
 /// Single-threaded mock embedding service: OpenAI-compatible /embeddings, deterministic one-hot vectors.
-fn spawn_mock_embedding() -> u16 {
+/// Returns the port plus a handle on every input text ever received (for asserting what the
+/// server actually sent — instruction prefixes among them).
+fn spawn_mock_embedding() -> (u16, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("mock bind");
     let port = listener.local_addr().expect("mock addr").port();
+    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let handle = seen.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
@@ -52,6 +57,9 @@ fn spawn_mock_embedding() -> u16 {
             }
             let parsed: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             let inputs = parsed["input"].as_array().cloned().unwrap_or_default();
+            seen.lock()
+                .unwrap()
+                .extend(inputs.iter().filter_map(|t| t.as_str().map(str::to_string)));
             let data: Vec<Value> = inputs
                 .iter()
                 .enumerate()
@@ -71,7 +79,7 @@ fn spawn_mock_embedding() -> u16 {
             let _ = stream.write_all(http.as_bytes());
         }
     });
-    port
+    (port, handle)
 }
 
 fn put_settings(port: u16, body: Value) {
@@ -95,7 +103,7 @@ fn put_settings(port: u16, body: Value) {
 fn semantic_search_hybrid_and_fallback() {
     let db = temp_db("semantic");
     cleanup(&db);
-    let mock_port = spawn_mock_embedding();
+    let (mock_port, _seen) = spawn_mock_embedding();
     let server = HttpProc::start(&db, "semantic");
     let port = server.port;
 
@@ -323,7 +331,7 @@ fn embedding_write_fallback_then_backfill() {
     assert!(!out.status.success(), "服务不可用时补跑应报错退出");
 
     // Service recovered: the backfill endpoint fills in (?batch controls items per batch)
-    let mock_port = spawn_mock_embedding();
+    let (mock_port, _seen) = spawn_mock_embedding();
     put_settings(
         port,
         json!({ "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1") }),
@@ -384,6 +392,111 @@ fn embedding_write_fallback_then_backfill() {
     assert!(!out.status.success());
     drop(server2);
     cleanup(&db2);
+
+    drop(server);
+    cleanup(&db);
+}
+
+/// Instruction prefixes (E5-style models): the query side and the passage side each get their
+/// configured prefix verbatim, and changing a prefix re-keys every stored vector — they go
+/// pending for backfill exactly like a model switch, instead of silently staying in use.
+#[test]
+fn embedding_prefixes_apply_and_rekey_vectors() {
+    let db = temp_db("semantic-prefix");
+    cleanup(&db);
+    let (mock_port, seen) = spawn_mock_embedding();
+    let server = HttpProc::start(&db, "semantic-prefix");
+    let port = server.port;
+
+    put_settings(
+        port,
+        json!({
+            "embedding_enabled": true,
+            "embedding_base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+            "embedding_model": "mock-embed",
+            "embedding_query_prefix": "q>> ",
+            "embedding_passage_prefix": "p>> "
+        }),
+    );
+    // Settings roundtrip: prefixes are echoed verbatim
+    let (_, body, _) = request(port, "GET", "/api/settings", None);
+    let settings = json_body(&body);
+    assert_eq!(settings["embedding_query_prefix"], "q>> ");
+    assert_eq!(settings["embedding_passage_prefix"], "p>> ");
+
+    // Creating a memory leaves its vector pending (the REST write face has no synchronous
+    // embedding); the write hook's background worker (or an explicit backfill) drains it:
+    // the passage prefix must go out verbatim
+    let (status, resp, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(
+            &serde_json::to_string(&json!({ "summary": "prefix probe", "content": "body text" }))
+                .unwrap(),
+        ),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|t| t == "p>> prefix probe\n\nbody text")
+        {
+            break;
+        }
+        // Nudge the queue in case the background worker is not running (fallback, not the norm)
+        let _ = request(port, "POST", "/api/embeddings/backfill", None);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "passage embedding never went out: {:?}",
+            seen.lock().unwrap()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Searching embeds the query: the query prefix went out, distinct from the passage side
+    let (status, body, _) = request(
+        port,
+        "GET",
+        &format!("/api/memories?query={}", encodeURIComponent("prefix probe")),
+        None,
+    );
+    assert_eq!(status, 200);
+    let out = json_body(&body);
+    assert_eq!(out["mode"], "hybrid");
+    let seen_now = seen.lock().unwrap().clone();
+    assert!(
+        seen_now.iter().any(|t| t == "q>> prefix probe"),
+        "query text must carry the query prefix verbatim: {seen_now:?}"
+    );
+
+    // The connection test goes through the query side too
+    let before = seen.lock().unwrap().len();
+    let (status, body, _) = request(port, "POST", "/api/embeddings/test", None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["ok"], true);
+    let seen_now = seen.lock().unwrap().clone();
+    assert!(seen_now[before..]
+        .iter()
+        .any(|t| t == "q>> connection test 连接测试"));
+
+    // Changing a prefix re-keys the vectors: coverage drops to all-pending under the new key
+    // (same behavior as a model switch), while the displayed model name stays the raw model
+    put_settings(port, json!({ "embedding_passage_prefix": "p2>> " }));
+    let (_, body, _) = request(port, "GET", "/api/stats", None);
+    let emb = &json_body(&body)["embedding"];
+    assert_eq!(emb["model"], "mock-embed");
+    assert_eq!(
+        emb["embedded"], 0,
+        "old-key vectors must not count for the new key"
+    );
+    assert_eq!(
+        emb["pending"], 1,
+        "the memory must go pending for re-embedding"
+    );
 
     drop(server);
     cleanup(&db);

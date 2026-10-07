@@ -85,10 +85,18 @@
       <el-form-item :label="t('access.embeddingApiKeyLabel')">
         <el-input v-model="draft.apiKey" show-password :placeholder="t('access.embeddingApiKeyPlaceholder')" />
       </el-form-item>
-      <!-- Vectors are keyed by model: a switch orphans every stored vector until backfilled.
-           Say the cost up front, with the count that will be invalidated. -->
+      <!-- Instruction prefixes for asymmetric embedding models (E5 etc.); applied verbatim,
+           so a trailing space is meaningful. Symmetric models (bge-m3) leave both empty. -->
+      <el-form-item :label="t('access.embeddingQueryPrefixLabel')">
+        <el-input v-model="draft.queryPrefix" :placeholder="t('access.embeddingQueryPrefixPlaceholder')" />
+      </el-form-item>
+      <el-form-item :label="t('access.embeddingPassagePrefixLabel')">
+        <el-input v-model="draft.passagePrefix" :placeholder="t('access.embeddingPassagePrefixPlaceholder')" />
+      </el-form-item>
+      <!-- Vectors are keyed by model + prefixes: a switch orphans every stored vector until
+           backfilled. Say the cost up front, with the count that will be invalidated. -->
       <el-alert
-        v-if="modelChanged && vectorCount > 0"
+        v-if="identityChanged && vectorCount > 0"
         :title="t('access.embeddingModelChangeWarn', { count: vectorCount })"
         type="warning"
         show-icon
@@ -120,6 +128,8 @@ const props = defineProps<{
   embeddingBaseUrl: string
   embeddingModel: string
   embeddingApiKey: string
+  embeddingQueryPrefix: string
+  embeddingPassagePrefix: string
   /** Stats fetched by the parent's load: the server's own view of effectivity + coverage */
   stats: import('../../types').StatsInfo | null
   /** In compact mode (<960px) the coverage progress bar narrows */
@@ -205,26 +215,39 @@ async function check(): Promise<EmbedTestResp | null> {
 
 // ---- Configuration form (always visible) ----
 const saving = ref(false)
-const draft = reactive({ baseUrl: '', model: '', apiKey: '' })
+const draft = reactive({ baseUrl: '', model: '', apiKey: '', queryPrefix: '', passagePrefix: '' })
 // Baseline the draft diffs against: the values currently stored server-side
-const saved = ref({ baseUrl: '', model: '', apiKey: '' })
+const saved = ref({ baseUrl: '', model: '', apiKey: '', queryPrefix: '', passagePrefix: '' })
 
 const dirty = computed(
   () =>
-    draft.baseUrl !== saved.value.baseUrl || draft.model !== saved.value.model || draft.apiKey !== saved.value.apiKey,
+    draft.baseUrl !== saved.value.baseUrl ||
+    draft.model !== saved.value.model ||
+    draft.apiKey !== saved.value.apiKey ||
+    draft.queryPrefix !== saved.value.queryPrefix ||
+    draft.passagePrefix !== saved.value.passagePrefix,
 )
 
 // Keep fields in sync while the draft is clean (a config edit elsewhere or a reload must not
 // be swallowed). An in-progress edit (dirty) owns the fields instead: a background refresh
 // triggered by another card must not clobber what the operator is typing.
 watch(
-  () => [props.embeddingBaseUrl, props.embeddingModel, props.embeddingApiKey] as const,
-  ([u, m, k]) => {
+  () =>
+    [
+      props.embeddingBaseUrl,
+      props.embeddingModel,
+      props.embeddingApiKey,
+      props.embeddingQueryPrefix,
+      props.embeddingPassagePrefix,
+    ] as const,
+  ([u, m, k, q, p]) => {
     if (dirty.value) return
-    saved.value = { baseUrl: u, model: m, apiKey: k }
+    saved.value = { baseUrl: u, model: m, apiKey: k, queryPrefix: q, passagePrefix: p }
     draft.baseUrl = u
     draft.model = m
     draft.apiKey = k
+    draft.queryPrefix = q
+    draft.passagePrefix = p
   },
   { immediate: true },
 )
@@ -233,10 +256,24 @@ function revert(): void {
   draft.baseUrl = props.embeddingBaseUrl
   draft.model = props.embeddingModel
   draft.apiKey = props.embeddingApiKey
-  saved.value = { baseUrl: props.embeddingBaseUrl, model: props.embeddingModel, apiKey: props.embeddingApiKey }
+  draft.queryPrefix = props.embeddingQueryPrefix
+  draft.passagePrefix = props.embeddingPassagePrefix
+  saved.value = {
+    baseUrl: props.embeddingBaseUrl,
+    model: props.embeddingModel,
+    apiKey: props.embeddingApiKey,
+    queryPrefix: props.embeddingQueryPrefix,
+    passagePrefix: props.embeddingPassagePrefix,
+  }
 }
 
-const modelChanged = computed(() => draft.model.trim() !== saved.value.model.trim())
+// The embedding identity = model + prefixes: changing any of them re-keys every vector
+const identityChanged = computed(
+  () =>
+    draft.model.trim() !== saved.value.model.trim() ||
+    draft.queryPrefix !== saved.value.queryPrefix ||
+    draft.passagePrefix !== saved.value.passagePrefix,
+)
 
 async function save(): Promise<void> {
   if (!dirty.value || saving.value) return
@@ -247,10 +284,18 @@ async function save(): Promise<void> {
         embedding_base_url: draft.baseUrl,
         embedding_model: draft.model,
         embedding_api_key: draft.apiKey,
+        embedding_query_prefix: draft.queryPrefix,
+        embedding_passage_prefix: draft.passagePrefix,
       }),
     )
     if (ok === undefined) return
-    saved.value = { baseUrl: draft.baseUrl, model: draft.model, apiKey: draft.apiKey }
+    saved.value = {
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      apiKey: draft.apiKey,
+      queryPrefix: draft.queryPrefix,
+      passagePrefix: draft.passagePrefix,
+    }
     emit('changed')
     lastTest.value = null
     if (props.embeddingEnabled) {

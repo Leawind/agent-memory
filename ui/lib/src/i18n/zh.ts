@@ -209,7 +209,7 @@ export default {
     embeddingRecheck: '重新检测',
     embeddingCoverageLine: '向量覆盖 {embedded}/{total}',
     embeddingBackfilling: '补跑中 {done}/{total}',
-    embeddingModelChangeWarn: '更换模型会使现有 {count} 条向量失效，保存后需补跑向量化。',
+    embeddingModelChangeWarn: '更换模型或指令前缀会使现有 {count} 条向量失效，保存后需补跑向量化。',
     embeddingFormHint:
       'OpenAI 兼容 /embeddings：云端（如 SiliconFlow）或本地 Ollama、LM Studio；服务不可用时搜索自动回退关键词，写入不中断。',
     embeddingEnabledLabel: '启用语义搜索',
@@ -219,6 +219,10 @@ export default {
     embeddingModelLabel: '模型名',
     embeddingApiKeyLabel: 'API Key',
     embeddingApiKeyPlaceholder: '本地服务可留空',
+    embeddingQueryPrefixLabel: '查询指令前缀（可选）',
+    embeddingQueryPrefixPlaceholder: '如 E5 系填 “query: ”（保留末尾空格）；bge-m3 留空',
+    embeddingPassagePrefixLabel: '文档指令前缀（可选）',
+    embeddingPassagePrefixPlaceholder: '如 E5 系填 “passage: ”',
     embeddingSaveTest: '保存并检测',
   },
 }

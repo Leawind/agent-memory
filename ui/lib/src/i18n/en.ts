@@ -217,7 +217,7 @@ export default {
     embeddingCoverageLine: 'Vector coverage {embedded}/{total}',
     embeddingBackfilling: 'Backfilling {done}/{total}',
     embeddingModelChangeWarn:
-      'Switching the model invalidates {count} stored vectors; a backfill is needed after saving.',
+      'Switching the model or instruction prefixes invalidates {count} stored vectors; a backfill is needed after saving.',
     embeddingFormHint:
       'OpenAI-compatible /embeddings: cloud (e.g. SiliconFlow) or local Ollama / LM Studio. If the service is unavailable, search falls back to keywords and writes are never blocked.',
     embeddingEnabledLabel: 'Enable semantic search',
@@ -227,6 +227,10 @@ export default {
     embeddingModelLabel: 'Model name',
     embeddingApiKeyLabel: 'API key',
     embeddingApiKeyPlaceholder: 'Leave empty for local services',
+    embeddingQueryPrefixLabel: 'Query instruction prefix (optional)',
+    embeddingQueryPrefixPlaceholder: 'e.g. "query: " for E5 models — keep the trailing space; bge-m3 leaves this empty',
+    embeddingPassagePrefixLabel: 'Passage instruction prefix (optional)',
+    embeddingPassagePrefixPlaceholder: 'e.g. "passage: " for E5 models',
     embeddingSaveTest: 'Save & test',
   },
 }

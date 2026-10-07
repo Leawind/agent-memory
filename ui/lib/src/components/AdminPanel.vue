@@ -66,6 +66,8 @@
               :embedding-base-url="embeddingBaseUrl"
               :embedding-model="embeddingModel"
               :embedding-api-key="embeddingApiKey"
+              :embedding-query-prefix="embeddingQueryPrefix"
+              :embedding-passage-prefix="embeddingPassagePrefix"
               :stats="stats"
               :compact="compact"
               @changed="load"
@@ -138,6 +140,8 @@ const embeddingEnabled = ref(false)
 const embeddingBaseUrl = ref('')
 const embeddingModel = ref('')
 const embeddingApiKey = ref('')
+const embeddingQueryPrefix = ref('')
+const embeddingPassagePrefix = ref('')
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
@@ -174,6 +178,8 @@ async function load(): Promise<void> {
         embedding_base_url?: string | null
         embedding_model?: string | null
         embedding_api_key?: string | null
+        embedding_query_prefix?: string | null
+        embedding_passage_prefix?: string | null
         default_instructions?: string | null
       }>('/api/settings'),
       api.get<import('../types').StatsInfo>('/api/stats'),
@@ -188,6 +194,8 @@ async function load(): Promise<void> {
     embeddingBaseUrl.value = settings?.embedding_base_url ?? ''
     embeddingModel.value = settings?.embedding_model ?? ''
     embeddingApiKey.value = settings?.embedding_api_key ?? ''
+    embeddingQueryPrefix.value = settings?.embedding_query_prefix ?? ''
+    embeddingPassagePrefix.value = settings?.embedding_passage_prefix ?? ''
     stats.value = statsResp ?? null
   })
 }

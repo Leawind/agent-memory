@@ -21,9 +21,34 @@ pub struct EmbedConfig {
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
+    /// Text prepended to search queries before embedding. Asymmetric models train with
+    /// instruction prefixes and lose noticeable quality without them (E5: "query: "; original
+    /// BGE: a "Represent this sentence for searching relevant passages:" instruction);
+    /// symmetric models like bge-m3 leave this unset. Applied verbatim — a trailing space is
+    /// part of the instruction.
+    pub query_prefix: Option<String>,
+    /// Text prepended to stored-memory texts before embedding (E5: "passage: ").
+    pub passage_prefix: Option<String>,
 }
 
 impl EmbedConfig {
+    /// Identity of the embedding function: the model plus its instruction prefixes. Stored
+    /// vectors are keyed by this, not by the raw model name — a prefix change silently changes
+    /// what the stored vectors mean, so it must orphan them exactly like a model switch does
+    /// (they go pending and re-embed under the new key). Both prefixes empty = the historical
+    /// key, just the model, keeping existing databases stable.
+    pub fn vector_key(&self) -> String {
+        match (&self.query_prefix, &self.passage_prefix) {
+            (None, None) => self.model.clone(),
+            (q, p) => format!(
+                "{}|q={}|p={}",
+                self.model,
+                q.as_deref().unwrap_or(""),
+                p.as_deref().unwrap_or("")
+            ),
+        }
+    }
+
     fn endpoint(&self) -> String {
         format!("{}/embeddings", self.base_url.trim_end_matches('/'))
     }
@@ -54,6 +79,24 @@ pub fn embed_memory_text(summary: &str, content: &str) -> String {
         text = text.chars().take(MAX_INPUT_CHARS).collect();
     }
     text
+}
+
+/// Query-side text: the model's query instruction prefix, then the query itself.
+pub fn embed_query_text(cfg: &EmbedConfig, query: &str) -> String {
+    let text = embed_memory_text(query, "");
+    match &cfg.query_prefix {
+        Some(p) => format!("{p}{text}"),
+        None => text,
+    }
+}
+
+/// Passage-side text: the model's passage prefix, then title + content.
+pub fn embed_passage_text(cfg: &EmbedConfig, summary: &str, content: &str) -> String {
+    let text = embed_memory_text(summary, content);
+    match &cfg.passage_prefix {
+        Some(p) => format!("{p}{text}"),
+        None => text,
+    }
 }
 
 /// Embed a batch. Any network/parsing failure returns Err; the caller decides how to degrade.
@@ -178,7 +221,7 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
         let Some(cfg) = st.embedding_config()? else {
             return Ok(None);
         };
-        let pending = st.embedding_pending_batch(&cfg.model, batch)?;
+        let pending = st.embedding_pending_batch(&cfg.vector_key(), batch)?;
         Ok::<_, String>(Some((cfg, pending)))
     }) {
         Ok(Some(pair)) => pair,
@@ -194,7 +237,7 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
 
     let texts: Vec<String> = pending
         .iter()
-        .map(|(_, summary, content)| embed_memory_text(summary, content))
+        .map(|(_, summary, content)| embed_passage_text(&cfg, summary, content))
         .collect();
     let vectors = match embed_texts(&cfg, &texts, BATCH_TIMEOUT) {
         Ok(v) => v,
@@ -205,9 +248,9 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     // reported remaining is identical to a post-commit recount
     match crate::store::with_db_in(db_path, TxMode::Write, |st| {
         for ((id, _, _), vec) in pending.iter().zip(&vectors) {
-            st.embedding_put(*id, &cfg.model, vec)?;
+            st.embedding_put(*id, &cfg.vector_key(), vec)?;
         }
-        let remaining = st.embedding_pending_count(&cfg.model)?;
+        let remaining = st.embedding_pending_count(&cfg.vector_key())?;
         Ok::<_, String>(remaining)
     }) {
         Ok(remaining) => EmbedOutcome::Processed {
@@ -274,7 +317,7 @@ fn ensure_vector(db_path: &Path, id: i64) {
         let Some(cfg) = st.embedding_config()? else {
             return Ok(None);
         };
-        let Some(row) = st.embedding_pending_for(&cfg.model, id)? else {
+        let Some(row) = st.embedding_pending_for(&cfg.vector_key(), id)? else {
             return Ok(None); // vector already stored (or the memory is gone)
         };
         Ok::<_, String>(Some((cfg, row)))
@@ -289,13 +332,13 @@ fn ensure_vector(db_path: &Path, id: i64) {
     };
     let vectors = embed_texts(
         &cfg,
-        &[embed_memory_text(&summary, &content)],
+        &[embed_passage_text(&cfg, &summary, &content)],
         QUERY_TIMEOUT,
     );
     match vectors {
         Ok(v) if !v.is_empty() => {
             let stored = crate::store::with_db_in(db_path, TxMode::Write, |st| {
-                st.embedding_put(id, &cfg.model, &v[0])
+                st.embedding_put(id, &cfg.vector_key(), &v[0])
             });
             if let Err(e) = stored {
                 eprintln!("semantic duplicate hint skipped: cannot store vector: {e}");
@@ -325,7 +368,7 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
         let Some(cfg) = st.embedding_config()? else {
             return Ok(Vec::new());
         };
-        let table = st.embeddings_active(&cfg.model)?;
+        let table = st.embeddings_active(&cfg.vector_key())?;
         let Some(mine) = table.get(&id) else {
             return Ok(Vec::new());
         };
@@ -478,6 +521,41 @@ mod tests {
         let text = embed_memory_text("s", &long);
         assert_eq!(text.chars().count(), MAX_INPUT_CHARS);
         assert!(text.starts_with("s\n\nx"));
+    }
+
+    fn cfg(model: &str, q: Option<&str>, p: Option<&str>) -> EmbedConfig {
+        EmbedConfig {
+            base_url: "http://x".into(),
+            model: model.into(),
+            api_key: None,
+            query_prefix: q.map(str::to_string),
+            passage_prefix: p.map(str::to_string),
+        }
+    }
+
+    /// Prefixes apply verbatim to their own side only, and the vector identity covers them:
+    /// a prefix change must re-key stored vectors exactly like a model change does.
+    #[test]
+    fn prefixes_apply_per_side_and_enter_vector_key() {
+        let bare = cfg("bge-m3", None, None);
+        assert_eq!(bare.vector_key(), "bge-m3");
+        assert_eq!(embed_query_text(&bare, "find x"), "find x");
+        assert_eq!(embed_passage_text(&bare, "t", "b"), "t\n\nb");
+
+        let e5 = cfg("e5", Some("query: "), Some("passage: "));
+        assert_eq!(
+            e5.vector_key(),
+            "bge-m3|q=query: |p=passage: ".replace("bge-m3", "e5")
+        );
+        // Trailing space of "query: " is part of the instruction — never trimmed
+        assert_eq!(embed_query_text(&e5, "find x"), "query: find x");
+        assert_eq!(embed_passage_text(&e5, "t", "b"), "passage: t\n\nb");
+
+        // Only one side set: the key reflects exactly what is configured
+        assert_eq!(
+            cfg("e5", Some("query: "), None).vector_key(),
+            "e5|q=query: |p="
+        );
     }
 
     /// Paraphrased recall: the keyword pass only hits m1, while the vector pass also brings in the semantically close m2,
