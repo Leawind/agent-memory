@@ -21,7 +21,7 @@
       </el-form-item>
     </el-form>
     <div class="save-row">
-      <el-button type="primary" :loading="saving" @click="saveAndTest">
+      <el-button type="primary" :loading="saving" :disabled="!dirty" @click="saveAndTest">
         {{ t('access.embeddingSaveTest') }}
       </el-button>
     </div>
@@ -109,6 +109,17 @@ watch(
   },
 )
 
+// A save re-sends the whole config and re-tests the connection: only meaningful when something
+// actually differs from the server state the props mirror (the parent reloads after each save,
+// which re-syncs the local draft and settles the button back to disabled)
+const dirty = computed(
+  () =>
+    enabled.value !== props.embeddingEnabled ||
+    baseUrl.value !== props.embeddingBaseUrl ||
+    model.value !== props.embeddingModel ||
+    apiKey.value !== props.embeddingApiKey,
+)
+
 // Only show the coverage section when the service is enabled (also not rendered while stats are
 // unloaded, avoiding a flash of "not enabled")
 const coverage = computed<EmbeddingCoverage | undefined>(() =>
@@ -127,6 +138,7 @@ const test = ref<null | undefined | { ok: boolean; dim?: number; elapsed_ms?: nu
 // After saving, immediately run a connectivity test with the server-side config; `changed` makes
 // the parent refetch the stats so the coverage section updates right away
 async function saveAndTest(): Promise<void> {
+  if (!dirty.value) return
   saving.value = true
   test.value = null
   try {

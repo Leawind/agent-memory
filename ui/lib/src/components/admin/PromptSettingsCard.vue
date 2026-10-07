@@ -33,7 +33,7 @@
       <el-button :disabled="isDefault" :loading="resetting" @click="resetToDefault">
         {{ t('access.resetToDefault') }}
       </el-button>
-      <el-button type="primary" :loading="saving" @click="save">
+      <el-button type="primary" :loading="saving" :disabled="!dirty" @click="save">
         {{ t('common.save') }}
       </el-button>
     </div>
@@ -54,6 +54,11 @@ const props = defineProps<{
   instructions: string
   /** The server's currently effective built-in default prompt (baseline for save normalization and restore-to-default) */
   defaultInstructions: string
+}>()
+
+const emit = defineEmits<{
+  /** Saved successfully (the parent refreshes settings so the save button settles back to disabled) */
+  saved: []
 }>()
 
 // Local editing state, refreshed when the parent loads
@@ -80,11 +85,21 @@ function normalizedInstructions(): string {
   return isDefault.value ? '' : instructions.value
 }
 
+// The baseline is the server's stored value, passed through the same normalization a save
+// applies (stored value is '' when following the default). A save would send exactly
+// normalizedInstructions(), so "no change" = it equals the normalized baseline.
+const baseline = computed(() =>
+  props.instructions.trim() === props.defaultInstructions.trim() ? '' : props.instructions,
+)
+const dirty = computed(() => normalizedInstructions() !== baseline.value)
+
 async function save(): Promise<void> {
+  if (!dirty.value) return
   saving.value = true
   try {
     await run(() => api.put('/api/settings', { instructions: normalizedInstructions() }))
     toastSuccess(t('access.saved'))
+    emit('saved')
   } finally {
     saving.value = false
   }

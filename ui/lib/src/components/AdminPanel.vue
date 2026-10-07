@@ -41,7 +41,7 @@
           @changed="load"
         />
 
-        <PromptSettingsCard :instructions="instructions" :default-instructions="defaultInstructions" />
+        <PromptSettingsCard :instructions="instructions" :default-instructions="defaultInstructions" @saved="load" />
 
         <BackupCard />
 

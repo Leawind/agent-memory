@@ -1,10 +1,11 @@
 <template>
-  <!-- Create / edit capabilities -->
+  <!-- Create / edit capabilities; the submit stays disabled until there is something to save -->
   <FormDialog
     v-model:visible="visible"
     :title="editing ? t('access.editTitle', { name: editing.name }) : t('access.createTitle')"
     :width="compact ? '96%' : '480px'"
     :saving="submitting"
+    :submit-disabled="!dirty"
     @submit="submit"
   >
     <el-form-item v-if="!editing" :label="t('access.nameLabel')">
@@ -17,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { toastSuccess } from '../../toast'
@@ -66,7 +67,17 @@ function openEdit(row: IdentityRow): void {
 
 defineExpose({ openCreate, openEdit })
 
+// Something to save: creating needs a name (the caps are a convenience prefill, not an edit);
+// editing needs a capability diff against the row the dialog opened with (both sides normalize
+// to booleans: the server may omit keys that are merely off)
+const dirty = computed(() => {
+  const row = editing.value
+  if (!row) return form.name.trim() !== ''
+  return CAPS.some((c) => (row.permissions?.[c.key] === true) !== (form.caps[c.key] === true))
+})
+
 async function submit(): Promise<void> {
+  if (!dirty.value) return
   submitting.value = true
   try {
     if (editing.value) {

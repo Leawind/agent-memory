@@ -116,18 +116,21 @@ describe('AdminPanel', () => {
     return wrapper.findAll('button').filter((b) => b.text() === '保存' && !b.element.closest('.el-dialog'))[0]
   }
 
-  it('prefills the built-in default when unset and normalizes it on save', async () => {
+  it('prefills the built-in default when unset and gates save on changes', async () => {
     const settingsPuts: string[] = []
+    // The mock stores what a PUT saved and returns it on GET, like the real server
+    const stored: Record<string, unknown> = {}
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string | URL, init?: RequestInit) => {
         const u = String(url)
         if (u.includes('/api/settings') && init?.method === 'PUT') {
           settingsPuts.push(String(init.body))
+          Object.assign(stored, JSON.parse(String(init.body)))
           return Promise.resolve(jsonResponse({ saved: true }))
         }
         if (u.includes('/api/settings')) {
-          return Promise.resolve(jsonResponse({ instructions: null, default_instructions: 'BUILT-IN DEFAULT PROMPT' }))
+          return Promise.resolve(jsonResponse({ ...stored, default_instructions: 'BUILT-IN DEFAULT PROMPT' }))
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -143,12 +146,187 @@ describe('AdminPanel', () => {
     // Content equals the default -> "reset to default" has nothing to do, disabled
     const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')!
     expect(resetBtn.attributes('disabled')).toBeDefined()
-    // Save without modification: content identical to the default normalizes to an empty string (keeps following the default instead of freezing a snapshot)
-    await promptCardSave(wrapper)!.trigger('click')
+    // Content identical to the effective value: a save would be a no-op, the button is disabled
+    const saveBtn = promptCardSave(wrapper)!
+    expect(saveBtn.attributes('disabled')).toBeDefined()
+    // Editing enables the save, and the PUT carries the edited text verbatim
+    await textarea.setValue('team rules v2')
+    expect(saveBtn.attributes('disabled')).toBeUndefined()
+    await saveBtn.trigger('click')
     await flushPromises()
-    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
+    expect(settingsPuts).toEqual([JSON.stringify({ instructions: 'team rules v2' })])
+    // The parent reloads after the save: the editor re-syncs to the stored value and the
+    // button settles back to disabled
+    await flushPromises()
+    expect(saveBtn.attributes('disabled')).toBeDefined()
     wrapper.unmount()
     // Remove toasts triggered by this case so leftovers don't interfere with later content-based toast assertions
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('saves a default-identical edit as unset (empty) when an override is stored', async () => {
+    const settingsPuts: string[] = []
+    // The mock stores what a PUT saved and returns it on GET, like the real server
+    const stored: Record<string, unknown> = { instructions: 'team rules' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/settings') && init?.method === 'PUT') {
+          settingsPuts.push(String(init.body))
+          Object.assign(stored, JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (u.includes('/api/settings')) {
+          return Promise.resolve(jsonResponse({ ...stored, default_instructions: 'BUILT-IN' }))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    const saveBtn = promptCardSave(wrapper)!
+    // The stored override differs from nothing yet: save stays disabled
+    expect(saveBtn.attributes('disabled')).toBeDefined()
+    // Typing text identical to the built-in default still differs from the stored override,
+    // so it is savable — and normalizes to '' (keeps following the default, not freezing a snapshot)
+    await wrapper.findAll('textarea')[0].setValue('BUILT-IN')
+    expect(saveBtn.attributes('disabled')).toBeUndefined()
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
+    // After the reload the stored value is unset (empty): the editor follows the default again
+    // and the button settles back to disabled
+    await flushPromises()
+    expect(saveBtn.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('gates the embedding save on config changes', async () => {
+    const settingsPuts: string[] = []
+    // The mock stores what a PUT saved and returns it on GET, like the real server: the reload
+    // after a save must reflect the new config for the button to settle back to disabled
+    const stored: Record<string, unknown> = {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/settings') && init?.method === 'PUT') {
+          settingsPuts.push(String(init.body))
+          Object.assign(stored, JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (u.includes('/api/settings')) {
+          return Promise.resolve(jsonResponse(stored))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存并测试连接')!
+    expect(saveBtn).toBeTruthy()
+    // Unchanged config: a save-and-test would be a no-op, the button is disabled
+    expect(saveBtn.attributes('disabled')).toBeDefined()
+    // Filling a field enables it; the PUT carries every config key
+    const modelInput = wrapper
+      .findAll('input')
+      .find((i) => i.attributes('placeholder') === 'BAAI/bge-m3 / bge-m3 / nomic-embed-text')!
+    await modelInput.setValue('bge-m3-x')
+    expect(saveBtn.attributes('disabled')).toBeUndefined()
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(settingsPuts).toEqual([
+      JSON.stringify({
+        embedding_enabled: false,
+        embedding_base_url: '',
+        embedding_model: 'bge-m3-x',
+        embedding_api_key: '',
+      }),
+    ])
+    // The parent reloads after the save: the draft re-syncs to the server state and the
+    // button settles back to disabled
+    await flushPromises()
+    expect(saveBtn.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('gates the identity dialog submit: create needs a name, edit needs a diff', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/api/identities') && init?.method === 'PUT') {
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (u.includes('/api/identities') && init?.method === 'POST') {
+          return Promise.resolve(
+            jsonResponse({
+              name: 'bob',
+              token_hint: 'b2c3',
+              permissions: { read: true },
+              token: 'tok-bob',
+              created_at: 1,
+            }),
+          )
+        }
+        if (u.includes('/api/identities')) {
+          return Promise.resolve(
+            jsonResponse({
+              identities: [{ name: 'bob', token_hint: 'b2c3', permissions: { read: true }, created_at: 1 }],
+            }),
+          )
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    // Create: the member preset pre-fills caps, but without a name there is nothing to save
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '新建身份')!
+      .trigger('click')
+    await flushPromises()
+    const createDialog = wrapper.find('.el-dialog')
+    const createSave = createDialog.findAll('button').find((b) => b.text() === '保存')!
+    expect(createSave.attributes('disabled')).toBeDefined()
+    await createDialog.find('input').setValue('bob')
+    expect(createSave.attributes('disabled')).toBeUndefined()
+    await createSave.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+
+    // Edit: the dialog opens on bob's stored caps, save is disabled until a capability changes
+    await wrapper.findAll('button[aria-label="编辑"]')[0].trigger('click')
+    await flushPromises()
+    const editDialog = wrapper.find('.el-dialog')
+    const editSave = editDialog.findAll('button').find((b) => b.text() === '保存')!
+    expect(editSave.attributes('disabled')).toBeDefined()
+    // Uncheck the read capability (the first checkbox): now there is a diff to save
+    await editDialog.find('.el-checkbox input').setValue(false)
+    expect(editSave.attributes('disabled')).toBeUndefined()
+    await editSave.trigger('click')
+    await flushPromises()
+    expect(
+      vi
+        .mocked(globalThis.fetch)
+        .mock.calls.some((c) => String(c[0]).includes('/api/identities/bob') && (c[1]?.method as string) === 'PUT'),
+    ).toBe(true)
+    wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
