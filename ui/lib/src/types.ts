@@ -112,6 +112,13 @@ export interface HealthInfo {
 
 export interface DoctorResp {
   ok: boolean
+  checks: DoctorCheck[]
+}
+
+/** One named hygiene check: id is a stable machine identifier (the UI localizes it) */
+export interface DoctorCheck {
+  id: string
+  ok: boolean
   issues: string[]
 }
 

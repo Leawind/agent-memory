@@ -90,9 +90,19 @@ pub fn handle(
             ("GET", ["doctor"]) => {
                 ctx.require(Cap::Admin)?;
                 store::with_db_in(db_path, tx_mode, |st| {
-                    st.hygiene_issues().map_err(ToolError::from).map(|issues| {
-                        let ok = issues.is_empty();
-                        (200, json!({ "ok": ok, "issues": issues }))
+                    st.hygiene_checks().map_err(ToolError::from).map(|checks| {
+                        let ok = checks.iter().all(|c| c.issues.is_empty());
+                        let checks: Vec<Value> = checks
+                            .into_iter()
+                            .map(|c| {
+                                json!({
+                                    "id": c.id,
+                                    "ok": c.issues.is_empty(),
+                                    "issues": c.issues,
+                                })
+                            })
+                            .collect();
+                        (200, json!({ "ok": ok, "checks": checks }))
                     })
                 })
             }

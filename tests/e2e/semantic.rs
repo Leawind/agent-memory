@@ -299,11 +299,18 @@ fn embedding_write_fallback_then_backfill() {
     assert_eq!(stats["embedding"]["pending"], 1);
     let (status, body, _) = request(port, "GET", "/api/doctor", None);
     assert_eq!(status, 200);
-    let issues = json_body(&body)["issues"]
+    // The doctor response is a named checklist; flatten the issue lines across checks
+    let issues = json_body(&body)["checks"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| v.as_str().unwrap_or_default())
+        .flat_map(|c| {
+            c["issues"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap_or_default().to_string())
+        })
         .collect::<Vec<_>>()
         .join("\n");
     assert!(

@@ -39,7 +39,7 @@ describe('locale switching', () => {
     expect(t('memories.deleteConfirm', { id: 'm7' })).toBe('确定永久删除记忆 m7？')
     expect(t('editor.titleFmt', { id: 'm7' })).toBe('记忆 #m7')
     expect(t('tags.titleFmt', { name: 'rust' })).toBe('标签 #rust')
-    expect(t('access.doctorFail', { count: 3 })).toBe('发现 3 个问题')
+    expect(t('access.doctorFail', { count: 3, failed: 2, total: 10 })).toBe('发现 3 个问题（2/10 项检查未通过）')
   })
 
   it('the shared composer exposes t for use outside component setup', () => {

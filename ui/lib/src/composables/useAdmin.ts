@@ -9,7 +9,7 @@ import type { DoctorResp, ImportResp } from '../types'
 export function useAdmin() {
   const client = useApiClient()
 
-  const doctor = ref<DoctorResp>({ ok: true, issues: [] })
+  const doctor = ref<DoctorResp>({ ok: true, checks: [] })
   const doctorRan = ref(false)
   const doctorLoading = ref(false)
   const exporting = ref(false)

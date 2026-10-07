@@ -125,7 +125,8 @@ describe('AdminPanel', () => {
     const items = wrapper.findAll('.admin-nav .nav-item')
     expect(items.map((i) => i.text())).toEqual(['身份与访问', '语义搜索', '自定义提示词', '备份导入导出', '数据体检'])
     // v-show toggles inline display: exactly the active section's card is visible
-    const displays = () => wrapper.findAll('.admin-sections .el-card').map((c) => c.element.style.display)
+    const displays = () =>
+      wrapper.findAll('.admin-sections .el-card').map((c) => (c.element as HTMLElement).style.display)
     expect(displays()).toEqual(['', 'none', 'none', 'none', 'none'])
     await items[4].trigger('click')
     expect(displays()).toEqual(['none', 'none', 'none', 'none', ''])
@@ -450,13 +451,21 @@ describe('AdminPanel', () => {
     wrapper.unmount()
   })
 
-  it('shows doctor results with issue list', async () => {
+  it('shows doctor results with the named checklist', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string | URL) => {
         const u = String(url)
         if (u.includes('/api/doctor')) {
-          return Promise.resolve(jsonResponse({ ok: false, issues: ['orphan tag: ghost'] }))
+          return Promise.resolve(
+            jsonResponse({
+              ok: false,
+              checks: [
+                { id: 'integrity', ok: true, issues: [] },
+                { id: 'tag_refs', ok: false, issues: ['orphan tag: ghost'] },
+              ],
+            }),
+          )
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -472,8 +481,11 @@ describe('AdminPanel', () => {
       .trigger('click')
     await flushPromises()
     const html = wrapper.html()
-    expect(html).toContain('发现 1 个问题')
+    expect(html).toContain('发现 1 个问题（1/2 项检查未通过）')
     expect(html).toContain('orphan tag: ghost')
+    // Every check gets a verdict row, passing ones included
+    expect(html).toContain('数据库完整性')
+    expect(html).toContain('标签引用')
     wrapper.unmount()
   })
 

@@ -6,11 +6,110 @@ use std::collections::{HashMap, HashSet};
 
 use super::Store;
 
+/// One named hygiene check. `id` is a stable machine identifier (the UI localizes it);
+/// `issues` holds raw operator-facing lines, printed verbatim by the CLI.
+pub struct HygieneCheck {
+    pub id: &'static str,
+    pub issues: Vec<String>,
+}
+
 impl Store {
-    /// Health check: reports data hazards (read-only). Covers dirty data that could slip in while foreign keys are off.
+    /// Health check: a fixed list of named data-hazard probes (read-only). Covers dirty data
+    /// that could slip in while foreign keys were off, timestamp/duplicate data-quality
+    /// hazards, and derived-data staleness (embedding coverage). The REST doctor endpoint
+    /// returns these as a checklist so the UI can render each verdict;
+    /// `hygiene_issues` flattens the same probes for the CLI.
+    pub fn hygiene_checks(&self) -> Result<Vec<HygieneCheck>, String> {
+        let probes = [
+            ("integrity", self.check_integrity()),
+            ("foreign_keys", self.check_foreign_keys()),
+            ("tag_refs", self.check_tag_refs()),
+            ("memory_refs", self.check_memory_refs()),
+            ("tag_case", self.check_tag_case()),
+            ("empty_summary", self.check_empty_summaries()),
+            ("timestamps", self.check_timestamps()),
+            ("duplicates", self.check_duplicates()),
+            ("orphan_embeddings", self.check_orphan_embeddings()),
+            ("embedding_coverage", self.check_embedding_coverage()),
+        ];
+        probes
+            .into_iter()
+            .map(|(id, result)| result.map(|issues| HygieneCheck { id, issues }))
+            .collect()
+    }
+
+    /// Flattened issue lines across every check (the CLI's output shape).
     pub fn hygiene_issues(&self) -> Result<Vec<String>, String> {
-        let mut issues = Vec::new();
-        // Orphan references: link rows pointing at nonexistent tag ids (possible while foreign keys are off)
+        Ok(self
+            .hygiene_checks()?
+            .into_iter()
+            .flat_map(|c| c.issues)
+            .collect())
+    }
+
+    /// PRAGMA quick_check: page-level corruption and broken indexes.
+    fn check_integrity(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<String> = self
+            .conn
+            .prepare(sql::HYGIENE_INTEGRITY)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let bad: Vec<String> = rows.into_iter().filter(|row| row != "ok").collect();
+        if bad.is_empty() {
+            Ok(vec![])
+        } else {
+            Ok(vec![format!(
+                "database integrity check failed: {}",
+                bad.join("; ")
+            )])
+        }
+    }
+
+    /// PRAGMA foreign_key_check: every foreign-key violation in the file, regardless of the
+    /// connection's foreign_keys setting (the check itself never depends on it).
+    fn check_foreign_keys(&self) -> Result<Vec<String>, String> {
+        let rows = self
+            .conn
+            .prepare(sql::HYGIENE_FOREIGN_KEYS)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(table, rowid, parent, parent_id)| {
+                format!(
+                    "foreign key violation: {table} row {} references missing {parent} row {}",
+                    Self::display_row(&table, rowid),
+                    Self::display_row(&parent, parent_id),
+                )
+            })
+            .collect())
+    }
+
+    /// Row ids read the way the API names them: memory rows carry the m<N> prefix, everything
+    /// else (tags, identities) is a bare internal id.
+    fn display_row(table: &str, id: i64) -> String {
+        if table == "memories" {
+            Self::format_id(id)
+        } else {
+            id.to_string()
+        }
+    }
+
+    /// Orphan references: link rows pointing at nonexistent tag ids (possible while foreign keys are off)
+    fn check_tag_refs(&self) -> Result<Vec<String>, String> {
         let orphan_ids: Vec<i64> = self
             .conn
             .prepare(sql::HYGIENE_ORPHANS)
@@ -19,17 +118,21 @@ impl Store {
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        if !orphan_ids.is_empty() {
-            issues.push(format!(
-                "memory_tags rows reference missing tags (schema corruption): tag ids {}",
-                orphan_ids
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        if orphan_ids.is_empty() {
+            return Ok(vec![]);
         }
-        // Reverse orphans: link rows pointing at nonexistent memories (possible while foreign keys are off)
+        Ok(vec![format!(
+            "memory_tags rows reference missing tags (schema corruption): tag ids {}",
+            orphan_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )])
+    }
+
+    /// Reverse orphans: link rows pointing at nonexistent memories (possible while foreign keys are off)
+    fn check_memory_refs(&self) -> Result<Vec<String>, String> {
         let reverse_ids: Vec<i64> = self
             .conn
             .prepare(sql::HYGIENE_REVERSE_ORPHANS)
@@ -38,17 +141,21 @@ impl Store {
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        if !reverse_ids.is_empty() {
-            issues.push(format!(
-                "database contains join rows pointing to missing memories (schema corruption): {}",
-                reverse_ids
-                    .iter()
-                    .map(|id| Self::format_id(*id))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        if reverse_ids.is_empty() {
+            return Ok(vec![]);
         }
-        // Groups of tags differing only in case
+        Ok(vec![format!(
+            "database contains join rows pointing to missing memories (schema corruption): {}",
+            reverse_ids
+                .iter()
+                .map(|id| Self::format_id(*id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )])
+    }
+
+    /// Groups of tags differing only in case
+    fn check_tag_case(&self) -> Result<Vec<String>, String> {
         let names: Vec<String> = self
             .conn
             .prepare(sql::TAG_ALL_NAMES)
@@ -61,15 +168,20 @@ impl Store {
         for n in &names {
             groups.entry(n.to_lowercase()).or_default().push(n.clone());
         }
-        for group in groups.values() {
-            if group.len() > 1 {
-                issues.push(format!(
+        Ok(groups
+            .into_values()
+            .filter(|group| group.len() > 1)
+            .map(|group| {
+                format!(
                     "case-conflicting tag group: {} (keep one and merge the rest with tag_update)",
                     group.join(" / ")
-                ));
-            }
-        }
-        // Empty summaries (content is optional: summary-only memories are a normal shape, not a hazard)
+                )
+            })
+            .collect())
+    }
+
+    /// Empty summaries (content is optional: summary-only memories are a normal shape, not a hazard)
+    fn check_empty_summaries(&self) -> Result<Vec<String>, String> {
         let rows = self
             .conn
             .prepare(sql::HYGIENE_MEMORIES)
@@ -78,27 +190,131 @@ impl Store {
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        for (id, summary) in rows {
-            if summary.trim().is_empty() {
+        Ok(rows
+            .into_iter()
+            .filter(|(_, summary)| summary.trim().is_empty())
+            .map(|(id, _)| format!("memory {} has an empty summary", Self::format_id(id)))
+            .collect())
+    }
+
+    /// Timestamp sanity: non-epoch timestamps, updated-before-created inversions, and dates
+    /// too far in the future (agents write on behalf of machines whose clocks can be wrong).
+    fn check_timestamps(&self) -> Result<Vec<String>, String> {
+        let rows = self
+            .conn
+            .prepare(sql::HYGIENE_TIMESTAMPS)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let now = crate::model::now() as i64;
+        // Tolerate modest clock skew between agents; flag anything beyond a full day ahead
+        const FUTURE_SLACK_SECS: i64 = 86_400;
+        let mut issues = Vec::new();
+        for (id, created_at, updated_at) in rows {
+            if created_at <= 0 || updated_at <= 0 {
                 issues.push(format!(
-                    "memory {} has an empty summary",
+                    "memory {} has a non-positive timestamp (created {created_at}, updated {updated_at})",
+                    Self::format_id(id)
+                ));
+            } else if updated_at < created_at {
+                issues.push(format!(
+                    "memory {} was updated before it was created",
+                    Self::format_id(id)
+                ));
+            } else if created_at > now + FUTURE_SLACK_SECS || updated_at > now + FUTURE_SLACK_SECS {
+                issues.push(format!(
+                    "memory {} is dated more than a day into the future (clock skew?)",
                     Self::format_id(id)
                 ));
             }
         }
-        // Semantic search coverage: when enabled and memories lack vectors for the current model, suggest a backfill.
-        // This is a derived-data issue rather than corruption, but it belongs here so doctor stays the single health-check entry point.
-        if let Some(cfg) = self.embedding_config()? {
-            let pending = self.embedding_pending_count(&cfg.model)?;
-            if pending > 0 {
-                issues.push(format!(
-                    "{pending} memories lack up-to-date embeddings (model '{}'); \
-                     run `agent-memory embed-backfill` or use the admin UI",
-                    cfg.model
-                ));
-            }
-        }
         Ok(issues)
+    }
+
+    /// Duplicate memories: same summary AND same content — redundant copies that waste the
+    /// context budget of whichever agent pulls them and noise up search results.
+    fn check_duplicates(&self) -> Result<Vec<String>, String> {
+        let rows = self
+            .conn
+            .prepare(sql::HYGIENE_DUPLICATES)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut groups: std::collections::BTreeMap<(String, String), Vec<String>> =
+            Default::default();
+        for (id, summary, content) in rows {
+            groups
+                .entry((summary, content))
+                .or_default()
+                .push(Self::format_id(id));
+        }
+        Ok(groups
+            .into_iter()
+            .filter(|(_, ids)| ids.len() > 1)
+            .map(|((summary, _), ids)| {
+                format!(
+                    "duplicate memories with identical summary and content: {} ({})",
+                    ids.join(", "),
+                    elide(&summary, 80)
+                )
+            })
+            .collect())
+    }
+
+    /// Embedding rows whose memory is gone (cascade deletes make this impossible with foreign
+    /// keys on; rows written while they were off would linger invisibly and poison vectors).
+    fn check_orphan_embeddings(&self) -> Result<Vec<String>, String> {
+        let ids: Vec<i64> = self
+            .conn
+            .prepare(sql::HYGIENE_ORPHAN_EMBEDDINGS)
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        Ok(vec![format!(
+            "embedding rows point to missing memories (schema corruption): {}",
+            ids.iter()
+                .map(|id| Self::format_id(*id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )])
+    }
+
+    /// Semantic search coverage: when enabled and memories lack vectors for the current model, suggest a backfill.
+    /// This is a derived-data issue rather than corruption, but it belongs here so doctor stays the single health-check entry point.
+    fn check_embedding_coverage(&self) -> Result<Vec<String>, String> {
+        let Some(cfg) = self.embedding_config()? else {
+            return Ok(vec![]);
+        };
+        let pending = self.embedding_pending_count(&cfg.model)?;
+        if pending == 0 {
+            return Ok(vec![]);
+        }
+        Ok(vec![format!(
+            "{pending} memories lack up-to-date embeddings (model '{}'); \
+             run `agent-memory embed-backfill` or use the admin UI",
+            cfg.model
+        )])
     }
 
     /// Data statistics (JSON form, shared by the CLI and the API).
@@ -387,6 +603,15 @@ fn validate_nonempty_len(s: &str, what: &str, max: usize) -> Result<String, Stri
     validate_max_len(t, what, max)
 }
 
+/// Truncate a long text for issue-line display (the full text stays in the database).
+fn elide(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{truncated}…")
+}
+
 fn validate_max_len(s: &str, what: &str, max: usize) -> Result<String, String> {
     if s.chars().count() > max {
         return Err(format!(
@@ -490,6 +715,116 @@ mod tests {
             !issues.contains("empty content"),
             "summary-only memory must not be flagged: {issues}"
         );
+        cleanup(&path);
+    }
+
+    /// The doctor endpoint exposes a named checklist (the UI renders every verdict), so a
+    /// healthy database must still yield one entry per probe — and the richer probes must
+    /// flag timestamp inversions, far-future clocks, duplicate memories and orphan embeddings.
+    #[test]
+    fn hygiene_checks_is_a_named_checklist_and_flags_rich_hazards() {
+        let path = temp_db("hygiene-checks");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let checks = st.hygiene_checks().unwrap();
+        let ids: Vec<&str> = checks.iter().map(|c| c.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "integrity",
+                "foreign_keys",
+                "tag_refs",
+                "memory_refs",
+                "tag_case",
+                "empty_summary",
+                "timestamps",
+                "duplicates",
+                "orphan_embeddings",
+                "embedding_coverage",
+            ]
+        );
+        assert!(
+            checks.iter().all(|c| c.issues.is_empty()),
+            "clean db must pass every check"
+        );
+
+        // Inject the hazards (foreign keys off, as in the real corruption paths)
+        st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+        st.conn
+            .execute(
+                "INSERT INTO memories(id, summary, content, created_at, updated_at) \
+                 VALUES (1, 'dup', 'same body', 1, 2)",
+                [],
+            )
+            .unwrap();
+        st.conn
+            .execute(
+                "INSERT INTO memories(id, summary, content, created_at, updated_at) \
+                 VALUES (2, 'dup', 'same body', 1, 1)",
+                [],
+            )
+            .unwrap();
+        st.conn
+            .execute(
+                "INSERT INTO memories(id, summary, content, created_at, updated_at) \
+                 VALUES (3, 'skew', 'c', 100, 50)",
+                [],
+            )
+            .unwrap();
+        let future = crate::model::now() as i64 + 7 * 86_400;
+        st.conn
+            .execute(
+                "INSERT INTO memories(id, summary, content, created_at, updated_at) \
+                 VALUES (4, 'future', 'c', ?1, ?1)",
+                [future],
+            )
+            .unwrap();
+        st.conn
+            .execute(
+                "INSERT INTO memory_embeddings(memory_id, model, dim, vec, updated_at) \
+                 VALUES (999, 'x', 2, x'00000000', 1)",
+                [],
+            )
+            .unwrap();
+
+        fn by_id(st: &Store, id: &str) -> Vec<String> {
+            st.hygiene_checks()
+                .unwrap()
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .issues
+        }
+        let dups = by_id(&st, "duplicates");
+        assert_eq!(dups.len(), 1);
+        assert!(
+            dups[0].contains("m1, m2") && dups[0].contains("dup"),
+            "got: {}",
+            dups[0]
+        );
+        let stamps = by_id(&st, "timestamps");
+        assert!(
+            stamps
+                .iter()
+                .any(|i| i.contains("m3") && i.contains("updated before it was created")),
+            "missing inversion: {stamps:?}"
+        );
+        assert!(
+            stamps
+                .iter()
+                .any(|i| i.contains("m4") && i.contains("future")),
+            "missing far-future: {stamps:?}"
+        );
+        let orphans = by_id(&st, "orphan_embeddings");
+        assert_eq!(orphans.len(), 1);
+        assert!(orphans[0].contains("m999"), "got: {}", orphans[0]);
+        // The generic foreign-key probe sees the orphan embedding row too
+        assert!(
+            by_id(&st, "foreign_keys")[0].contains("memory_embeddings"),
+            "fk probe must cover memory_embeddings"
+        );
+        // The flat CLI view carries the same lines
+        assert!(st.hygiene_issues().unwrap().len() >= 4);
         cleanup(&path);
     }
 

@@ -45,9 +45,14 @@ pub const EMBEDDING_PENDING_FOR: &str = include_str!("../sql/embedding_pending_f
 pub const EMBEDDING_PENDING_COUNT: &str = include_str!("../sql/embedding_pending_count.sql");
 pub const EMBEDDING_EMBEDDED_COUNT: &str = include_str!("../sql/embedding_embedded_count.sql");
 
+pub const HYGIENE_INTEGRITY: &str = include_str!("../sql/hygiene_integrity.sql");
+pub const HYGIENE_FOREIGN_KEYS: &str = include_str!("../sql/hygiene_foreign_keys.sql");
 pub const HYGIENE_ORPHANS: &str = include_str!("../sql/hygiene_orphans.sql");
 pub const HYGIENE_REVERSE_ORPHANS: &str = include_str!("../sql/hygiene_reverse_orphans.sql");
 pub const HYGIENE_MEMORIES: &str = include_str!("../sql/hygiene_memories.sql");
+pub const HYGIENE_TIMESTAMPS: &str = include_str!("../sql/hygiene_timestamps.sql");
+pub const HYGIENE_DUPLICATES: &str = include_str!("../sql/hygiene_duplicates.sql");
+pub const HYGIENE_ORPHAN_EMBEDDINGS: &str = include_str!("../sql/hygiene_orphan_embeddings.sql");
 
 pub const IDENTITY_INSERT: &str = include_str!("../sql/identity_insert.sql");
 pub const IDENTITY_BY_TOKEN: &str = include_str!("../sql/identity_by_token.sql");
@@ -132,9 +137,14 @@ mod tests {
             ("EMBEDDING_PENDING_FOR", EMBEDDING_PENDING_FOR),
             ("EMBEDDING_PENDING_COUNT", EMBEDDING_PENDING_COUNT),
             ("EMBEDDING_EMBEDDED_COUNT", EMBEDDING_EMBEDDED_COUNT),
+            ("HYGIENE_INTEGRITY", HYGIENE_INTEGRITY),
+            ("HYGIENE_FOREIGN_KEYS", HYGIENE_FOREIGN_KEYS),
             ("HYGIENE_ORPHANS", HYGIENE_ORPHANS),
             ("HYGIENE_REVERSE_ORPHANS", HYGIENE_REVERSE_ORPHANS),
             ("HYGIENE_MEMORIES", HYGIENE_MEMORIES),
+            ("HYGIENE_TIMESTAMPS", HYGIENE_TIMESTAMPS),
+            ("HYGIENE_DUPLICATES", HYGIENE_DUPLICATES),
+            ("HYGIENE_ORPHAN_EMBEDDINGS", HYGIENE_ORPHAN_EMBEDDINGS),
             ("STATS_MEMORY_COUNT", STATS_MEMORY_COUNT),
             ("STATS_TAG_COUNT", STATS_TAG_COUNT),
             ("STATS_HAS_SEQUENCE", STATS_HAS_SEQUENCE),

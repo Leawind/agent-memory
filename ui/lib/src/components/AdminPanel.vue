@@ -71,7 +71,7 @@
 
             <BackupCard v-show="activeSection === 'backup'" />
 
-            <DoctorCard v-show="activeSection === 'doctor'" />
+            <DoctorCard v-show="activeSection === 'doctor'" :stats="stats" />
           </div>
         </div>
       </template>
