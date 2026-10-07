@@ -14,6 +14,7 @@ mod http;
 mod model;
 mod notify;
 mod protocol;
+mod rerank;
 mod resources;
 mod search;
 mod sql;

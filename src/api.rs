@@ -187,10 +187,16 @@ pub fn handle(
                         .map_err(ToolError::from)?
                         .filter(|s| !s.is_empty());
                     // The ordered model-candidate lists are returned as native arrays (canonical
-                    // entry shape via EmbedEntry::to_json): the endpoint is Admin-only and
+                    // entry shapes via the entry types): the endpoint is Admin-only and
                     // api_key and instructions are both "server secrets", no extra masking
                     let embedding_models: Vec<Value> = st
                         .embedding_entries()
+                        .map_err(ToolError::from)?
+                        .iter()
+                        .map(|e| e.to_json())
+                        .collect();
+                    let rerank_models: Vec<Value> = st
+                        .rerank_entries()
                         .map_err(ToolError::from)?
                         .iter()
                         .map(|e| e.to_json())
@@ -207,6 +213,7 @@ pub fn handle(
                                 .anonymous_permissions()?
                                 .map(|p| p.to_json()),
                             "embedding_models": embedding_models,
+                            "rerank_models": rerank_models,
                             // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -224,6 +231,7 @@ pub fn handle(
                     "auth_required",
                     store::Store::SETTING_ANONYMOUS_PERMISSIONS,
                     store::Store::SETTING_EMBEDDING_MODELS,
+                    store::Store::SETTING_RERANK_MODELS,
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
@@ -263,15 +271,28 @@ pub fn handle(
                                 Ok(entries) => entries,
                                 Err(e) => return Ok(bad_request(e)),
                             };
-                            let canonical = match serde_json::to_string(
-                                &entries.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
+                            if let Err(e) = push_canonical(
+                                key,
+                                &entries,
+                                crate::embed::EmbedEntry::to_json,
+                                &mut updates,
                             ) {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    return Ok(bad_request(ToolError::invalid(e.to_string())))
-                                }
+                                return Ok(bad_request(e));
+                            }
+                        }
+                        Some(v) if *key == store::Store::SETTING_RERANK_MODELS => {
+                            let entries = match parse_rerank_entries(key, v) {
+                                Ok(entries) => entries,
+                                Err(e) => return Ok(bad_request(e)),
                             };
-                            updates.push((key, canonical));
+                            if let Err(e) = push_canonical(
+                                key,
+                                &entries,
+                                crate::rerank::RerankEntry::to_json,
+                                &mut updates,
+                            ) {
+                                return Ok(bad_request(e));
+                            }
                         }
                         Some(v) if BOOL_KEYS.contains(key) => match v.as_bool() {
                             Some(on) => {
@@ -398,6 +419,42 @@ pub fn handle(
                             "model": cfg.model,
                             "ok": true,
                             "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
+                            "elapsed_ms": start.elapsed().as_millis() as u64,
+                        })),
+                        Err(e) => {
+                            all_ok = false;
+                            results.push(json!({ "model": cfg.model, "ok": false, "error": e }));
+                        }
+                    }
+                }
+                Ok((200, json!({ "ok": all_ok, "results": results })))
+            }
+            ("POST", ["rerank", "test"]) => {
+                ctx.require(Cap::Admin)?;
+                let configs = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                    st.rerank_configs().map_err(ToolError::from)
+                })?;
+                if configs.is_empty() {
+                    return Ok(bad_request(ToolError::invalid(
+                        "no enabled, fully specified reranker entry exists (reranker settings)",
+                    )));
+                }
+                // Per-candidate probe with a one-document rerank: every enabled candidate is
+                // exercised, mirroring what the search-time failover would walk
+                let mut results = Vec::with_capacity(configs.len());
+                let mut all_ok = true;
+                for cfg in &configs {
+                    let start = std::time::Instant::now();
+                    match crate::rerank::rerank(
+                        cfg,
+                        "connection test 连接测试",
+                        &["a relevant document 一篇相关文档".to_string()],
+                        crate::rerank::RERANK_TIMEOUT,
+                    ) {
+                        Ok(scores) => results.push(json!({
+                            "model": cfg.model,
+                            "ok": true,
+                            "scored": scores.len(),
                             "elapsed_ms": start.elapsed().as_millis() as u64,
                         })),
                         Err(e) => {
@@ -614,6 +671,21 @@ fn bad_request(e: ToolError) -> (u16, Value) {
     (400, json!({ "error": e.message() }))
 }
 
+/// Canonical JSON of a validated candidate list — the form that gets stored and later echoed
+/// by GET (shared by both ordered model lists).
+fn push_canonical<'a, T>(
+    key: &'a str,
+    entries: &[T],
+    to_json: impl Fn(&T) -> Value,
+    updates: &mut Vec<(&'a str, String)>,
+) -> Result<(), ToolError> {
+    let values: Vec<Value> = entries.iter().map(to_json).collect();
+    let canonical =
+        serde_json::to_string(&values).map_err(|e| ToolError::invalid(format!("{key}: {e}")))?;
+    updates.push((key, canonical));
+    Ok(())
+}
+
 /// Validate and canonicalize one ordered model-candidate list from the settings PUT body.
 /// Entries must be objects; an enabled entry must carry non-empty base_url and model; the
 /// per-entry similarity floor must lie in 0..=1 (absent = built-in default). Unknown fields
@@ -678,6 +750,56 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
             query_prefix: opt_string("query_prefix")?,
             passage_prefix: opt_string("passage_prefix")?,
             min_similarity,
+        });
+    }
+    Ok(entries)
+}
+
+/// Validate and canonicalize the ordered reranker-candidate list (same rules as
+/// `parse_model_entries` minus the embedding-specific fields).
+fn parse_rerank_entries(
+    key: &str,
+    v: &Value,
+) -> Result<Vec<crate::rerank::RerankEntry>, ToolError> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| ToolError::invalid(format!("{key} must be an array")))?;
+    let mut entries = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let obj = item
+            .as_object()
+            .ok_or_else(|| ToolError::invalid(format!("{key}[{i}] must be an object")))?;
+        let opt_string = |field: &str| -> Result<Option<String>, ToolError> {
+            match obj.get(field) {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
+                Some(Value::String(_)) => Ok(None),
+                Some(_) => Err(ToolError::invalid(format!(
+                    "{key}[{i}].{field} must be a string"
+                ))),
+            }
+        };
+        let enabled = match obj.get("enabled") {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => {
+                return Err(ToolError::invalid(format!(
+                    "{key}[{i}].enabled must be a boolean"
+                )))
+            }
+        };
+        let base_url = opt_string("base_url")?.unwrap_or_default();
+        let model = opt_string("model")?.unwrap_or_default();
+        if enabled && (base_url.trim().is_empty() || model.trim().is_empty()) {
+            return Err(ToolError::invalid(format!(
+                "{key}[{i}]: an enabled entry needs a non-empty base_url and model"
+            )));
+        }
+        entries.push(crate::rerank::RerankEntry {
+            enabled,
+            base_url,
+            model,
+            api_key: opt_string("api_key")?,
         });
     }
     Ok(entries)

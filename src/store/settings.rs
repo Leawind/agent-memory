@@ -108,6 +108,35 @@ impl Store {
             .filter_map(|e| e.usable())
             .collect())
     }
+
+    /// The ordered reranker candidate list (same shape and discipline as `embedding_models`).
+    pub const SETTING_RERANK_MODELS: &'static str = "rerank_models";
+
+    /// All configured reranker candidates, in priority order (disabled ones included).
+    pub fn rerank_entries(&self) -> Result<Vec<crate::rerank::RerankEntry>, String> {
+        let Some(raw) = self.settings_get(Self::SETTING_RERANK_MODELS)? else {
+            return Ok(Vec::new());
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("corrupt rerank_models JSON: {e}"))?;
+        let arr = value
+            .as_array()
+            .ok_or("corrupt rerank_models: not a JSON array")?;
+        Ok(arr
+            .iter()
+            .filter_map(crate::rerank::RerankEntry::from_json)
+            .collect())
+    }
+
+    /// The runtime reranker selection pool: enabled, fully specified candidates in priority order.
+    /// An empty list means reranking is off — search results keep their fused order.
+    pub fn rerank_configs(&self) -> Result<Vec<crate::rerank::RerankConfig>, String> {
+        Ok(self
+            .rerank_entries()?
+            .iter()
+            .filter_map(|e| e.usable())
+            .collect())
+    }
 }
 
 #[cfg(test)]

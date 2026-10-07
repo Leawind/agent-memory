@@ -11,9 +11,9 @@
 //! - `tag_list`      → `<count> <[*]name>[: <description>]`
 //! - `memory_list`   → header `total: N | offset: N`, rows `<id> [<tags>] <updated> <summary>`
 //! - `memory_search` → header `total_matches: N | offset: N | returned: N | mode: <mode>`,
-//!   optional flag lines (`semantic_fallback` / `semantic` / `hint` / `note`, only when they
-//!   apply), rows `<id> [<tags>] <updated> <score> <summary>` plus an indented `  > <snippet>`
-//!   continuation line
+//!   optional flag lines (`keyword_matches` / `semantic_fallback` / `semantic` / `reranked_by` /
+//!   `hint` / `note`, only when they apply), rows `<id> [<tags>] <updated> <score> <summary>`
+//!   plus an indented `  > <snippet>` continuation line
 
 use serde_json::Value;
 
@@ -94,6 +94,11 @@ fn render_memory_search(v: &Value) -> Option<String> {
     if let Some(semantic) = v.get("semantic").and_then(Value::as_str) {
         out.push_str("semantic: ");
         out.push_str(semantic);
+        out.push('\n');
+    }
+    if let Some(model) = v.get("reranked_by").and_then(Value::as_str) {
+        out.push_str("reranked_by: ");
+        out.push_str(model);
         out.push('\n');
     }
     for key in ["hint", "note"] {

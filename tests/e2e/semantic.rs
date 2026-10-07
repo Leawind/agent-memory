@@ -22,6 +22,43 @@ fn mock_memory_text(summary: &str, content: &str) -> String {
     format!("{}\n\n{}", summary.trim(), content.trim())
 }
 
+/// Read one HTTP request off the stream and return its JSON body (mock-service helper).
+fn read_json_body(stream: &mut std::net::TcpStream) -> Value {
+    // Read until the header-terminating delimiter
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while let Ok(1) = stream.read(&mut byte) {
+        buf.push(byte[0]);
+        if buf.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let head = String::from_utf8_lossy(&buf);
+    let len: usize = head
+        .lines()
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .and_then(|v| v.trim().parse().ok())
+        })
+        .unwrap_or(0);
+    let mut body = vec![0u8; len];
+    if len > 0 {
+        let _ = stream.read_exact(&mut body);
+    }
+    serde_json::from_slice(&body).unwrap_or(json!({}))
+}
+
+/// Write one HTTP 200 JSON response (mock-service helper).
+fn respond_json(stream: &mut std::net::TcpStream, payload: &Value) {
+    let body = serde_json::to_string(payload).unwrap();
+    let http = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(http.as_bytes());
+}
+
 /// Single-threaded mock embedding service: OpenAI-compatible /embeddings, deterministic one-hot vectors.
 /// Returns the port plus a handle on every input text ever received (for asserting what the
 /// server actually sent — instruction prefixes among them).
@@ -33,29 +70,7 @@ fn spawn_mock_embedding() -> (u16, Arc<Mutex<Vec<String>>>) {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            // Read until the header-terminating delimiter
-            let mut buf = Vec::new();
-            let mut byte = [0u8; 1];
-            while let Ok(1) = stream.read(&mut byte) {
-                buf.push(byte[0]);
-                if buf.ends_with(b"\r\n\r\n") {
-                    break;
-                }
-            }
-            let head = String::from_utf8_lossy(&buf);
-            let len: usize = head
-                .lines()
-                .find_map(|l| {
-                    l.to_ascii_lowercase()
-                        .strip_prefix("content-length:")
-                        .and_then(|v| v.trim().parse().ok())
-                })
-                .unwrap_or(0);
-            let mut body = vec![0u8; len];
-            if len > 0 {
-                let _ = stream.read_exact(&mut body);
-            }
-            let parsed: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            let parsed = read_json_body(&mut stream);
             let inputs = parsed["input"].as_array().cloned().unwrap_or_default();
             seen.lock()
                 .unwrap()
@@ -71,12 +86,41 @@ fn spawn_mock_embedding() -> (u16, Arc<Mutex<Vec<String>>>) {
                     json!({ "index": i, "embedding": vec })
                 })
                 .collect();
-            let payload = serde_json::to_string(&json!({ "data": data })).unwrap();
-            let http = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-                payload.len()
-            );
-            let _ = stream.write_all(http.as_bytes());
+            respond_json(&mut stream, &json!({ "data": data }));
+        }
+    });
+    (port, handle)
+}
+
+/// Single-threaded mock reranker: Cohere-style /rerank that scores document i with `i` —
+/// descending sort therefore REVERSES the incoming (fused) order, making the reorder visible.
+/// Records every (query, documents) pair it saw.
+type SeenRerank = Arc<Mutex<Vec<(String, Vec<String>)>>>;
+
+fn spawn_mock_reranker() -> (u16, SeenRerank) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("mock reranker bind");
+    let port = listener.local_addr().expect("mock addr").port();
+    let seen: SeenRerank = Arc::new(Mutex::new(Vec::new()));
+    let handle = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let parsed = read_json_body(&mut stream);
+            let query = parsed["query"].as_str().unwrap_or_default().to_string();
+            let docs: Vec<String> = parsed["documents"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|v| v.as_str().unwrap_or_default().to_string())
+                .collect();
+            seen.lock().unwrap().push((query.clone(), docs.clone()));
+            let results: Vec<Value> = docs
+                .iter()
+                .enumerate()
+                .map(|(i, _)| json!({ "index": i, "relevance_score": i as f64 }))
+                .collect();
+            respond_json(&mut stream, &json!({ "results": results }));
         }
     });
     (port, handle)
@@ -787,6 +831,161 @@ fn rest_create_reports_similar_to_and_merge_route_works() {
         merged["content"].as_str().unwrap().contains(&twin_content),
         "the target content must carry the absorbed body"
     );
+
+    drop(server);
+    cleanup(&db);
+}
+
+/// The rerank stage: a configured cross-encoder re-orders the candidate pool (the response
+/// names it via reranked_by and scores switch to the reranker scale), explicit keyword mode
+/// keeps its deterministic order, and a reranker that is down silently leaves the fused order.
+#[test]
+fn reranker_reorders_and_degrades() {
+    let db = temp_db("rerank");
+    cleanup(&db);
+    let (rerank_port, seen) = spawn_mock_reranker();
+    let server = HttpProc::start(&db, "rerank");
+    let port = server.port;
+
+    // No embedding configuration on purpose: auto = keyword recall + rerank stage, which keeps
+    // the reranker useful even where semantic recall is off.
+    put_settings(
+        port,
+        json!({ "rerank_models": [{
+            "base_url": format!("http://127.0.0.1:{rerank_port}/v1"),
+            "model": "mock-rerank"
+        }] }),
+    );
+
+    // Three keyword hits with a deterministic fused order (summary hits outweigh content hits):
+    // m1 (summary + content) > m2 (summary only) > m3 (content only)
+    for (summary, content) in [
+        ("alpha one", "alpha body"),
+        ("alpha two", ""),
+        ("zzz three", "alpha body text"),
+    ] {
+        let (status, resp, _) = request(
+            port,
+            "POST",
+            "/api/memories",
+            Some(
+                &serde_json::to_string(&json!({ "summary": summary, "content": content })).unwrap(),
+            ),
+        );
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+    }
+    let fused = |mode: &str| {
+        let (status, body, _) = request(
+            port,
+            "GET",
+            &format!(
+                "/api/memories?query={}&limit=10{}",
+                encodeURIComponent("alpha"),
+                mode
+            ),
+            None,
+        );
+        assert_eq!(status, 200);
+        json_body(&body)
+    };
+
+    // Auto: the reranker reverses the fused order (mock scores document i with i) and names
+    // itself; the scores switch to the reranker scale
+    let out = fused("");
+    assert_eq!(out["reranked_by"], "mock-rerank", "{out}");
+    let order: Vec<String> = out["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(order, vec!["zzz three", "alpha two", "alpha one"]);
+    let scores: Vec<i64> = out["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["score"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        scores,
+        vec![20_000, 10_000, 0],
+        "relevance i (fused position) scaled by 10000, sorted descending"
+    );
+    // The reranker saw the query and the summary+content documents
+    let seen_now = seen.lock().unwrap();
+    let (query, docs) = &seen_now[seen_now.len() - 1];
+    assert_eq!(query, "alpha");
+    assert!(docs.iter().any(|d| d.contains("alpha one")));
+    assert!(docs.iter().any(|d| d.contains("alpha body text")));
+    // No content ever leaks through the rerank stage either
+    assert!(out["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r.get("content").is_none()));
+
+    // Explicit keyword mode: deterministic keyword order, no rerank stage
+    let out = fused("&mode=keyword");
+    assert!(out.get("reranked_by").is_none());
+    let order: Vec<&str> = out["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap())
+        .collect();
+    assert_eq!(order, vec!["alpha one", "alpha two", "zzz three"]);
+
+    // Reranker down: auto silently keeps the fused order (degradation, not failure)
+    let dead = {
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        l.local_addr().unwrap().port()
+    };
+    put_settings(
+        port,
+        json!({ "rerank_models": [{
+            "base_url": format!("http://127.0.0.1:{dead}/v1"),
+            "model": "mock-rerank"
+        }] }),
+    );
+    let out = fused("");
+    assert!(out.get("reranked_by").is_none(), "{out}");
+    let order: Vec<&str> = out["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap())
+        .collect();
+    assert_eq!(order, vec!["alpha one", "alpha two", "zzz three"]);
+
+    // Connection test reports per-candidate health
+    let (status, body, _) = request(port, "POST", "/api/rerank/test", None);
+    assert_eq!(status, 200);
+    let test = json_body(&body);
+    assert_eq!(test["ok"], false, "the only candidate is down");
+    assert_eq!(test["results"][0]["ok"], false);
+
+    let (mock_port, _seen2) = spawn_mock_reranker();
+    put_settings(
+        port,
+        json!({ "rerank_models": [{
+            "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+            "model": "mock-rerank"
+        }] }),
+    );
+    let (status, body, _) = request(port, "POST", "/api/rerank/test", None);
+    assert_eq!(status, 200);
+    let test = json_body(&body);
+    assert_eq!(test["ok"], true);
+    assert_eq!(test["results"][0]["ok"], true);
+    assert_eq!(test["results"][0]["scored"], 1);
+
+    // Reranker settings roundtrip: canonical entries echoed
+    let (_, body, _) = request(port, "GET", "/api/settings", None);
+    let settings = json_body(&body);
+    let models = settings["rerank_models"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["model"], "mock-rerank");
+    assert_eq!(models[0]["enabled"], true);
 
     drop(server);
     cleanup(&db);

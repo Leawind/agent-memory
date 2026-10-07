@@ -244,12 +244,23 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     // The tag expression (leaves, regex atoms and operators alike) narrows the ranked
     // candidates per memory tag set — including the vector-only hits the fusion introduced
-    let hits = match &tag_expr {
+    let hits: Vec<search::Hit> = match &tag_expr {
         Some(expr) => hits
             .into_iter()
             .filter(|h| expr.eval(&memories[h.idx].tags))
             .collect(),
         None => hits,
+    };
+
+    // Rerank stage: a configured cross-encoder re-scores the candidate pool (recall wide,
+    // rerank narrow), giving one calibrated relevance scale across both channels. Explicit
+    // keyword mode keeps its deterministic keyword order; everywhere else the fused order is
+    // the silent fallback when no reranker answers. Filtering runs first so no rerank work is
+    // spent on candidates the tag expression would drop anyway.
+    let (hits, reranked_by) = if matches!(mode, SearchMode::Auto | SearchMode::Hybrid) {
+        rerank_pass(st, hits, &memories, &query)
+    } else {
+        (hits, None)
     };
 
     let total = hits.len() as u64;
@@ -288,6 +299,9 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // this is the fact a caller cannot derive from the response itself
     if let Some(model) = &vector_model {
         out["embedding_model"] = json!(model);
+    }
+    if let Some(model) = &reranked_by {
+        out["reranked_by"] = json!(model);
     }
     // Only hybrid fuses two channels; in keyword mode the count would just duplicate total_matches
     if used_hybrid {
@@ -790,4 +804,69 @@ fn semantic_pass(
         true,
         Some(cfg.model.clone()),
     )
+}
+
+/// Rerank stage: the fused candidate head goes through the configured cross-encoder(s), which
+/// re-order it by calibrated relevance; the pool tail keeps its fused order behind the reranked
+/// head. Hit scores switch to the reranker scale (relevance × 10 000) for the reranked head —
+/// score is an ordering value in every mode, never comparable across responses. Every failure
+/// (no configuration, all candidates down, malformed answer) keeps the incoming order: reranking
+/// is an improvement, never a dependency. Returns `(hits, the reranker that answered)`.
+fn rerank_pass(
+    st: &Store,
+    hits: Vec<search::Hit>,
+    memories: &[crate::model::Memory],
+    query: &str,
+) -> (Vec<search::Hit>, Option<String>) {
+    let configs = match st.rerank_configs() {
+        Ok(configs) => configs,
+        Err(e) => {
+            eprintln!("rerank skipped (cannot read reranker config): {e}");
+            return (hits, None);
+        }
+    };
+    if configs.is_empty() || hits.len() < 2 {
+        return (hits, None);
+    }
+    let mut iter = hits.into_iter();
+    let mut slots: Vec<Option<search::Hit>> = (&mut iter)
+        .take(crate::rerank::CANDIDATE_POOL)
+        .map(Some)
+        .collect();
+    let tail: Vec<search::Hit> = iter.collect();
+    let documents: Vec<String> = slots
+        .iter()
+        .map(|slot| {
+            let h = slot.as_ref().expect("slot filled at construction");
+            // The reranker reads the same text the embedding side sees: title + blank line + content
+            crate::embed::embed_memory_text(&memories[h.idx].summary, &memories[h.idx].content)
+        })
+        .collect();
+    let scored = crate::rerank::RERANK_FAILOVER.first_available(&configs, |cfg| {
+        crate::rerank::rerank(cfg, query, &documents, crate::rerank::RERANK_TIMEOUT)
+    });
+    match scored {
+        Ok((_, cfg, scores)) => {
+            let reranked: Vec<search::Hit> = scores
+                .into_iter()
+                .map(|(doc_idx, relevance)| {
+                    let mut hit = slots[doc_idx]
+                        .take()
+                        .expect("every index is scored exactly once");
+                    hit.score = (relevance * 10_000.0).round() as i64;
+                    hit
+                })
+                .collect();
+            let tail = tail.into_iter().chain(slots.into_iter().flatten());
+            (
+                reranked.into_iter().chain(tail).collect(),
+                Some(cfg.model.clone()),
+            )
+        }
+        Err(e) => {
+            eprintln!("rerank skipped (all rerankers unavailable): {e}");
+            let head = slots.into_iter().flatten();
+            (head.into_iter().chain(tail).collect(), None)
+        }
+    }
 }
