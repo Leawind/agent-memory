@@ -1,31 +1,42 @@
-// EmbeddingSettingsCard state-machine tests: the card mirrors the server's own state
-// (effective config = switch on AND base_url AND model; health = probe; coverage = stats).
-// Mounts the card directly with props; fetch is mocked per route.
+// EmbeddingSettingsCard tests for the multi-candidate editor: ordered list editing, canonical
+// save payload, per-candidate probe verdicts, identity-change warning, and per-model cache
+// management (backfill loop / delete-with-confirm). Mounts the card directly; fetch is mocked
+// per route.
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import { setMemoryUILocale } from '../../index'
 import EmbeddingSettingsCard from './EmbeddingSettingsCard.vue'
-import type { StatsInfo } from '../../types'
+import type { EmbedModelEntry, StatsInfo, VectorCacheInfo } from '../../types'
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) }
 }
 
-const COVERAGE: NonNullable<StatsInfo['embedding']> = { enabled: true, model: 'bge-m3', embedded: 2, pending: 0 }
+const MODEL: EmbedModelEntry = {
+  enabled: true,
+  base_url: 'http://svc:9/v1',
+  model: 'bge-m3',
+  api_key: 'key',
+  query_prefix: null,
+  passage_prefix: null,
+  min_similarity: 0.4,
+}
 
-function makeProps(over: Partial<ConstructorParameters<typeof EmbeddingSettingsCard>[0]> = {}) {
+const STATS: StatsInfo = {
+  path: 'memory.db',
+  memories: 2,
+  tags: 0,
+  file_size: 0,
+  schema_version: 2,
+  embedding: { enabled: true, model: 'bge-m3', embedded: 2, pending: 0 },
+}
+
+function makeProps(over: { models?: EmbedModelEntry[]; stats?: StatsInfo | null } = {}) {
   return {
-    embeddingEnabled: true,
-    embeddingBaseUrl: 'http://svc:9/v1',
-    embeddingModel: 'bge-m3',
-    embeddingApiKey: 'key',
-    embeddingQueryPrefix: '',
-    embeddingPassagePrefix: '',
-    embeddingMinSimilarity: '',
-    stats: { embedding: COVERAGE } as StatsInfo | null,
-    compact: false,
-    ...over,
+    models: over.models ?? [MODEL],
+    stats: 'stats' in over ? over.stats! : STATS,
   }
 }
 
@@ -49,9 +60,7 @@ function recordFetch(routes: Array<(r: Recorded) => unknown | undefined>) {
       for (const route of routes) {
         const out = route(rec)
         if (out === undefined) continue
-        // A route may hand back a Promise it controls (to hold a response in flight); pass it
-        // through untouched — wrapping it here would stringify it into an empty object
-        return out instanceof Promise ? out : Promise.resolve(jsonResponse(out))
+        return Promise.resolve(jsonResponse(out))
       }
       return Promise.resolve(jsonResponse({}))
     }),
@@ -59,223 +68,224 @@ function recordFetch(routes: Array<(r: Recorded) => unknown | undefined>) {
   return calls
 }
 
-function mountCard(props = makeProps()) {
-  return mount(EmbeddingSettingsCard, { props, global: { plugins: [ElementPlus] } })
+const CACHE: VectorCacheInfo = { key: 'bge-m3', model: 'bge-m3', embedded: 3, pending: 0, configured: true }
+
+function cacheRoute(caches: VectorCacheInfo[]) {
+  return (r: Recorded) => (r.url.includes('/api/embeddings/caches') && r.method !== 'DELETE' ? { caches } : undefined)
 }
 
-function badge(wrapper: ReturnType<typeof mountCard>) {
+async function mountCard(props = makeProps(), routes: Array<(r: Recorded) => unknown | undefined> = []) {
+  // Caller routes come first: the default caches route is the catch-all fallback
+  const calls = recordFetch([...routes, cacheRoute([CACHE])])
+  const wrapper = mount(EmbeddingSettingsCard, { props, global: { plugins: [ElementPlus] } })
+  await flushPromises() // settle the caches fetch fired on mount
+  return { wrapper, calls }
+}
+
+function badge(wrapper: ReturnType<typeof mount>) {
   return wrapper.find('.el-card__header .el-tag').text()
 }
 
-function saveButton(wrapper: ReturnType<typeof mountCard>) {
+function saveButton(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('button').find((b) => b.text() === '保存并检测')!
 }
 
-async function fillInput(wrapper: ReturnType<typeof mountCard>, index: number, value: string) {
-  await wrapper.findAll('.config-form input')[index].setValue(value)
+/** The model input of one entry (the el-switch also renders an input — always select by class) */
+function modelInput(wrapper: ReturnType<typeof mount>, entry = 0) {
+  return wrapper.findAll('.entry')[entry].find('.entry-model input')!
+}
+/** The five field inputs of one entry: baseUrl, apiKey, minSimilarity, queryPrefix, passagePrefix */
+function fieldInputs(wrapper: ReturnType<typeof mount>, entry = 0) {
+  return wrapper.findAll('.entry')[entry].findAll('.entry-fields input')
 }
 
 beforeEach(() => {
   setMemoryUILocale('zh')
 })
 
-describe('EmbeddingSettingsCard states', () => {
-  it('shows the config form permanently while unconfigured and keeps the switch disabled', () => {
-    const calls = recordFetch([])
-    const wrapper = mountCard(
-      makeProps({
-        embeddingEnabled: false,
-        embeddingBaseUrl: '',
-        embeddingModel: '',
-        embeddingApiKey: '',
-        stats: { embedding: { enabled: false } },
-      }),
+describe('EmbeddingSettingsCard multi-candidate editor', () => {
+  it('starts empty and unconfigured, with the editor ready and no requests beyond the cache list', async () => {
+    const { wrapper, calls } = await mountCard(
+      makeProps({ models: [], stats: { ...STATS, embedding: { enabled: false } } }),
+      [],
     )
     expect(badge(wrapper)).toBe('未配置')
-    expect(wrapper.find('.el-switch').classes()).toContain('is-disabled')
-    expect(wrapper.find('.config-form').exists()).toBe(true)
-    expect(wrapper.text()).toContain('语义')
-    // A save on an untouched empty form is a no-op: disabled
+    expect(wrapper.findAll('.entry').length).toBe(0)
     expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
-    expect(calls).toHaveLength(0)
+    expect(wrapper.text()).toContain('语义')
+    expect(calls.every((c) => c.url.includes('/api/embeddings/caches'))).toBe(true)
     wrapper.unmount()
   })
 
-  it('saves only the five config fields while disabled and settles to the parked badge', async () => {
-    const calls = recordFetch([
-      (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
-    ])
-    const props = makeProps({
-      embeddingEnabled: false,
-      embeddingBaseUrl: '',
-      embeddingModel: '',
-      embeddingApiKey: '',
-      stats: { embedding: { enabled: false } },
-    })
-    const wrapper = mountCard(props)
-    await fillInput(wrapper, 0, 'http://svc:9/v1')
-    await fillInput(wrapper, 1, 'bge-m3')
+  it('adds a candidate and saves the canonical list, then probes because it is enabled', async () => {
+    const { wrapper, calls } = await mountCard(
+      makeProps({ models: [], stats: { ...STATS, embedding: { enabled: false } } }),
+      [
+        (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
+        (r) =>
+          r.url.includes('/api/embeddings/test')
+            ? { ok: true, results: [{ model: 'bge-m3-x', ok: true, dim: 1024, elapsed_ms: 42 }] }
+            : undefined,
+      ],
+    )
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '添加候选模型')!
+      .trigger('click')
+    await modelInput(wrapper).setValue('bge-m3-x')
+    await fieldInputs(wrapper)[0].setValue('http://svc:9/v1')
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     await saveButton(wrapper).trigger('click')
     await flushPromises()
-    // The switch is not the form's business: the PUT carries the five config fields only, and no
-    // probe runs while the switch is off (the server would reject it as not-configured)
+    await flushPromises()
     const put = calls.find((c) => c.method === 'PUT')!
     expect(JSON.parse(put.body!)).toEqual({
-      embedding_base_url: 'http://svc:9/v1',
-      embedding_model: 'bge-m3',
-      embedding_api_key: '',
-      embedding_query_prefix: '',
-      embedding_passage_prefix: '',
-      embedding_min_similarity: '',
+      embedding_models: [
+        {
+          enabled: true,
+          base_url: 'http://svc:9/v1',
+          model: 'bge-m3-x',
+          api_key: null,
+          query_prefix: null,
+          passage_prefix: null,
+          min_similarity: null,
+        },
+      ],
     })
-    expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(false)
+    expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(true)
     expect(wrapper.emitted('changed')).toHaveLength(1)
-    // The parent reload feeds the saved values back as props (both URL and model: that is what
-    // makes the config complete server-side) — the card settles on the parked badge, and the
-    // permanent form mirrors the saved values with its actions disabled again
-    await wrapper.setProps({ embeddingBaseUrl: 'http://svc:9/v1', embeddingModel: 'bge-m3', embeddingApiKey: '' })
-    await flushPromises()
-    expect(badge(wrapper)).toBe('已停用')
-    const inputs = wrapper.findAll('.config-form input')
-    expect((inputs[0].element as HTMLInputElement).value).toBe('http://svc:9/v1')
-    expect((inputs[1].element as HTMLInputElement).value).toBe('bge-m3')
-    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
     wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('reverts an in-progress draft back to the server state without any request', async () => {
-    const calls = recordFetch([])
-    const wrapper = mountCard()
-    await fillInput(wrapper, 1, 'edited-model')
+  it('reverts an in-progress draft without any write request', async () => {
+    const { wrapper, calls } = await mountCard()
+    await modelInput(wrapper).setValue('edited-model')
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     await wrapper
       .findAll('button')
       .find((b) => b.text() === '还原')!
       .trigger('click')
-    const inputs = wrapper.findAll('.config-form input')
-    expect((inputs[1].element as HTMLInputElement).value).toBe('bge-m3')
+    expect((modelInput(wrapper).element as HTMLInputElement).value).toBe('bge-m3')
     expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
-    expect(calls).toHaveLength(0)
+    expect(calls.every((c) => c.method !== 'PUT')).toBe(true)
     wrapper.unmount()
   })
 
-  it('applies the intent switch immediately with a dedicated PUT', async () => {
-    const calls = recordFetch([
-      (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
-    ])
-    const wrapper = mountCard(makeProps({ embeddingEnabled: false }))
-    expect(badge(wrapper)).toBe('已停用')
-    await wrapper.find('.el-switch').trigger('click')
-    await flushPromises()
-    const put = calls.find((c) => c.method === 'PUT')!
-    expect(JSON.parse(put.body!)).toEqual({ embedding_enabled: true })
-    expect(wrapper.emitted('changed')).toHaveLength(1)
-    wrapper.unmount()
-  })
-
-  it('probes on demand and turns the badge healthy with the dimension', async () => {
-    const calls = recordFetch([
-      (r) => (r.url.includes('/api/embeddings/test') ? { ok: true, dim: 1024, elapsed_ms: 42 } : undefined),
-    ])
-    const wrapper = mountCard()
+  it('shows per-candidate probe verdicts and the broken badge when a candidate fails', async () => {
+    const { wrapper } = await mountCard(
+      makeProps({
+        models: [MODEL, { ...MODEL, model: 'dead-model', enabled: true, base_url: 'http://dead:9/v1' }],
+      }),
+      [
+        (r) =>
+          r.url.includes('/api/embeddings/test')
+            ? {
+                ok: false,
+                results: [
+                  { model: 'bge-m3', ok: true, dim: 1024, elapsed_ms: 42 },
+                  { model: 'dead-model', ok: false, error: 'connection refused' },
+                ],
+              }
+            : undefined,
+      ],
+    )
     expect(badge(wrapper)).toBe('未检测')
-    expect(wrapper.text()).toContain('向量覆盖 2/2')
     await wrapper
       .findAll('button')
       .find((b) => b.text() === '检测连接')!
       .trigger('click')
     await flushPromises()
-    expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(true)
-    expect(badge(wrapper)).toBe('已生效')
-    expect(wrapper.text()).toContain('1024 维')
-    // The label flips once a probe has settled
-    expect(wrapper.findAll('button').some((b) => b.text() === '重新检测')).toBe(true)
+    expect(badge(wrapper)).toBe('部分异常')
+    const probes = wrapper.find('.probe-results').text()
+    expect(probes).toContain('bge-m3')
+    expect(probes).toContain('1024 维')
+    expect(probes).toContain('dead-model')
+    expect(probes).toContain('connection refused')
     wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('surfaces a broken probe verbatim under the broken badge', async () => {
-    recordFetch([
+  it('warns about vector invalidation when an identity changes, and preserves floors on save', async () => {
+    const { wrapper, calls } = await mountCard(makeProps(), [
+      (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
       (r) =>
         r.url.includes('/api/embeddings/test')
-          ? { ok: false, error: 'embedding service returned 401: bad key' }
+          ? { ok: true, results: [{ model: 'new-model', ok: true, dim: 8 }] }
           : undefined,
     ])
-    const wrapper = mountCard()
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === '检测连接')!
-      .trigger('click')
-    await flushPromises()
-    expect(badge(wrapper)).toBe('服务异常')
-    expect(wrapper.find('.broken-err').text()).toContain('bad key')
-    wrapper.unmount()
-  })
-
-  it('warns about vector invalidation when the model changes and probes after saving', async () => {
-    const calls = recordFetch([
-      (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
-      (r) => (r.url.includes('/api/embeddings/test') ? { ok: true, dim: 8 } : undefined),
-    ])
-    const wrapper = mountCard(
-      makeProps({
-        embeddingModel: 'old-model',
-        stats: { embedding: { ...COVERAGE, model: 'old-model', embedded: 3 } },
-      }),
-    )
-    await fillInput(wrapper, 1, 'new-model')
+    await modelInput(wrapper).setValue('new-model')
     expect(wrapper.text()).toContain('更换模型或前缀将使 3 条向量失效')
-    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     await saveButton(wrapper).trigger('click')
     await flushPromises()
     await flushPromises()
-    const put = calls.find((c) => c.method === 'PUT')!
-    expect(JSON.parse(put.body!)).toEqual({
-      embedding_base_url: 'http://svc:9/v1',
-      embedding_model: 'new-model',
-      embedding_api_key: 'key',
-      embedding_query_prefix: '',
-      embedding_passage_prefix: '',
-      embedding_min_similarity: '',
-    })
-    // Enabled: the save is followed by a probe; the permanent form stays with its actions idle
+    const put = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!)
+    expect(put.embedding_models[0].model).toBe('new-model')
+    expect(put.embedding_models[0].min_similarity).toBe(0.4)
+    expect(put.embedding_models[0].api_key).toBe('key')
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(true)
-    expect(badge(wrapper)).toBe('已生效')
-    expect(wrapper.find('.config-form').exists()).toBe(true)
     wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('shows live progress while a backfill drains the queue', async () => {
-    // Hold the second batch in flight so the progress line can be observed mid-run (it clears
-    // in the finally once the queue drains)
-    let releaseSecond: (v: unknown) => void = () => {}
+  it('reorders candidates: the saved list order is the new failover priority', async () => {
+    const second: EmbedModelEntry = { ...MODEL, model: 'e5', enabled: false, api_key: null }
+    const { wrapper, calls } = await mountCard(makeProps({ models: [MODEL, second] }), [
+      (r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined),
+    ])
+    // Move the second entry up
+    await wrapper.findAll('.entry')[1].findAll('button')[0].trigger('click')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+    const put = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!)
+    expect(put.embedding_models.map((e: EmbedModelEntry) => e.model)).toEqual(['e5', 'bge-m3'])
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('backfills one cache identity: loops with model_key until the queue drains', async () => {
     let n = 0
-    recordFetch([
+    const { wrapper, calls } = await mountCard(makeProps(), [
+      cacheRoute([{ ...CACHE, pending: 2 }]),
       (r) => {
         if (!r.url.includes('/api/embeddings/backfill')) return undefined
         n += 1
-        if (n === 1) return { configured: true, processed: 1, remaining: 1 }
-        if (n === 2) return new Promise((res) => (releaseSecond = res))
-        return { configured: true, processed: 0, remaining: 0 }
+        return n === 1
+          ? { configured: true, processed: 1, remaining: 1 }
+          : { configured: true, processed: 0, remaining: 1 }
       },
     ])
-    const wrapper = mountCard(makeProps({ stats: { embedding: { ...COVERAGE, embedded: 0, pending: 2 } } }))
+    expect(wrapper.find('.cache-section').exists()).toBe(true)
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === '补跑向量化')!
+      .find((b) => b.text() === '补跑')!
       .trigger('click')
     await flushPromises()
     await flushPromises()
-    expect(wrapper.text()).toContain('补跑中 1/2')
-    // Resolve the held batch with a Response-shaped object (the api layer calls res.text())
-    releaseSecond(jsonResponse({ configured: true, processed: 1, remaining: 0 }))
-    await flushPromises()
-    await flushPromises()
-    // Progress clears; the parent reload feeds the drained coverage back through props
+    const posts = calls.filter((c) => c.url.includes('/api/embeddings/backfill'))
+    expect(posts.length).toBe(2)
+    expect(JSON.parse(posts[0].body!)).toEqual({ model_key: 'bge-m3' })
     expect(wrapper.emitted('changed')).toHaveLength(1)
-    await wrapper.setProps({ stats: { embedding: { ...COVERAGE, embedded: 2, pending: 0 } } as StatsInfo })
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('deletes a cache identity only after confirmation, carrying model_key on DELETE', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const { wrapper, calls } = await mountCard(makeProps(), [
+      (r) => (r.url.includes('/api/embeddings/caches') && r.method === 'DELETE' ? { deleted: 3 } : undefined),
+    ])
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '删除缓存')!
+      .trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('向量覆盖 2/2')
+    await flushPromises()
+    expect(spy).toHaveBeenCalled()
+    const del = calls.find((c) => c.method === 'DELETE')!
+    expect(JSON.parse(del.body!)).toEqual({ model_key: 'bge-m3' })
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+    spy.mockRestore()
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })

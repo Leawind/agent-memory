@@ -10,7 +10,8 @@ export interface ApiClient {
   get: <T = void>(path: string) => Promise<T>
   post: <T = void>(path: string, body?: unknown) => Promise<T>
   put: <T = void>(path: string, body?: unknown) => Promise<T>
-  del: <T = void>(path: string) => Promise<T>
+  /** DELETE with an optional JSON body (a few routes take arguments, e.g. cache deletion) */
+  del: <T = void>(path: string, body?: unknown) => Promise<T>
   /** Binary download (e.g. backup export); throws on non-2xx with the message taken from the server's error field */
   getBlob: (path: string) => Promise<Blob>
 }
@@ -55,7 +56,11 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
     post: <T = void>(path: string, body?: unknown) =>
       api<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) }),
     put: <T = void>(path: string, body?: unknown) => api<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
-    del: <T = void>(path: string) => api<T>(path, { method: 'DELETE' }),
+    del: <T = void>(path: string, body?: unknown) =>
+      api<T>(path, {
+        method: 'DELETE',
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
     getBlob,
   }
 }

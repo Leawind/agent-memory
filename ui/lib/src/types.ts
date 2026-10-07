@@ -83,12 +83,82 @@ export interface MemorySearchResp {
   results: SearchResult[]
 }
 
+/** One ordered embedding candidate (settings.embedding_models element, canonical server shape) */
+export interface EmbedModelEntry {
+  enabled: boolean
+  base_url: string
+  model: string
+  api_key?: string | null
+  query_prefix?: string | null
+  passage_prefix?: string | null
+  /** Absent/null = the server-side built-in default floor */
+  min_similarity?: number | null
+}
+
+/** One ordered reranker candidate (settings.rerank_models element) */
+export interface RerankModelEntry {
+  enabled: boolean
+  base_url: string
+  model: string
+  api_key?: string | null
+}
+
+/** Per-candidate verdict from the connection tests */
+export interface EmbedTestResult {
+  model: string
+  ok: boolean
+  dim?: number
+  elapsed_ms?: number
+  error?: string
+}
+
+export interface EmbedTestResp {
+  ok: boolean
+  results: EmbedTestResult[]
+}
+
+export interface RerankTestResult {
+  model: string
+  ok: boolean
+  scored?: number
+  elapsed_ms?: number
+  error?: string
+}
+
+export interface RerankTestResp {
+  ok: boolean
+  results: RerankTestResult[]
+}
+
+/** One vector-cache identity (GET /api/embeddings/caches): keys are model+prefix identities */
+export interface VectorCacheInfo {
+  key: string
+  /** Display convenience: the raw model name with identity suffixes stripped */
+  model: string
+  embedded: number
+  pending: number
+  /** Whether an enabled settings entry matches this key (unconfigured caches can only be deleted) */
+  configured: boolean
+}
+
+export interface VectorCachesResp {
+  caches: VectorCacheInfo[]
+}
+
 /** stats.embedding: semantic search vector coverage (enabled=false means not enabled) */
 export interface EmbeddingCoverage {
   enabled: boolean
   model?: string
   embedded?: number
   pending?: number
+  /** Per-candidate coverage (the head candidate's numbers stay top-level for convenience) */
+  models?: Array<{
+    key: string
+    model: string
+    enabled: boolean
+    embedded?: number
+    pending?: number
+  }>
 }
 
 export interface EmbedBackfillResp {
@@ -96,6 +166,10 @@ export interface EmbedBackfillResp {
   processed?: number
   remaining?: number
   error?: string
+}
+
+export interface VectorCacheDeleteResp {
+  deleted: number
 }
 
 export interface EmbedTestResp {

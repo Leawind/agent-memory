@@ -1,6 +1,16 @@
 // Ops endpoints: stats / doctor / import & export / version
 import type { ApiClient } from './client'
-import type { DoctorResp, EmbedBackfillResp, EmbedTestResp, HealthInfo, ImportResp, StatsInfo } from '../types'
+import type {
+  DoctorResp,
+  EmbedBackfillResp,
+  EmbedTestResp,
+  HealthInfo,
+  ImportResp,
+  RerankTestResp,
+  StatsInfo,
+  VectorCacheDeleteResp,
+  VectorCachesResp,
+} from '../types'
 
 export function getStats(client: ApiClient): Promise<StatsInfo> {
   return client.get<StatsInfo>('/api/stats')
@@ -23,12 +33,31 @@ export function importBackup(client: ApiClient, dump: unknown): Promise<ImportRe
   return client.post<ImportResp>('/api/import', dump)
 }
 
-/** Backfill a batch of semantic search vectors, returning processed / remaining (the UI loops until remaining=0) */
-export function backfillEmbeddings(client: ApiClient): Promise<EmbedBackfillResp> {
-  return client.post<EmbedBackfillResp>('/api/embeddings/backfill', {})
+/**
+ * Backfill a batch of semantic search vectors, returning processed / remaining (the UI loops
+ * until remaining=0). With modelKey, drains that specific cache identity instead of the
+ * active candidate's.
+ */
+export function backfillEmbeddings(client: ApiClient, modelKey?: string): Promise<EmbedBackfillResp> {
+  return client.post<EmbedBackfillResp>('/api/embeddings/backfill', modelKey ? { model_key: modelKey } : {})
 }
 
-/** Run a connectivity test using the embedding config saved on the server */
+/** Run a connectivity test against every enabled embedding candidate saved on the server */
 export function testEmbeddings(client: ApiClient): Promise<EmbedTestResp> {
   return client.post<EmbedTestResp>('/api/embeddings/test', {})
+}
+
+/** Run a one-document rerank against every enabled reranker candidate saved on the server */
+export function testRerankers(client: ApiClient): Promise<RerankTestResp> {
+  return client.post<RerankTestResp>('/api/rerank/test', {})
+}
+
+/** List the vector caches per identity (rows with embedded/pending, configured or leftover) */
+export function listVectorCaches(client: ApiClient): Promise<VectorCachesResp> {
+  return client.get<VectorCachesResp>('/api/embeddings/caches')
+}
+
+/** Delete one cache identity's vectors outright (they go pending for backfill afterwards) */
+export function deleteVectorCache(client: ApiClient, modelKey: string): Promise<VectorCacheDeleteResp> {
+  return client.del<VectorCacheDeleteResp>('/api/embeddings/caches', { model_key: modelKey })
 }

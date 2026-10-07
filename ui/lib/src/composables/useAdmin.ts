@@ -61,18 +61,19 @@ export function useAdmin() {
 
   /**
    * Loop backfilling semantic search vectors until the queue drains (a small batch per request;
-   * bounded server-side, serial on the frontend).
+   * bounded server-side, serial on the frontend). With `modelKey`, drains that specific cache
+   * identity instead of the active candidate's.
    * `onProgress` reports cumulative done and the estimated total after each batch, so callers
    * can show real progress instead of a bare spinner.
    * Returns the total number backfilled; unconfigured / server errors are thrown directly,
    * toasted at the panel layer.
    */
-  async function backfill(onProgress?: (done: number, total: number) => void): Promise<number> {
+  async function backfill(modelKey?: string, onProgress?: (done: number, total: number) => void): Promise<number> {
     backfilling.value = true
     try {
       let done = 0
       for (;;) {
-        const out = await backfillEmbeddings(client)
+        const out = await backfillEmbeddings(client, modelKey)
         if (!out.configured) throw new Error(t('access.embeddingNotConfigured'))
         if (out.error) throw new Error(out.error)
         done += out.processed ?? 0

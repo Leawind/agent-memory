@@ -100,12 +100,10 @@ describe('AdminPanel', () => {
     expect(createBtn).toBeTruthy()
     expect(createBtn!.element.closest('.el-card__header')).toBeNull()
     expect(createBtn!.element.closest('.el-card__body')).toBeTruthy()
-    // Semantic search card: status-first (unconfigured with the config form auto-open),
-    // coverage line driven by the server's effective config in stats
+    // Semantic search cards: the candidate editor (empty) plus the reranker card, status-first
     expect(html).toContain('语义搜索')
-    expect(html).toContain('未配置')
-    expect(html).toContain('向量覆盖 3/4')
-    expect(html).toContain('补跑向量化')
+    expect(html).toContain('重排')
+    expect(html).toContain('添加候选模型')
     // Missing-key fallback no longer appears (vue-i18n echoes the key itself when missing)
     expect(html).not.toContain('access.embedding')
     expect(html).not.toContain('access.identityCard')
@@ -127,11 +125,11 @@ describe('AdminPanel', () => {
     // v-show toggles inline display: exactly the active section's card is visible
     const displays = () =>
       wrapper.findAll('.admin-sections .el-card').map((c) => (c.element as HTMLElement).style.display)
-    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none'])
+    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none', 'none'])
     await items[4].trigger('click')
-    expect(displays()).toEqual(['none', 'none', 'none', 'none', ''])
+    expect(displays()).toEqual(['none', 'none', 'none', 'none', 'none', ''])
     await items[1].trigger('click')
-    expect(displays()).toEqual(['none', '', 'none', 'none', 'none'])
+    expect(displays()).toEqual(['none', '', '', 'none', 'none', 'none'])
     wrapper.unmount()
   })
 
@@ -230,9 +228,8 @@ describe('AdminPanel', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('embedding card: permanent config form saves fields only, settles parked', async () => {
+  it('embedding card: candidate editor saves the canonical list, then probes (entry enabled)', async () => {
     const settingsPuts: string[] = []
-    // The mock stores what a PUT saved and returns it on GET, like the real server
     const stored: Record<string, unknown> = {}
     vi.stubGlobal(
       'fetch',
@@ -246,6 +243,11 @@ describe('AdminPanel', () => {
         if (u.includes('/api/settings')) {
           return Promise.resolve(jsonResponse(stored))
         }
+        if (u.includes('/api/embeddings/test')) {
+          return Promise.resolve(
+            jsonResponse({ ok: true, results: [{ model: 'bge-m3-x', ok: true, dim: 1024, elapsed_ms: 42 }] }),
+          )
+        }
         return Promise.resolve(jsonResponse({}))
       }),
     )
@@ -254,44 +256,39 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // Nothing configured: the form is the primary flow, the switch is out of business
-    const modelInput = wrapper
-      .findAll('input')
-      .find((i) => i.attributes('placeholder') === 'BAAI/bge-m3 / bge-m3 / nomic-embed-text')!
-    expect(modelInput).toBeTruthy()
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存并检测')!
-    expect(saveBtn.attributes('disabled')).toBeDefined()
-    // The server only counts base_url AND model together as configured: fill both
+    // Switch to the semantic section and add one candidate through the editor
+    await wrapper.findAll('.admin-nav .nav-item')[1].trigger('click')
     await wrapper
-      .findAll('input')
-      .find((i) => i.attributes('placeholder') === 'https://api.siliconflow.cn/v1 或 http://127.0.0.1:11434/v1')!
-      .setValue('http://svc:9/v1')
-    await modelInput.setValue('bge-m3-x')
+      .findAll('button')
+      .find((b) => b.text() === '添加候选模型')!
+      .trigger('click')
+    await wrapper.findAll('.entry')[0].find('.entry-model input')!.setValue('bge-m3-x')
+    await wrapper.findAll('.entry')[0].findAll('.entry-fields input')[0].setValue('http://svc:9/v1')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存并检测')!
     expect(saveBtn.attributes('disabled')).toBeUndefined()
     await saveBtn.trigger('click')
     await flushPromises()
     await flushPromises()
-    // The intent switch is not the form's business: the PUT carries the five config fields only,
-    // and with the switch off no probe runs (the server rejects tests of non-effective config)
     expect(settingsPuts).toEqual([
       JSON.stringify({
-        embedding_base_url: 'http://svc:9/v1',
-        embedding_model: 'bge-m3-x',
-        embedding_api_key: '',
-        embedding_query_prefix: '',
-        embedding_passage_prefix: '',
-        embedding_min_similarity: '',
+        embedding_models: [
+          {
+            enabled: true,
+            base_url: 'http://svc:9/v1',
+            model: 'bge-m3-x',
+            api_key: null,
+            query_prefix: null,
+            passage_prefix: null,
+            min_similarity: null,
+          },
+        ],
       }),
     ])
-    expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/embeddings/test'))).toBe(
-      false,
-    )
-    // Configured but switch off: the parked state, and the permanent form mirrors the saved values
-    expect(wrapper.text()).toContain('已停用')
-    expect(wrapper.find('.config-form').exists()).toBe(true)
-    const configInputs = wrapper.findAll('.config-form input')
-    expect((configInputs[0].element as HTMLInputElement).value).toBe('http://svc:9/v1')
-    expect((configInputs[1].element as HTMLInputElement).value).toBe('bge-m3-x')
+    // An enabled candidate is probed right after the save
+    expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/embeddings/test'))).toBe(true)
+    // The editor mirrors the saved values with its actions disabled again
+    await flushPromises()
+    expect(saveBtn.attributes('disabled')).toBeDefined()
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
