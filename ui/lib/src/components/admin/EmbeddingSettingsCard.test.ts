@@ -22,6 +22,7 @@ function makeProps(over: Partial<ConstructorParameters<typeof EmbeddingSettingsC
     embeddingApiKey: 'key',
     embeddingQueryPrefix: '',
     embeddingPassagePrefix: '',
+    embeddingMinSimilarity: '',
     stats: { embedding: COVERAGE } as StatsInfo | null,
     compact: false,
     ...over,
@@ -126,6 +127,7 @@ describe('EmbeddingSettingsCard states', () => {
       embedding_api_key: '',
       embedding_query_prefix: '',
       embedding_passage_prefix: '',
+      embedding_min_similarity: '',
     })
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(false)
     expect(wrapper.emitted('changed')).toHaveLength(1)
@@ -222,7 +224,7 @@ describe('EmbeddingSettingsCard states', () => {
       }),
     )
     await fillInput(wrapper, 1, 'new-model')
-    expect(wrapper.text()).toContain('更换模型或指令前缀会使现有 3 条向量失效')
+    expect(wrapper.text()).toContain('更换模型或前缀将使 3 条向量失效')
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     await saveButton(wrapper).trigger('click')
     await flushPromises()
@@ -234,6 +236,7 @@ describe('EmbeddingSettingsCard states', () => {
       embedding_api_key: 'key',
       embedding_query_prefix: '',
       embedding_passage_prefix: '',
+      embedding_min_similarity: '',
     })
     // Enabled: the save is followed by a probe; the permanent form stays with its actions idle
     expect(calls.some((c) => c.url.includes('/api/embeddings/test'))).toBe(true)

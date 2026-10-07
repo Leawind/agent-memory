@@ -218,6 +218,31 @@ fn rest_api_end_to_end() {
     let (_, body, _) = request(port, "GET", "/api/stats", None);
     assert_eq!(json_body(&body)["memories"], 0);
 
+    // The similarity floor setting: roundtrip, and garbage values are rejected at write time
+    let (status, _, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{ "embedding_min_similarity": "0.45" }"#),
+    );
+    assert_eq!(status, 200);
+    let (_, body, _) = request(port, "GET", "/api/settings", None);
+    assert_eq!(json_body(&body)["embedding_min_similarity"], "0.45");
+    let (status, _, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{ "embedding_min_similarity": "abc" }"#),
+    );
+    assert_eq!(status, 400);
+    let (status, _, _) = request(
+        port,
+        "PUT",
+        "/api/settings",
+        Some(r#"{ "embedding_min_similarity": "3" }"#),
+    );
+    assert_eq!(status, 400);
+
     drop(server);
     cleanup(&db);
 }

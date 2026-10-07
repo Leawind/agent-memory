@@ -68,6 +68,7 @@
               :embedding-api-key="embeddingApiKey"
               :embedding-query-prefix="embeddingQueryPrefix"
               :embedding-passage-prefix="embeddingPassagePrefix"
+              :embedding-min-similarity="embeddingMinSimilarity"
               :stats="stats"
               :compact="compact"
               @changed="load"
@@ -142,6 +143,7 @@ const embeddingModel = ref('')
 const embeddingApiKey = ref('')
 const embeddingQueryPrefix = ref('')
 const embeddingPassagePrefix = ref('')
+const embeddingMinSimilarity = ref('')
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
@@ -180,6 +182,7 @@ async function load(): Promise<void> {
         embedding_api_key?: string | null
         embedding_query_prefix?: string | null
         embedding_passage_prefix?: string | null
+        embedding_min_similarity?: string | null
         default_instructions?: string | null
       }>('/api/settings'),
       api.get<import('../types').StatsInfo>('/api/stats'),
@@ -196,6 +199,7 @@ async function load(): Promise<void> {
     embeddingApiKey.value = settings?.embedding_api_key ?? ''
     embeddingQueryPrefix.value = settings?.embedding_query_prefix ?? ''
     embeddingPassagePrefix.value = settings?.embedding_passage_prefix ?? ''
+    embeddingMinSimilarity.value = settings?.embedding_min_similarity ?? ''
     stats.value = statsResp ?? null
   })
 }

@@ -94,15 +94,16 @@ describe('App shell', () => {
     await flushPromises()
     const countStatsCalls = () =>
       vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).includes('/api/stats')).length
-    // No stats requests while the dialog is unopened
-    expect(countStatsCalls()).toBe(0)
+    // The memories panel probes stats once on mount (semantic availability for the search box);
+    // the overview dialog fetches lazily on open — an increment, not a count from zero
+    const baseline = countStatsCalls()
 
     await wrapper.find('.brand-btn').trigger('click')
     await flushPromises()
     await flushPromises()
     const dialog = wrapper.find('.el-dialog')
     expect(dialog.isVisible()).toBe(true)
-    expect(countStatsCalls()).toBe(1)
+    expect(countStatsCalls()).toBe(baseline + 1)
     expect(dialog.text()).toContain('/tmp/m.db')
     wrapper.unmount()
   })

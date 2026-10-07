@@ -62,6 +62,18 @@ export function useMemories() {
 
   const searching = computed(() => isSearchMode(query.value))
 
+  /** Whether semantic recall is available server-side (shapes the search box's placeholder and
+   * what "search" means here). Probed once via /api/stats; failures leave keyword-only wording. */
+  const semanticReady = ref(false)
+  onMounted(() => {
+    client
+      .get<{ embedding?: { enabled?: boolean } }>('/api/stats')
+      .then((stats) => {
+        semanticReady.value = stats?.embedding?.enabled === true
+      })
+      .catch(() => {})
+  })
+
   // A change to the search term / tag expression is a new query intent: restart from page 1
   function onSearch() {
     page.value = 1
@@ -158,6 +170,7 @@ export function useMemories() {
     tagOptions,
     tagDescriptions,
     searching,
+    semanticReady,
     onSearch,
     reload,
     loadTagOptions,

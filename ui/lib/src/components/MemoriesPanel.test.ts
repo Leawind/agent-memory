@@ -33,10 +33,12 @@ const searchPayload = {
   ],
 }
 const tagsPayload = { tags: [{ name: 't1', count: 1, description: '测试标签' }] }
+const statsPayload = { embedding: { enabled: true, model: 'bge-m3', embedded: 1, pending: 0 } }
 
 function mockFetch(url: string | URL) {
   const u = String(url)
   if (u.startsWith('/api/tags')) return jsonResponse(tagsPayload)
+  if (u.includes('/api/stats')) return jsonResponse(statsPayload)
   if (u.includes('query=')) return jsonResponse(searchPayload)
   if (/\/api\/memories\/m\d+/.test(u)) return jsonResponse(detailPayload)
   return jsonResponse(listPayload)
@@ -87,8 +89,10 @@ describe('MemoriesPanel', () => {
   it('switches to search results when a query is entered', async () => {
     const wrapper = mount(MemoriesPanel)
     await flushPromises()
-    const input = wrapper.find('input[placeholder*="关键词"]')
+    // Semantic search is enabled server-side (stats): the placeholder says so
+    const input = wrapper.find('input[placeholder*="搜索"]')
     expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).placeholder).toContain('语义')
     await input.setValue('命中')
     await input.trigger('keyup.enter')
     await flushPromises()

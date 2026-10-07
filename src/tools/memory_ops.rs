@@ -749,7 +749,14 @@ fn semantic_pass(
         return (keyword_hits, false);
     };
     (
-        crate::embed::hybrid_hits(memories, keyword_hits, &table, &query_vec, vector_k),
+        crate::embed::hybrid_hits(
+            memories,
+            keyword_hits,
+            &table,
+            &query_vec,
+            vector_k,
+            cfg.min_similarity,
+        ),
         true,
     )
 }

@@ -14,7 +14,7 @@
       <div class="am-toolbar">
         <el-input
           :model-value="query"
-          :placeholder="t('memories.searchPlaceholder')"
+          :placeholder="semanticReady ? t('memories.searchPlaceholderSemantic') : t('memories.searchPlaceholder')"
           clearable
           class="search"
           @update:model-value="onQueryInput"
@@ -171,6 +171,7 @@ const {
   tagOptions,
   tagDescriptions,
   searching,
+  semanticReady,
   onSearch,
   reload,
   loadTagOptions,

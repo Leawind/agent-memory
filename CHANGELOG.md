@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **语义搜索**：语义召回通道新增余弦下限过滤（`embedding_min_similarity`，默认 0.30，0 为关闭；查询时过滤、不影响已存向量）——库小于候选上限时"任何查询都返回全库"的问题就此修复，MCP 与前端同享；管理界面语义搜索卡片新增该配置项
+- **前端**：搜索框占位符按语义搜索可用性动态显示；说明文本全面精简（字段标签去括号说明、提示语收敛为一句）
 - **REST**：写路径与 MCP 面共用同一段写后钩子（`tools::after_commit`）——REST 创建记忆现在同样返回 `similar_to` 语义查重提示；新增 `POST /api/memories/merge` 路由（复用 MCP `memory_merge` 处理器）；`memory_merge` 纳入回填触发条件，合并后目标向量立即补嵌
 - **前端**：编辑器对话框承接查重提示（创建后一键合并/保留两条）、新增"合并另一条"入口；搜索分页行显示关键词命中占比（hybrid 时）
 - **工具**：`memory_search` hybrid 模式先按余弦截断语义通道（约 2×limit、下限 20）再做 RRF 融合，`total_matches` 不再恒等于库总量；hybrid 时响应新增 `keyword_matches` 行，标明多少命中来自字面关键词、多少仅由语义通道带入

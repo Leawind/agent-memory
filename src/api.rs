@@ -217,6 +217,9 @@ pub fn handle(
                             "embedding_passage_prefix": st
                                 .settings_get(store::Store::SETTING_EMBEDDING_PASSAGE_PREFIX)
                                 .map_err(ToolError::from)?,
+                            "embedding_min_similarity": st
+                                .settings_get(store::Store::SETTING_EMBEDDING_MIN_SIMILARITY)
+                                .map_err(ToolError::from)?,
                             // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -239,6 +242,7 @@ pub fn handle(
                     store::Store::SETTING_EMBEDDING_API_KEY,
                     store::Store::SETTING_EMBEDDING_QUERY_PREFIX,
                     store::Store::SETTING_EMBEDDING_PASSAGE_PREFIX,
+                    store::Store::SETTING_EMBEDDING_MIN_SIMILARITY,
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
@@ -287,6 +291,21 @@ pub fn handle(
                                 return Ok(bad_request(ToolError::invalid(format!(
                                     "{key} is too long (max {MAX_INSTRUCTIONS_CHARS} characters)"
                                 ))));
+                            }
+                            // The similarity floor is parsed at read time: reject garbage here so
+                            // the read path's fallback-to-default never silently overrides intent
+                            if *key == store::Store::SETTING_EMBEDDING_MIN_SIMILARITY
+                                && !s.trim().is_empty()
+                            {
+                                let ok = s
+                                    .trim()
+                                    .parse::<f32>()
+                                    .is_ok_and(|v| (0.0..=1.0).contains(&v));
+                                if !ok {
+                                    return Ok(bad_request(ToolError::invalid(format!(
+                                        "{key} must be a number between 0 and 1 (0 disables the floor)"
+                                    ))));
+                                }
                             }
                             updates.push((key, s.clone()));
                         }

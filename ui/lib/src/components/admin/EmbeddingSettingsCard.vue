@@ -93,6 +93,10 @@
       <el-form-item :label="t('access.embeddingPassagePrefixLabel')">
         <el-input v-model="draft.passagePrefix" :placeholder="t('access.embeddingPassagePrefixPlaceholder')" />
       </el-form-item>
+      <!-- Recall floor for the semantic channel: query-time only, never re-keys vectors -->
+      <el-form-item :label="t('access.embeddingMinSimilarityLabel')">
+        <el-input v-model="draft.minSimilarity" :placeholder="t('access.embeddingMinSimilarityPlaceholder')" />
+      </el-form-item>
       <!-- Vectors are keyed by model + prefixes: a switch orphans every stored vector until
            backfilled. Say the cost up front, with the count that will be invalidated. -->
       <el-alert
@@ -130,6 +134,7 @@ const props = defineProps<{
   embeddingApiKey: string
   embeddingQueryPrefix: string
   embeddingPassagePrefix: string
+  embeddingMinSimilarity: string
   /** Stats fetched by the parent's load: the server's own view of effectivity + coverage */
   stats: import('../../types').StatsInfo | null
   /** In compact mode (<960px) the coverage progress bar narrows */
@@ -215,9 +220,9 @@ async function check(): Promise<EmbedTestResp | null> {
 
 // ---- Configuration form (always visible) ----
 const saving = ref(false)
-const draft = reactive({ baseUrl: '', model: '', apiKey: '', queryPrefix: '', passagePrefix: '' })
+const draft = reactive({ baseUrl: '', model: '', apiKey: '', queryPrefix: '', passagePrefix: '', minSimilarity: '' })
 // Baseline the draft diffs against: the values currently stored server-side
-const saved = ref({ baseUrl: '', model: '', apiKey: '', queryPrefix: '', passagePrefix: '' })
+const saved = ref({ baseUrl: '', model: '', apiKey: '', queryPrefix: '', passagePrefix: '', minSimilarity: '' })
 
 const dirty = computed(
   () =>
@@ -225,7 +230,8 @@ const dirty = computed(
     draft.model !== saved.value.model ||
     draft.apiKey !== saved.value.apiKey ||
     draft.queryPrefix !== saved.value.queryPrefix ||
-    draft.passagePrefix !== saved.value.passagePrefix,
+    draft.passagePrefix !== saved.value.passagePrefix ||
+    draft.minSimilarity !== saved.value.minSimilarity,
 )
 
 // Keep fields in sync while the draft is clean (a config edit elsewhere or a reload must not
@@ -239,15 +245,17 @@ watch(
       props.embeddingApiKey,
       props.embeddingQueryPrefix,
       props.embeddingPassagePrefix,
+      props.embeddingMinSimilarity,
     ] as const,
-  ([u, m, k, q, p]) => {
+  ([u, m, k, q, p, s]) => {
     if (dirty.value) return
-    saved.value = { baseUrl: u, model: m, apiKey: k, queryPrefix: q, passagePrefix: p }
+    saved.value = { baseUrl: u, model: m, apiKey: k, queryPrefix: q, passagePrefix: p, minSimilarity: s }
     draft.baseUrl = u
     draft.model = m
     draft.apiKey = k
     draft.queryPrefix = q
     draft.passagePrefix = p
+    draft.minSimilarity = s
   },
   { immediate: true },
 )
@@ -258,12 +266,14 @@ function revert(): void {
   draft.apiKey = props.embeddingApiKey
   draft.queryPrefix = props.embeddingQueryPrefix
   draft.passagePrefix = props.embeddingPassagePrefix
+  draft.minSimilarity = props.embeddingMinSimilarity
   saved.value = {
     baseUrl: props.embeddingBaseUrl,
     model: props.embeddingModel,
     apiKey: props.embeddingApiKey,
     queryPrefix: props.embeddingQueryPrefix,
     passagePrefix: props.embeddingPassagePrefix,
+    minSimilarity: props.embeddingMinSimilarity,
   }
 }
 
@@ -286,6 +296,7 @@ async function save(): Promise<void> {
         embedding_api_key: draft.apiKey,
         embedding_query_prefix: draft.queryPrefix,
         embedding_passage_prefix: draft.passagePrefix,
+        embedding_min_similarity: draft.minSimilarity,
       }),
     )
     if (ok === undefined) return
@@ -295,6 +306,7 @@ async function save(): Promise<void> {
       apiKey: draft.apiKey,
       queryPrefix: draft.queryPrefix,
       passagePrefix: draft.passagePrefix,
+      minSimilarity: draft.minSimilarity,
     }
     emit('changed')
     lastTest.value = null

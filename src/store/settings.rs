@@ -82,6 +82,7 @@ impl Store {
     pub const SETTING_EMBEDDING_API_KEY: &'static str = "embedding_api_key";
     pub const SETTING_EMBEDDING_QUERY_PREFIX: &'static str = "embedding_query_prefix";
     pub const SETTING_EMBEDDING_PASSAGE_PREFIX: &'static str = "embedding_passage_prefix";
+    pub const SETTING_EMBEDDING_MIN_SIMILARITY: &'static str = "embedding_min_similarity";
 
     /// Semantic search switch (an explicit boolean key of the same kind as auth_required).
     pub fn embedding_enabled(&self) -> Result<bool, String> {
@@ -117,12 +118,24 @@ impl Store {
         let passage_prefix = self
             .settings_get(Self::SETTING_EMBEDDING_PASSAGE_PREFIX)?
             .filter(|s| !s.is_empty());
+        // Cosine floor for the semantic channel. Unset/empty = the built-in default; "0" = off;
+        // unparseable values fall back to the default (the REST layer rejects them on write, so
+        // this only guards hand-edited databases). Query-time only: never part of the vector
+        // identity, changing it does not orphan stored vectors.
+        let min_similarity = self
+            .settings_get(Self::SETTING_EMBEDDING_MIN_SIMILARITY)?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|v| *v >= 0.0 && *v <= 1.0)
+            .unwrap_or(crate::embed::DEFAULT_MIN_SIMILARITY);
         Ok(Some(crate::embed::EmbedConfig {
             base_url: base_url.trim().to_string(),
             model: model.trim().to_string(),
             api_key,
             query_prefix,
             passage_prefix,
+            min_similarity,
         }))
     }
 }
@@ -179,6 +192,24 @@ mod tests {
         // Trailing space preserved; empty string = unset
         assert_eq!(cfg.query_prefix.as_deref(), Some("query: "));
         assert_eq!(cfg.passage_prefix, None);
+        // Unset floor = built-in default
+        assert!((cfg.min_similarity - crate::embed::DEFAULT_MIN_SIMILARITY).abs() < 1e-6);
+
+        st.settings_put(Store::SETTING_EMBEDDING_MIN_SIMILARITY, "0.45")
+            .unwrap();
+        assert!((st.embedding_config().unwrap().unwrap().min_similarity - 0.45).abs() < 1e-6);
+        st.settings_put(Store::SETTING_EMBEDDING_MIN_SIMILARITY, "0")
+            .unwrap();
+        assert_eq!(st.embedding_config().unwrap().unwrap().min_similarity, 0.0);
+        // Unparseable (hand-edited db; the REST layer rejects these on write) = default
+        st.settings_put(Store::SETTING_EMBEDDING_MIN_SIMILARITY, "abc")
+            .unwrap();
+        assert!(
+            (st.embedding_config().unwrap().unwrap().min_similarity
+                - crate::embed::DEFAULT_MIN_SIMILARITY)
+                .abs()
+                < 1e-6
+        );
         cleanup(&path);
     }
 
