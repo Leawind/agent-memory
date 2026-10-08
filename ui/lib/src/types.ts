@@ -123,6 +123,28 @@ export interface RerankModelEntry {
 export interface SearchLimits {
   semantic_candidates: number
   rerank_candidates: number
+  adaptive: {
+    enabled: boolean
+    min_candidates: number
+    max_candidates: number
+    target_latency_ms: number
+    max_input_chars: number
+  }
+}
+
+export interface SearchRuntime {
+  process_local: boolean
+  adaptive_enabled: boolean
+  models: Array<{
+    id: string
+    model: string
+    samples: number
+    failures: number
+    selected_candidates: number
+    last_candidates: number
+    last_latency_ms: number
+    ewma_ms_per_document: number | null
+  }>
 }
 
 export interface LifecyclePolicy {

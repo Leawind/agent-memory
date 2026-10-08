@@ -230,7 +230,7 @@ pub const MAX_BATCH: usize = 16;
 /// Character truncation length applied to each text before it goes to the embedding service. bge-m3's 8K token window
 /// is roughly 8K Chinese characters; smaller 512-token models truncate server-side — this only guards against extremely
 /// long texts blowing up the request body.
-const MAX_INPUT_CHARS: usize = 8_000;
+pub const MAX_INPUT_CHARS: usize = 8_000;
 /// Default floor for the semantic recall channel: vector candidates below this cosine never
 /// enter the fusion. Deliberately conservative — baselines are model-specific (bge-family
 /// unrelated pairs score ~0.4, OpenAI text-embedding-3 ~0.2) — and configurable per model via

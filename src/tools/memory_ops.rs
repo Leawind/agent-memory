@@ -360,7 +360,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // the silent fallback when no reranker answers. Filtering runs first so no rerank work is
     // spent on candidates the tag expression would drop anyway.
     let (hits, reranked_by) = if matches!(mode, SearchMode::Auto | SearchMode::Hybrid) {
-        rerank_pass(st, hits, &memories, &query, limits.rerank_candidates)
+        rerank_pass(st, hits, &memories, &query, &limits)
     } else {
         (hits, None)
     };
@@ -936,7 +936,7 @@ fn rerank_pass(
     hits: Vec<search::Hit>,
     memories: &[crate::model::Memory],
     query: &str,
-    candidates: usize,
+    limits: &search::Limits,
 ) -> (Vec<search::Hit>, Option<String>) {
     let configs = match st.rerank_configs() {
         Ok(configs) => configs,
@@ -948,18 +948,39 @@ fn rerank_pass(
     if configs.is_empty() || hits.len() < 2 {
         return (hits, None);
     }
-    let mut iter = hits.into_iter();
-    let slots: Vec<search::Hit> = (&mut iter).take(candidates).collect();
-    let tail: Vec<search::Hit> = iter.collect();
-    let documents: Vec<String> = slots
+    let ceiling = if limits.adaptive.enabled {
+        limits.adaptive.max_candidates
+    } else {
+        limits.rerank_candidates
+    };
+    let documents: Vec<String> = hits
         .iter()
+        .take(ceiling)
         .map(|h| {
             // The reranker reads the same text the embedding side sees: title + blank line + content
             crate::embed::embed_memory_text(&memories[h.idx].summary, &memories[h.idx].content)
         })
         .collect();
+    let document_chars: Vec<_> = documents.iter().map(|doc| doc.chars().count()).collect();
     let scored = crate::rerank::RERANK_FAILOVER.first_available(&configs, |cfg| {
-        crate::rerank::rerank(cfg, query, &documents, crate::rerank::RERANK_TIMEOUT)
+        let pool = crate::adaptive::budget(&st.path, cfg, limits, &document_chars);
+        let started = std::time::Instant::now();
+        let result = crate::rerank::rerank(
+            cfg,
+            query,
+            &documents[..pool],
+            crate::rerank::RERANK_TIMEOUT,
+        );
+        crate::adaptive::observe(
+            &st.path,
+            cfg,
+            limits,
+            pool,
+            document_chars.iter().take(pool).sum(),
+            started.elapsed(),
+            result.is_ok(),
+        );
+        result
     });
     match scored {
         Ok((_, cfg, scores)) => {
@@ -974,21 +995,20 @@ fn rerank_pass(
                     }
                     previous = Some(relevance);
                     search::Hit {
-                        idx: slots[doc_idx].idx,
+                        idx: hits[doc_idx].idx,
                         score: -(rank as i64),
-                        snippet: slots[doc_idx].snippet.clone(),
+                        snippet: hits[doc_idx].snippet.clone(),
                     }
                 })
                 .collect();
-            let prior: Vec<_> = slots.into_iter().chain(tail).collect();
             (
-                search::fuse(memories, &[(&prior, 1.0), (&reranked, 4.0)]),
+                search::fuse(memories, &[(&hits, 1.0), (&reranked, 4.0)]),
                 Some(cfg.model.clone()),
             )
         }
         Err(e) => {
             eprintln!("rerank skipped (all rerankers unavailable): {e}");
-            (slots.into_iter().chain(tail).collect(), None)
+            (hits, None)
         }
     }
 }

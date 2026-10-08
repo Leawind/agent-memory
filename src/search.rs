@@ -10,6 +10,29 @@ use std::collections::HashMap;
 pub struct Limits {
     pub semantic_candidates: usize,
     pub rerank_candidates: usize,
+    pub adaptive: Adaptive,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Adaptive {
+    pub enabled: bool,
+    pub min_candidates: usize,
+    pub max_candidates: usize,
+    pub target_latency_ms: u64,
+    pub max_input_chars: usize,
+}
+
+impl Default for Adaptive {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_candidates: 20,
+            max_candidates: 100,
+            target_latency_ms: 1000,
+            max_input_chars: 400_000,
+        }
+    }
 }
 
 impl Default for Limits {
@@ -17,6 +40,7 @@ impl Default for Limits {
         Self {
             semantic_candidates: 100,
             rerank_candidates: 50,
+            adaptive: Adaptive::default(),
         }
     }
 }
@@ -33,6 +57,21 @@ impl Limits {
         if limits.semantic_candidates < limits.rerank_candidates {
             return Err("semantic_candidates must be at least rerank_candidates".into());
         }
+        let a = &limits.adaptive;
+        if !(1..=1000).contains(&a.min_candidates)
+            || !(a.min_candidates..=1000).contains(&a.max_candidates)
+            || !(50..=15000).contains(&a.target_latency_ms)
+            || !(crate::embed::MAX_INPUT_CHARS..=8_000_000).contains(&a.max_input_chars)
+            || a.max_input_chars < a.min_candidates * crate::embed::MAX_INPUT_CHARS
+        {
+            return Err("adaptive limits require 1 <= min <= max <= 1000, 50..15000ms target, and enough input characters for the minimum pool".into());
+        }
+        if a.enabled
+            && (limits.semantic_candidates < a.max_candidates
+                || !(a.min_candidates..=a.max_candidates).contains(&limits.rerank_candidates))
+        {
+            return Err("adaptive max must fit semantic_candidates and rerank_candidates must be within adaptive bounds".into());
+        }
         Ok(limits)
     }
 
@@ -40,6 +79,7 @@ impl Limits {
         serde_json::json!({
             "semantic_candidates": self.semantic_candidates,
             "rerank_candidates": self.rerank_candidates,
+            "adaptive": self.adaptive,
         })
     }
 }
@@ -672,6 +712,13 @@ mod tests {
             json!({"semantic_candidates": 10, "rerank_candidates": 20}),
             json!({"rerank_candidates": 2.5}),
             json!({"rerank_candidates": "20"}),
+            json!({"adaptive":{"min_candidates":0}}),
+            json!({"adaptive":{"min_candidates":100,"max_candidates":20}}),
+            json!({"adaptive":{"target_latency_ms":1}}),
+            json!({"adaptive":{"max_input_chars":8000}}),
+            json!({"adaptive":{"typo":true}}),
+            json!({"semantic_candidates":50,"adaptive":{"enabled":true}}),
+            json!({"rerank_candidates":5,"adaptive":{"enabled":true}}),
         ] {
             assert!(Limits::parse(&value).is_err(), "{value}");
         }

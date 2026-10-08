@@ -64,6 +64,19 @@ pub fn handle(
     // carries them so a short-circuit returns the whole request as that error kind.
     let result: Result<(u16, Value), ToolError> = (|| -> Result<(u16, Value), ToolError> {
         match (method, segments.as_slice()) {
+            ("GET", ["search", "runtime"]) => {
+                ctx.require(Cap::Admin)?;
+                store::with_db_in(db_path, tx_mode, |st| {
+                    Ok((
+                        200,
+                        crate::adaptive::view(
+                            &st.path,
+                            &st.rerank_configs()?,
+                            &st.search_limits()?,
+                        ),
+                    ))
+                })
+            }
             ("GET", ["access", "stats"]) => {
                 ctx.require(Cap::Admin)?;
                 store::with_db_in(db_path, tx_mode, |st| {
@@ -1138,6 +1151,10 @@ mod tests {
             200
         );
         let reader = ctx_with(&[Cap::Read]);
+        assert_eq!(
+            handle(&db, &reader, "GET", "/api/search/runtime", "", &[]).0,
+            403
+        );
         for path in ["/api/memories", "/api/memories/m1/usage"] {
             assert_eq!(handle(&db, &reader, "GET", path, "", &[]).0, 200);
         }

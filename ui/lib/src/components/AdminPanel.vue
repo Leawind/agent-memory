@@ -64,7 +64,12 @@
 
             <RerankerSettingsCard v-show="activeSection === 'embedding'" :models="rerankModels" @changed="load" />
 
-            <SearchLimitsCard v-show="activeSection === 'embedding'" :limits="searchLimits" @changed="load" />
+            <SearchLimitsCard
+              v-show="activeSection === 'embedding'"
+              :active="activeSection === 'embedding'"
+              :limits="searchLimits"
+              @changed="load"
+            />
             <LifecyclePolicyCard
               v-show="activeSection === 'lifecycle'"
               :policy="lifecyclePolicy"
@@ -148,7 +153,18 @@ const authRequired = ref(false)
 const anonymousPermissions = ref<Record<string, boolean> | null>(null)
 const embeddingModels = ref<EmbedModelEntry[]>([])
 const rerankModels = ref<RerankModelEntry[]>([])
-const searchLimits = ref<SearchLimits>({ semantic_candidates: 100, rerank_candidates: 50 })
+const defaultSearchLimits: SearchLimits = {
+  semantic_candidates: 100,
+  rerank_candidates: 50,
+  adaptive: {
+    enabled: false,
+    min_candidates: 20,
+    max_candidates: 100,
+    target_latency_ms: 1000,
+    max_input_chars: 400000,
+  },
+}
+const searchLimits = ref<SearchLimits>(defaultSearchLimits)
 const tagRules = ref<TagRule[]>([])
 const defaultLifecyclePolicy: LifecyclePolicy = {
   half_life_days: { fact: null, preference: 365, procedure: 730, context: 30, event: 7 },
@@ -208,7 +224,7 @@ async function load(): Promise<void> {
     anonymousPermissions.value = settings?.anonymous_permissions ?? null
     embeddingModels.value = Array.isArray(settings?.embedding_models) ? settings.embedding_models : []
     rerankModels.value = Array.isArray(settings?.rerank_models) ? settings.rerank_models : []
-    searchLimits.value = settings?.search_limits ?? { semantic_candidates: 100, rerank_candidates: 50 }
+    searchLimits.value = settings?.search_limits ?? defaultSearchLimits
     lifecyclePolicy.value = settings?.lifecycle_policy ?? defaultLifecyclePolicy
     stats.value = statsResp ?? null
     tagRules.value = Array.isArray(rules?.constraints) ? rules.constraints : []

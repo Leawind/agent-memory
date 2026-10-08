@@ -160,7 +160,21 @@ describe('AdminPanel', () => {
           return Promise.resolve(jsonResponse({}))
         }
         if (String(url).includes('/api/settings')) {
-          return Promise.resolve(jsonResponse({ search_limits: { semantic_candidates: 30, rerank_candidates: 20 } }))
+          return Promise.resolve(
+            jsonResponse({
+              search_limits: {
+                semantic_candidates: 30,
+                rerank_candidates: 20,
+                adaptive: {
+                  enabled: false,
+                  min_candidates: 20,
+                  max_candidates: 100,
+                  target_latency_ms: 1000,
+                  max_input_chars: 400000,
+                },
+              },
+            }),
+          )
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -179,7 +193,21 @@ describe('AdminPanel', () => {
     expect(save.attributes('disabled')).toBeUndefined()
     await save.trigger('click')
     await flushPromises()
-    expect(writes).toEqual([{ search_limits: { semantic_candidates: 40, rerank_candidates: 20 } }])
+    expect(writes).toEqual([
+      {
+        search_limits: {
+          semantic_candidates: 40,
+          rerank_candidates: 20,
+          adaptive: {
+            enabled: false,
+            min_candidates: 20,
+            max_candidates: 100,
+            target_latency_ms: 1000,
+            max_input_chars: 400000,
+          },
+        },
+      },
+    ])
     wrapper.unmount()
   })
 

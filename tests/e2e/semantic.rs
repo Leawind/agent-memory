@@ -5,6 +5,7 @@
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::common::{cleanup, encodeURIComponent, json_body, request, run_cli, temp_db, HttpProc};
@@ -98,6 +99,10 @@ fn spawn_mock_embedding() -> (u16, Arc<Mutex<Vec<String>>>) {
 type SeenRerank = Arc<Mutex<Vec<(String, Vec<String>)>>>;
 
 fn spawn_mock_reranker() -> (u16, SeenRerank) {
+    spawn_mock_reranker_with_delay(Arc::new(AtomicU64::new(0)))
+}
+
+fn spawn_mock_reranker_with_delay(delay: Arc<AtomicU64>) -> (u16, SeenRerank) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("mock reranker bind");
     let port = listener.local_addr().expect("mock addr").port();
     let seen: SeenRerank = Arc::new(Mutex::new(Vec::new()));
@@ -115,6 +120,9 @@ fn spawn_mock_reranker() -> (u16, SeenRerank) {
                 .map(|v| v.as_str().unwrap_or_default().to_string())
                 .collect();
             seen.lock().unwrap().push((query.clone(), docs.clone()));
+            std::thread::sleep(std::time::Duration::from_millis(
+                delay.load(Ordering::Relaxed),
+            ));
             let results: Vec<Value> = docs
                 .iter()
                 .enumerate()
@@ -139,6 +147,69 @@ fn put_settings(port: u16, body: Value) {
         "settings put failed: {}",
         String::from_utf8_lossy(&resp)
     );
+}
+
+#[test]
+fn adaptive_rerank_changes_real_request_sizes_and_reports_safe_telemetry() {
+    let db = temp_db("adaptive-rerank");
+    cleanup(&db);
+    let delay = Arc::new(AtomicU64::new(250));
+    let (mock_port, seen) = spawn_mock_reranker_with_delay(delay.clone());
+    let server = HttpProc::start(&db, "adaptive-rerank");
+    let port = server.port;
+    for index in 0..8 {
+        assert_eq!(
+            request(
+                port,
+                "POST",
+                "/api/memories",
+                Some(&json!({"summary":format!("alpha item {index}")}).to_string())
+            )
+            .0,
+            200
+        );
+    }
+    let limits = json!({"semantic_candidates":6,"rerank_candidates":4,"adaptive":{
+        "enabled":true,"min_candidates":2,"max_candidates":6,"target_latency_ms":50,"max_input_chars":48000
+    }});
+    put_settings(
+        port,
+        json!({"search_limits":limits,"rerank_models":[{"id":"mock","model":"mock","base_url":format!("http://127.0.0.1:{mock_port}/v1"),"api_key":"private-credential"}]}),
+    );
+    let search = || {
+        let (status, bytes, _) = request(port, "GET", "/api/memories?query=alpha&limit=1", None);
+        assert_eq!(status, 200);
+        assert_eq!(json_body(&bytes)["reranked_by"], "mock");
+    };
+    search();
+    search();
+    assert_eq!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .map(|(_, docs)| docs.len())
+            .collect::<Vec<_>>(),
+        [4, 2]
+    );
+    let (_, bytes, _) = request(port, "GET", "/api/search/runtime", None);
+    let runtime = json_body(&bytes);
+    assert_eq!(runtime["models"][0]["samples"], 2);
+    assert_eq!(runtime["models"][0]["selected_candidates"], 2);
+    assert!(!runtime.to_string().contains("private-credential"));
+    delay.store(0, Ordering::Relaxed);
+    for _ in 0..22 {
+        search();
+    }
+    let seen = seen.lock().unwrap();
+    assert!(seen.iter().all(|(_, docs)| (2..=6).contains(&docs.len())));
+    assert!(seen.last().unwrap().1.len() > 2);
+    drop(seen);
+    let disabled =
+        json!({"semantic_candidates":6,"rerank_candidates":4,"adaptive":{"enabled":false}});
+    put_settings(port, json!({"search_limits":disabled}));
+    search();
+    drop(server);
+    cleanup(&db);
 }
 
 #[test]
@@ -263,10 +334,10 @@ fn candidate_budgets_are_configurable_and_page_independent() {
     let server = HttpProc::start(&db, "search-budgets");
     let port = server.port;
     let (_, body, _) = request(port, "GET", "/api/settings", None);
-    assert_eq!(
-        json_body(&body)["search_limits"],
-        json!({"semantic_candidates": 100, "rerank_candidates": 50})
-    );
+    let defaults = json_body(&body);
+    assert_eq!(defaults["search_limits"]["semantic_candidates"], 100);
+    assert_eq!(defaults["search_limits"]["rerank_candidates"], 50);
+    assert_eq!(defaults["search_limits"]["adaptive"]["enabled"], false);
     let (status, _, _) = request(port, "PUT", "/api/settings", Some(&json!({
         "instructions": "must not persist", "search_limits": {"semantic_candidates": 2, "rerank_candidates": 3}
     }).to_string()));
@@ -970,12 +1041,15 @@ fn embedding_cache_ids_survive_reordering_and_renaming() {
     let (mock_port, seen) = spawn_mock_embedding();
     let server = HttpProc::start(&db, "semantic-cache-ids");
     let port = server.port;
-    // Create before configuring models so only explicit backfills call the mock.
+    // Restore the fixture without the create hook: a background create backfill
+    // can race with the following settings write, making processed counts flaky.
     let (status, _, _) = request(
         port,
         "POST",
-        "/api/memories",
-        Some(r#"{"summary":"identity probe","content":"body"}"#),
+        "/api/import",
+        Some(
+            r#"{"tags":{},"memories":{"m1":{"summary":"identity probe","content":"body","created_at":1,"updated_at":1}}}"#,
+        ),
     );
     assert_eq!(status, 200);
     let mut a = json!({"id":"local-a", "name":"First service", "model":"shared-model", "base_url":format!("http://127.0.0.1:{mock_port}/v1")});

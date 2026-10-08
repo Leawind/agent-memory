@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod access;
+mod adaptive;
 mod api;
 mod auth;
 mod embed;

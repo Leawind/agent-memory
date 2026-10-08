@@ -16,6 +16,7 @@ use std::time::Duration;
 /// Reranker service configuration (see `Failover` reuse in the search handler).
 #[derive(Clone, Debug)]
 pub struct RerankConfig {
+    pub id: String,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -87,6 +88,7 @@ impl RerankEntry {
             return None;
         }
         Some(RerankConfig {
+            id: self.id.clone(),
             base_url: self.base_url.trim().to_string(),
             model: self.model.trim().to_string(),
             api_key: self.api_key.clone(),
