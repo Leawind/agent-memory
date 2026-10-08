@@ -42,14 +42,19 @@ export function backfillEmbeddings(client: ApiClient, modelKey?: string): Promis
   return client.post<EmbedBackfillResp>('/api/embeddings/backfill', modelKey ? { model_key: modelKey } : {})
 }
 
-/** Run a connectivity test against every enabled embedding candidate saved on the server */
-export function testEmbeddings(client: ApiClient): Promise<EmbedTestResp> {
-  return client.post<EmbedTestResp>('/api/embeddings/test', {})
+/**
+ * Run a connectivity test. With `entries`, exactly those candidates are probed (in request order,
+ * one verdict per position) — the admin editor verifies what is on screen, including a candidate
+ * that is disabled or not saved yet. Without it, every enabled candidate stored server-side is
+ * probed: the list the search-time failover walks.
+ */
+export function testEmbeddings(client: ApiClient, entries?: unknown[]): Promise<EmbedTestResp> {
+  return client.post<EmbedTestResp>('/api/embeddings/test', entries ? { entries } : {})
 }
 
-/** Run a one-document rerank against every enabled reranker candidate saved on the server */
-export function testRerankers(client: ApiClient): Promise<RerankTestResp> {
-  return client.post<RerankTestResp>('/api/rerank/test', {})
+/** Run a one-document rerank against reranker candidates (same `entries` contract as testEmbeddings) */
+export function testRerankers(client: ApiClient, entries?: unknown[]): Promise<RerankTestResp> {
+  return client.post<RerankTestResp>('/api/rerank/test', entries ? { entries } : {})
 }
 
 /** List the vector caches per identity (rows with embedded/pending, configured or leftover) */

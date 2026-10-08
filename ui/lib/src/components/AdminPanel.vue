@@ -59,13 +59,8 @@
               @reset-token="askResetToken"
             />
 
-            <!-- Semantic search candidates + vector caches, then the reranker candidates -->
-            <EmbeddingSettingsCard
-              v-show="activeSection === 'embedding'"
-              :models="embeddingModels"
-              :stats="stats"
-              @changed="load"
-            />
+            <!-- Semantic search candidates + per-model vector caches, then the reranker candidates -->
+            <EmbeddingSettingsCard v-show="activeSection === 'embedding'" :models="embeddingModels" @changed="load" />
 
             <RerankerSettingsCard v-show="activeSection === 'embedding'" :models="rerankModels" @changed="load" />
 

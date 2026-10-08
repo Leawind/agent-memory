@@ -15,6 +15,13 @@ export function useAdmin() {
   const exporting = ref(false)
   const importing = ref(false)
   const backfilling = ref(false)
+  /** Set by `cancelBackfill`: the drain loop checks it between batches */
+  const backfillCancelled = ref(false)
+
+  /** Interrupt a running backfill loop (the batch in flight still finishes and is stored) */
+  function cancelBackfill(): void {
+    backfillCancelled.value = true
+  }
 
   async function runDoctor() {
     doctorLoading.value = true
@@ -65,11 +72,17 @@ export function useAdmin() {
    * identity instead of the active candidate's.
    * `onProgress` reports cumulative done and the estimated total after each batch, so callers
    * can show real progress instead of a bare spinner.
-   * Returns the total number backfilled; unconfigured / server errors are thrown directly,
-   * toasted at the panel layer.
+   * `cancelBackfill` stops the loop after the batch already in flight (that batch always lands —
+   * interruption is a client-side stop, never a half-written batch).
+   * Returns the number backfilled plus whether the loop was interrupted; unconfigured / server
+   * errors are thrown directly, toasted at the panel layer.
    */
-  async function backfill(modelKey?: string, onProgress?: (done: number, total: number) => void): Promise<number> {
+  async function backfill(
+    modelKey?: string,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ done: number; cancelled: boolean }> {
     backfilling.value = true
+    backfillCancelled.value = false
     try {
       let done = 0
       for (;;) {
@@ -78,11 +91,13 @@ export function useAdmin() {
         if (out.error) throw new Error(out.error)
         done += out.processed ?? 0
         onProgress?.(done, done + (out.remaining ?? 0))
+        if (backfillCancelled.value) return { done, cancelled: true }
         if ((out.processed ?? 0) === 0) break
       }
-      return done
+      return { done, cancelled: false }
     } finally {
       backfilling.value = false
+      backfillCancelled.value = false
     }
   }
 
@@ -97,6 +112,7 @@ export function useAdmin() {
     exportData,
     importFile,
     backfill,
+    cancelBackfill,
   }
 }
 

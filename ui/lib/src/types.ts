@@ -103,10 +103,14 @@ export interface RerankModelEntry {
   api_key?: string | null
 }
 
-/** Per-candidate verdict from the connection tests */
+/** Per-candidate verdict from the connection tests: `index` is the request position, so an editor
+ *  can line results up with its rows even when a candidate is incomplete */
 export interface EmbedTestResult {
+  index: number
   model: string
   ok: boolean
+  /** The probed candidate's vector identity (absent for an incomplete candidate) */
+  key?: string
   dim?: number
   elapsed_ms?: number
   error?: string
@@ -118,6 +122,7 @@ export interface EmbedTestResp {
 }
 
 export interface RerankTestResult {
+  index: number
   model: string
   ok: boolean
   scored?: number
@@ -170,13 +175,6 @@ export interface EmbedBackfillResp {
 
 export interface VectorCacheDeleteResp {
   deleted: number
-}
-
-export interface EmbedTestResp {
-  ok: boolean
-  dim?: number
-  elapsed_ms?: number
-  error?: string
 }
 
 export interface StatsInfo {

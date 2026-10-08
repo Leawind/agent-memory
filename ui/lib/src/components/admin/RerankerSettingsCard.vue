@@ -1,7 +1,8 @@
 <template>
-  <!-- Reranker card: an ordered cross-encoder candidate list that re-scores search results
-       after fusion. Same editor discipline as the embedding card, minus the vector cache
-       (rerankers keep no derived data). -->
+  <!-- Reranker card: an ordered cross-encoder candidate list that re-scores search results after
+       fusion. Same editor as the embedding card (collapsed line per candidate, expand for the
+       labeled fields and per-candidate actions), minus the vector cache: rerankers keep no
+       derived data, so there is nothing to backfill or delete. -->
   <el-card shadow="never">
     <template #header>
       <div class="card-header">
@@ -10,67 +11,103 @@
       </div>
     </template>
 
-    <div class="state-row">
-      <span class="state-line" :class="{ 'is-broken': state === 'broken' }">
-        <template v-if="state === 'unconfigured'">{{ t('access.rerankPitch') }}</template>
-        <template v-else-if="state === 'testing'">{{ t('access.embeddingChecking') }}</template>
-        <template v-else-if="state === 'untested'">{{ t('access.rerankUntested') }}</template>
-        <template v-else-if="state === 'healthy'">{{ t('access.rerankHealthy') }}</template>
-        <template v-else>{{ t('access.rerankBroken') }}</template>
-      </span>
-      <span class="state-actions">
-        <el-button
-          v-if="state !== 'unconfigured' && state !== 'testing'"
-          size="small"
-          :loading="testing"
-          @click="check"
-        >
-          {{ state === 'untested' ? t('access.embeddingCheck') : t('access.embeddingRecheck') }}
-        </el-button>
-      </span>
-    </div>
-
-    <div v-if="lastTest" class="probe-results">
-      <div v-for="r in lastTest.results" :key="r.model" class="probe-line" :class="r.ok ? 'is-ok' : 'is-bad'">
-        {{ r.ok ? '✓' : '✗' }} {{ r.model }}<template v-if="r.ok"> · {{ r.elapsed_ms ?? 0 }}ms</template
-        ><template v-else>
-          · <code class="broken-err">{{ r.error }}</code></template
-        >
+    <p class="state-line" :class="{ 'is-broken': state === 'broken' }">{{ stateText }}</p>
+    <div v-if="failures.length" class="probe-results">
+      <div v-for="f in failures" :key="f.id" class="probe-line">
+        <span>{{ f.model || t('access.embeddingEntryUntitled') }}</span> ·
+        <code class="broken-err">{{ f.error }}</code>
       </div>
     </div>
 
     <div class="entry-list">
-      <div v-for="(row, i) in draft" :key="i" class="entry" :class="{ 'is-off': !row.enabled }">
-        <div class="entry-head">
-          <el-switch v-model="row.enabled" :aria-label="t('access.embeddingEntryEnabled')" />
-          <span class="entry-index">#{{ i + 1 }}</span>
-          <el-input v-model="row.model" :placeholder="t('access.embeddingModelLabel')" class="entry-model" />
-          <el-button-group class="entry-ops">
-            <el-button size="small" :disabled="i === 0" @click="move(i, -1)">
-              <el-icon><ArrowUp /></el-icon>
-            </el-button>
-            <el-button size="small" :disabled="i === draft.length - 1" @click="move(i, 1)">
-              <el-icon><ArrowDown /></el-icon>
-            </el-button>
-            <el-button size="small" @click="removeEntry(i)">
-              <el-icon><Delete /></el-icon>
-            </el-button>
-          </el-button-group>
+      <div
+        v-for="(row, i) in draft"
+        :key="row.id"
+        class="entry"
+        :class="{ 'is-off': !row.enabled, 'is-open': row.open, 'is-over': overIndex === i && dragIndex !== i }"
+        @dragover.prevent="onDragOver(i)"
+        @drop.prevent="onDrop(i)"
+      >
+        <div class="entry-bar">
+          <span
+            class="entry-handle"
+            draggable="true"
+            :title="t('access.entryDrag')"
+            @dragstart="onDragStart(i)"
+            @dragend="onDragEnd"
+          >
+            <el-icon><Rank /></el-icon>
+          </span>
+          <button type="button" class="entry-toggle" @click="row.open = !row.open">
+            <el-icon class="entry-caret"><ArrowRight /></el-icon>
+            <span class="entry-index">#{{ i + 1 }}</span>
+            <span class="entry-name">{{ row.model.trim() || t('access.embeddingEntryUntitled') }}</span>
+          </button>
+          <span class="entry-tags">
+            <span v-if="verdictOf(row)" class="entry-verdict" :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'">
+              <el-icon>
+                <CircleCheckFilled v-if="verdictOf(row)!.ok" />
+                <CircleCloseFilled v-else />
+              </el-icon>
+              {{
+                verdictOf(row)!.ok
+                  ? t('access.entryTestRerank', {
+                      count: verdictOf(row)!.scored ?? 0,
+                      ms: verdictOf(row)!.elapsed_ms ?? 0,
+                    })
+                  : t('access.entryTestFail')
+              }}
+            </span>
+            <span v-else-if="row.enabled && !complete(row)" class="entry-verdict is-warn">
+              {{ t('access.embeddingEntryIncomplete') }}
+            </span>
+          </span>
+          <el-switch v-model="row.enabled" class="entry-switch" :aria-label="t('access.entryEnable')" />
         </div>
-        <div class="entry-fields">
-          <el-input v-model="row.baseUrl" :placeholder="t('access.embeddingBaseUrlPlaceholder')" class="span-2" />
-          <el-input v-model="row.apiKey" show-password :placeholder="t('access.embeddingApiKeyPlaceholder')" />
+
+        <div v-if="row.open" class="entry-detail">
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">{{ t('access.entryBaseUrlLabel') }}</span>
+              <el-input v-model="row.baseUrl" class="f-base-url" :placeholder="t('access.entryBaseUrlPlaceholder')" />
+            </label>
+            <label class="field">
+              <span class="field-label">{{ t('access.entryModelLabel') }}</span>
+              <el-input v-model="row.model" class="f-model" />
+            </label>
+            <label class="field">
+              <span class="field-label">{{ t('access.entryApiKeyLabel') }}</span>
+              <el-input
+                v-model="row.apiKey"
+                class="f-api-key"
+                show-password
+                :placeholder="t('access.entryApiKeyPlaceholder')"
+              />
+            </label>
+          </div>
+
+          <div class="entry-actions">
+            <el-button size="small" :loading="testingRowId === row.id" @click="testRow(row)">
+              {{ t('access.embeddingTest') }}
+            </el-button>
+            <span class="spacer" />
+            <el-button size="small" type="danger" plain @click="removeEntry(i)">
+              {{ t('common.delete') }}
+            </el-button>
+          </div>
         </div>
       </div>
     </div>
 
     <p class="form-hint">{{ t('access.rerankFormHint') }}</p>
     <div class="form-actions">
-      <el-button @click="addEntry">{{ t('access.embeddingAddCandidate') }}</el-button>
+      <el-button :icon="Plus" @click="addEntry">{{ t('access.embeddingAdd') }}</el-button>
       <span class="form-actions-main">
-        <el-button :disabled="!dirty" @click="revert">{{ t('access.embeddingRevert') }}</el-button>
+        <el-button :loading="testingAll" :disabled="!enabledRows.length" @click="testAll">
+          {{ t('access.embeddingTest') }}
+        </el-button>
         <el-button :disabled="!dirty" :loading="saving" type="primary" @click="save">
-          {{ t('access.embeddingSaveTest') }}
+          {{ t('access.embeddingSave') }}
         </el-button>
       </span>
     </div>
@@ -79,135 +116,201 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowDown, ArrowUp, Delete } from '@element-plus/icons-vue'
+import { ArrowRight, CircleCheckFilled, CircleCloseFilled, Plus, Rank } from '@element-plus/icons-vue'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { testRerankers } from '../../api/ops'
-import type { EmbedModelEntry, RerankModelEntry, RerankTestResp } from '../../types'
+import { useDragOrder } from '../../composables/useDragOrder'
+import type { RerankModelEntry, RerankTestResult } from '../../types'
 import { run } from './caps'
 
 const props = defineProps<{
   /** The ordered reranker candidate list as stored server-side (settings GET) */
-  models: EmbedModelEntry[] | RerankModelEntry[]
+  models: RerankModelEntry[]
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
 
 const api = useApiClient()
 
-type CardState = 'unconfigured' | 'testing' | 'untested' | 'healthy' | 'broken'
-
-const testing = ref(false)
-const saving = ref(false)
-const lastTest = ref<RerankTestResp | null>(null)
-
-const state = computed<CardState>(() => {
-  if (!props.models.some((e) => e.enabled && e.base_url.trim() !== '' && e.model.trim() !== '')) {
-    return 'unconfigured'
-  }
-  if (testing.value) return 'testing'
-  if (!lastTest.value) return 'untested'
-  return lastTest.value.ok ? 'healthy' : 'broken'
-})
-
-const badgeKey = computed(
-  () =>
-    ({
-      unconfigured: 'access.embeddingBadgeUnconfigured',
-      testing: 'access.embeddingBadgeTesting',
-      untested: 'access.embeddingBadgeUntested',
-      healthy: 'access.embeddingBadgeHealthy',
-      broken: 'access.embeddingBadgeBroken',
-    })[state.value],
-)
-const badgeType = computed(
-  () =>
-    ({
-      unconfigured: 'info',
-      testing: 'warning',
-      untested: 'warning',
-      healthy: 'success',
-      broken: 'danger',
-    })[state.value] as 'info' | 'warning' | 'success' | 'danger',
-)
-
-async function check(): Promise<void> {
-  testing.value = true
-  try {
-    const out = await run(() => testRerankers(api))
-    if (out) lastTest.value = out
-  } finally {
-    testing.value = false
-  }
-}
-
+// ---- Draft rows: form fields plus UI state (expanded / verdict), keyed by a stable id ----
 interface EntryDraft {
+  id: number
   enabled: boolean
   baseUrl: string
   model: string
   apiKey: string
+  open: boolean
+  /** The last probe verdict with the payload it was taken for (stale verdicts are dropped) */
+  probe: { payload: string; result: RerankTestResult } | null
 }
 
-function toDraft(entries: Array<EmbedModelEntry | RerankModelEntry>): EntryDraft[] {
-  return entries.map((e) => ({
+let nextId = 1
+
+/** One row's canonical write shape — exactly what a settings PUT sends for that row */
+function entryPayload(r: EntryDraft) {
+  return {
+    enabled: r.enabled,
+    base_url: r.baseUrl.trim(),
+    model: r.model.trim(),
+    api_key: r.apiKey.trim() === '' ? null : r.apiKey,
+  }
+}
+
+function payloadKey(r: EntryDraft): string {
+  return JSON.stringify(entryPayload(r))
+}
+
+function toDraftRow(e: RerankModelEntry): EntryDraft {
+  return {
+    id: nextId++,
     enabled: e.enabled,
     baseUrl: e.base_url,
     model: e.model,
     apiKey: e.api_key ?? '',
-  }))
+    open: false,
+    probe: null,
+  }
 }
 
 const draft = ref<EntryDraft[]>([])
 const saved = ref<EntryDraft[]>([])
-const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(saved.value))
+
+function payloads(rows: EntryDraft[]): string {
+  return JSON.stringify(rows.map(entryPayload))
+}
+
+const dirty = computed(() => payloads(draft.value) !== payloads(saved.value))
 
 watch(
   () => props.models,
   (models) => {
     if (dirty.value) return
-    saved.value = toDraft(models)
-    draft.value = toDraft(models)
+    saved.value = models.map(toDraftRow)
+    draft.value = models.map((e, i) => {
+      const fresh = toDraftRow(e)
+      const prev = draft.value[i]
+      // Same candidate at the same position = the row the operator was just looking at: keep its
+      // UI state across the reload (a verdict is only shown while its payload still matches)
+      if (!prev || payloadKey(prev) !== payloadKey(fresh)) return fresh
+      return { ...fresh, id: prev.id, open: prev.open, probe: prev.probe }
+    })
   },
   { immediate: true, deep: true },
 )
 
+const { dragIndex, overIndex, onDragStart, onDragOver, onDrop, onDragEnd } = useDragOrder(draft)
+
 function addEntry(): void {
-  draft.value.push({ enabled: true, baseUrl: '', model: '', apiKey: '' })
+  draft.value.push({
+    id: nextId++,
+    enabled: true,
+    baseUrl: '',
+    model: '',
+    apiKey: '',
+    open: true,
+    probe: null,
+  })
 }
 
 function removeEntry(i: number): void {
   draft.value.splice(i, 1)
 }
 
-function move(i: number, delta: number): void {
-  const j = i + delta
-  if (j < 0 || j >= draft.value.length) return
-  const rows = draft.value
-  ;[rows[i], rows[j]] = [rows[j], rows[i]]
+function complete(r: EntryDraft): boolean {
+  return r.baseUrl.trim() !== '' && r.model.trim() !== ''
 }
 
-function revert(): void {
-  draft.value = saved.value.map((r) => ({ ...r }))
+// ---- Probes: per row (exactly that row's current values) and over the whole list ----
+const testingAll = ref(false)
+const testingRowId = ref<number | null>(null)
+const enabledRows = computed(() => draft.value.filter((r) => r.enabled))
+
+function verdictOf(r: EntryDraft): RerankTestResult | null {
+  return r.probe && r.probe.payload === payloadKey(r) ? r.probe.result : null
 }
+
+function record(rows: EntryDraft[], results: RerankTestResult[] | undefined): void {
+  for (const result of results ?? []) {
+    const row = rows[result.index]
+    if (row) row.probe = { payload: payloadKey(row), result }
+  }
+}
+
+async function testAll(): Promise<void> {
+  const rows = enabledRows.value
+  if (!rows.length || testingAll.value) return
+  testingAll.value = true
+  try {
+    const out = await run(() => testRerankers(api, rows.map(entryPayload)))
+    if (out) record(rows, out.results)
+  } finally {
+    testingAll.value = false
+  }
+}
+
+async function testRow(row: EntryDraft): Promise<void> {
+  if (testingRowId.value !== null) return
+  testingRowId.value = row.id
+  try {
+    const out = await run(() => testRerankers(api, [entryPayload(row)]))
+    if (out) record([row], out.results)
+  } finally {
+    testingRowId.value = null
+  }
+}
+
+type CardState = 'unconfigured' | 'testing' | 'untested' | 'healthy' | 'broken'
+
+const failures = computed(() =>
+  enabledRows.value
+    .map((r) => ({ r, verdict: verdictOf(r) }))
+    .filter((x): x is { r: EntryDraft; verdict: RerankTestResult } => x.verdict != null && !x.verdict.ok)
+    .map((x) => ({ id: x.r.id, model: x.r.model.trim(), error: x.verdict.error ?? t('access.entryTestFail') })),
+)
+
+const state = computed<CardState>(() => {
+  if (!enabledRows.value.length) return 'unconfigured'
+  if (testingAll.value || testingRowId.value !== null) return 'testing'
+  const verdicts = enabledRows.value.map(verdictOf)
+  if (verdicts.some((v) => v === null)) return 'untested'
+  return verdicts.every((v) => v!.ok) ? 'healthy' : 'broken'
+})
+
+const badgeSuffix = computed(
+  () =>
+    ({ unconfigured: 'Unconfigured', testing: 'Testing', untested: 'Untested', healthy: 'Healthy', broken: 'Broken' })[
+      state.value
+    ],
+)
+const badgeKey = computed(() => `access.embeddingBadge${badgeSuffix.value}`)
+const badgeType = computed(
+  () =>
+    ({ unconfigured: 'info', testing: 'warning', untested: 'warning', healthy: 'success', broken: 'danger' })[
+      state.value
+    ] as 'info' | 'warning' | 'success' | 'danger',
+)
+const stateText = computed(
+  () =>
+    ({
+      unconfigured: t('access.rerankPitch'),
+      testing: t('access.embeddingChecking'),
+      untested: t('access.rerankUntested'),
+      healthy: t('access.rerankHealthy'),
+      broken: t('access.rerankBroken'),
+    })[state.value],
+)
+
+const saving = ref(false)
 
 async function save(): Promise<void> {
   if (!dirty.value || saving.value) return
   saving.value = true
   try {
-    const payload = draft.value.map((r) => ({
-      enabled: r.enabled,
-      base_url: r.baseUrl.trim(),
-      model: r.model.trim(),
-      api_key: r.apiKey.trim() === '' ? null : r.apiKey,
-    }))
-    const ok = await run(() => api.put('/api/settings', { rerank_models: payload }))
+    const ok = await run(() => api.put('/api/settings', { rerank_models: draft.value.map(entryPayload) }))
     if (ok === undefined) return
     saved.value = draft.value.map((r) => ({ ...r }))
     emit('changed')
-    lastTest.value = null
-    if (payload.some((e) => e.enabled)) {
-      await check()
-    }
   } finally {
     saving.value = false
   }
@@ -221,34 +324,18 @@ async function save(): Promise<void> {
   justify-content: space-between;
 }
 
-.state-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
 .state-line {
+  margin: 0 0 12px;
   font-size: 13px;
   line-height: 1.6;
   color: var(--el-text-color-regular);
-  min-width: 0;
 }
 .state-line.is-broken {
   color: var(--el-color-danger);
 }
-.broken-err {
-  font-size: 12px;
-  word-break: break-all;
-  color: var(--el-text-color-secondary);
-}
-.state-actions {
-  margin-left: auto;
-  flex-shrink: 0;
-  display: inline-flex;
-  gap: 8px;
-}
 
 .probe-results {
-  margin-top: 8px;
+  margin: -6px 0 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -256,61 +343,137 @@ async function save(): Promise<void> {
 .probe-line {
   font-size: 12px;
   line-height: 1.6;
+  color: var(--el-color-danger);
   font-variant-numeric: tabular-nums;
 }
-.probe-line.is-ok {
-  color: var(--el-color-success);
-}
-.probe-line.is-bad {
-  color: var(--el-color-danger);
+.broken-err {
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--el-text-color-secondary);
 }
 
 .entry-list {
-  margin-top: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 .entry {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 .entry.is-off {
-  opacity: 0.55;
+  opacity: 0.6;
 }
-.entry-head {
+.entry.is-over {
+  border-color: var(--el-color-primary);
+}
+.entry-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  padding: 5px 10px;
+}
+.entry-handle {
+  display: inline-flex;
+  color: var(--el-text-color-placeholder);
+  cursor: grab;
+}
+.entry-handle:active {
+  cursor: grabbing;
+}
+.entry-toggle {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.entry-caret {
+  color: var(--el-text-color-placeholder);
+  transition: transform 0.15s;
+}
+.entry.is-open .entry-caret {
+  transform: rotate(90deg);
 }
 .entry-index {
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--el-text-color-placeholder);
   font-variant-numeric: tabular-nums;
+}
+.entry-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-tags {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.entry-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.entry-verdict.is-ok {
+  color: var(--el-color-success);
+}
+.entry-verdict.is-bad {
+  color: var(--el-color-danger);
+}
+.entry-verdict.is-warn {
+  color: var(--el-color-warning);
+}
+.entry-switch {
   flex-shrink: 0;
 }
-.entry-model {
-  flex: 1;
-  min-width: 120px;
+
+.entry-detail {
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding: 10px;
 }
-.entry-ops {
-  flex-shrink: 0;
-}
-.entry-fields {
+.field-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 10px;
 }
-.entry-fields .span-2 {
-  grid-column: span 2;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.field-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.entry-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.spacer {
+  flex: 1;
 }
 
 .form-hint {
-  margin: 10px 0 12px;
+  margin: 12px 0 10px;
   font-size: 12px;
   color: var(--el-text-color-placeholder);
 }

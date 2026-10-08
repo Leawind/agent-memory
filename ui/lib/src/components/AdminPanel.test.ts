@@ -103,7 +103,7 @@ describe('AdminPanel', () => {
     // Semantic search cards: the candidate editor (empty) plus the reranker card, status-first
     expect(html).toContain('语义搜索')
     expect(html).toContain('重排')
-    expect(html).toContain('添加候选模型')
+    expect(html).toContain('添加')
     // Missing-key fallback no longer appears (vue-i18n echoes the key itself when missing)
     expect(html).not.toContain('access.embedding')
     expect(html).not.toContain('access.identityCard')
@@ -133,9 +133,10 @@ describe('AdminPanel', () => {
     wrapper.unmount()
   })
 
-  // The save row's "save" coexists with the identically named dialog button; find the card's one only
+  // Every settings card ends in a button named 保存; scope to the prompt card's own one
   function promptCardSave(wrapper: ReturnType<typeof mount>) {
-    return wrapper.findAll('button').filter((b) => b.text() === '保存' && !b.element.closest('.el-dialog'))[0]
+    const card = wrapper.findAll('.admin-sections .el-card').find((c) => c.text().includes('自定义提示词'))!
+    return card.findAll('button').find((b) => b.text() === '保存')!
   }
 
   it('prefills the built-in default when unset and gates save on changes', async () => {
@@ -228,7 +229,7 @@ describe('AdminPanel', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('embedding card: candidate editor saves the canonical list, then probes (entry enabled)', async () => {
+  it('embedding card: candidate editor saves the canonical list, then probes on demand', async () => {
     const settingsPuts: string[] = []
     const stored: Record<string, unknown> = {}
     vi.stubGlobal(
@@ -245,7 +246,7 @@ describe('AdminPanel', () => {
         }
         if (u.includes('/api/embeddings/test')) {
           return Promise.resolve(
-            jsonResponse({ ok: true, results: [{ model: 'bge-m3-x', ok: true, dim: 1024, elapsed_ms: 42 }] }),
+            jsonResponse({ ok: true, results: [{ index: 0, model: 'bge-m3-x', ok: true, dim: 1024, elapsed_ms: 42 }] }),
           )
         }
         return Promise.resolve(jsonResponse({}))
@@ -256,15 +257,15 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // Switch to the semantic section and add one candidate through the editor
+    // Switch to the semantic section and add one candidate through the editor (new rows open)
     await wrapper.findAll('.admin-nav .nav-item')[1].trigger('click')
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === '添加候选模型')!
+      .find((b) => b.text() === '添加')!
       .trigger('click')
-    await wrapper.findAll('.entry')[0].find('.entry-model input')!.setValue('bge-m3-x')
-    await wrapper.findAll('.entry')[0].findAll('.entry-fields input')[0].setValue('http://svc:9/v1')
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存并检测')!
+    await wrapper.findAll('.entry')[0].find('.f-model input')!.setValue('bge-m3-x')
+    await wrapper.findAll('.entry')[0].find('.f-base-url input')!.setValue('http://svc:9/v1')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存')!
     expect(saveBtn.attributes('disabled')).toBeUndefined()
     await saveBtn.trigger('click')
     await flushPromises()
@@ -284,8 +285,19 @@ describe('AdminPanel', () => {
         ],
       }),
     ])
-    // An enabled candidate is probed right after the save
-    expect(vi.mocked(globalThis.fetch).mock.calls.some((c) => String(c[0]).includes('/api/embeddings/test'))).toBe(true)
+    // Saving does not probe on its own: the explicit test button does, over the draft's values
+    const probeCalls = () =>
+      vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).includes('/api/embeddings/test'))
+    expect(probeCalls()).toHaveLength(0)
+    // The row's own test button probes exactly that row's values
+    await wrapper
+      .findAll('.entry')[0]
+      .findAll('button')
+      .find((b) => b.text() === '检测')!
+      .trigger('click')
+    await flushPromises()
+    expect(probeCalls()).toHaveLength(1)
+    expect(String(probeCalls()[0][1]?.body)).toContain('"model":"bge-m3-x"')
     // The editor mirrors the saved values with its actions disabled again
     await flushPromises()
     expect(saveBtn.attributes('disabled')).toBeDefined()
