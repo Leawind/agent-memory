@@ -134,9 +134,9 @@ fn states() -> &'static Mutex<HashMap<String, State>> {
     STATES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn maintain(states: &mut HashMap<String, State>) {
+fn maintain(states: &mut HashMap<String, State>, incoming: &str) {
     states.retain(|_, state| state.touched.elapsed() < IDLE_TTL);
-    if states.len() >= MAX_MODELS {
+    if !states.contains_key(incoming) && states.len() >= MAX_MODELS {
         if let Some(oldest) = states
             .iter()
             .min_by_key(|(_, state)| state.touched)
@@ -152,7 +152,7 @@ pub fn budget(path: &Path, cfg: &RerankConfig, limits: &Limits, document_chars: 
     let mut states = states()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    maintain(&mut states);
+    maintain(&mut states, &key);
     let state = states.entry(key).or_insert_with(|| State::new(limits));
     state.touched = Instant::now();
     state.budget(limits, document_chars)
@@ -171,7 +171,7 @@ pub fn observe(
     let mut states = states()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    maintain(&mut states);
+    maintain(&mut states, &key);
     states
         .entry(key)
         .or_insert_with(|| State::new(limits))
@@ -201,6 +201,24 @@ mod tests {
     fn limits() -> Limits {
         Limits::parse(&json!({"semantic_candidates":100,"rerank_candidates":50,
             "adaptive":{"enabled":true,"min_candidates":10,"max_candidates":100,"target_latency_ms":1000}})).unwrap()
+    }
+
+    #[test]
+    fn full_cache_preserves_existing_feedback_and_evicts_only_for_a_new_model() {
+        let limits = limits();
+        let mut states = HashMap::new();
+        for index in 0..MAX_MODELS {
+            let mut state = State::new(&limits);
+            state.samples = index as u64 + 1;
+            states.insert(index.to_string(), state);
+        }
+        maintain(&mut states, "0");
+        assert_eq!(states.len(), MAX_MODELS);
+        assert_eq!(states["0"].samples, 1);
+        maintain(&mut states, "new");
+        assert_eq!(states.len(), MAX_MODELS - 1);
+        states.insert("new".into(), State::new(&limits));
+        assert_eq!(states.len(), MAX_MODELS);
     }
 
     #[test]
