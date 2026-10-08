@@ -50,6 +50,8 @@ pub const ACCESS_BUCKETS_FOR: &str = include_str!("../sql/access_buckets_for.sql
 pub const ACCESS_DELETE_BATCH: &str = include_str!("../sql/access_delete_batch.sql");
 pub const ACCESS_MEMORY_IDS: &str = include_str!("../sql/access_memory_ids.sql");
 pub const ACCESS_STATS: &str = include_str!("../sql/access_stats.sql");
+pub const SEARCH_REVISION_BUMP: &str = include_str!("../sql/search_revision_bump.sql");
+pub const SEARCH_CURSOR_GENERATE: &str = include_str!("../sql/search_cursor_generate.sql");
 pub const ACCESS_EVENTS_EXPORT: &str = include_str!("../sql/access_events_export.sql");
 pub const LIFECYCLE_GET: &str = include_str!("../sql/lifecycle_get.sql");
 pub const LIFECYCLE_ALL: &str = include_str!("../sql/lifecycle_all.sql");
@@ -164,6 +166,8 @@ mod tests {
             ("ACCESS_DELETE_BATCH", ACCESS_DELETE_BATCH),
             ("ACCESS_MEMORY_IDS", ACCESS_MEMORY_IDS),
             ("ACCESS_STATS", ACCESS_STATS),
+            ("SEARCH_REVISION_BUMP", SEARCH_REVISION_BUMP),
+            ("SEARCH_CURSOR_GENERATE", SEARCH_CURSOR_GENERATE),
             ("ACCESS_EVENTS_EXPORT", ACCESS_EVENTS_EXPORT),
             ("LIFECYCLE_GET", LIFECYCLE_GET),
             ("LIFECYCLE_ALL", LIFECYCLE_ALL),

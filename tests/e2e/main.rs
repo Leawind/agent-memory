@@ -21,5 +21,6 @@ mod resources;
 mod rest;
 mod semantic;
 mod shared;
+mod snapshots;
 mod subscribe;
 mod tag_rules;

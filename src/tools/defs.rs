@@ -173,6 +173,7 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
+                    "cursor": {"type": "string", "description": "Reuse the response cursor with the same query, mode, state and tag expression to page a stable ranking. Valid for at most 120 seconds, bound to the caller and process; repeat without cursor if stale. Content, tag, lifecycle or search-setting writes invalidate it; access feedback does not."},
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
                     "state": {"type": "string", "enum": ["active", "archived", "expired", "all"], "description": "Default active: archived and expired memories are excluded before candidate selection. Explicit filters can inspect them."},
                     "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (content + tags + semantic) when the server has semantic search configured, otherwise plain keyword (flagged semantic: \"disabled\" in the response). 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
@@ -317,6 +318,22 @@ pub fn is_read_only(tool: &str) -> bool {
         .get(tool)
         .copied()
         .unwrap_or(false)
+}
+
+/// Primary search inputs changed; access feedback deliberately preserves existing snapshots.
+pub fn affects_search(tool: &str) -> bool {
+    matches!(
+        tool,
+        TAG_CREATE
+            | TAG_UPDATE
+            | TAG_DELETE
+            | MEMORY_CREATE
+            | MEMORY_UPDATE
+            | MEMORY_EDIT
+            | MEMORY_MERGE
+            | MEMORY_DELETE
+            | MEMORY_LIFECYCLE
+    )
 }
 
 /// Tool name → the capabilities required from the caller (the single registry of permissions,

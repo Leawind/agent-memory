@@ -7,6 +7,24 @@ use rusqlite::params;
 use super::Store;
 
 impl Store {
+    pub fn search_revision(&self) -> Result<u64, String> {
+        self.settings_get("search_revision")?.map_or(Ok(0), |raw| {
+            raw.parse().map_err(|_| "corrupt search revision".into())
+        })
+    }
+
+    pub fn bump_search_revision(&self) -> Result<(), String> {
+        self.conn
+            .execute(sql::SEARCH_REVISION_BUMP, [])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn new_search_cursor(&self) -> Result<String, String> {
+        self.conn
+            .query_row(sql::SEARCH_CURSOR_GENERATE, [], |row| row.get(0))
+            .map_err(|e| e.to_string())
+    }
     pub const SETTING_SEARCH_LIMITS: &'static str = "search_limits";
     pub const SETTING_LIFECYCLE_POLICY: &'static str = "lifecycle_policy";
 
@@ -62,8 +80,19 @@ impl Store {
         }
         self.conn
             .execute(sql::SETTINGS_PUT, params![key, value])
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        if [
+            Self::SETTING_SEARCH_LIMITS,
+            Self::SETTING_LIFECYCLE_POLICY,
+            Self::SETTING_TAG_RULES,
+            Self::SETTING_EMBEDDING_MODELS,
+            Self::SETTING_RERANK_MODELS,
+        ]
+        .contains(&key)
+        {
+            self.bump_search_revision()?;
+        }
+        Ok(())
     }
 
     /// Token auth switch (a settings key, explicit and persisted): whether enforcement happens at runtime depends solely on this value,

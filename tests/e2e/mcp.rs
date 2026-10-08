@@ -121,16 +121,17 @@ fn mcp_endpoint_end_to_end() {
         "search header: {text}"
     );
     assert_eq!(
-        lines[1], "semantic: disabled",
+        lines[2], "semantic: disabled",
         "unconfigured semantic search is stated, not inferred: {text}"
     );
     assert!(
-        lines[2].starts_with("hint: "),
+        lines[3].starts_with("hint: "),
         "first page carries the hint: {text}"
     );
-    assert_eq!(lines.len(), 5, "one row plus its snippet only: {text}");
+    assert!(lines[1].starts_with("cursor: s_"));
+    assert_eq!(lines.len(), 6, "one row plus its snippet only: {text}");
     // Row grammar: <id> [<tags>] <updated> <score> <summary>
-    let row = lines[3];
+    let row = lines[4];
     let rest = row
         .strip_prefix(mem_id.as_str())
         .unwrap_or_else(|| panic!("row must start with the memory id {mem_id}: {row}"));
@@ -155,7 +156,7 @@ fn mcp_endpoint_end_to_end() {
         "summary column: {row}"
     );
     assert!(
-        lines[4].starts_with("  > "),
+        lines[5].starts_with("  > "),
         "snippet rides its own indented line: {text}"
     );
     let empty = mcp_rpc(
@@ -166,9 +167,9 @@ fn mcp_endpoint_end_to_end() {
     );
     let empty_text = result_text(&empty);
     assert!(
-        empty_text.starts_with(
-            "total_matches: 0 | offset: 10 | returned: 0 | mode: keyword\nsemantic: disabled\nnote: "
-        ),
+        empty_text
+            .starts_with("total_matches: 0 | offset: 10 | returned: 0 | mode: keyword\ncursor: s_")
+            && empty_text.contains("\nsemantic: disabled\nnote: "),
         "empty search: {empty_text}"
     );
     assert!(

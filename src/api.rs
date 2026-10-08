@@ -797,9 +797,13 @@ pub fn handle(
             let status = match e {
                 ToolError::NotFound(_) => 404,
                 ToolError::Forbidden(_) => 403,
-                ToolError::Invalid(_) => 400,
+                ToolError::Invalid(_) | ToolError::StaleSearch(_) => 400,
             };
-            (status, json!({ "error": e.message() }))
+            let mut body = json!({ "error": e.message() });
+            if matches!(e, ToolError::StaleSearch(_)) {
+                body["code"] = json!("stale_search_cursor");
+            }
+            (status, body)
         }
     }
 }
@@ -1035,7 +1039,7 @@ fn parse_model_identity(
 fn list_or_search_args(query: &str) -> Value {
     let mut args = Map::new();
     for key in [
-        "query", "tag_expr", "sort", "order", "offset", "limit", "mode", "state",
+        "query", "tag_expr", "sort", "order", "offset", "limit", "mode", "state", "cursor",
     ] {
         if let Some(v) = query_get(query, key) {
             let value = if key == "offset" || key == "limit" {

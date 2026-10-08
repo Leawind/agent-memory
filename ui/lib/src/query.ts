@@ -17,6 +17,7 @@ export interface MemoriesQueryState {
   page: number
   pageSize: number
   state?: string
+  cursor?: string
 }
 
 function pair(k: string, v: string): string {
@@ -29,6 +30,7 @@ export function buildMemoriesQuery(s: MemoriesQueryState): string {
   if (searching) {
     p.push(pair('query', s.query.trim()))
     if (s.mode && s.mode !== 'auto') p.push(pair('mode', s.mode))
+    if (s.cursor) p.push(pair('cursor', s.cursor))
   } else {
     p.push(pair('sort', s.sort))
     p.push(pair('order', s.order))

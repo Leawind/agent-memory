@@ -1,6 +1,6 @@
 // API client tests: baseUrl prefix, custom fetch injection, error handling and JSON parsing conventions
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createApiClient } from './client'
+import { ApiError, createApiClient } from './client'
 import type { ResolvedMemoryUIConfig } from '../config'
 
 function makeConfig(fetchImpl: typeof fetch, baseUrl = ''): ResolvedMemoryUIConfig {
@@ -22,6 +22,13 @@ afterEach(() => {
 })
 
 describe('api client', () => {
+  it('preserves status and structured codes without classifying error text', async () => {
+    const client = createApiClient(
+      makeConfig(mockFetch(400, { error: 'Ranking changed', code: 'stale_search_cursor' }) as unknown as typeof fetch),
+    )
+    await expect(client.get('/api/memories')).rejects.toBeInstanceOf(ApiError)
+    await expect(client.get('/api/memories')).rejects.toMatchObject({ status: 400, code: 'stale_search_cursor' })
+  })
   it('prefixes baseUrl and passes the custom fetch through', async () => {
     const fetchMock = mockFetch(200, { ok: true })
     const client = createApiClient(makeConfig(fetchMock as unknown as typeof fetch, 'http://127.0.0.1:8899'))

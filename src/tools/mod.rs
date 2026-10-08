@@ -40,6 +40,8 @@ pub enum ToolError {
     NotFound(String),
     /// Argument validation failure or business conflict (REST → 400)
     Invalid(String),
+    /// Expired, invalidated or mismatched search snapshot (REST → 400 with a stable code).
+    StaleSearch(String),
     /// The caller identity lacks a required capability (REST → 403; consistent with the MCP spec's
     /// "403 = insufficient permissions" semantics)
     Forbidden(String),
@@ -61,7 +63,10 @@ impl ToolError {
     /// Readable message for agents / the management UI.
     pub fn message(&self) -> &str {
         match self {
-            ToolError::NotFound(m) | ToolError::Invalid(m) | ToolError::Forbidden(m) => m,
+            ToolError::NotFound(m)
+            | ToolError::Invalid(m)
+            | ToolError::Forbidden(m)
+            | ToolError::StaleSearch(m) => m,
         }
     }
 }
@@ -159,7 +164,7 @@ pub fn execute(
         reserved_tag_guard(st, ctx, name, map)?;
     }
 
-    match name {
+    let out = match name {
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
         defs::TAG_RULE_LIST => st.tag_rules_view().map_err(ToolError::from),
@@ -167,7 +172,7 @@ pub fn execute(
         defs::TAG_DELETE => tag_ops::tag_delete(st, map),
         defs::MEMORY_CREATE => memory_ops::memory_create(st, map),
         defs::MEMORY_LIST => memory_ops::memory_list(st, map),
-        defs::MEMORY_SEARCH => memory_ops::memory_search(st, map),
+        defs::MEMORY_SEARCH => memory_ops::memory_search(st, ctx, map),
         defs::MEMORY_GET => memory_ops::memory_get(st, map),
         defs::MEMORY_UPDATE => memory_ops::memory_update(st, map),
         defs::MEMORY_EDIT => memory_ops::memory_edit(st, map),
@@ -178,7 +183,11 @@ pub fn execute(
         defs::MEMORY_LIFECYCLE => memory_ops::memory_lifecycle(st, map),
         defs::MEMORY_USE => memory_ops::memory_use(st, ctx, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
+    }?;
+    if defs::affects_search(name) && !map.get("dry_run").and_then(Value::as_bool).unwrap_or(false) {
+        st.bump_search_revision()?;
     }
+    Ok(out)
 }
 
 /// Reserved-tag guards for 'convention' (the resident convention, also surfaced as resources).
@@ -410,6 +419,65 @@ mod tests {
         let after = call(&path, "memory_list", json!({})).unwrap();
         assert_eq!(after["total"], 0);
 
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_snapshots_survive_feedback_but_reject_other_callers_and_primary_writes() {
+        let path = crate::store::test_support::temp_db("search-snapshot");
+        cleanup(&path);
+        store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {
+            for summary in ["alpha one", "alpha two", "alpha three"] {
+                st.insert_memory(summary, "body", &[], 100, 100)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let first = call(
+            &path,
+            MEMORY_SEARCH,
+            json!({"query":"alpha","mode":"keyword","limit":1}),
+        )
+        .unwrap();
+        let cursor = first["cursor"].as_str().unwrap();
+        assert_eq!(first["results"][0]["id"], "m1");
+        call(&path, MEMORY_USE, json!({"id":"m3","event_key":"action"})).unwrap();
+        let next_args =
+            json!({"query":"alpha","mode":"keyword","cursor":cursor,"offset":1,"limit":1});
+        assert_eq!(
+            call(&path, MEMORY_SEARCH, next_args.clone()).unwrap()["results"][0]["id"],
+            "m2"
+        );
+        assert_eq!(
+            call(
+                &path,
+                MEMORY_SEARCH,
+                json!({"query":"alpha","mode":"keyword"})
+            )
+            .unwrap()["results"][0]["id"],
+            "m3"
+        );
+        assert!(matches!(
+            call_as(
+                &path,
+                &[crate::auth::Cap::Read],
+                MEMORY_SEARCH,
+                next_args.clone()
+            ),
+            Err(ToolError::StaleSearch(_))
+        ));
+        assert!(call(&path, MEMORY_UPDATE, json!({"id":"m2","summary":""})).is_err());
+        assert!(call(&path, MEMORY_SEARCH, next_args.clone()).is_ok());
+        call(
+            &path,
+            MEMORY_UPDATE,
+            json!({"id":"m2","summary":"alpha changed"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            call(&path, MEMORY_SEARCH, next_args),
+            Err(ToolError::StaleSearch(_))
+        ));
         cleanup(&path);
     }
 

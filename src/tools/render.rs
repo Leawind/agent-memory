@@ -80,6 +80,20 @@ fn render_memory_search(v: &Value) -> Option<String> {
     let mut out = format!(
         "total_matches: {total} | offset: {offset} | returned: {returned} | mode: {mode}\n"
     );
+    if let Some(cursor) = v.get("cursor").and_then(Value::as_str) {
+        out.push_str("cursor: ");
+        out.push_str(cursor);
+        if let Some(deadline) = v.get("cursor_expires_at").and_then(Value::as_u64) {
+            out.push_str(" | expires_at: ");
+            out.push_str(&deadline.to_string());
+        }
+        out.push('\n');
+    }
+    if let Some(reason) = v.get("cursor_unavailable").and_then(Value::as_str) {
+        out.push_str("cursor_unavailable: ");
+        out.push_str(reason);
+        out.push('\n');
+    }
     if let Some(km) = v.get("keyword_matches").and_then(Value::as_u64) {
         out.push_str("keyword_matches: ");
         out.push_str(&km.to_string());

@@ -642,6 +642,7 @@ impl Store {
             }
         }
         self.access_rebuild()?;
+        self.bump_search_revision()?;
         Ok((memories.len(), created_tags))
     }
 }

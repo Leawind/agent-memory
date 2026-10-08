@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest'
 import { buildMemoriesQuery, isSearchMode } from './query.js'
 
 describe('buildMemoriesQuery', () => {
+  it('includes the snapshot cursor only in search mode', () => {
+    for (const query of ['', 'alpha']) {
+      const qs = buildMemoriesQuery({
+        query,
+        tagExpr: '',
+        mode: 'keyword',
+        sort: 'id',
+        order: 'asc',
+        page: 2,
+        pageSize: 20,
+        cursor: 'snapshot',
+      })
+      expect(new URLSearchParams(qs).get('cursor')).toBe(query ? 'snapshot' : null)
+    }
+  })
   it('carries lifecycle filters through both list and search requests', () => {
     for (const query of ['', 'rust']) {
       const qs = buildMemoriesQuery({

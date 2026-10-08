@@ -16,6 +16,17 @@ export interface ApiClient {
   getBlob: (path: string) => Promise<Blob>
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
   async function api<T = void>(path: string, options: RequestInit = {}): Promise<T> {
     const res = await config.fetch(config.baseUrl + path, {
@@ -31,7 +42,8 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
     }
     if (!res.ok) {
       const msg = (data as { error?: string } | null)?.error ?? t('errors.http', { status: res.status })
-      throw new Error(msg)
+      const code = (data as { code?: unknown } | null)?.code
+      throw new ApiError(msg, res.status, typeof code === 'string' ? code : undefined)
     }
     return data as T
   }
@@ -46,7 +58,7 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
       } catch {
         /* Non-JSON response body, fall back to the default message */
       }
-      throw new Error(msg)
+      throw new ApiError(msg, res.status)
     }
     return res.blob()
   }

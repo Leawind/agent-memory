@@ -82,6 +82,9 @@ export interface SearchResult {
 }
 
 export interface MemorySearchResp {
+  cursor?: string
+  cursor_expires_at?: number
+  cursor_unavailable?: string
   total_matches: number
   /** Hybrid only: how many matches are literal keyword hits (the rest entered via the semantic channel) */
   keyword_matches?: number

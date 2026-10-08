@@ -229,7 +229,11 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     Ok(json!({"total": total, "offset": offset, "limit": limit, "memories": memories}))
 }
 
-pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+pub fn memory_search(
+    st: &Store,
+    ctx: &IdentityCtx,
+    args: &Map<String, Value>,
+) -> Result<Value, ToolError> {
     let state = state_filter(args)?;
     let query = req_str(args, "query")?;
     if query.trim().is_empty() {
@@ -253,6 +257,16 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
             )))
         }
     };
+
+    let scope = crate::search_snapshot::scope(
+        st,
+        ctx,
+        &json!({"query":query,"tag_expr":opt_str(args,"tag_expr")?.unwrap_or_default().trim(),"state":state,"mode":opt_str(args,"mode")?.unwrap_or_else(|| "auto".into())}),
+    );
+    let revision = st.search_revision()?;
+    if let Some(cursor) = opt_str(args, "cursor")? {
+        return crate::search_snapshot::get(&cursor, &scope, revision, offset, limit);
+    }
 
     // Eligibility must precede every channel's top-k selection: filtering after
     // vector truncation can discard its entire head and hide eligible memories.
@@ -380,8 +394,6 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let keyword_matches = hits.iter().filter(|h| keyword_idx.contains(&h.idx)).count() as u64;
     let results: Vec<Value> = hits
         .iter()
-        .skip(offset as usize)
-        .take(limit as usize)
         .map(|h| {
             let m = &memories[h.idx];
             json!({
@@ -422,17 +434,24 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         out["keyword_matches"] = json!(keyword_matches);
     }
     // Progressive-disclosure guidance is carried only on the first page; by paging, the client has already read it, saving repeated context overhead
-    if offset == 0 {
-        out["hint"] = json!(
+    out["hint"] = json!(
             "Summaries + snippets only (progressive disclosure). Call memory_get with the ids worth reading to reveal full content."
-        );
-    }
+    );
     if total == 0 {
         out["note"] = json!(
             "no memory matched every term; drop some terms or try broader ones (matching is case-insensitive substring)"
         );
     }
-    Ok(out)
+    let next_expiry = hits
+        .iter()
+        .filter_map(|hit| {
+            lifecycle
+                .get(&Store::parse_id(&memories[hit.idx].id).unwrap_or(0))
+                .and_then(|meta| meta.expires_at)
+        })
+        .filter(|deadline| *deadline > response_time)
+        .min();
+    crate::search_snapshot::create(st, scope, revision, out, offset, limit, next_expiry)
 }
 
 pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {

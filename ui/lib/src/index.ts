@@ -23,7 +23,7 @@ export { default as FormDialog } from './components/FormDialog.vue'
 export { default as MarkdownView } from './components/MarkdownView.vue'
 
 // API and utilities
-export { createApiClient, useApiClient } from './api/client'
+export { ApiError, createApiClient, useApiClient } from './api/client'
 export type { ApiClient } from './api/client'
 export { renderMarkdown } from './markdown'
 export { formatTime, formatSize } from './format'

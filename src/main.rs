@@ -20,6 +20,7 @@ mod protocol;
 mod rerank;
 mod resources;
 mod search;
+mod search_snapshot;
 mod sql;
 mod store;
 mod tag_expr;

@@ -2,7 +2,7 @@
 // tag diffing.
 // Failed actions throw an Error; the panel layer shows the toast uniformly.
 import { computed, onMounted, ref, watch } from 'vue'
-import { useApiClient } from '../api/client'
+import { ApiError, useApiClient } from '../api/client'
 import { buildMemoriesQuery, isSearchMode } from '../query'
 import { useMemoryConfig } from '../config'
 import { listTags } from '../api/tags'
@@ -81,7 +81,11 @@ export function useMemories() {
     return reload()
   }
 
-  function buildQuery() {
+  let searchCursor = ''
+  let cursorIntent = ''
+  const intent = () => JSON.stringify([query.value.trim(), tagExpr.value.trim(), mode.value, state.value])
+
+  function buildQuery(cursor?: string) {
     return buildMemoriesQuery({
       query: query.value,
       tagExpr: tagExpr.value,
@@ -91,6 +95,7 @@ export function useMemories() {
       page: page.value,
       pageSize: pageSize.value,
       state: state.value,
+      cursor,
     })
   }
 
@@ -99,14 +104,40 @@ export function useMemories() {
   // overwrites a newer one
   let requestSeq = 0
 
-  async function reload() {
+  function reload(): Promise<void> {
+    searchCursor = ''
+    cursorIntent = ''
+    return load(false)
+  }
+
+  function reloadPage(): Promise<void> {
+    return load(true)
+  }
+
+  async function load(preserveSnapshot: boolean): Promise<void> {
     const seq = ++requestSeq
     loading.value = true
     try {
-      const qs = buildQuery()
+      const currentIntent = intent()
+      if (cursorIntent !== currentIntent) searchCursor = ''
+      const cursor = preserveSnapshot ? searchCursor : ''
+      const qs = buildQuery(cursor)
       if (isSearchMode(query.value)) {
-        const data = (await client.get<MemorySearchResp>(`/api/memories?${qs}`)) as MemorySearchResp
+        let data: MemorySearchResp
+        try {
+          data = await client.get<MemorySearchResp>(`/api/memories?${qs}`)
+        } catch (error) {
+          if (seq !== requestSeq) return
+          if (!cursor || !(error instanceof ApiError) || error.status !== 400 || error.code !== 'stale_search_cursor')
+            throw error
+          searchCursor = ''
+          cursorIntent = ''
+          page.value = 1
+          data = await client.get<MemorySearchResp>(`/api/memories?${buildQuery()}`)
+        }
         if (seq !== requestSeq) return
+        searchCursor = data.cursor ?? ''
+        cursorIntent = currentIntent
         // Snippets are plain text from the server and are rendered via text interpolation — never v-html
         searchResults.value = data.results ?? []
         total.value = data.total_matches ?? 0
@@ -116,6 +147,8 @@ export function useMemories() {
         note.value = data.semantic_fallback ? t('memories.semanticFallback') : ''
         showSearchResults.value = true
       } else {
+        searchCursor = ''
+        cursorIntent = ''
         const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`)) as MemoryListResp
         if (seq !== requestSeq) return
         // After deletion/filtering the current page may fall out of range: fall back to the
@@ -176,6 +209,7 @@ export function useMemories() {
     semanticReady,
     onSearch,
     reload,
+    reloadPage,
     loadTagOptions,
   }
 }

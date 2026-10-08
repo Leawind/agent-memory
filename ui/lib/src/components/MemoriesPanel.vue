@@ -106,8 +106,8 @@
           :total="total"
           :page-sizes="[20, 50, 100, 200]"
           layout="total, sizes, prev, pager, next"
-          @current-change="run(reload)"
-          @size-change="run(reload)"
+          @current-change="run(reloadPage)"
+          @size-change="run(reloadPage)"
         />
       </div>
       <div class="am-pager" v-else>
@@ -122,8 +122,8 @@
           :total="total"
           :page-sizes="[10, 20, 50]"
           layout="total, sizes, prev, pager, next"
-          @current-change="run(reload)"
-          @size-change="run(reload)"
+          @current-change="run(reloadPage)"
+          @size-change="run(reloadPage)"
         />
       </div>
 
@@ -191,6 +191,7 @@ const {
   semanticReady,
   onSearch,
   reload,
+  reloadPage,
   loadTagOptions,
 } = useMemories()
 
