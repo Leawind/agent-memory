@@ -15,7 +15,8 @@ import http from 'node:http'
 const PORTS = [Number(process.argv[2]), Number(process.argv[3])]
 const DURATION_MS = 60_000
 const MAX_SOCKETS = 4
-const ops = { create: 0, search: 0, list: 0, tag: 0 }
+const ops = { create: 0, search: 0, list: 0, tag: 0, read: 0, use: 0 }
+const recentIds: string[] = []
 const fails = { refused: 0, reset: 0, status4: 0, status5: 0, other: 0 }
 const samples: string[] = []
 
@@ -87,8 +88,14 @@ async function main(): Promise<void> {
             // the tag is fixed fixture vocabulary; opt into auto-creation explicitly
             create_missing_tags: true,
           })
-          if (r.status === 200) ops.create++
-          else recordFail('create', r)
+          if (r.status === 200) {
+            ops.create++
+            const id = (JSON.parse(r.body ?? '{}') as { id?: string }).id
+            if (id) {
+              recentIds.push(id)
+              if (recentIds.length > 64) recentIds.shift()
+            }
+          } else recordFail('create', r)
         }
       })(),
     )
@@ -109,10 +116,14 @@ async function main(): Promise<void> {
       let i = 0
       while (Date.now() < deadline) {
         const name = `soaktag${i % 5}`
-        await req('POST', PORTS[i % 2], '/api/tags', { name, description: 'soak' })
-        await req('PUT', PORTS[i % 2], `/api/tags/${name}`, { description: `v${i}` })
-        await req('DELETE', PORTS[i % 2], `/api/tags/${name}?mode=detach`)
-        ops.tag++
+        for (const r of [
+          await req('POST', PORTS[i % 2], '/api/tags', { name, description: 'soak' }),
+          await req('PUT', PORTS[i % 2], `/api/tags/${name}`, { description: `v${i}` }),
+          await req('DELETE', PORTS[i % 2], `/api/tags/${name}?mode=detach`),
+        ]) {
+          if (r.status === 200) ops.tag++
+          else recordFail('tag', r)
+        }
         i++
       }
     })(),
@@ -127,11 +138,36 @@ async function main(): Promise<void> {
     })(),
   )
 
+  for (const worker of [0, 1]) {
+    work.push(
+      (async () => {
+        let sequence = 0
+        while (Date.now() < deadline) {
+          const id = recentIds[(sequence + worker) % Math.max(1, recentIds.length)]
+          if (!id) {
+            await new Promise((resolve) => setTimeout(resolve, 10))
+            continue
+          }
+          const read = await req('GET', PORTS[worker], `/api/memories/${id}`)
+          if (read.status === 200) ops.read++
+          else recordFail('read', read)
+          const used = await req('POST', PORTS[worker], `/api/memories/${id}/use`, {
+            event_key: `soak-${worker}-${sequence++}`,
+          })
+          if (used.status === 200) ops.use++
+          else recordFail('use', used)
+        }
+      })(),
+    )
+  }
+
   await Promise.all(work)
   console.log('ops:', JSON.stringify(ops))
   console.log('fails:', JSON.stringify(fails))
   console.log('error samples:')
   for (const s of samples) console.log('  -', s)
+  agent.destroy()
+  if (fails.reset + fails.status4 + fails.status5 + fails.other > 0) process.exitCode = 1
 }
 
 void main()

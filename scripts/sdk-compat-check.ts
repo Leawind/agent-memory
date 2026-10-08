@@ -16,6 +16,27 @@ const ENDPOINT = process.env.MCP_URL || 'http://127.0.0.1:8899/mcp'
 const TOKEN = process.env.MCP_TOKEN
 const PROTOCOL_VERSION = '2026-07-28'
 const LEGACY_PROTOCOL_VERSION = '2025-06-18'
+const EXPECTED_TOOLS = [
+  'tag_create',
+  'tag_list',
+  'tag_rule_list',
+  'tag_update',
+  'tag_delete',
+  'memory_create',
+  'memory_list',
+  'memory_search',
+  'memory_get',
+  'memory_update',
+  'memory_edit',
+  'memory_merge',
+  'memory_delete',
+  'memory_lifecycle',
+  'memory_use',
+].sort()
+
+function hasExpectedInventory(tools: { name: string }[] | undefined): boolean {
+  return JSON.stringify((tools ?? []).map((tool) => tool.name).sort()) === JSON.stringify(EXPECTED_TOOLS)
+}
 
 const failures: string[] = []
 function check(name: string, cond: boolean, extra = ''): void {
@@ -203,7 +224,11 @@ try {
   // ---- tools/list: the full inventory plus static caching hints
   const tools = await rpc(2, 'tools/list')
   const toolNames = ((tools.result?.tools as { name: string }[] | undefined) ?? []).map((t) => t.name)
-  check('tools/list returns 12 tools', toolNames.length === 12, `got ${toolNames.length}`)
+  check(
+    'tools/list returns the complete named inventory',
+    hasExpectedInventory(tools.result?.tools as { name: string }[] | undefined),
+    `got ${toolNames.length}`,
+  )
   check(
     'tools/list is public and cacheable',
     tools.result?.cacheScope === 'public' && tools.result?.ttlMs === 3_600_000,
@@ -252,6 +277,13 @@ try {
   const searched = await rpc(4, 'tools/call', { name: 'memory_search', arguments: { query: '联调' } })
   const searchedText = textOf(searched) ?? ''
   check('memory_search finds it', lineHeader(searchedText).total_matches === '1')
+  const searchCursor = searchedText.match(/^cursor: (\S+)/m)?.[1]
+  check('search publishes an opaque pagination cursor', /^s_[a-f0-9]{32}$/.test(searchCursor ?? ''))
+  const repeatedSearch = await rpc('snapshot-reuse', 'tools/call', {
+    name: 'memory_search',
+    arguments: { query: '联调', cursor: searchCursor },
+  })
+  check('the cursor reuses the same search result', textOf(repeatedSearch) === searchedText)
   check(
     'search returns summary rows only (no content column)',
     searchedText.split('\n').every((l) => !l.startsWith('content')),
@@ -265,6 +297,35 @@ try {
         string | undefined
     )?.includes('2026-07-28') === true,
   )
+
+  const used = await rpc('memory-use', 'tools/call', {
+    name: 'memory_use',
+    arguments: { id: createdId, event_key: 'compat-answer' },
+  })
+  check('memory_use records a successful use', payloadOf(used)?.recorded === true)
+  const usedAgain = await rpc('memory-use-repeat', 'tools/call', {
+    name: 'memory_use',
+    arguments: { id: createdId, event_key: 'compat-answer' },
+  })
+  check('memory_use retries are idempotent', payloadOf(usedAgain)?.recorded === false)
+  const rules = await rpc('tag-rules', 'tools/call', { name: 'tag_rule_list', arguments: {} })
+  check(
+    'tag rules expose both constraints and derivations',
+    Array.isArray(payloadOf(rules)?.constraints) && Array.isArray(payloadOf(rules)?.derivations),
+  )
+  const archived = await rpc('archive', 'tools/call', {
+    name: 'memory_lifecycle',
+    arguments: { id: createdId, kind: 'context', archived: true },
+  })
+  check('memory_lifecycle accepts a reversible archive', archived.result?.isError !== true)
+  const hidden = await rpc('archive-search', 'tools/call', { name: 'memory_search', arguments: { query: '联调' } })
+  check('default search hides archived memories', lineHeader(textOf(hidden) ?? '').total_matches === '0')
+  await rpc('restore-archive', 'tools/call', {
+    name: 'memory_lifecycle',
+    arguments: { id: createdId, archived: false },
+  })
+  const visible = await rpc('restored-search', 'tools/call', { name: 'memory_search', arguments: { query: '联调' } })
+  check('restoring an archive returns it to default search', lineHeader(textOf(visible) ?? '').total_matches === '1')
 
   const updated = await rpc(6, 'tools/call', {
     name: 'memory_update',
@@ -529,7 +590,7 @@ try {
   const legacyTools = await legacyRpc('legacy-2', 'tools/list')
   check(
     'legacy tools/list works without any envelope',
-    legacyTools.status === 200 && ((legacyTools.result?.tools as { name: string }[] | undefined) ?? []).length === 12,
+    legacyTools.status === 200 && hasExpectedInventory(legacyTools.result?.tools as { name: string }[] | undefined),
   )
   const legacySearch = await legacyRpc('legacy-3', 'tools/call', {
     name: 'memory_search',
