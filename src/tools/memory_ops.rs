@@ -94,7 +94,55 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     Ok(out)
 }
 
+fn state_filter(args: &Map<String, Value>) -> Result<String, ToolError> {
+    let state = opt_str(args, "state")?.unwrap_or_else(|| "active".into());
+    if !["active", "archived", "expired", "all"].contains(&state.as_str()) {
+        return Err(ToolError::invalid(
+            "state must be active, archived, expired or all",
+        ));
+    }
+    Ok(state)
+}
+
+pub fn memory_lifecycle(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let raw_id = req_str(args, "id")?;
+    let id = Store::parse_id(&raw_id).ok_or_else(|| ToolError::invalid("id must follow m<N>"))?;
+    if !st.memory_exists(id)? {
+        return Err(ToolError::not_found(format!("memory '{raw_id}' not found")));
+    }
+    if args.len() == 1 {
+        return Err(ToolError::invalid("provide at least one lifecycle field"));
+    }
+    let before = st.lifecycle_get(id)?;
+    let mut meta = before.clone();
+    if let Some(kind) = opt_str(args, "kind")? {
+        meta.kind = serde_json::from_value(json!(kind)).map_err(|_| {
+            ToolError::invalid("kind must be fact, preference, procedure, context or event")
+        })?;
+    }
+    if args.contains_key("expires_at") {
+        meta.expires_at = opt_u64(args, "expires_at")?;
+    }
+    if let Some(pinned) = opt_bool(args, "pinned")? {
+        meta.pinned = pinned;
+    }
+    if let Some(archived) = opt_bool(args, "archived")? {
+        meta.archived_at = if archived {
+            Some(meta.archived_at.unwrap_or_else(now))
+        } else {
+            None
+        };
+    }
+    meta.validate()?;
+    let changed = meta != before;
+    if changed {
+        st.lifecycle_put(id, &meta)?;
+    }
+    Ok(json!({"updated": changed}))
+}
+
 pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let state = state_filter(args)?;
     let sort_opt = opt_str(args, "sort")?;
     // 'id' is the creation order (ids are monotonic at insert), so there is no separate
     // created_at sort key — and the summary rows do not carry a creation timestamp at all
@@ -139,18 +187,29 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         ListFilter {
             tag: None,
             id_set: id_set.as_deref(),
+            state: Some(&state),
         },
         sort,
         asc,
         offset,
         limit,
     )?;
-    let memories: Vec<Value> = page.iter().map(|m| m.summary_view()).collect();
+    let memories: Vec<Value> = page
+        .iter()
+        .map(|m| {
+            let mut view = m.summary_view();
+            view["lifecycle"] = st
+                .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
+                .view(now());
+            Ok(view)
+        })
+        .collect::<Result<_, String>>()?;
 
     Ok(json!({"total": total, "offset": offset, "limit": limit, "memories": memories}))
 }
 
 pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let state = state_filter(args)?;
     let query = req_str(args, "query")?;
     if query.trim().is_empty() {
         return Err(ToolError::invalid("query must not be empty"));
@@ -176,9 +235,18 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     // Eligibility must precede every channel's top-k selection: filtering after
     // vector truncation can discard its entire head and hide eligible memories.
+    let lifecycle = st.lifecycle_all()?;
+    let default_lifecycle = crate::lifecycle::Metadata::default();
+    let query_time = now();
     let memories: Vec<_> = st
         .all_memories()?
         .into_iter()
+        .filter(|m| {
+            lifecycle
+                .get(&Store::parse_id(&m.id).unwrap_or(0))
+                .unwrap_or(&default_lifecycle)
+                .matches(&state, query_time)
+        })
         .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
         .collect();
     let keyword_hits = search::literal_channels(&memories, &query);
@@ -271,6 +339,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                 "score": h.score,
                 "snippet": h.snippet,
                 "updated": crate::util::format_local_compact(m.updated_at),
+                "lifecycle": lifecycle.get(&Store::parse_id(&m.id).unwrap_or(0)).unwrap_or(&default_lifecycle).view(query_time),
             })
         })
         .collect();
@@ -326,6 +395,9 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
                 .memory_tag_provenance(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?;
             view["original_tags"] = provenance["original_tags"].clone();
             view["derived_tags"] = provenance["derived_tags"].clone();
+            view["lifecycle"] = st
+                .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
+                .view(now());
             Ok(view)
         })
         .collect::<Result<_, String>>()?;

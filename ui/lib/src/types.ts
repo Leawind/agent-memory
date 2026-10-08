@@ -6,6 +6,15 @@ export interface MemorySummary {
   summary: string
   /** Compact server-local wall clock "YYYY-MM-DD HH:MM"; summaries carry no creation time (the id encodes creation order) */
   updated: string
+  lifecycle?: LifecycleMetadata
+}
+
+export interface LifecycleMetadata {
+  kind: 'fact' | 'preference' | 'procedure' | 'context' | 'event'
+  expires_at: number | null
+  archived_at: number | null
+  pinned: boolean
+  state: 'active' | 'archived' | 'expired'
 }
 
 export interface MemoryFull extends MemorySummary {
@@ -13,6 +22,7 @@ export interface MemoryFull extends MemorySummary {
   content: string
   original_tags: string[]
   derived_tags: Array<{ tag: string; rules: string[] }>
+  lifecycle: LifecycleMetadata
 }
 
 /** Write responses are echo-free: only facts the client cannot derive from its own request */
@@ -68,6 +78,7 @@ export interface SearchResult {
   score: number
   snippet: string
   updated: string
+  lifecycle?: LifecycleMetadata
 }
 
 export interface MemorySearchResp {

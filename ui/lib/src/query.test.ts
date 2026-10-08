@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest'
 import { buildMemoriesQuery, isSearchMode } from './query.js'
 
 describe('buildMemoriesQuery', () => {
+  it('carries lifecycle filters through both list and search requests', () => {
+    for (const query of ['', 'rust']) {
+      const qs = buildMemoriesQuery({
+        query,
+        tagExpr: '',
+        mode: 'auto',
+        sort: 'id',
+        order: 'asc',
+        page: 1,
+        pageSize: 20,
+        state: 'archived',
+      })
+      expect(new URLSearchParams(qs).get('state')).toBe('archived')
+    }
+  })
   it('list mode: sort + pagination', () => {
     const qs = buildMemoriesQuery({
       query: '',

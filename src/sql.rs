@@ -37,6 +37,9 @@ pub const MEMORY_LIST_COUNT: &str = include_str!("../sql/memory_list_count.sql")
 pub const MEMORY_UPDATE_FIELDS: &str = include_str!("../sql/memory_update_fields.sql");
 pub const MEMORY_DELETE: &str = include_str!("../sql/memory_delete.sql");
 pub const MEMORY_SUMMARIES: &str = include_str!("../sql/memory_summaries.sql");
+pub const LIFECYCLE_GET: &str = include_str!("../sql/lifecycle_get.sql");
+pub const LIFECYCLE_ALL: &str = include_str!("../sql/lifecycle_all.sql");
+pub const LIFECYCLE_PUT: &str = include_str!("../sql/lifecycle_put.sql");
 
 pub const EMBEDDING_PUT: &str = include_str!("../sql/embedding_put.sql");
 pub const EMBEDDING_DELETE: &str = include_str!("../sql/embedding_delete.sql");
@@ -134,6 +137,9 @@ mod tests {
             ("MEMORY_UPDATE_FIELDS", MEMORY_UPDATE_FIELDS),
             ("MEMORY_DELETE", MEMORY_DELETE),
             ("MEMORY_SUMMARIES", MEMORY_SUMMARIES),
+            ("LIFECYCLE_GET", LIFECYCLE_GET),
+            ("LIFECYCLE_ALL", LIFECYCLE_ALL),
+            ("LIFECYCLE_PUT", LIFECYCLE_PUT),
             ("EMBEDDING_PUT", EMBEDDING_PUT),
             ("EMBEDDING_DELETE", EMBEDDING_DELETE),
             ("EMBEDDING_MODELS_LIST", EMBEDDING_MODELS_LIST),

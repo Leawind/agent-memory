@@ -23,9 +23,9 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 pub use defs::{
-    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST,
-    TAG_UPDATE, TOOL_NAMES,
+    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIFECYCLE,
+    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST,
+    TAG_RULE_LIST, TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -141,7 +141,7 @@ pub fn execute(
     check_known_args(name, map)?;
     if TOOL_NAMES.contains(&name) {
         ctx.require_all(defs::required_caps(name))?;
-        reserved_tag_guard(ctx, name, map)?;
+        reserved_tag_guard(st, ctx, name, map)?;
     }
 
     match name {
@@ -160,6 +160,7 @@ pub fn execute(
         // name no tags; only the loaded memories reveal whether the convention is involved)
         defs::MEMORY_MERGE => memory_ops::memory_merge(st, ctx, map),
         defs::MEMORY_DELETE => memory_ops::memory_delete(st, map),
+        defs::MEMORY_LIFECYCLE => memory_ops::memory_lifecycle(st, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
 }
@@ -171,6 +172,7 @@ pub fn execute(
 /// - creating it and attaching it to / detaching it from memories requires the admin capability,
 ///   keeping the operator-curated convention out of agents' reach.
 fn reserved_tag_guard(
+    st: &Store,
     ctx: &IdentityCtx,
     name: &str,
     args: &Map<String, Value>,
@@ -188,6 +190,24 @@ fn reserved_tag_guard(
             .any(|t| t.trim() == RESERVED_TAG)
     }
     match name {
+        defs::MEMORY_LIFECYCLE if !ctx.can(Cap::Admin) => {
+            if let Some(id) = args
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(Store::parse_id)
+            {
+                if st
+                    .get_memories(&[id])?
+                    .0
+                    .iter()
+                    .any(|memory| memory.tags.iter().any(|tag| tag == RESERVED_TAG))
+                {
+                    return Err(ToolError::forbidden(
+                        "changing the resident convention's lifecycle requires admin",
+                    ));
+                }
+            }
+        }
         defs::TAG_CREATE => {
             if raw_tag(args, "name").as_deref() == Some(RESERVED_TAG) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
@@ -1194,6 +1214,41 @@ mod tests {
             call_as(&path, &[], TAG_RULE_LIST, json!({})),
             Err(ToolError::Forbidden(_))
         ));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn lifecycle_permissions_protect_the_resident_convention() {
+        let path = temp_db("lifecycle-permissions");
+        let id = call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "resident rule", "tags": ["convention"]}),
+        )
+        .unwrap()["id"]
+            .clone();
+        assert!(matches!(
+            call_as(
+                &path,
+                &[Cap::Update],
+                MEMORY_LIFECYCLE,
+                json!({"id": id, "archived": true})
+            ),
+            Err(ToolError::Forbidden(_))
+        ));
+        assert!(matches!(
+            call_as(
+                &path,
+                &[Cap::Read],
+                MEMORY_LIFECYCLE,
+                json!({"id": id, "archived": true})
+            ),
+            Err(ToolError::Forbidden(_))
+        ));
+        assert!(call(&path, MEMORY_LIFECYCLE, json!({"id": id, "archived": true})).is_ok());
+        let listing = call(&path, MEMORY_LIST, json!({"state": "all"})).unwrap();
+        assert!(listing["memories"][0].get("content").is_none());
+        assert_eq!(listing["memories"][0]["lifecycle"]["state"], "archived");
         cleanup(&path);
     }
 

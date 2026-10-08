@@ -11,6 +11,7 @@ mod api;
 mod auth;
 mod embed;
 mod http;
+mod lifecycle;
 mod model;
 mod notify;
 mod protocol;

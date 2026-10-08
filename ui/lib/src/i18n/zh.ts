@@ -1,5 +1,23 @@
 // Chinese UI copy (keys grouped by component; en.ts must match these keys one-to-one, guarded by i18n.test.ts)
 export default {
+  lifecycle: {
+    title: '生命周期',
+    state: '记忆状态',
+    active: '有效',
+    archived: '已归档',
+    expired: '已到期',
+    all: '全部状态',
+    kind: '内容类型',
+    fact: '长期事实',
+    preference: '偏好',
+    procedure: '操作方法',
+    context: '短期上下文',
+    event: '事件',
+    expires: '到期时间',
+    noExpiry: '不设到期时间',
+    pinned: '置顶（免时效衰减）',
+    hint: '归档可以恢复。置顶不覆盖明确的到期时间；取消归档后，已到期的记忆还需要清除或延长到期时间。',
+  },
   common: {
     edit: '编辑',
     delete: '删除',

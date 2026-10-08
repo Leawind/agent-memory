@@ -45,6 +45,19 @@
           <el-option :label="t('memories.modeKeyword')" value="keyword" />
           <el-option :label="t('memories.modeHybrid')" value="hybrid" />
         </el-select>
+        <el-select
+          v-model="state"
+          class="mode-select state-select"
+          :aria-label="t('lifecycle.state')"
+          @change="run(onSearch)"
+        >
+          <el-option
+            v-for="status in ['active', 'archived', 'expired', 'all']"
+            :key="status"
+            :value="status"
+            :label="t(`lifecycle.${status}`)"
+          />
+        </el-select>
       </div>
 
       <el-alert v-if="note" :title="note" type="warning" show-icon :closable="false" />
@@ -60,6 +73,9 @@
             <!-- Snippets are plain text (server sends them unescaped); text interpolation, never v-html -->
             <span v-if="card.snippet" class="card-snippet">{{ card.snippet }}</span>
             <span class="card-tags">
+              <el-tag v-if="card.state && card.state !== 'active'" size="small" type="info">{{
+                t(`lifecycle.${card.state}`)
+              }}</el-tag>
               <!-- A tag chip shows its description on hover (only when one exists) -->
               <el-tooltip
                 v-for="tag in card.tags"
@@ -155,6 +171,7 @@ const emit = defineEmits<{
 
 const {
   query,
+  state,
   tagExpr,
   mode,
   sort,
@@ -187,6 +204,7 @@ interface MemoryCard {
   updated: string
   snippet?: string
   score?: number
+  state?: string
 }
 const cards = computed<MemoryCard[]>(() =>
   searching.value && showSearchResults.value
@@ -197,8 +215,15 @@ const cards = computed<MemoryCard[]>(() =>
         updated: r.updated,
         snippet: r.snippet,
         score: r.score,
+        state: r.lifecycle?.state,
       }))
-    : rows.value.map((r) => ({ id: r.id, summary: r.summary, tags: r.tags, updated: r.updated })),
+    : rows.value.map((r) => ({
+        id: r.id,
+        summary: r.summary,
+        tags: r.tags,
+        updated: r.updated,
+        state: r.lifecycle?.state,
+      })),
 )
 
 // The empty-result notice is generated locally (the server's note targets agents and is English

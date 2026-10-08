@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS memory_tags (
 CREATE INDEX IF NOT EXISTS idx_memory_tags_tag_id ON memory_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
 
+CREATE TABLE IF NOT EXISTS memory_lifecycle (
+    memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('fact', 'preference', 'procedure', 'context', 'event')),
+    expires_at INTEGER CHECK (expires_at >= 0),
+    archived_at INTEGER CHECK (archived_at >= 0),
+    pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))
+);
+
 -- identities：访问身份（token 即身份，无账号/注册/登录——由操作者经 Web UI
 -- 或 CLI 签发）。permissions 为能力清单 JSON（如 {"read":true,"admin":false,...}），
 -- 键集合由 src/auth.rs 的登记表校验，未知键在写入前被拒绝。token 只存 SHA-256

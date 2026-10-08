@@ -18,8 +18,9 @@ use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
-    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_MERGE,
-    MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST, TAG_UPDATE,
+    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
+    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST,
+    TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -673,6 +674,11 @@ pub fn handle(
                 };
                 tool_write(db_path, ctx, MEMORY_MERGE, &Value::Object(args))
             }
+            ("PUT", ["memories", mem_id, "lifecycle"]) => {
+                let mut args = args_from_body()?;
+                args.insert("id".into(), json!(mem_id));
+                tool_write(db_path, ctx, MEMORY_LIFECYCLE, &Value::Object(args))
+            }
             ("GET", ["memories", mem_id]) => store::with_db_in(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] })).map(|v| {
                     let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
@@ -963,7 +969,7 @@ fn parse_model_identity(
 fn list_or_search_args(query: &str) -> Value {
     let mut args = Map::new();
     for key in [
-        "query", "tag_expr", "sort", "order", "offset", "limit", "mode",
+        "query", "tag_expr", "sort", "order", "offset", "limit", "mode", "state",
     ] {
         if let Some(v) = query_get(query, key) {
             let value = if key == "offset" || key == "limit" {

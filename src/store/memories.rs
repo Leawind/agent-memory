@@ -14,6 +14,7 @@ use super::Store;
 pub struct ListFilter<'a> {
     pub tag: Option<&'a str>,
     pub id_set: Option<&'a str>,
+    pub state: Option<&'a str>,
 }
 
 impl Store {
@@ -153,13 +154,17 @@ impl Store {
         offset: u64,
         limit: u64,
     ) -> Result<(u64, Vec<Memory>), String> {
-        let ListFilter { tag, id_set } = filter;
+        let ListFilter { tag, id_set, state } = filter;
+        let state = state.unwrap_or("active");
+        let query_time = crate::model::now() as i64;
         let dir: i64 = if asc { 1 } else { -1 };
         let total: u64 = self
             .conn
-            .query_row(sql::MEMORY_LIST_COUNT, params![tag, id_set], |r| {
-                r.get::<_, i64>(0)
-            })
+            .query_row(
+                sql::MEMORY_LIST_COUNT,
+                params![tag, id_set, state, query_time],
+                |r| r.get::<_, i64>(0),
+            )
             .map(|n| n as u64)
             .map_err(|e| e.to_string())?;
         let mut st = self
@@ -168,7 +173,16 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map(
-                params![tag, id_set, sort, dir, limit as i64, offset as i64],
+                params![
+                    tag,
+                    id_set,
+                    sort,
+                    dir,
+                    limit as i64,
+                    offset as i64,
+                    state,
+                    query_time
+                ],
                 |r| {
                     let created: i64 = r.get(3)?;
                     let updated: i64 = r.get(4)?;
@@ -446,6 +460,7 @@ mod tests {
                 ListFilter {
                     tag: Some("t2"),
                     id_set: Some(&id_set_raw(&[6])),
+                    state: None,
                 },
                 "updated_at",
                 false,

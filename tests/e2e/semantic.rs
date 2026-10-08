@@ -231,6 +231,27 @@ fn semantic_tag_filter_applies_before_recall_limit() {
         assert!(result["results"][0].get("content").is_none());
     }
 
+    // Lifecycle eligibility is also applied before vector top-k. All 24 distracting
+    // vectors have the same semantic score and were ahead of the selected memory.
+    for id in 1..25 {
+        let (status, _, _) = request(
+            port,
+            "PUT",
+            &format!("/api/memories/m{id}/lifecycle"),
+            Some(r#"{"archived": true}"#),
+        );
+        assert_eq!(status, 200);
+    }
+    let (status, body, _) = request(
+        port,
+        "GET",
+        &format!("/api/memories?query={query}&limit=1&mode=hybrid"),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["total_matches"], 1);
+    assert_eq!(json_body(&body)["results"][0]["id"], selected_id);
+
     drop(server);
     cleanup(&db);
 }

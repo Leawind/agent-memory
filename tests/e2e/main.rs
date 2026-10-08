@@ -14,6 +14,7 @@ mod auth;
 mod cli;
 mod common;
 mod legacy;
+mod lifecycle;
 mod mcp;
 mod resources;
 mod rest;

@@ -20,8 +20,8 @@
 use crate::model::RESERVED_TAG;
 use crate::resources;
 use crate::tools::{
-    MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_MERGE, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE,
-    TAG_UPDATE,
+    MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_LIFECYCLE, MEMORY_MERGE, MEMORY_UPDATE,
+    TAG_CREATE, TAG_DELETE, TAG_UPDATE,
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -220,7 +220,9 @@ pub struct PreState {
 
 pub fn capture(db_path: &Path, tool: &str, args: &Value) -> PreState {
     let ids: Vec<String> = match tool {
-        MEMORY_UPDATE => vec![args["id"].as_str().unwrap_or_default().to_string()],
+        MEMORY_UPDATE | MEMORY_LIFECYCLE => {
+            vec![args["id"].as_str().unwrap_or_default().to_string()]
+        }
         // Merge diffs the target's tags (first id) and needs the source's tags for its removal events
         MEMORY_MERGE => vec![
             args["target"].as_str().unwrap_or_default().to_string(),
@@ -266,7 +268,7 @@ pub fn capture(db_path: &Path, tool: &str, args: &Value) -> PreState {
 /// final tag set — a post-commit re-read of the store.
 pub fn after_write(db_path: &Path, tool: &str, args: &Value, result: &Value, pre: &PreState) {
     let final_tags = match tool {
-        MEMORY_CREATE | MEMORY_UPDATE | MEMORY_MERGE => {
+        MEMORY_CREATE | MEMORY_UPDATE | MEMORY_MERGE | MEMORY_LIFECYCLE => {
             let raw = match tool {
                 MEMORY_CREATE => result["id"].as_str().unwrap_or_default(),
                 MEMORY_MERGE => args["target"].as_str().unwrap_or_default(),
@@ -403,6 +405,25 @@ fn compute_events(
                         result["id"].as_str().unwrap_or_default(),
                     )),
                 );
+            }
+        }
+        MEMORY_LIFECYCLE => {
+            if result["updated"] == true {
+                push(
+                    &mut events,
+                    Event::Updated(resources::memory_resource_uri(
+                        args["id"].as_str().unwrap_or_default(),
+                    )),
+                );
+                for tag in final_tags {
+                    push(
+                        &mut events,
+                        Event::Updated(resources::tag_resource_uri(tag)),
+                    );
+                }
+                if final_tags.iter().any(|tag| tag == RESERVED_TAG) {
+                    push(&mut events, Event::ListChanged);
+                }
             }
         }
         MEMORY_UPDATE => {
@@ -706,6 +727,29 @@ mod tests {
             &[],
         );
         assert_eq!(evs, vec![Event::Updated("memory://memories/m1".into())]);
+    }
+
+    #[test]
+    fn lifecycle_changes_invalidate_the_memory_and_active_catalogs() {
+        let tags = ["convention".to_string(), "topic".to_string()];
+        let events = events_for(
+            MEMORY_LIFECYCLE,
+            json!({"id": "m1", "archived": true}),
+            json!({"updated": true}),
+            &PreState::default(),
+            &tags,
+        );
+        assert!(events.contains(&Event::Updated(resources::memory_resource_uri("m1"))));
+        assert!(events.contains(&Event::Updated(resources::tag_resource_uri("topic"))));
+        assert!(events.contains(&Event::ListChanged));
+        assert!(events_for(
+            MEMORY_LIFECYCLE,
+            json!({"id": "m1"}),
+            json!({"updated": false}),
+            &PreState::default(),
+            &tags
+        )
+        .is_empty());
     }
 
     #[test]

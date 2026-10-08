@@ -25,6 +25,7 @@ pub const MEMORY_UPDATE: &str = "memory_update";
 pub const MEMORY_EDIT: &str = "memory_edit";
 pub const MEMORY_MERGE: &str = "memory_merge";
 pub const MEMORY_DELETE: &str = "memory_delete";
+pub const MEMORY_LIFECYCLE: &str = "memory_lifecycle";
 
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
@@ -40,6 +41,7 @@ pub const TOOL_NAMES: &[&str] = &[
     MEMORY_EDIT,
     MEMORY_MERGE,
     MEMORY_DELETE,
+    MEMORY_LIFECYCLE,
 ];
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
@@ -48,6 +50,17 @@ const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memorie
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
+        def(
+            MEMORY_LIFECYCLE,
+            "Set a memory's content kind, expiry, pin or archive status. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
+            json!({"type": "object", "properties": {
+                "id": {"type": "string", "pattern": "^m[0-9]+$"},
+                "kind": {"type": "string", "enum": ["fact", "preference", "procedure", "context", "event"]},
+                "expires_at": {"type": ["integer", "null"], "minimum": 0, "maximum": crate::lifecycle::MAX_TIMESTAMP, "description": "Unix epoch seconds; null clears expiry."},
+                "archived": {"type": "boolean", "description": "True archives; false restores. An expired memory also needs its expiry cleared or extended to be active."},
+                "pinned": {"type": "boolean"}
+            }, "required": ["id"], "additionalProperties": false}), false, false,
+        ),
         def(
             TAG_CREATE,
             "Create a new tag. Tags are labels used to organize memories; you own the taxonomy. Fails if the tag already exists (check with tag_list). If a tag differing only by case exists, it is created anyway but reported in similar_existing - prefer merging to keep the taxonomy tidy. Responses never echo the input: a clean create answers with an empty object, success being the absence of an error.",
@@ -64,7 +77,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_LIST,
-            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
+            "List tags with descriptions and memory counts across all lifecycle states. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
@@ -128,11 +141,12 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_LIST,
-            "Browse memories, optionally filtered by a tag expression. Token-frugal line format: a `total: N | offset: N` header, then one memory per line `<id> [<tags>] <updated> <summary>` ('updated' is the server's local wall clock, 'YYYY-MM-DD HH:MM'; newlines inside text render as literal \\n, one line is always one record). Returns summaries only - never full content; call memory_get for entries worth reading. Newest first by default; paginated (page with offset/limit, the header's total tells when to stop).",
+            "Browse memories, optionally filtered by a tag expression. Token-frugal line format: a `total: N | offset: N` header, then one memory per line `<id> [<tags>] <updated> <summary>` ('updated' is the server's local wall clock, 'YYYY-MM-DD HH:MM'; newlines inside text render as literal \\n, one line is always one record). Archived and expired rows include a trailing [state:archived] or [state:expired] marker. Returns summaries only - never full content; call memory_get for entries worth reading. Newest first by default; paginated (page with offset/limit, the header's total tells when to stop).",
             json!({
                 "type": "object",
                 "properties": {
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
+                    "state": {"type": "string", "enum": ["active", "archived", "expired", "all"], "description": "Default active: archived and expired memories are excluded before candidate selection. Explicit filters can inspect them."},
                     "sort": {"type": "string", "enum": ["updated_at", "id"], "description": "Default: updated_at. 'id' equals creation order."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
                     "offset": {"type": "integer", "minimum": 0},
@@ -150,6 +164,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
+                    "state": {"type": "string", "enum": ["active", "archived", "expired", "all"], "description": "Default active: archived and expired memories are excluded before candidate selection. Explicit filters can inspect them."},
                     "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (content + tags + semantic) when the server has semantic search configured, otherwise plain keyword (flagged semantic: \"disabled\" in the response). 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}
@@ -303,7 +318,7 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
         MEMORY_CREATE => &[Cap::Create],
         TAG_LIST | TAG_RULE_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET => &[Cap::Read],
-        MEMORY_UPDATE | MEMORY_EDIT => &[Cap::Update],
+        MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],
         _ => &[Cap::Read],

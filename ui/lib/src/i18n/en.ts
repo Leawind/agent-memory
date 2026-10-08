@@ -1,5 +1,23 @@
 // English messages — keys must mirror zh.ts exactly (guarded by i18n.test.ts)
 export default {
+  lifecycle: {
+    title: 'Lifecycle',
+    state: 'Memory state',
+    active: 'Active',
+    archived: 'Archived',
+    expired: 'Expired',
+    all: 'All states',
+    kind: 'Content kind',
+    fact: 'Durable fact',
+    preference: 'Preference',
+    procedure: 'Procedure',
+    context: 'Short-term context',
+    event: 'Event',
+    expires: 'Expiry time',
+    noExpiry: 'No expiry',
+    pinned: 'Pinned (exempt from freshness decay)',
+    hint: 'Archives can be restored. Pins do not override explicit expiry; restoring an expired archive also requires clearing or extending its expiry.',
+  },
   common: {
     edit: 'Edit',
     delete: 'Delete',

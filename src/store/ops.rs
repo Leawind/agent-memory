@@ -492,6 +492,7 @@ impl Store {
                     "tags": tags,
                     "created_at": created_at,
                     "updated_at": updated_at,
+                    "lifecycle": self.lifecycle_get(id)?,
                 }),
             );
         }
@@ -619,7 +620,12 @@ impl Store {
                 })?;
                 tag_ids.push(*id);
             }
-            self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
+            let id = self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
+            if let Some(value) = m.get("lifecycle") {
+                let meta = serde_json::from_value(value.clone())
+                    .map_err(|error| format!("invalid exported lifecycle: {error}"))?;
+                self.lifecycle_put(id, &meta)?;
+            }
         }
         Ok((memories.len(), created_tags))
     }

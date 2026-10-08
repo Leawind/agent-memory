@@ -225,7 +225,7 @@ fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
             return Err(ResourceError::not_found(uri));
         }
         let view = st.tag_view(name)?;
-        let (_, page) = st.list_memories(
+        let (count, page) = st.list_memories(
             ListFilter {
                 tag: Some(name),
                 ..Default::default()
@@ -236,7 +236,7 @@ fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
             TAG_RESOURCE_LIMIT,
         )?;
         let memories: Vec<Value> = page.iter().map(Memory::summary_view).collect();
-        let memory_count = view["count"].clone();
+        let memory_count = json!(count);
         let mut doc = json!({
             // Directory resource: metadata + summaries only, never content (progressive disclosure)
             "name": view["name"],

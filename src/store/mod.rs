@@ -20,6 +20,7 @@
 
 mod embeddings;
 mod identities;
+mod lifecycle;
 mod memories;
 mod migrate;
 mod ops;

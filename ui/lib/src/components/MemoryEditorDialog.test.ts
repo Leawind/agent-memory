@@ -15,6 +15,7 @@ const fullMemory = {
   tags: ['t1'],
   original_tags: ['t1'],
   derived_tags: [],
+  lifecycle: { kind: 'fact', expires_at: null, archived_at: null, pinned: false, state: 'active' },
   created: '2026-10-04 08:00',
   updated: '2026-10-04 08:00',
 }
