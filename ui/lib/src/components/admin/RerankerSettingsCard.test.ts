@@ -4,9 +4,29 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import type { SortableEvent, SortableOptions } from 'sortablejs'
 import { setMemoryUILocale } from '../../index'
 import RerankerSettingsCard from './RerankerSettingsCard.vue'
 import type { RerankModelEntry } from '../../types'
+
+// Reordering is delegated to SortableJS, which owns the DOM half of a drag; the tests drive the
+// callback it fires on a drop, so the geometry that produces those two indices stays its business
+const sortable = vi.hoisted(() => ({ created: [] as Array<{ el: Element; options: SortableOptions }> }))
+
+vi.mock('sortablejs', () => ({
+  default: {
+    create: (el: Element, options: SortableOptions) => {
+      const instance = { el, options, destroy: () => {} }
+      sortable.created.push(instance)
+      return instance
+    },
+  },
+}))
+
+/** Drop the row at `from` onto the position `to`, the way SortableJS reports it */
+function drop(from: number, to: number): void {
+  sortable.created[sortable.created.length - 1].options.onEnd!({ oldIndex: from, newIndex: to } as SortableEvent)
+}
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) }
@@ -72,6 +92,7 @@ function button(wrapper: Wrapper, text: string, scope?: ReturnType<Wrapper['find
 }
 
 beforeEach(() => {
+  sortable.created.length = 0
   setMemoryUILocale('zh')
 })
 
@@ -173,8 +194,9 @@ describe('RerankerSettingsCard', () => {
       [ENTRY, { ...ENTRY, model: 'second' }],
       [(r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined)],
     )
-    await row(wrapper, 1).find('.entry-handle').trigger('dragstart')
-    await row(wrapper, 0).trigger('drop')
+    expect(sortable.created[0].el).toBe(wrapper.find('.entry-list').element)
+    drop(1, 0)
+    await flushPromises()
     expect(wrapper.findAll('.entry-name').map((n) => n.text())).toEqual(['second', 'bge-reranker-v2-m3'])
     await button(wrapper, '保存')!.trigger('click')
     await flushPromises()

@@ -29,10 +29,12 @@
   "dependencies": {
     "dompurify": "^3.4.16",
     "marked": "^18.0.14",
+    "sortablejs": "^1.15.7",
     "vue-i18n": "^11.4.12"
   },
   "devDependencies": {
     "@element-plus/icons-vue": "^2.3.1",
+    "@types/sortablejs": "^1.15.9",
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/test-utils": "^2.5.1",
     "element-plus": "^2.9.0",

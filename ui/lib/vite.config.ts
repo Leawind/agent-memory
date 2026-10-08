@@ -35,6 +35,7 @@ export default defineConfig({
         /^marked($|\/)/,
         /^dompurify($|\/)/,
         /^vue-i18n($|\/)/,
+        /^sortablejs($|\/)/,
       ],
     },
   },

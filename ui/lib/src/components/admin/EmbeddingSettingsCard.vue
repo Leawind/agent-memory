@@ -22,23 +22,15 @@
       </div>
     </div>
 
-    <div class="entry-list">
+    <div ref="listEl" class="entry-list">
       <div
         v-for="(row, i) in draft"
         :key="row.id"
         class="entry"
-        :class="{ 'is-off': !row.enabled, 'is-open': row.open, 'is-over': overIndex === i && dragIndex !== i }"
-        @dragover.prevent="onDragOver(i)"
-        @drop.prevent="onDrop(i)"
+        :class="{ 'is-off': !row.enabled, 'is-open': row.open }"
       >
         <div class="entry-bar">
-          <span
-            class="entry-handle"
-            draggable="true"
-            :title="t('access.entryDrag')"
-            @dragstart="onDragStart(i)"
-            @dragend="onDragEnd"
-          >
+          <span class="entry-handle" :title="t('access.entryDrag')">
             <!-- GitHub-style grip: two columns of three dots, the usual drag affordance -->
             <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <path
@@ -306,7 +298,9 @@ watch(
   { immediate: true, deep: true },
 )
 
-const { dragIndex, overIndex, onDragStart, onDragOver, onDrop, onDragEnd } = useDragOrder(draft)
+// Drag reordering: the list container is handed to SortableJS, the draft array follows the drop
+const listEl = ref<HTMLElement | null>(null)
+useDragOrder(listEl, draft)
 
 function addEntry(): void {
   draft.value.push({
@@ -596,19 +590,35 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
 .entry.is-off {
   opacity: 0.6;
 }
-.entry.is-over {
-  border-color: var(--el-color-primary);
+/* SortableJS state, shared by both drag modes: the row left in the list is the landing preview */
+.entry.is-ghost {
+  border-style: dashed;
+  background: var(--el-fill-color-light);
+}
+/* ... and the floating clone is the row being carried (touch only: a native drag is drawn by the
+   browser from the row itself) */
+.entry.is-drag {
+  background: var(--el-bg-color);
+  box-shadow: var(--el-box-shadow-light);
 }
 .entry-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px;
+  padding: 5px 10px 5px 3px;
 }
 .entry-handle {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* The glyph is small, the grab area should not be: full row height, generous width */
+  align-self: stretch;
+  width: 26px;
+  min-height: 26px;
   color: var(--el-text-color-placeholder);
   cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 .grip {
   display: block;
