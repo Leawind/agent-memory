@@ -639,7 +639,8 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
   gap: 6px;
 }
 .entry {
-  background: var(--el-fill-color-blank);
+  --el-fill-color-blank: var(--el-bg-color);
+  background: var(--el-fill-color);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
 }
@@ -654,7 +655,7 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
 /* ... and the floating clone is the row being carried (touch only: a native drag is drawn by the
    browser from the row itself) */
 .entry.is-drag {
-  background: var(--el-bg-color);
+  background: var(--el-fill-color);
   box-shadow: var(--el-box-shadow-light);
 }
 .entry-bar {
