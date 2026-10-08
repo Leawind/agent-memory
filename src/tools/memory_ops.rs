@@ -181,12 +181,10 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         .into_iter()
         .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
         .collect();
-    let keyword_hits = search::run(&memories, &query);
-    // Ids of the keyword channel's hits, for the keyword_matches report below (the semantic pass
-    // consumes the hits themselves). The keyword channel is AND-limited so every hit survives fusion;
-    // after tag filtering each surviving hit is still in the fused list.
+    let keyword_hits = search::literal_channels(&memories, &query);
+    // Count literal candidates once even when both independent channels support them.
     let keyword_idx: std::collections::HashSet<usize> =
-        keyword_hits.iter().map(|h| h.idx).collect();
+        keyword_hits.iter().flatten().map(|h| h.idx).collect();
     // The semantic channel's candidate cap: the top vector candidates by cosine, scaled to how much
     // the caller reads (without it the vector channel pulls in every stored vector and total_matches
     // degenerates to the store size)
@@ -203,18 +201,18 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let mut semantic_disabled = false;
     let mut vector_model: Option<String> = None;
     let hits = match mode {
-        SearchMode::Keyword => keyword_hits,
+        SearchMode::Keyword => search::fuse_literal(&memories, &keyword_hits),
         SearchMode::Auto => match &config_result {
             Err(e) => {
                 eprintln!(
                     "semantic search fell back to keyword (cannot read embedding config): {e}"
                 );
                 semantic_fallback = true;
-                keyword_hits
+                search::fuse_literal(&memories, &keyword_hits)
             }
             Ok(configs) if configs.is_empty() => {
                 semantic_disabled = true;
-                keyword_hits
+                search::fuse_literal(&memories, &keyword_hits)
             }
             Ok(configs) => {
                 let (hits, ok, model) =
@@ -760,7 +758,7 @@ fn semantic_pass(
     st: &Store,
     configs: &[crate::embed::EmbedConfig],
     memories: &[crate::model::Memory],
-    keyword_hits: Vec<search::Hit>,
+    keyword_hits: [Vec<search::Hit>; 2],
     query: &str,
     vector_k: usize,
 ) -> (Vec<search::Hit>, bool, Option<String>) {
@@ -775,17 +773,17 @@ fn semantic_pass(
         Ok(found) => found,
         Err(e) => {
             eprintln!("semantic search fell back to keyword (embedding services unavailable): {e}");
-            return (keyword_hits, false, None);
+            return (search::fuse_literal(memories, &keyword_hits), false, None);
         }
     };
     let Some(query_vec) = query_vecs.into_iter().next() else {
-        return (keyword_hits, false, None);
+        return (search::fuse_literal(memories, &keyword_hits), false, None);
     };
     let table = match st.embeddings_active(&cfg.vector_key(), &cfg.fingerprint()) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("semantic search skipped (cannot load embeddings): {e}");
-            return (keyword_hits, false, None);
+            return (search::fuse_literal(memories, &keyword_hits), false, None);
         }
     };
     (

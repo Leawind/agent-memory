@@ -231,9 +231,6 @@ pub const MAX_BATCH: usize = 16;
 /// is roughly 8K Chinese characters; smaller 512-token models truncate server-side — this only guards against extremely
 /// long texts blowing up the request body.
 const MAX_INPUT_CHARS: usize = 8_000;
-/// The RRF (Reciprocal Rank Fusion) constant: earlier ranks contribute more, and K smooths out head-of-list weight differences.
-const RRF_K: f64 = 60.0;
-
 /// Default floor for the semantic recall channel: vector candidates below this cosine never
 /// enter the fusion. Deliberately conservative — baselines are model-specific (bge-family
 /// unrelated pairs score ~0.4, OpenAI text-embedding-3 ~0.2) — and configurable per model via
@@ -600,24 +597,11 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
     }
 }
 
-/// RRF fusion ranking over keyword + vector recall.
-///
-/// Each channel contributes `1/(K+rank)` by rank, which naturally sidesteps the incomparable units of "keyword TF scores"
-/// versus "cosine values". Vector-only hits (zero keyword hits but semantically close) are introduced by this function
-/// — exactly the point of semantic search; their snippets take the fallback path from the start of the content.
-///
-/// The vector channel is capped at `vector_k` candidates (top cosine) before fusion: the keyword channel is already
-/// self-limited by its all-terms AND, but without a cap the vector channel would pull in every stored vector, making
-/// `total_matches` equal the store size and burying the head of the ranking in a noise tail. `vector_k` derives from
-/// the caller's `limit` (roughly twice it, floored) so the cap scales with how much the caller actually reads.
-///
-/// On top of the rank cap, candidates below `min_similarity` cosine never qualify at all: a rank
-/// cap alone cannot fix small stores (when every memory fits under the cap, a query matching
-/// nothing still returns the whole store ranked). The floor is a query-time relevance bar —
-/// model-specific baselines make it configurable rather than universal (`DEFAULT_MIN_SIMILARITY`).
+/// Fuse content, tags and bounded semantic recall. Similarity must clear the
+/// model-specific floor before an independent semantic candidate qualifies.
 pub fn hybrid_hits(
     memories: &[crate::model::Memory],
-    keyword_hits: Vec<Hit>,
+    literal: [Vec<Hit>; 2],
     table: &HashMap<i64, Vec<f32>>,
     query_vec: &[f32],
     vector_k: usize,
@@ -638,42 +622,19 @@ pub fn hybrid_hits(
     vector_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     vector_ranked.truncate(vector_k);
 
-    let mut fused: HashMap<usize, f64> = HashMap::new();
-    let mut keyword_snippets: HashMap<usize, &str> = HashMap::new();
-    for (rank, hit) in keyword_hits.iter().enumerate() {
-        *fused.entry(hit.idx).or_default() += 1.0 / (RRF_K + rank as f64);
-        keyword_snippets.insert(hit.idx, hit.snippet.as_str());
-    }
-    for (rank, (idx, _)) in vector_ranked.iter().enumerate() {
-        *fused.entry(*idx).or_default() += 1.0 / (RRF_K + rank as f64);
-    }
-
-    let mut items: Vec<(usize, f64)> = fused.into_iter().collect();
-    // Same tie-break as the keyword pass: score → updated_at descending → id ascending
-    items.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(memories[b.0].updated_at.cmp(&memories[a.0].updated_at))
-            .then(memories[a.0].id.cmp(&memories[b.0].id))
-    });
-
-    items
+    let vector_hits: Vec<Hit> = vector_ranked
         .into_iter()
-        .map(|(idx, score)| {
-            // RRF values are tiny (<0.033); scaling by 1e6 into integers preserves order, not precision — the score field
-            // is an internal value for ordering only and promises no interpretability
-            let score = (score * 1_000_000.0).round() as i64;
-            let snippet = match keyword_snippets.get(&idx) {
-                Some(s) => (*s).to_string(),
-                None => search::fallback_snippet(&memories[idx].content),
-            };
-            Hit {
-                idx,
-                score,
-                snippet,
-            }
+        .map(|(idx, score)| Hit {
+            idx,
+            // Positive float bits preserve score order and exact ties without rounding.
+            score: i64::from(score.to_bits()),
+            snippet: search::fallback_snippet(&memories[idx].content),
         })
-        .collect()
+        .collect();
+    search::fuse(
+        memories,
+        &[(&literal[0], 1.0), (&literal[1], 1.0), (&vector_hits, 1.0)],
+    )
 }
 
 #[cfg(test)]
@@ -785,7 +746,14 @@ mod tests {
         table.insert(2i64, vec![0.9, 0.1]); // cosine ≈ 0.994
         table.insert(3i64, vec![0.6, 0.8]); // cosine 0.6
 
-        let hits = hybrid_hits(&memories, Vec::new(), &table, &[1.0, 0.0], 10, 0.7);
+        let hits = hybrid_hits(
+            &memories,
+            [Vec::new(), Vec::new()],
+            &table,
+            &[1.0, 0.0],
+            10,
+            0.7,
+        );
         let ids: Vec<&str> = hits.iter().map(|h| memories[h.idx].id.as_str()).collect();
         assert_eq!(
             ids,
@@ -793,10 +761,24 @@ mod tests {
             "the 0.6-cosine candidate is below the floor"
         );
 
-        let hits = hybrid_hits(&memories, Vec::new(), &table, &[1.0, 0.0], 10, 0.0);
+        let hits = hybrid_hits(
+            &memories,
+            [Vec::new(), Vec::new()],
+            &table,
+            &[1.0, 0.0],
+            10,
+            0.0,
+        );
         assert_eq!(hits.len(), 3, "floor 0 keeps every positive candidate");
 
-        let hits = hybrid_hits(&memories, Vec::new(), &table, &[1.0, 0.0], 10, 1.5);
+        let hits = hybrid_hits(
+            &memories,
+            [Vec::new(), Vec::new()],
+            &table,
+            &[1.0, 0.0],
+            10,
+            1.5,
+        );
         assert_eq!(hits.len(), 0, "nothing is close enough");
 
         let keyword_hit = Hit {
@@ -804,7 +786,14 @@ mod tests {
             score: 5,
             snippet: "s3".into(),
         };
-        let hits = hybrid_hits(&memories, vec![keyword_hit], &table, &[1.0, 0.0], 10, 0.7);
+        let hits = hybrid_hits(
+            &memories,
+            [vec![keyword_hit], Vec::new()],
+            &table,
+            &[1.0, 0.0],
+            10,
+            0.7,
+        );
         assert_eq!(
             hits.len(),
             3,
@@ -960,8 +949,8 @@ mod tests {
             mem(1, "token hashing", "sha256 of tokens"),
             mem(2, "密码保存", "哈希存储"),
         ];
-        let keyword_hits = search::run(&memories, "hashing");
-        assert_eq!(keyword_hits.len(), 1);
+        let keyword_hits = search::literal_channels(&memories, "hashing");
+        assert_eq!(keyword_hits[0].len(), 1);
 
         let mut table = HashMap::new();
         table.insert(1i64, unit(4, 0)); // same direction as the query
@@ -982,7 +971,7 @@ mod tests {
         let tilted: Vec<f32> = vec![0.9, 0.1, 0.0, 0.0];
         let mut table2 = table.clone();
         table2.insert(2i64, tilted);
-        let keyword_hits = search::run(&memories, "hashing");
+        let keyword_hits = search::literal_channels(&memories, "hashing");
         let hits = hybrid_hits(
             &memories,
             keyword_hits,
@@ -1025,7 +1014,7 @@ mod tests {
         table.insert(1i64, vec![0.5, 0.87]);
         let hits = hybrid_hits(
             &[a, b, c],
-            vec![k1, k2],
+            [vec![k1, k2], Vec::new()],
             &table,
             &[1.0, 0.0],
             usize::MAX,
@@ -1050,7 +1039,14 @@ mod tests {
         for i in 0..6usize {
             table.insert((i + 1) as i64, vec![1.0, i as f32]);
         }
-        let hits = hybrid_hits(&memories, Vec::new(), &table, &[1.0, 0.0], 3, 0.0);
+        let hits = hybrid_hits(
+            &memories,
+            [Vec::new(), Vec::new()],
+            &table,
+            &[1.0, 0.0],
+            3,
+            0.0,
+        );
         assert_eq!(hits.len(), 3);
         let ids: Vec<&str> = hits.iter().map(|h| memories[h.idx].id.as_str()).collect();
         assert_eq!(
@@ -1084,7 +1080,14 @@ mod tests {
         ];
         let mut table = HashMap::new();
         table.insert(4i64, vec![1.0, 0.0]);
-        let hits = hybrid_hits(&memories, keyword_hits, &table, &[1.0, 0.0], 1, 0.0);
+        let hits = hybrid_hits(
+            &memories,
+            [keyword_hits, Vec::new()],
+            &table,
+            &[1.0, 0.0],
+            1,
+            0.0,
+        );
         let ids: std::collections::HashSet<usize> = hits.iter().map(|h| h.idx).collect();
         assert!(
             ids.is_superset(&[0usize, 1, 2].into_iter().collect()),

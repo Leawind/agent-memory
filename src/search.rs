@@ -1,16 +1,12 @@
-//! Keyword search: whitespace tokenization (quoted phrases become single terms), all-terms matching (AND), weighted scoring,
-//! and snippet generation.
-//!
-//! Matching is substring lookup over case-folded text, so Chinese hits directly by substring with no word segmentation.
-//! Weights are the constants below: exact tag > tag substring > title > content; title/content score per hit
-//! (capped at 3 hits), pure-ASCII words get a bonus for word-boundary hits, and quoted phrases
-//! get a further bonus for whole-phrase hits. Among candidate positions, the snippet window chosen is the one covering the most distinct terms.
+//! Literal recall and rank fusion. Content and tags rank independently; all
+//! query terms must be covered across their union before a literal candidate
+//! qualifies. Semantic recall may independently introduce paraphrased candidates.
 
 use crate::model::Memory;
+use std::collections::HashMap;
 
-/// Weight: exact tag-name hit (accumulated per matching tag).
+/// One term receives its best tag match only; taxonomy expansion is not evidence.
 const W_TAG_EXACT: i64 = 40;
-/// Weight: tag-name substring hit (accumulated per matching tag).
 const W_TAG_SUBSTR: i64 = 25;
 /// Weight: title hit (each one; capped at MAX_TF_HITS).
 const W_SUMMARY: i64 = 10;
@@ -25,6 +21,7 @@ const W_WORD_CONTENT: i64 = 2;
 const W_PHRASE: i64 = 8;
 /// Hit-count scoring cap: no further points beyond it, so long documents cannot steamroll field weights.
 const MAX_TF_HITS: usize = 3;
+const RRF_K: f64 = 60.0;
 
 pub struct Hit {
     pub idx: usize,
@@ -58,33 +55,40 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
-/// The caller applies eligibility filters before either recall channel ranks candidates.
-pub fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
+pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
     let terms = parse_query(query);
     if terms.is_empty() {
-        return Vec::new();
+        return [Vec::new(), Vec::new()];
     }
-    let mut hits = Vec::new();
+    let mut content_channel = Vec::new();
+    let mut tag_channel = Vec::new();
     for (idx, m) in memories.iter().enumerate() {
         let lc_summary = m.summary.to_lowercase();
         let lc_tags: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
         // Content is folded once and shared by all terms (see find_all_in_folded)
         let (folded, map) = fold_with_map(&m.content);
 
-        let mut score = 0i64;
+        let mut content_score = 0i64;
+        let mut tag_score = 0i64;
         let mut all_matched = true;
         // Content hit positions per term (original byte offsets), for snippet window selection
         let mut content_hits: Vec<Vec<usize>> = Vec::new();
 
         for term in &terms {
             let mut term_score = 0i64;
-            for t in &lc_tags {
-                if *t == *term {
-                    term_score += W_TAG_EXACT;
-                } else if t.contains(term.as_str()) {
-                    term_score += W_TAG_SUBSTR;
-                }
-            }
+            let tag_term = lc_tags
+                .iter()
+                .map(|tag| {
+                    if tag == term {
+                        W_TAG_EXACT
+                    } else if tag.contains(term.as_str()) {
+                        W_TAG_SUBSTR
+                    } else {
+                        0
+                    }
+                })
+                .max()
+                .unwrap_or(0);
             let summary_hits = count_non_overlapping(&lc_summary, term);
             if summary_hits > 0 {
                 term_score += summary_hits.min(MAX_TF_HITS) as i64 * W_SUMMARY;
@@ -105,11 +109,12 @@ pub fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
             if term.contains(' ') && (summary_hits > 0 || !positions.is_empty()) {
                 term_score += W_PHRASE;
             }
-            if term_score == 0 {
+            if term_score == 0 && tag_term == 0 {
                 all_matched = false;
                 break;
             }
-            score += term_score;
+            content_score += term_score;
+            tag_score += tag_term;
             content_hits.push(positions);
         }
 
@@ -118,20 +123,82 @@ pub fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
         }
         let anchor = choose_snippet_anchor(&content_hits);
         let snippet = make_snippet(&m.content, anchor);
-        hits.push(Hit {
-            idx,
-            score,
-            snippet,
-        });
+        if content_score > 0 {
+            content_channel.push(Hit {
+                idx,
+                score: content_score,
+                snippet: snippet.clone(),
+            });
+        }
+        if tag_score > 0 {
+            tag_channel.push(Hit {
+                idx,
+                score: tag_score,
+                snippet,
+            });
+        }
     }
 
-    hits.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then(memories[b.idx].updated_at.cmp(&memories[a.idx].updated_at))
-            .then(memories[a.idx].id.cmp(&memories[b.idx].id))
+    for channel in [&mut content_channel, &mut tag_channel] {
+        channel.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| tie_break(memories, a.idx, b.idx))
+        });
+    }
+    [content_channel, tag_channel]
+}
+
+pub fn fuse_literal(memories: &[Memory], channels: &[Vec<Hit>; 2]) -> Vec<Hit> {
+    fuse(memories, &[(&channels[0], 1.0), (&channels[1], 1.0)])
+}
+
+/// Equal evidence receives equal rank, so a tag channel full of ties cannot
+/// introduce an accidental age/ID preference as an additional relevance vote.
+pub fn fuse(memories: &[Memory], channels: &[(&[Hit], f64)]) -> Vec<Hit> {
+    let mut fused: HashMap<usize, (f64, &str)> = HashMap::new();
+    for (hits, weight) in channels {
+        if *weight <= 0.0 {
+            continue;
+        }
+        let mut previous = None;
+        let mut rank = 1usize;
+        for (position, hit) in hits.iter().enumerate() {
+            if previous != Some(hit.score) {
+                rank = position + 1;
+            }
+            previous = Some(hit.score);
+            let entry = fused.entry(hit.idx).or_insert((0.0, &hit.snippet));
+            entry.0 += weight / (RRF_K + rank as f64);
+        }
+    }
+    let mut ranked: Vec<_> = fused.into_iter().collect();
+    ranked.sort_by(|(a, (sa, _)), (b, (sb, _))| {
+        sb.total_cmp(sa).then_with(|| tie_break(memories, *a, *b))
     });
-    hits
+    ranked
+        .into_iter()
+        .map(|(idx, (score, snippet))| Hit {
+            idx,
+            score: (score * 1_000_000.0).round() as i64,
+            snippet: snippet.to_string(),
+        })
+        .collect()
+}
+
+fn tie_break(memories: &[Memory], a: usize, b: usize) -> std::cmp::Ordering {
+    memories[b]
+        .updated_at
+        .cmp(&memories[a].updated_at)
+        .then_with(|| {
+            crate::store::Store::parse_id(&memories[a].id)
+                .cmp(&crate::store::Store::parse_id(&memories[b].id))
+        })
+}
+
+#[cfg(test)]
+fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
+    fuse_literal(memories, &literal_channels(memories, query))
 }
 
 /// Pick the snippet window among candidate anchors: prefer the window covering the most distinct terms, ties broken by the earliest.
@@ -502,5 +569,55 @@ mod tests {
             parse_query("rust \"borrow checker"),
             vec!["rust".to_string(), "borrow checker".to_string()]
         );
+    }
+
+    #[test]
+    fn independent_channels_preserve_cross_field_term_coverage() {
+        let memories = [
+            mem("m1", &["vue3"], "debounce", "防抖实现", 1),
+            mem("m2", &["vue3"], "render", "渲染实现", 2),
+            mem("m3", &[], "debounce", "防抖实现", 3),
+        ];
+        let channels = literal_channels(&memories, "vue3 防抖");
+        assert_eq!(channels[0].len(), 1);
+        assert_eq!(channels[1].len(), 1);
+        assert_eq!(channels[0][0].idx, 0);
+        assert_eq!(channels[1][0].idx, 0);
+        let hits = fuse_literal(&memories, &channels);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].snippet.contains("防抖"));
+    }
+
+    #[test]
+    fn extra_tags_cannot_inflate_content_or_tag_evidence() {
+        let memories = [
+            mem("m1", &["web"], "common note", "common body", 1),
+            mem(
+                "m2",
+                &["web", "web-front", "web-back"],
+                "common note",
+                "common body",
+                1,
+            ),
+        ];
+        let channels = literal_channels(&memories, "web common");
+        assert_eq!(channels[0][0].score, channels[0][1].score);
+        assert_eq!(channels[1][0].score, channels[1][1].score);
+        let hits = fuse_literal(&memories, &channels);
+        assert_eq!(hits[0].score, hits[1].score);
+        let tag_only = literal_channels(&memories, "web");
+        assert!(tag_only[0].is_empty());
+        assert_eq!(tag_only[1].len(), 2);
+    }
+
+    #[test]
+    fn fusion_uses_numeric_id_only_to_break_equal_evidence() {
+        let memories = [
+            mem("m10", &["web"], "s", "c", 1),
+            mem("m2", &["web"], "s", "c", 1),
+        ];
+        let hits = run(&memories, "web");
+        assert_eq!(hits[0].idx, 1);
+        assert_eq!(hits[0].score, hits[1].score);
     }
 }
