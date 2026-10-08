@@ -8,6 +8,17 @@ use super::Store;
 
 impl Store {
     pub const SETTING_SEARCH_LIMITS: &'static str = "search_limits";
+    pub const SETTING_LIFECYCLE_POLICY: &'static str = "lifecycle_policy";
+
+    pub fn lifecycle_policy(&self) -> Result<crate::lifecycle::Policy, String> {
+        match self.settings_get(Self::SETTING_LIFECYCLE_POLICY)? {
+            Some(raw) => crate::lifecycle::Policy::parse(
+                &serde_json::from_str(&raw)
+                    .map_err(|e| format!("corrupt lifecycle_policy JSON: {e}"))?,
+            ),
+            None => Ok(crate::lifecycle::Policy::default()),
+        }
+    }
 
     pub fn search_limits(&self) -> Result<crate::search::Limits, String> {
         match self.settings_get(Self::SETTING_SEARCH_LIMITS)? {

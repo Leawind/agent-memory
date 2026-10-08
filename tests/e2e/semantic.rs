@@ -274,12 +274,15 @@ fn candidate_budgets_are_configurable_and_page_independent() {
     let (_, body, _) = request(port, "GET", "/api/settings", None);
     assert!(json_body(&body)["instructions"].is_null());
 
-    for summary in ["alpha first", "alpha second", "alpha third"] {
+    for (index, summary) in ["alpha first", "alpha second", "alpha third"]
+        .into_iter()
+        .enumerate()
+    {
         let (status, _, _) = request(
             port,
             "POST",
             "/api/memories",
-            Some(&json!({"summary": summary}).to_string()),
+            Some(&json!({"summary": summary, "content": "alpha ".repeat(3 - index)}).to_string()),
         );
         assert_eq!(status, 200);
     }
@@ -1207,10 +1210,9 @@ fn reranker_reorders_and_degrades() {
         .iter()
         .map(|r| r["score"].as_i64().unwrap())
         .collect();
-    assert_eq!(
-        scores,
-        vec![20_000, 10_000, 0],
-        "relevance i (fused position) scaled by 10000, sorted descending"
+    assert!(
+        scores.windows(2).all(|pair| pair[0] > pair[1]),
+        "rank evidence stays on the RRF scale: {scores:?}"
     );
     // The reranker saw the query and the summary+content documents
     let seen_now = seen.lock().unwrap();

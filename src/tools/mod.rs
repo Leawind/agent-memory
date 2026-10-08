@@ -413,6 +413,75 @@ mod tests {
         cleanup(&path);
     }
 
+    #[test]
+    fn temporal_priors_reorder_only_relevant_eligible_candidates() {
+        let path = crate::store::test_support::temp_db("temporal-priors");
+        cleanup(&path);
+        let now = crate::model::now();
+        store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {
+            for (summary, time) in [
+                ("topic old", now - 60 * 86400),
+                ("topic new", now),
+                ("unrelated", now),
+                ("topic expired", now),
+            ] {
+                let id = st.insert_memory(summary, "body", &[], time, time)?;
+                let mut meta = crate::lifecycle::Metadata {
+                    kind: crate::lifecycle::Kind::Context,
+                    ..Default::default()
+                };
+                if id == 4 {
+                    meta.expires_at = Some(0);
+                }
+                st.lifecycle_put(id, &meta)?;
+            }
+            st.access_append(
+                3,
+                "actor",
+                crate::access::Kind::Use,
+                Some("irrelevant"),
+                now,
+            )?;
+            st.access_append(4, "actor", crate::access::Kind::Use, Some("expired"), now)?;
+            Ok(())
+        })
+        .unwrap();
+        let search = || {
+            call(
+                &path,
+                MEMORY_SEARCH,
+                json!({"query":"topic", "mode":"keyword"}),
+            )
+            .unwrap()
+        };
+        let baseline = search();
+        assert_eq!(baseline["total_matches"], 2);
+        assert_eq!(baseline["results"][0]["id"], "m2");
+        call(
+            &path,
+            MEMORY_USE,
+            json!({"id":"m1", "event_key":"actual-use"}),
+        )
+        .unwrap();
+        assert_eq!(search()["results"][0]["id"], "m1");
+        assert_eq!(search()["total_matches"], 2);
+        let original_time = Store::open(&path).unwrap().get_memories(&[1]).unwrap().0[0].updated_at;
+        call(&path, MEMORY_LIFECYCLE, json!({"id":"m1", "pinned":true})).unwrap();
+        assert_eq!(
+            Store::open(&path).unwrap().get_memories(&[1]).unwrap().0[0].updated_at,
+            original_time
+        );
+        store::with_db_in(&path, store::TxMode::Write, |st| {
+            st.settings_put(
+                Store::SETTING_LIFECYCLE_POLICY,
+                &json!({"freshness_weight":0,"reinforcement_weight":0}).to_string(),
+            )
+        })
+        .unwrap();
+        assert_eq!(search()["results"][0]["id"], "m2");
+        cleanup(&path);
+    }
+
     /// memory_create's three-way tag-link classification: created / reused / reused-but-missing-description.
     #[test]
     fn create_reports_tag_mount_classification() {

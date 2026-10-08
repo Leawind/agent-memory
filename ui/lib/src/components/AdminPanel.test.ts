@@ -124,19 +124,29 @@ describe('AdminPanel', () => {
     expect(items.map((i) => i.text())).toEqual([
       '身份与访问',
       '搜索模型',
+      '生命周期',
       '标签规则',
       '自定义提示词',
       '备份导入导出',
       '数据体检',
     ])
-    // v-show toggles inline display: exactly the active section's card is visible
-    const displays = () =>
-      wrapper.findAll('.admin-sections .el-card').map((c) => (c.element as HTMLElement).style.display)
-    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none', 'none', 'none', 'none'])
-    await items[5].trigger('click')
-    expect(displays()).toEqual(['none', 'none', 'none', 'none', 'none', 'none', 'none', ''])
+    const cards = () => wrapper.findAll('.admin-sections .el-card')
+    const visible = () =>
+      cards().filter((card) => {
+        const section = card.element.closest('.lifecycle-cards') ?? card.element
+        return (section as HTMLElement).style.display !== 'none'
+      })
+    expect(cards()).toHaveLength(10)
+    expect(visible()).toHaveLength(1)
+    await items.find((item) => item.text() === '数据体检')!.trigger('click')
+    expect(visible()).toHaveLength(1)
+    expect(visible()[0].text()).toContain('数据体检')
     await items[1].trigger('click')
-    expect(displays()).toEqual(['none', '', '', '', 'none', 'none', 'none', 'none'])
+    expect(visible()).toHaveLength(3)
+    await items.find((item) => item.text() === '生命周期')!.trigger('click')
+    await flushPromises()
+    expect(visible()).toHaveLength(2)
+    expect(cards()).toHaveLength(10)
     wrapper.unmount()
   })
 

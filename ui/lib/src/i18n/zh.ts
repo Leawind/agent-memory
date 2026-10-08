@@ -1,6 +1,24 @@
 // Chinese UI copy (keys grouped by component; en.ts must match these keys one-to-one, guarded by i18n.test.ts)
 export default {
   lifecycle: {
+    nav: '生命周期',
+    policyTitle: '时效与强化策略',
+    enableDecay: '启用衰减',
+    noDecay: '不衰减',
+    days: '天（半衰期）',
+    freshnessWeight: '时效排名权重',
+    reinforcementWeight: '访问强化排名权重',
+    policyHint: '权重为 0 表示关闭该信号。这些排名只调整相关候选，不扩大召回；置顶跳过软衰减，到期仍会排除。',
+    accessTitle: '访问事件与投影',
+    rawEvents: '原始事件',
+    buckets: '小时聚合',
+    tracked: '有访问记录的记忆',
+    dropped: '本进程跳过的读取事件',
+    accessHint:
+      '成功读取正文才计入弱强化，显式使用计入强强化；同身份同类型 60 秒内不重复强化。30 天前的事件自动按小时聚合，强化半衰期固定为 30 天。',
+    refresh: '刷新统计',
+    compact: '压缩一批旧事件',
+    rebuild: '重建分数投影',
     title: '生命周期',
     state: '记忆状态',
     active: '有效',

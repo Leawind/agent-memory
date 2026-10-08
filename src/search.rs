@@ -188,6 +188,7 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
     [content_channel, tag_channel]
 }
 
+#[cfg(test)]
 pub fn fuse_literal(memories: &[Memory], channels: &[Vec<Hit>; 2]) -> Vec<Hit> {
     fuse(memories, &[(&channels[0], 1.0), (&channels[1], 1.0)])
 }

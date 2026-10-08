@@ -100,11 +100,31 @@ fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
     );
     assert_eq!(set(json!({"archived": true})).0, 200);
     let archived = get()["lifecycle"].clone();
+    assert_eq!(api(port, "PUT", "/api/settings", Some(json!({"lifecycle_policy":{"half_life_days":{"context":14},"reinforcement_weight":0.3}}))).0, 200);
+    let policy = api(port, "GET", "/api/settings", None).1["lifecycle_policy"].clone();
+    assert_eq!(policy["half_life_days"]["context"], 14.0);
+    assert_eq!(
+        api(
+            port,
+            "PUT",
+            "/api/settings",
+            Some(
+                json!({"instructions":"invalid batch", "lifecycle_policy":{"freshness_weight":-1}})
+            )
+        )
+        .0,
+        400
+    );
+    assert!(api(port, "GET", "/api/settings", None).1["instructions"].is_null());
     let dump = api(port, "GET", "/api/export", None).1;
     let restore_path = temp_db("lifecycle-restore");
     cleanup(&restore_path);
     let restore = HttpProc::start(&restore_path, "lifecycle-restore");
     assert_eq!(api(restore.port, "POST", "/api/import", Some(dump)).0, 200);
+    assert_eq!(
+        api(restore.port, "GET", "/api/settings", None).1["lifecycle_policy"],
+        policy
+    );
     assert_eq!(
         api(restore.port, "GET", "/api/memories", None).1["total"],
         0

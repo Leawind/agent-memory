@@ -248,6 +248,7 @@ pub fn handle(
                             "embedding_models": embedding_models,
                             "rerank_models": rerank_models,
                             "search_limits": st.search_limits()?.to_json(),
+                            "lifecycle_policy": st.lifecycle_policy()?,
                             // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -267,6 +268,7 @@ pub fn handle(
                     store::Store::SETTING_EMBEDDING_MODELS,
                     store::Store::SETTING_RERANK_MODELS,
                     store::Store::SETTING_SEARCH_LIMITS,
+                    store::Store::SETTING_LIFECYCLE_POLICY,
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
@@ -286,6 +288,15 @@ pub fn handle(
                 for key in VALID_KEYS {
                     match args.get(*key) {
                         None => continue, // omitted = leave this item unchanged
+                        Some(v) if *key == store::Store::SETTING_LIFECYCLE_POLICY => {
+                            let policy =
+                                crate::lifecycle::Policy::parse(v).map_err(ToolError::invalid)?;
+                            updates.push((
+                                key,
+                                serde_json::to_string(&policy)
+                                    .map_err(|e| ToolError::invalid(e.to_string()))?,
+                            ));
+                        }
                         Some(v) if *key == store::Store::SETTING_SEARCH_LIMITS => {
                             let limits = match crate::search::Limits::parse(v) {
                                 Ok(limits) => limits,

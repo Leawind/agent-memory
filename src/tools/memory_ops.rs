@@ -288,23 +288,22 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let mut semantic_fallback = false;
     let mut semantic_disabled = false;
     let mut vector_model: Option<String> = None;
-    let hits = match mode {
-        SearchMode::Keyword => search::fuse_literal(&memories, &keyword_hits),
+    let vector_hits = match mode {
+        SearchMode::Keyword => Vec::new(),
         SearchMode::Auto => match &config_result {
             Err(e) => {
                 eprintln!(
                     "semantic search fell back to keyword (cannot read embedding config): {e}"
                 );
                 semantic_fallback = true;
-                search::fuse_literal(&memories, &keyword_hits)
+                Vec::new()
             }
             Ok(configs) if configs.is_empty() => {
                 semantic_disabled = true;
-                search::fuse_literal(&memories, &keyword_hits)
+                Vec::new()
             }
             Ok(configs) => {
-                let (hits, ok, model) =
-                    semantic_pass(st, configs, &memories, keyword_hits, &query, vector_k);
+                let (hits, ok, model) = semantic_pass(st, configs, &memories, &query, vector_k);
                 used_hybrid = ok;
                 semantic_fallback = !ok;
                 vector_model = model;
@@ -325,14 +324,35 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                     )));
                 }
             };
-            let (hits, ok, model) =
-                semantic_pass(st, configs, &memories, keyword_hits, &query, vector_k);
+            let (hits, ok, model) = semantic_pass(st, configs, &memories, &query, vector_k);
             used_hybrid = ok;
             semantic_fallback = !ok;
             vector_model = model;
             hits
         }
     };
+
+    let mut eligible = keyword_idx.clone();
+    eligible.extend(vector_hits.iter().map(|hit| hit.idx));
+    let policy = st.lifecycle_policy()?;
+    let priors = crate::lifecycle::rank_channels(
+        &memories,
+        &eligible,
+        &lifecycle,
+        &st.access_projection_all()?,
+        &policy,
+        query_time,
+    );
+    let hits = search::fuse(
+        &memories,
+        &[
+            (&keyword_hits[0], 1.0),
+            (&keyword_hits[1], 1.0),
+            (&vector_hits, 1.0),
+            (&priors[0], policy.freshness_weight),
+            (&priors[1], policy.reinforcement_weight),
+        ],
+    );
 
     // Rerank stage: a configured cross-encoder re-scores the candidate pool (recall wide,
     // rerank narrow), giving one calibrated relevance scale across both channels. Explicit
@@ -345,6 +365,17 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         (hits, None)
     };
 
+    // A model call may cross an expiry deadline. Recheck before returning the page.
+    let response_time = now();
+    let hits: Vec<_> = hits
+        .into_iter()
+        .filter(|hit| {
+            lifecycle
+                .get(&Store::parse_id(&memories[hit.idx].id).unwrap_or(0))
+                .unwrap_or(&default_lifecycle)
+                .matches(&state, response_time)
+        })
+        .collect();
     let total = hits.len() as u64;
     let keyword_matches = hits.iter().filter(|h| keyword_idx.contains(&h.idx)).count() as u64;
     let results: Vec<Value> = hits
@@ -360,7 +391,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
                 "score": h.score,
                 "snippet": h.snippet,
                 "updated": crate::util::format_local_compact(m.updated_at),
-                "lifecycle": lifecycle.get(&Store::parse_id(&m.id).unwrap_or(0)).unwrap_or(&default_lifecycle).view(query_time),
+                "lifecycle": lifecycle.get(&Store::parse_id(&m.id).unwrap_or(0)).unwrap_or(&default_lifecycle).view(response_time),
             })
         })
         .collect();
@@ -860,7 +891,6 @@ fn semantic_pass(
     st: &Store,
     configs: &[crate::embed::EmbedConfig],
     memories: &[crate::model::Memory],
-    keyword_hits: [Vec<search::Hit>; 2],
     query: &str,
     vector_k: usize,
 ) -> (Vec<search::Hit>, bool, Option<String>) {
@@ -875,37 +905,30 @@ fn semantic_pass(
         Ok(found) => found,
         Err(e) => {
             eprintln!("semantic search fell back to keyword (embedding services unavailable): {e}");
-            return (search::fuse_literal(memories, &keyword_hits), false, None);
+            return (Vec::new(), false, None);
         }
     };
     let Some(query_vec) = query_vecs.into_iter().next() else {
-        return (search::fuse_literal(memories, &keyword_hits), false, None);
+        return (Vec::new(), false, None);
     };
     let table = match st.embeddings_active(&cfg.vector_key(), &cfg.fingerprint()) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("semantic search skipped (cannot load embeddings): {e}");
-            return (search::fuse_literal(memories, &keyword_hits), false, None);
+            return (Vec::new(), false, None);
         }
     };
     (
-        crate::embed::hybrid_hits(
-            memories,
-            keyword_hits,
-            &table,
-            &query_vec,
-            vector_k,
-            cfg.min_similarity,
-        ),
+        crate::embed::semantic_hits(memories, &table, &query_vec, vector_k, cfg.min_similarity),
         true,
         Some(cfg.model.clone()),
     )
 }
 
 /// Rerank stage: the fused candidate head goes through the configured cross-encoder(s), which
-/// re-order it by calibrated relevance; the pool tail keeps its fused order behind the reranked
-/// head. Hit scores switch to the reranker scale (relevance × 10 000) for the reranked head —
-/// score is an ordering value in every mode, never comparable across responses. Every failure
+/// rank evidence is fused with the prior order (weights 4:1), preserving soft priors without
+/// adding raw relevance to freshness or cosine. Unscored candidates keep their prior evidence.
+/// Scores remain RRF ordering values, never comparable across responses. Every failure
 /// (no configuration, all candidates down, malformed answer) keeps the incoming order: reranking
 /// is an improvement, never a dependency. Returns `(hits, the reranker that answered)`.
 fn rerank_pass(
@@ -926,12 +949,11 @@ fn rerank_pass(
         return (hits, None);
     }
     let mut iter = hits.into_iter();
-    let mut slots: Vec<Option<search::Hit>> = (&mut iter).take(candidates).map(Some).collect();
+    let slots: Vec<search::Hit> = (&mut iter).take(candidates).collect();
     let tail: Vec<search::Hit> = iter.collect();
     let documents: Vec<String> = slots
         .iter()
-        .map(|slot| {
-            let h = slot.as_ref().expect("slot filled at construction");
+        .map(|h| {
             // The reranker reads the same text the embedding side sees: title + blank line + content
             crate::embed::embed_memory_text(&memories[h.idx].summary, &memories[h.idx].content)
         })
@@ -941,26 +963,32 @@ fn rerank_pass(
     });
     match scored {
         Ok((_, cfg, scores)) => {
+            let mut previous = None;
+            let mut rank = 1usize;
             let reranked: Vec<search::Hit> = scores
                 .into_iter()
-                .map(|(doc_idx, relevance)| {
-                    let mut hit = slots[doc_idx]
-                        .take()
-                        .expect("every index is scored exactly once");
-                    hit.score = (relevance * 10_000.0).round() as i64;
-                    hit
+                .enumerate()
+                .map(|(position, (doc_idx, relevance))| {
+                    if previous != Some(relevance) {
+                        rank = position + 1;
+                    }
+                    previous = Some(relevance);
+                    search::Hit {
+                        idx: slots[doc_idx].idx,
+                        score: -(rank as i64),
+                        snippet: slots[doc_idx].snippet.clone(),
+                    }
                 })
                 .collect();
-            let tail = tail.into_iter().chain(slots.into_iter().flatten());
+            let prior: Vec<_> = slots.into_iter().chain(tail).collect();
             (
-                reranked.into_iter().chain(tail).collect(),
+                search::fuse(memories, &[(&prior, 1.0), (&reranked, 4.0)]),
                 Some(cfg.model.clone()),
             )
         }
         Err(e) => {
             eprintln!("rerank skipped (all rerankers unavailable): {e}");
-            let head = slots.into_iter().flatten();
-            (head.into_iter().chain(tail).collect(), None)
+            (slots.into_iter().chain(tail).collect(), None)
         }
     }
 }

@@ -502,6 +502,7 @@ impl Store {
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
             "tag_rules": self.tag_rules_view()?,
+            "lifecycle_policy": self.lifecycle_policy()?,
         }))
     }
 
@@ -588,6 +589,13 @@ impl Store {
         }
 
         let empty_rules = json!({"constraints": []});
+        if let Some(value) = dump.get("lifecycle_policy") {
+            let policy = crate::lifecycle::Policy::parse(value)?;
+            self.settings_put(
+                Self::SETTING_LIFECYCLE_POLICY,
+                &serde_json::to_string(&policy).map_err(|e| e.to_string())?,
+            )?;
+        }
         self.replace_tag_rules(dump.get("tag_rules").unwrap_or(&empty_rules), false)?;
         for (key, m) in memories {
             let summary = m

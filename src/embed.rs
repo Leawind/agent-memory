@@ -599,9 +599,8 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
 
 /// Fuse content, tags and bounded semantic recall. Similarity must clear the
 /// model-specific floor before an independent semantic candidate qualifies.
-pub fn hybrid_hits(
+pub fn semantic_hits(
     memories: &[crate::model::Memory],
-    literal: [Vec<Hit>; 2],
     table: &HashMap<i64, Vec<f32>>,
     query_vec: &[f32],
     vector_k: usize,
@@ -622,7 +621,7 @@ pub fn hybrid_hits(
     vector_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     vector_ranked.truncate(vector_k);
 
-    let vector_hits: Vec<Hit> = vector_ranked
+    vector_ranked
         .into_iter()
         .map(|(idx, score)| Hit {
             idx,
@@ -630,7 +629,19 @@ pub fn hybrid_hits(
             score: i64::from(score.to_bits()),
             snippet: search::fallback_snippet(&memories[idx].content),
         })
-        .collect();
+        .collect()
+}
+
+#[cfg(test)]
+fn hybrid_hits(
+    memories: &[crate::model::Memory],
+    literal: [Vec<Hit>; 2],
+    table: &HashMap<i64, Vec<f32>>,
+    query_vec: &[f32],
+    vector_k: usize,
+    min_similarity: f32,
+) -> Vec<Hit> {
+    let vector_hits = semantic_hits(memories, table, query_vec, vector_k, min_similarity);
     search::fuse(
         memories,
         &[(&literal[0], 1.0), (&literal[1], 1.0), (&vector_hits, 1.0)],

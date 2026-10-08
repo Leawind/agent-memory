@@ -1,6 +1,25 @@
 // English messages — keys must mirror zh.ts exactly (guarded by i18n.test.ts)
 export default {
   lifecycle: {
+    nav: 'Lifecycle',
+    policyTitle: 'Freshness and reinforcement',
+    enableDecay: 'Enable decay',
+    noDecay: 'No decay',
+    days: 'days (half-life)',
+    freshnessWeight: 'Freshness rank weight',
+    reinforcementWeight: 'Access reinforcement rank weight',
+    policyHint:
+      'A weight of zero disables that signal. These ranks only reorder relevant candidates. Pins bypass soft decay; expiry still excludes them.',
+    accessTitle: 'Access events and projections',
+    rawEvents: 'Raw events',
+    buckets: 'Hourly buckets',
+    tracked: 'Memories with access history',
+    dropped: 'Read events skipped by this process',
+    accessHint:
+      'Full reads receive weak credit; explicit uses receive strong credit. The same identity and event kind receive credit once per 60 seconds. Events older than 30 days are compacted hourly; reinforcement has a fixed 30-day half-life.',
+    refresh: 'Refresh statistics',
+    compact: 'Compact one old-event batch',
+    rebuild: 'Rebuild score projections',
     title: 'Lifecycle',
     state: 'Memory state',
     active: 'Active',

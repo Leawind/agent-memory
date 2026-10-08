@@ -125,6 +125,19 @@ export interface SearchLimits {
   rerank_candidates: number
 }
 
+export interface LifecyclePolicy {
+  half_life_days: Record<LifecycleMetadata['kind'], number | null>
+  freshness_weight: number
+  reinforcement_weight: number
+}
+
+export interface AccessStats {
+  raw_events: number
+  hourly_buckets: number
+  tracked_memories: number
+  dropped_read_events: number
+}
+
 /** Per-candidate verdict from the connection tests: `index` is the request position, so an editor
  *  can line results up with its rows even when a candidate is incomplete */
 export interface EmbedTestResult {
