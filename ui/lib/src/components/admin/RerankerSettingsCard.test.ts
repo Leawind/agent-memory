@@ -99,6 +99,25 @@ beforeEach(() => {
 })
 
 describe('RerankerSettingsCard', () => {
+  it('validates required fields and duplicate IDs, with an optional API key and an ID help icon', async () => {
+    const { wrapper } = mountCard([])
+    await button(wrapper, '添加')!.trigger('click')
+    expect(row(wrapper).findAll('.el-input.is-invalid')).toHaveLength(4)
+    expect(row(wrapper).find('.f-api-key input').attributes('placeholder') ?? '').toBe('')
+    expect(wrapper.find('.field-help').attributes('aria-label')).toContain('稳定标识')
+    await row(wrapper).find('.f-id input').setValue('local')
+    await row(wrapper).find('.f-name input').setValue('Local reranker')
+    await row(wrapper).find('.f-base-url input').setValue('http://127.0.0.1:1234/v1')
+    await row(wrapper).find('.f-model input').setValue('reranker')
+    expect(row(wrapper).findAll('.el-input.is-invalid')).toHaveLength(0)
+    expect(button(wrapper, '保存')!.attributes('disabled')).toBeUndefined()
+    await button(wrapper, '添加')!.trigger('click')
+    await row(wrapper, 1).find('.f-id input').setValue('local')
+    expect(row(wrapper, 0).find('.f-id').classes()).toContain('is-invalid')
+    expect(row(wrapper, 1).find('.f-id').classes()).toContain('is-invalid')
+    expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
   it('renders display names without sequence numbers and keeps expansion by ID on reload', async () => {
     const first = { ...ENTRY, name: 'Local reranker' }
     const second = { ...ENTRY, id: 'cloud-reranker', name: 'Cloud reranker' }
@@ -133,7 +152,7 @@ describe('RerankerSettingsCard', () => {
       row(wrapper)
         .findAll('.field-label')
         .map((l) => l.text()),
-    ).toEqual(['模型 ID', '显示名称', '服务地址（base_url）', 'API 模型名', 'API Key'])
+    ).toEqual(['模型 ID', '显示名称', '服务地址（base_url）', 'API 模型名', '* API Key'])
     expect(button(wrapper, '删除', row(wrapper))).toBeTruthy()
     expect(button(wrapper, '检测', row(wrapper))).toBeTruthy()
     wrapper.unmount()

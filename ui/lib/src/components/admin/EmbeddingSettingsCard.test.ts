@@ -112,7 +112,7 @@ async function expand(wrapper: Wrapper, i = 0) {
   await row(wrapper, i).find('.entry-toggle').trigger('click')
 }
 function field(wrapper: Wrapper, cls: string, i = 0) {
-  return row(wrapper, i).find(`${cls} input`)
+  return row(wrapper, i).find(`${cls} input, ${cls} textarea`)
 }
 /** A button by its text, scoped to one row's expanded area or to the card's bottom action row */
 function button(wrapper: Wrapper, text: string, scope?: ReturnType<Wrapper['find']>) {
@@ -125,6 +125,57 @@ beforeEach(() => {
 })
 
 describe('EmbeddingSettingsCard candidate editor', () => {
+  it('marks empty required fields and invalid values, while optional fields may stay empty', async () => {
+    const { wrapper, calls } = await mountCard([])
+    await button(wrapper, '添加')!.trigger('click')
+    for (const selector of ['.f-id', '.f-name', '.f-base-url', '.f-model']) {
+      expect(row(wrapper).find(selector).classes()).toContain('is-invalid')
+      expect(field(wrapper, selector).attributes('aria-invalid')).toBe('true')
+    }
+    expect(row(wrapper).find('.f-api-key').classes()).not.toContain('is-invalid')
+    expect(row(wrapper).find('.f-min-similarity').classes()).not.toContain('is-invalid')
+    expect(field(wrapper, '.f-api-key').attributes('placeholder') ?? '').toBe('')
+    expect(field(wrapper, '.f-query-prefix').attributes('placeholder') ?? '').toBe('')
+    expect(wrapper.findAll('.field-help')).toHaveLength(4)
+    expect(wrapper.find('.field-help').attributes('aria-label')).toContain('向量缓存键')
+    await field(wrapper, '.f-id').setValue('local')
+    await field(wrapper, '.f-name').setValue('Local model')
+    await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')
+    await field(wrapper, '.f-model').setValue('embeddinggemma-300m')
+    expect(button(wrapper, '保存')!.attributes('disabled')).toBeUndefined()
+    for (const invalid of ['bad', '-0.1', '1.01', 'Infinity']) {
+      await field(wrapper, '.f-min-similarity').setValue(invalid)
+      expect(field(wrapper, '.f-min-similarity').attributes('aria-invalid')).toBe('true')
+      expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
+    }
+    await field(wrapper, '.f-min-similarity').setValue('0')
+    expect(button(wrapper, '保存')!.attributes('disabled')).toBeUndefined()
+    await field(wrapper, '.f-base-url').setValue('file:///tmp/model')
+    expect(field(wrapper, '.f-base-url').attributes('aria-invalid')).toBe('true')
+    expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('marks duplicate IDs on both rows and preserves multiline instruction prefixes in the save payload', async () => {
+    const { wrapper, calls } = await mountCard(
+      [MODEL, { ...MODEL, id: 'second', name: 'Second' }],
+      [(r) => (r.method === 'PUT' ? { saved: true } : undefined)],
+    )
+    await expand(wrapper, 0)
+    await expand(wrapper, 1)
+    await field(wrapper, '.f-id', 1).setValue(' local-model ')
+    expect(field(wrapper, '.f-id', 0).attributes('aria-invalid')).toBe('true')
+    expect(field(wrapper, '.f-id', 1).attributes('aria-invalid')).toBe('true')
+    expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
+    await field(wrapper, '.f-id', 1).setValue('second')
+    const prefix = 'Instruct: Retrieve matching memories\nQuery: '
+    await field(wrapper, '.f-query-prefix').setValue(prefix)
+    await button(wrapper, '保存')!.trigger('click')
+    await flushPromises()
+    expect(JSON.parse(calls.find((c) => c.method === 'PUT')!.body!).embedding_models[0].query_prefix).toBe(prefix)
+    wrapper.unmount()
+  })
   it('uses display names and preserves caches and open rows by ID across reordered settings', async () => {
     const first = { ...MODEL, name: '本地服务' }
     const second = { ...MODEL, id: 'cloud-model', name: '云端服务' }
@@ -179,10 +230,10 @@ describe('EmbeddingSettingsCard candidate editor', () => {
       '显示名称',
       '服务地址（base_url）',
       'API 模型名',
-      'API Key',
-      '查询指令前缀（可选）',
-      '文档指令前缀（可选）',
-      '语义召回最低相似度',
+      '* API Key',
+      '* 查询指令前缀',
+      '* 文档指令前缀',
+      '* 语义召回最低相似度',
     ])
     expect((field(wrapper, '.f-model').element as HTMLInputElement).value).toBe('bge-m3')
     expect(button(wrapper, '检测', detail)).toBeTruthy()

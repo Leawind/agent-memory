@@ -66,29 +66,45 @@
         <div v-if="row.open" class="entry-detail">
           <div class="field-grid">
             <label class="field">
-              <span class="field-label">{{ t('access.entryIdLabel') }}</span>
-              <el-input v-model="row.modelId" class="f-id" :placeholder="t('access.entryIdPlaceholder')" />
-            </label>
-            <label class="field">
-              <span class="field-label">{{ t('access.entryNameLabel') }}</span>
-              <el-input v-model="row.name" class="f-name" />
-            </label>
-            <label class="field">
-              <span class="field-label">{{ t('access.entryBaseUrlLabel') }}</span>
-              <el-input v-model="row.baseUrl" class="f-base-url" :placeholder="t('access.entryBaseUrlPlaceholder')" />
-            </label>
-            <label class="field">
-              <span class="field-label">{{ t('access.entryModelLabel') }}</span>
-              <el-input v-model="row.model" class="f-model" />
-            </label>
-            <label class="field">
-              <span class="field-label">{{ t('access.entryApiKeyLabel') }}</span>
+              <ModelFieldLabel :label="t('access.entryIdLabel')" :hint="t('access.entryRerankIdHint')" />
               <el-input
-                v-model="row.apiKey"
-                class="f-api-key"
-                show-password
-                :placeholder="t('access.entryApiKeyPlaceholder')"
+                v-model="row.modelId"
+                :class="{ 'is-invalid': errorsOf(row).modelId }"
+                :aria-invalid="errorsOf(row).modelId"
+                class="f-id"
               />
+            </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryNameLabel')" />
+              <el-input
+                v-model="row.name"
+                :class="{ 'is-invalid': errorsOf(row).name }"
+                :aria-invalid="errorsOf(row).name"
+                class="f-name"
+              />
+            </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryBaseUrlLabel')" />
+              <el-input
+                v-model="row.baseUrl"
+                :class="{ 'is-invalid': errorsOf(row).baseUrl }"
+                :aria-invalid="errorsOf(row).baseUrl"
+                class="f-base-url"
+                :placeholder="t('access.entryBaseUrlPlaceholder')"
+              />
+            </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryModelLabel')" />
+              <el-input
+                v-model="row.model"
+                :class="{ 'is-invalid': errorsOf(row).model }"
+                :aria-invalid="errorsOf(row).model"
+                class="f-model"
+              />
+            </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryApiKeyLabel')" optional />
+              <el-input v-model="row.apiKey" class="f-api-key" show-password />
             </label>
           </div>
 
@@ -105,14 +121,14 @@
       </div>
     </div>
 
-    <p class="form-hint">{{ t('access.rerankFormHint') }}</p>
+    <p class="form-hint">{{ t('access.optionalFieldsHint') }} · {{ t('access.rerankFormHint') }}</p>
     <div class="form-actions">
       <el-button :icon="Plus" @click="addEntry">{{ t('access.embeddingAdd') }}</el-button>
       <span class="form-actions-main">
         <el-button :loading="testingAll" :disabled="!enabledRows.length" @click="testAll">
           {{ t('access.embeddingTest') }}
         </el-button>
-        <el-button :disabled="!dirty" :loading="saving" type="primary" @click="save">
+        <el-button :disabled="!dirty || !valid" :loading="saving" type="primary" @click="save">
           {{ t('access.embeddingSave') }}
         </el-button>
       </span>
@@ -129,6 +145,8 @@ import { testRerankers } from '../../api/ops'
 import { useDragOrder } from '../../composables/useDragOrder'
 import type { RerankModelEntry, RerankTestResult } from '../../types'
 import { run } from './caps'
+import ModelFieldLabel from './ModelFieldLabel.vue'
+import { candidateFieldErrors } from './modelFields'
 
 const props = defineProps<{
   /** The ordered reranker candidate list as stored server-side (settings GET) */
@@ -193,6 +211,11 @@ function payloads(rows: EntryDraft[]): string {
 }
 
 const dirty = computed(() => payloads(draft.value) !== payloads(saved.value))
+const valid = computed(() => draft.value.every((r) => !Object.values(errorsOf(r)).some(Boolean)))
+
+function errorsOf(row: EntryDraft) {
+  return candidateFieldErrors(row, draft.value)
+}
 
 watch(
   () => props.models,
@@ -233,7 +256,7 @@ function removeEntry(i: number): void {
 }
 
 function complete(r: EntryDraft): boolean {
-  return r.modelId.trim() !== '' && r.name.trim() !== '' && r.baseUrl.trim() !== '' && r.model.trim() !== ''
+  return !Object.values(errorsOf(r)).some(Boolean)
 }
 
 // ---- Probes: per row (exactly that row's current values) and over the whole list ----
@@ -323,7 +346,7 @@ const stateText = computed(
 const saving = ref(false)
 
 async function save(): Promise<void> {
-  if (!dirty.value || saving.value) return
+  if (!dirty.value || !valid.value || saving.value) return
   saving.value = true
   try {
     const ok = await run(() => api.put('/api/settings', { rerank_models: draft.value.map(entryPayload) }))
@@ -489,9 +512,8 @@ async function save(): Promise<void> {
   gap: 4px;
   min-width: 0;
 }
-.field-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+.field :deep(.el-input.is-invalid .el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 .entry-actions {
   display: flex;

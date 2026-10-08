@@ -227,7 +227,7 @@ export default {
     embeddingTest: 'Test',
     embeddingAdd: 'Add',
     embeddingEntryUntitled: 'Untitled candidate',
-    embeddingEntryIncomplete: 'ID, display name, URL and API model are required',
+    embeddingEntryIncomplete: 'Incomplete or invalid configuration',
     embeddingFormHint:
       'List order is the failover priority; search falls back to keywords when every candidate is down, writes never block',
     embeddingModelChangeWarn:
@@ -235,17 +235,23 @@ export default {
     entryDrag: 'Drag to change priority',
     entryEnable: 'Enable this candidate',
     entryIdLabel: 'Model ID',
-    entryIdPlaceholder: 'Unique, stable cache identifier',
+    entryIdHint:
+      'Vector cache key. Must be unique within embedding models; reordering and display-name edits preserve the cache.',
+    entryRerankIdHint: 'Stable identifier for this configuration; must be unique within reranking models.',
+    optionalFieldsHint: '* marks optional fields',
     entryNameLabel: 'Display name',
     entryModelLabel: 'API model name',
     entryBaseUrlLabel: 'Service base URL',
     entryBaseUrlPlaceholder: 'https://api.siliconflow.cn/v1 or http://127.0.0.1:11434/v1',
     entryApiKeyLabel: 'API key',
-    entryApiKeyPlaceholder: 'Leave empty for local services',
-    entryQueryPrefixLabel: 'Query instruction prefix (optional)',
-    entryQueryPrefixPlaceholder: '"query: " for E5 (keep the trailing space); empty for bge-m3',
-    entryPassagePrefixLabel: 'Passage instruction prefix (optional)',
-    entryPassagePrefixPlaceholder: 'e.g. "passage: " for E5 models',
+    entryQueryPrefixLabel: 'Query instruction prefix',
+    entryQueryPrefixHint:
+      'Prepended verbatim to search queries before embedding. Follow the model’s requirements; trailing spaces and line breaks are preserved. Do not repeat a prefix already added by the service.',
+    entryPassagePrefixLabel: 'Passage instruction prefix',
+    entryPassagePrefixHint:
+      'Prepended verbatim to memory text before embedding. Follow the model’s requirements; trailing spaces and line breaks are preserved. Do not repeat a prefix already added by the service.',
+    entryMinSimilarityHint:
+      'Filters semantic candidates below this similarity. Range: 0–1; 0 disables filtering. Empty uses the default.',
     entryMinSimilarityLabel: 'Semantic recall floor',
     entryMinSimilarityPlaceholder: 'Default 0.30; 0 disables filtering',
     entryTestOk: 'OK · {dim}-dim · {ms}ms',
