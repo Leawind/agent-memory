@@ -24,6 +24,7 @@ mod memories;
 mod migrate;
 mod ops;
 mod settings;
+mod tag_rules;
 mod tags;
 mod tx;
 

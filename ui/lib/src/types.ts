@@ -219,6 +219,17 @@ export interface ImportResp {
   imported_tags: number
 }
 
+export interface TagRule {
+  name: string
+  expression: string
+}
+
+export interface TagRulePreview {
+  valid: boolean
+  total_violations: number
+  violations: Array<{ id: string; summary: string; rules: string[] }>
+}
+
 /** Caller identity summary returned by /api/whoami (mode=open means full capabilities in permissions; mode=anonymous means the configured capability set of the anonymous identity) */
 export interface WhoAmI {
   name: string

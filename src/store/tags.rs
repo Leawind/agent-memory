@@ -131,6 +131,7 @@ impl Store {
 
     /// detach: delete the tag (cascading away all references), returning the number of memories affected.
     pub fn tag_delete_detach(&self, name: &str) -> Result<u64, String> {
+        self.assert_tag_deletable(name)?;
         if !self.tag_exists(name)? {
             return Err(format!("tag '{name}' not found (see tag_list)"));
         }
@@ -149,6 +150,7 @@ impl Store {
 
     /// purge: also delete every memory carrying the tag, returning the deleted memory ids.
     pub fn tag_delete_purge(&self, name: &str) -> Result<Vec<String>, String> {
+        self.assert_tag_deletable(name)?;
         if !self.tag_exists(name)? {
             return Err(format!("tag '{name}' not found (see tag_list)"));
         }

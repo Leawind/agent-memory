@@ -110,6 +110,7 @@ pub fn tag_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     // (count for both modes, plus the exact ids that would die under purge).
     // Echo-free throughout: the tag name and mode are the caller's own arguments.
     if dry_run {
+        st.assert_tag_deletable(&name)?;
         let ids = st.tag_memory_ids(&name)?;
         let mut out = json!({ "memories_affected": ids.len() });
         if mode == "purge" {

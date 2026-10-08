@@ -499,6 +499,7 @@ impl Store {
             "exported_at": crate::model::now(),
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
+            "tag_rules": self.tag_rules_view()?,
         }))
     }
 
@@ -584,6 +585,8 @@ impl Store {
             tag_id_by_key.insert(key.as_str(), id);
         }
 
+        let empty_rules = json!({"constraints": []});
+        self.replace_tag_rules(dump.get("tag_rules").unwrap_or(&empty_rules), false)?;
         for (key, m) in memories {
             let summary = m
                 .get("summary")

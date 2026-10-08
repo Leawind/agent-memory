@@ -145,6 +145,29 @@ fn token_auth_end_to_end() {
     // Read-only identity: reads OK; writes/admin 403; MCP writes report the permission error via isError
     let viewer_auth = format!("Bearer {viewer_token}");
     let viewer_headers = [("Authorization", viewer_auth.as_str())];
+    assert_eq!(
+        try_request(port, "GET", "/api/tag-rules", None, &viewer_headers)
+            .unwrap()
+            .0,
+        200
+    );
+    for (method, path) in [
+        ("PUT", "/api/tag-rules"),
+        ("POST", "/api/tag-rules/preview"),
+    ] {
+        assert_eq!(
+            try_request(
+                port,
+                method,
+                path,
+                Some(r#"{"constraints": []}"#),
+                &viewer_headers
+            )
+            .unwrap()
+            .0,
+            403
+        );
+    }
     let (status, _, _) = try_request(port, "GET", "/api/memories", None, &viewer_headers).unwrap();
     assert_eq!(status, 200);
     let (status, body, _) = try_request(

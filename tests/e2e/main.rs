@@ -20,3 +20,4 @@ mod rest;
 mod semantic;
 mod shared;
 mod subscribe;
+mod tag_rules;

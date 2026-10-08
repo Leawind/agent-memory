@@ -121,15 +121,22 @@ describe('AdminPanel', () => {
     })
     await flushPromises()
     const items = wrapper.findAll('.admin-nav .nav-item')
-    expect(items.map((i) => i.text())).toEqual(['身份与访问', '搜索模型', '自定义提示词', '备份导入导出', '数据体检'])
+    expect(items.map((i) => i.text())).toEqual([
+      '身份与访问',
+      '搜索模型',
+      '标签规则',
+      '自定义提示词',
+      '备份导入导出',
+      '数据体检',
+    ])
     // v-show toggles inline display: exactly the active section's card is visible
     const displays = () =>
       wrapper.findAll('.admin-sections .el-card').map((c) => (c.element as HTMLElement).style.display)
-    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none', 'none', 'none'])
-    await items[4].trigger('click')
-    expect(displays()).toEqual(['none', 'none', 'none', 'none', 'none', 'none', ''])
+    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none', 'none', 'none', 'none'])
+    await items[5].trigger('click')
+    expect(displays()).toEqual(['none', 'none', 'none', 'none', 'none', 'none', 'none', ''])
     await items[1].trigger('click')
-    expect(displays()).toEqual(['none', '', '', '', 'none', 'none', 'none'])
+    expect(displays()).toEqual(['none', '', '', '', 'none', 'none', 'none', 'none'])
     wrapper.unmount()
   })
 

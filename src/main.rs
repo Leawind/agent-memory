@@ -20,6 +20,7 @@ mod search;
 mod sql;
 mod store;
 mod tag_expr;
+mod tag_rules;
 mod tools;
 mod util;
 

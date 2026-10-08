@@ -837,7 +837,10 @@ mod tests {
         let (status, listing) =
             roundtrip_legacy(&store, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         assert_eq!(status, 200);
-        assert_eq!(listing["result"]["tools"].as_array().unwrap().len(), 12);
+        assert_eq!(
+            listing["result"]["tools"].as_array().unwrap().len(),
+            tools::TOOL_NAMES.len()
+        );
 
         let (status, created) = roundtrip_legacy(
             &store,
@@ -1233,7 +1236,10 @@ mod tests {
         let store = temp_db("tools-list");
         let (_, listing) = roundtrip(&store, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
         assert_eq!(listing["result"]["resultType"], "complete");
-        assert_eq!(listing["result"]["tools"].as_array().unwrap().len(), 12);
+        assert_eq!(
+            listing["result"]["tools"].as_array().unwrap().len(),
+            tools::TOOL_NAMES.len()
+        );
         assert_eq!(listing["result"]["ttlMs"], 3_600_000);
         assert_eq!(listing["result"]["cacheScope"], "public");
         cleanup(&store);

@@ -24,8 +24,8 @@ use std::path::Path;
 
 pub use defs::{
     tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
-    TOOL_NAMES,
+    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST,
+    TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -147,6 +147,7 @@ pub fn execute(
     match name {
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
+        defs::TAG_RULE_LIST => st.tag_rules_view().map_err(ToolError::from),
         defs::TAG_UPDATE => tag_ops::tag_update(st, map),
         defs::TAG_DELETE => tag_ops::tag_delete(st, map),
         defs::MEMORY_CREATE => memory_ops::memory_create(st, map),
@@ -1180,6 +1181,19 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("unknown tool"));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_rule_listing_is_read_only_and_schema_validated() {
+        let path = temp_db("tag-rule-list");
+        let result = call_as(&path, &[Cap::Read], TAG_RULE_LIST, json!({})).unwrap();
+        assert_eq!(result, json!({"constraints": []}));
+        assert!(call(&path, TAG_RULE_LIST, json!({"unexpected": true})).is_err());
+        assert!(matches!(
+            call_as(&path, &[], TAG_RULE_LIST, json!({})),
+            Err(ToolError::Forbidden(_))
+        ));
         cleanup(&path);
     }
 

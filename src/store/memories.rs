@@ -46,6 +46,7 @@ impl Store {
         created_at: u64,
         updated_at: u64,
     ) -> Result<i64, String> {
+        self.validate_tag_constraints(tag_ids)?;
         self.conn
             .execute(
                 sql::MEMORY_INSERT,
@@ -229,6 +230,15 @@ impl Store {
             ));
         }
         let mut changed = false;
+        let names = self.tags_of(id)?;
+        let mut final_tags = self.tag_ids_for_names(&names)?;
+        for tag_id in add_tag_ids {
+            if !final_tags.contains(tag_id) {
+                final_tags.push(*tag_id);
+            }
+        }
+        final_tags.retain(|id| !remove_tag_ids.contains(id));
+        self.validate_tag_constraints(&final_tags)?;
         if summary.is_some() || content.is_some() {
             self.conn
                 .execute(

@@ -66,6 +66,8 @@
 
             <SearchLimitsCard v-show="activeSection === 'embedding'" :limits="searchLimits" @changed="load" />
 
+            <TagRulesCard v-show="activeSection === 'tagRules'" :rules="tagRules" @changed="load" />
+
             <PromptSettingsCard
               v-show="activeSection === 'prompt'"
               :instructions="instructions"
@@ -98,7 +100,7 @@ import { t } from '../i18n'
 import { useApiClient } from '../api/client'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import { toastSuccess } from '../toast'
-import type { EmbedModelEntry, RerankModelEntry, SearchLimits, WhoAmI } from '../types'
+import type { EmbedModelEntry, RerankModelEntry, SearchLimits, TagRule, WhoAmI } from '../types'
 import { run, type IdentityRow } from './admin/caps'
 import AuthCard from './admin/AuthCard.vue'
 import IdentityFormDialog from './admin/IdentityFormDialog.vue'
@@ -106,6 +108,7 @@ import TokenOnceDialog from './admin/TokenOnceDialog.vue'
 import EmbeddingSettingsCard from './admin/EmbeddingSettingsCard.vue'
 import RerankerSettingsCard from './admin/RerankerSettingsCard.vue'
 import SearchLimitsCard from './admin/SearchLimitsCard.vue'
+import TagRulesCard from './admin/TagRulesCard.vue'
 import PromptSettingsCard from './admin/PromptSettingsCard.vue'
 import BackupCard from './admin/BackupCard.vue'
 import DoctorCard from './admin/DoctorCard.vue'
@@ -134,6 +137,7 @@ const anonymousPermissions = ref<Record<string, boolean> | null>(null)
 const embeddingModels = ref<EmbedModelEntry[]>([])
 const rerankModels = ref<RerankModelEntry[]>([])
 const searchLimits = ref<SearchLimits>({ semantic_candidates: 100, rerank_candidates: 50 })
+const tagRules = ref<TagRule[]>([])
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
@@ -146,11 +150,12 @@ const rootRef = ref<HTMLElement | null>(null)
 const { compact } = useContainerWidth(rootRef)
 
 // ---- Category nav: one entry per settings card; the sections themselves stay mounted ----
-type SectionId = 'access' | 'embedding' | 'prompt' | 'backup' | 'doctor'
+type SectionId = 'access' | 'embedding' | 'tagRules' | 'prompt' | 'backup' | 'doctor'
 
 const categories: Array<{ id: SectionId; labelKey: string; icon: Component }> = [
   { id: 'access', labelKey: 'access.navAccess', icon: User },
   { id: 'embedding', labelKey: 'access.navEmbedding', icon: Search },
+  { id: 'tagRules', labelKey: 'access.tagRulesTitle', icon: FolderOpened },
   { id: 'prompt', labelKey: 'access.navPrompt', icon: ChatDotRound },
   { id: 'backup', labelKey: 'access.navBackup', icon: FolderOpened },
   { id: 'doctor', labelKey: 'access.navDoctor', icon: FirstAidKit },
@@ -160,7 +165,7 @@ const activeSection = ref<SectionId>('access')
 
 async function load(): Promise<void> {
   await run(async () => {
-    const [list, settings, statsResp] = await Promise.all([
+    const [list, settings, statsResp, rules] = await Promise.all([
       api.get<{ identities?: IdentityRow[] }>('/api/identities'),
       api.get<{
         instructions?: string | null
@@ -172,6 +177,7 @@ async function load(): Promise<void> {
         default_instructions?: string | null
       }>('/api/settings'),
       api.get<import('../types').StatsInfo>('/api/stats'),
+      api.get<{ constraints?: TagRule[] }>('/api/tag-rules'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
     // When unset, prefill the built-in default directly (what you see is what applies); the card derives its faded state from the content
@@ -183,6 +189,7 @@ async function load(): Promise<void> {
     rerankModels.value = Array.isArray(settings?.rerank_models) ? settings.rerank_models : []
     searchLimits.value = settings?.search_limits ?? { semantic_candidates: 100, rerank_candidates: 50 }
     stats.value = statsResp ?? null
+    tagRules.value = Array.isArray(rules?.constraints) ? rules.constraints : []
   })
 }
 

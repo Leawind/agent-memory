@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 /// matched elsewhere fails to compile.
 pub const TAG_CREATE: &str = "tag_create";
 pub const TAG_LIST: &str = "tag_list";
+pub const TAG_RULE_LIST: &str = "tag_rule_list";
 pub const TAG_UPDATE: &str = "tag_update";
 pub const TAG_DELETE: &str = "tag_delete";
 pub const MEMORY_CREATE: &str = "memory_create";
@@ -28,6 +29,7 @@ pub const MEMORY_DELETE: &str = "memory_delete";
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
     TAG_LIST,
+    TAG_RULE_LIST,
     TAG_UPDATE,
     TAG_DELETE,
     MEMORY_CREATE,
@@ -42,7 +44,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
@@ -70,6 +72,12 @@ pub fn tool_definitions() -> Value {
                 },
                 "additionalProperties": false
             }),
+            true, false,
+        ),
+        def(
+            TAG_RULE_LIST,
+            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
             true, false,
         ),
         def(
@@ -294,7 +302,7 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
         MEMORY_CREATE => &[Cap::Create],
-        MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET => &[Cap::Read],
+        TAG_LIST | TAG_RULE_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET => &[Cap::Read],
         MEMORY_UPDATE | MEMORY_EDIT => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],
@@ -322,8 +330,8 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(
-            read_only, 4,
-            "the contract should have exactly 4 read-only tools"
+            read_only, 5,
+            "the contract should have exactly 5 read-only tools"
         );
     }
 
