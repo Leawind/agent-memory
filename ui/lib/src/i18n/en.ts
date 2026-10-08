@@ -164,15 +164,15 @@ export default {
     navEmbedding: 'Search models',
     tagRulesTitle: 'Tag rules',
     tagRulesHint:
-      'Every constraint must evaluate true. mutex(a,b,c) allows at most one operand; &, |, ! and grouping support expressions such as !child|parent. Create referenced tags first. Saving rechecks all existing memories; previews show up to 100 conflicts.',
+      "Every constraint must evaluate true. mutex(a,b,c) allows at most one operand; &, {'|'}, ! and grouping support expressions such as !child{'|'}parent. Create referenced tags first. Saving rechecks all existing memories; previews show up to 100 conflicts.",
     ruleName: 'Rule name',
-    ruleExpression: 'Constraint expression',
+    ruleExpression: 'Rule expression',
     addRule: 'Add constraint',
     addDerivation: 'Add derivation',
     constraintsTitle: 'Combination constraints',
     derivationsTitle: 'Tag implications and derivations',
     derivationsHint:
-      'Positive rules support vue3 => web and minecraft-modding <=> minecraft & modding. Premises allow & and |; conclusions allow tags joined by &. Positive cycles converge; removing original tags recomputes the closure. convention cannot be derived.',
+      "Positive rules support vue3 => web and minecraft-modding <=> minecraft & modding. Premises allow & and {'|'}; conclusions allow tags joined by &. Positive cycles converge; removing original tags recomputes the closure. convention cannot be derived.",
     positiveCycles: 'Positive cycles detected; inference uses the least fixed point',
     previewRules: 'Check existing memories',
     rulesValid: 'All existing memories satisfy the rules',

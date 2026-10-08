@@ -161,15 +161,15 @@ export default {
     navEmbedding: '搜索模型',
     tagRulesTitle: '标签规则',
     tagRulesHint:
-      '每条约束表达式必须为真。mutex(a,b,c) 表示最多出现一个；允许 &、|、! 和括号，例如 !child|parent。引用的标签须先创建。保存时会重新检查全部现有记忆，最多展示 100 条冲突。',
+      "每条约束表达式必须为真。mutex(a,b,c) 表示最多出现一个；允许 &、{'|'}、! 和括号，例如 !child{'|'}parent。引用的标签须先创建。保存时会重新检查全部现有记忆，最多展示 100 条冲突。",
     ruleName: '规则名称',
-    ruleExpression: '约束表达式',
+    ruleExpression: '规则表达式',
     addRule: '添加约束',
     addDerivation: '添加派生',
     constraintsTitle: '组合约束',
     derivationsTitle: '标签蕴含与派生',
     derivationsHint:
-      '正向规则支持 vue3 => web、minecraft-modding <=> minecraft & modding。前提允许 &、|；结论只允许标签和 &。正向循环可以收敛，删除原始标签后会重新推导。不能派生 convention。',
+      "正向规则支持 vue3 => web、minecraft-modding <=> minecraft & modding。前提允许 &、{'|'}；结论只允许标签和 &。正向循环可以收敛，删除原始标签后会重新推导。不能派生 convention。",
     positiveCycles: '包含正向循环，按最小固定点推导',
     previewRules: '检查现有记忆',
     rulesValid: '全部现有记忆符合规则',

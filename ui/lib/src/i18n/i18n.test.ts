@@ -23,6 +23,17 @@ describe('i18n messages', () => {
       expect(String(t(key)).trim()).not.toBe('')
     }
   })
+
+  it('renders all tag-rule operators and the full derivation restrictions', () => {
+    for (const locale of ['zh', 'en'] as const) {
+      setMemoryUILocale(locale)
+      expect(t('access.tagRulesHint')).toContain('!child|parent')
+      expect(t('access.tagRulesHint')).toContain('100')
+      expect(t('access.derivationsHint')).toContain('|')
+      expect(t('access.derivationsHint')).toContain('convention')
+    }
+    setMemoryUILocale('zh')
+  })
 })
 
 describe('locale switching', () => {
