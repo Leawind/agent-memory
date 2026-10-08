@@ -114,11 +114,11 @@ describe('RerankerSettingsCard', () => {
   it('validates required fields and duplicate IDs, with an optional API key and an ID help icon', async () => {
     const { wrapper } = mountCard([])
     await button(wrapper, '添加')!.trigger('click')
-    expect(row(wrapper).findAll('.el-input.is-invalid')).toHaveLength(4)
+    expect(row(wrapper).findAll('.el-input.is-invalid')).toHaveLength(3)
+    expect(row(wrapper).find('.f-name').classes()).not.toContain('is-invalid')
     expect(row(wrapper).find('.f-api-key input').attributes('placeholder') ?? '').toBe('')
     expect(wrapper.find('.field-help').attributes('aria-label')).toContain('稳定标识')
     await row(wrapper).find('.f-id input').setValue('local')
-    await row(wrapper).find('.f-name input').setValue('Local reranker')
     await row(wrapper).find('.f-base-url input').setValue('http://127.0.0.1:1234/v1')
     await row(wrapper).find('.f-model input').setValue('reranker')
     expect(row(wrapper).findAll('.el-input.is-invalid')).toHaveLength(0)
@@ -164,7 +164,7 @@ describe('RerankerSettingsCard', () => {
       row(wrapper)
         .findAll('.field-label')
         .map((l) => l.text()),
-    ).toEqual(['模型 ID', '显示名称', '服务地址（base_url）', 'API 模型名', '* API Key'])
+    ).toEqual(['* 模型 ID', '显示名称', '* 服务地址（base_url）', '* API 模型名', 'API Key'])
     expect(button(wrapper, '删除', row(wrapper))).toBeTruthy()
     expect(button(wrapper, '检测', row(wrapper))).toBeTruthy()
     wrapper.unmount()
@@ -177,7 +177,6 @@ describe('RerankerSettingsCard', () => {
     )
     await button(wrapper, '添加')!.trigger('click')
     await row(wrapper).find('.f-id input').setValue('rerank-local')
-    await row(wrapper).find('.f-name input').setValue('Local reranker')
     await row(wrapper).find('.f-model input').setValue('bge-reranker-v2-m3')
     await row(wrapper).find('.f-base-url input').setValue('http://rerank:9/v1')
     await button(wrapper, '保存')!.trigger('click')
@@ -187,7 +186,7 @@ describe('RerankerSettingsCard', () => {
       rerank_models: [
         {
           id: 'rerank-local',
-          name: 'Local reranker',
+          name: '',
           enabled: true,
           base_url: 'http://rerank:9/v1',
           model: 'bge-reranker-v2-m3',

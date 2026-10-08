@@ -66,44 +66,42 @@
         <div v-if="row.open" class="entry-detail">
           <div class="field-grid">
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryIdLabel')" :hint="t('access.entryRerankIdHint')" />
+              <ModelFieldLabel :label="t('access.entryIdLabel')" :hint="t('access.entryRerankIdHint')" required />
               <el-input
                 v-model="row.modelId"
                 :class="{ 'is-invalid': errorsOf(row).modelId }"
                 :aria-invalid="errorsOf(row).modelId"
+                aria-required="true"
                 class="f-id"
               />
             </label>
             <label class="field">
               <ModelFieldLabel :label="t('access.entryNameLabel')" />
-              <el-input
-                v-model="row.name"
-                :class="{ 'is-invalid': errorsOf(row).name }"
-                :aria-invalid="errorsOf(row).name"
-                class="f-name"
-              />
+              <el-input v-model="row.name" class="f-name" />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryBaseUrlLabel')" />
+              <ModelFieldLabel :label="t('access.entryBaseUrlLabel')" required />
               <el-input
                 v-model="row.baseUrl"
                 :class="{ 'is-invalid': errorsOf(row).baseUrl }"
                 :aria-invalid="errorsOf(row).baseUrl"
+                aria-required="true"
                 class="f-base-url"
                 :placeholder="t('access.entryBaseUrlPlaceholder')"
               />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryModelLabel')" />
+              <ModelFieldLabel :label="t('access.entryModelLabel')" required />
               <el-input
                 v-model="row.model"
                 :class="{ 'is-invalid': errorsOf(row).model }"
                 :aria-invalid="errorsOf(row).model"
+                aria-required="true"
                 class="f-model"
               />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryApiKeyLabel')" optional />
+              <ModelFieldLabel :label="t('access.entryApiKeyLabel')" />
               <el-input v-model="row.apiKey" class="f-api-key" show-password />
             </label>
           </div>
@@ -121,7 +119,7 @@
       </div>
     </div>
 
-    <p class="form-hint">{{ t('access.optionalFieldsHint') }} · {{ t('access.rerankFormHint') }}</p>
+    <p class="form-hint">{{ t('access.requiredFieldsHint') }} · {{ t('access.rerankFormHint') }}</p>
     <div class="form-actions">
       <el-button :icon="Plus" @click="addEntry">{{ t('access.embeddingAdd') }}</el-button>
       <span class="form-actions-main">
@@ -400,6 +398,7 @@ async function save(): Promise<void> {
   gap: 6px;
 }
 .entry {
+  background: var(--el-fill-color-blank);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
 }

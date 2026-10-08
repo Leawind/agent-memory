@@ -229,7 +229,7 @@ export default {
     entryIdLabel: '模型 ID',
     entryIdHint: '向量缓存键。需在向量模型列表中唯一；排序和修改显示名称不影响缓存。',
     entryRerankIdHint: '此配置的稳定标识，需在重排模型列表中唯一。',
-    optionalFieldsHint: '* 表示可选',
+    requiredFieldsHint: '* 表示必填',
     entryNameLabel: '显示名称',
     entryModelLabel: 'API 模型名',
     entryBaseUrlLabel: '服务地址（base_url）',

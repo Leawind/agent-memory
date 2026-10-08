@@ -921,7 +921,15 @@ fn parse_model_identity(
             })
     };
     let id = required("id")?;
-    let name = required("name")?;
+    let name = match item.get("name") {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(s)) => s.trim().to_string(),
+        Some(_) => {
+            return Err(ToolError::invalid(format!(
+                "{key}[{index}].name must be a string or null"
+            )))
+        }
+    };
     if !ids.insert(id.clone()) {
         return Err(ToolError::invalid(format!(
             "{key}[{index}]: duplicate id '{id}'"
@@ -968,7 +976,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn model_lists_require_unique_ids_and_display_names() {
+    fn model_lists_require_unique_ids_and_allow_optional_display_names() {
         for key in ["embedding_models", "rerank_models"] {
             let parse = |value: &Value| -> Result<Vec<Value>, ToolError> {
                 if key == "embedding_models" {
@@ -986,16 +994,24 @@ mod tests {
             let entries = parse(&valid).unwrap();
             assert_eq!(entries[0]["id"], "local");
             assert_eq!(entries[0]["name"], "Local model");
-            for field in ["id", "name"] {
-                for invalid in [Value::Null, json!("  "), json!(3)] {
-                    let mut candidate = valid.clone();
-                    candidate[0][field] = invalid;
-                    assert!(parse(&candidate).is_err(), "{key}: {field}");
-                }
+            for invalid in [Value::Null, json!("  "), json!(3)] {
                 let mut candidate = valid.clone();
-                candidate[0].as_object_mut().unwrap().remove(field);
-                assert!(parse(&candidate).is_err());
+                candidate[0]["id"] = invalid;
+                assert!(parse(&candidate).is_err(), "{key}: id");
             }
+            let mut missing_id = valid.clone();
+            missing_id[0].as_object_mut().unwrap().remove("id");
+            assert!(parse(&missing_id).is_err());
+            for name in [Value::Null, json!(""), json!("  ")] {
+                let mut candidate = valid.clone();
+                candidate[0]["name"] = name;
+                assert_eq!(parse(&candidate).unwrap()[0]["name"], "");
+            }
+            let mut unnamed = valid.clone();
+            unnamed[0].as_object_mut().unwrap().remove("name");
+            assert_eq!(parse(&unnamed).unwrap()[0]["name"], "");
+            unnamed[0]["name"] = json!(3);
+            assert!(parse(&unnamed).is_err());
             let mut duplicate = valid;
             duplicate[1]["id"] = json!("local");
             assert!(parse(&duplicate).is_err());

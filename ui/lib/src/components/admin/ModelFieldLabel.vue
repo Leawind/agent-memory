@@ -1,6 +1,6 @@
 <template>
   <span class="field-label">
-    <span>{{ optional ? '* ' : '' }}{{ label }}</span>
+    <span><span v-if="required" class="field-required" aria-hidden="true">* </span>{{ label }}</span>
     <el-tooltip v-if="hint" :content="hint" placement="top" :trigger="['hover', 'focus']">
       <el-icon class="field-help" tabindex="0" :aria-label="`${label}: ${hint}`"><InfoFilled /></el-icon>
     </el-tooltip>
@@ -10,7 +10,7 @@
 <script setup lang="ts">
 import { InfoFilled } from '@element-plus/icons-vue'
 
-defineProps<{ label: string; hint?: string; optional?: boolean }>()
+defineProps<{ label: string; hint?: string; required?: boolean }>()
 </script>
 
 <style scoped>
@@ -24,6 +24,9 @@ defineProps<{ label: string; hint?: string; optional?: boolean }>()
 .field-help {
   cursor: help;
   color: var(--el-text-color-placeholder);
+}
+.field-required {
+  color: var(--el-color-danger);
 }
 .field-help:focus-visible {
   outline: 2px solid var(--el-color-primary);

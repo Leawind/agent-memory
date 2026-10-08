@@ -141,10 +141,11 @@ describe('EmbeddingSettingsCard candidate editor', () => {
   it('marks empty required fields and invalid values, while optional fields may stay empty', async () => {
     const { wrapper, calls } = await mountCard([])
     await button(wrapper, '添加')!.trigger('click')
-    for (const selector of ['.f-id', '.f-name', '.f-base-url', '.f-model']) {
+    for (const selector of ['.f-id', '.f-base-url', '.f-model']) {
       expect(row(wrapper).find(selector).classes()).toContain('is-invalid')
       expect(field(wrapper, selector).attributes('aria-invalid')).toBe('true')
     }
+    expect(row(wrapper).find('.f-name').classes()).not.toContain('is-invalid')
     expect(row(wrapper).find('.f-api-key').classes()).not.toContain('is-invalid')
     expect(row(wrapper).find('.f-min-similarity').classes()).not.toContain('is-invalid')
     expect(field(wrapper, '.f-api-key').attributes('placeholder') ?? '').toBe('')
@@ -152,7 +153,6 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(wrapper.findAll('.field-help')).toHaveLength(4)
     expect(wrapper.find('.field-help').attributes('aria-label')).toContain('向量缓存键')
     await field(wrapper, '.f-id').setValue('local')
-    await field(wrapper, '.f-name').setValue('Local model')
     await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')
     await field(wrapper, '.f-model').setValue('embeddinggemma-300m')
     expect(button(wrapper, '保存')!.attributes('disabled')).toBeUndefined()
@@ -167,6 +167,14 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(field(wrapper, '.f-base-url').attributes('aria-invalid')).toBe('true')
     expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
     expect(calls.some((c) => c.method === 'PUT')).toBe(false)
+    await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')
+    await field(wrapper, '.f-min-similarity').setValue('')
+    await button(wrapper, '保存')!.trigger('click')
+    await flushPromises()
+    const saved = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!).embedding_models[0]
+    expect(saved.name).toBe('')
+    expect(saved.min_similarity).toBeNull()
+    expect(row(wrapper).find('.entry-name').text()).toBe('embeddinggemma-300m')
     wrapper.unmount()
   })
 
@@ -239,14 +247,14 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     await expand(wrapper)
     const detail = row(wrapper).find('.entry-detail')
     expect(detail.findAll('.field-label').map((l) => l.text())).toEqual([
-      '模型 ID',
+      '* 模型 ID',
       '显示名称',
-      '服务地址（base_url）',
-      'API 模型名',
-      '* API Key',
-      '* 查询指令前缀',
-      '* 文档指令前缀',
-      '* 语义召回最低相似度',
+      '* 服务地址（base_url）',
+      '* API 模型名',
+      'API Key',
+      '查询指令前缀',
+      '文档指令前缀',
+      '语义召回最低相似度',
     ])
     expect((field(wrapper, '.f-model').element as HTMLInputElement).value).toBe('bge-m3')
     expect(button(wrapper, '检测', detail)).toBeTruthy()

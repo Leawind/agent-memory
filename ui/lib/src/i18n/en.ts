@@ -238,7 +238,7 @@ export default {
     entryIdHint:
       'Vector cache key. Must be unique within embedding models; reordering and display-name edits preserve the cache.',
     entryRerankIdHint: 'Stable identifier for this configuration; must be unique within reranking models.',
-    optionalFieldsHint: '* marks optional fields',
+    requiredFieldsHint: '* marks required fields',
     entryNameLabel: 'Display name',
     entryModelLabel: 'API model name',
     entryBaseUrlLabel: 'Service base URL',

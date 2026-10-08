@@ -74,7 +74,7 @@ impl RerankEntry {
 
     /// The operational view: enabled and fully specified.
     pub fn usable(&self) -> Option<RerankConfig> {
-        if !self.enabled || self.id.is_empty() || self.name.is_empty() {
+        if !self.enabled || self.id.is_empty() {
             return None;
         }
         self.config()
@@ -199,6 +199,16 @@ pub fn parse_response(body: &Value, docs: usize) -> Result<Vec<(usize, f64)>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unnamed_candidate_is_usable_and_round_trips() {
+        let entry = RerankEntry::from_json(&json!({
+            "id": "local", "base_url": "http://local/v1", "model": "reranker"
+        }))
+        .unwrap();
+        assert_eq!(entry.usable().expect("name is optional").model, "reranker");
+        assert_eq!(entry.to_json()["name"], "");
+    }
 
     /// Response parsing accepts the common shapes (wrapped results, bare array, `score` naming),
     /// sorts by score descending, and rejects partial/ambiguous answers outright.

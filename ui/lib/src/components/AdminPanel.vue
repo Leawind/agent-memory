@@ -298,6 +298,9 @@ async function askResetToken(row: IdentityRow): Promise<void> {
   flex-direction: column;
   gap: 16px;
 }
+.admin-sections > :deep(.el-card) {
+  --el-card-bg-color: transparent;
+}
 
 /* Compact containers: the nav folds into a wrapping pill row above the active section.
    flex-start (the row layout's top alignment) must become stretch here — in a column flex

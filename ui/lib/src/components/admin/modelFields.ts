@@ -1,17 +1,15 @@
 interface CandidateFields {
-  enabled: boolean
   modelId: string
-  name: string
   baseUrl: string
   model: string
   minSimilarity?: string
 }
 
-/** Empty endpoint/model fields are allowed only for disabled drafts, matching settings validation. */
+/** Only ID, endpoint and API model are required; empty optional fields are valid. */
 export function candidateFieldErrors(row: CandidateFields, rows: CandidateFields[]) {
   const id = row.modelId.trim()
   const baseUrl = row.baseUrl.trim()
-  let invalidUrl = row.enabled && !baseUrl
+  let invalidUrl = !baseUrl
   if (baseUrl) {
     try {
       const url = new URL(baseUrl)
@@ -24,9 +22,8 @@ export function candidateFieldErrors(row: CandidateFields, rows: CandidateFields
   const similarity = Number(floor)
   return {
     modelId: !id || rows.filter((r) => r.modelId.trim() === id).length > 1,
-    name: !row.name.trim(),
     baseUrl: !!invalidUrl,
-    model: row.enabled && !row.model.trim(),
+    model: !row.model.trim(),
     minSimilarity: floor !== '' && (!Number.isFinite(similarity) || similarity < 0 || similarity > 1),
   }
 }

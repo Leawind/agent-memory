@@ -134,7 +134,7 @@ impl EmbedEntry {
 
     /// The operational view: usable only when enabled and base_url / model are both non-empty.
     pub fn usable(&self) -> Option<EmbedConfig> {
-        if !self.enabled || self.id.is_empty() || self.name.is_empty() {
+        if !self.enabled || self.id.is_empty() {
             return None;
         }
         self.config()
@@ -868,6 +868,14 @@ mod tests {
         let cfg = enabled.usable().expect("enabled + complete = usable");
         assert_eq!(cfg.base_url, "http://x/v1", "trimmed");
         assert_eq!(cfg.min_similarity, 0.45);
+        let unnamed = EmbedEntry {
+            name: String::new(),
+            ..enabled
+        };
+        assert_eq!(
+            unnamed.usable().expect("name is optional").vector_key(),
+            "e5"
+        );
 
         // Minimal entry: enabled by default, floor defaults, unusable while fields are blank
         let bare = EmbedEntry::from_json(&json!({})).expect("empty object still parses");

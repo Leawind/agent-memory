@@ -69,52 +69,46 @@
         <div v-if="row.open" class="entry-detail">
           <div class="field-grid">
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryIdLabel')" :hint="t('access.entryIdHint')" />
+              <ModelFieldLabel :label="t('access.entryIdLabel')" :hint="t('access.entryIdHint')" required />
               <el-input
                 v-model="row.modelId"
                 :class="{ 'is-invalid': errorsOf(row).modelId }"
                 :aria-invalid="errorsOf(row).modelId"
+                aria-required="true"
                 class="f-id"
               />
             </label>
             <label class="field">
               <ModelFieldLabel :label="t('access.entryNameLabel')" />
-              <el-input
-                v-model="row.name"
-                :class="{ 'is-invalid': errorsOf(row).name }"
-                :aria-invalid="errorsOf(row).name"
-                class="f-name"
-              />
+              <el-input v-model="row.name" class="f-name" />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryBaseUrlLabel')" />
+              <ModelFieldLabel :label="t('access.entryBaseUrlLabel')" required />
               <el-input
                 v-model="row.baseUrl"
                 :class="{ 'is-invalid': errorsOf(row).baseUrl }"
                 :aria-invalid="errorsOf(row).baseUrl"
+                aria-required="true"
                 class="f-base-url"
                 :placeholder="t('access.entryBaseUrlPlaceholder')"
               />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryModelLabel')" />
+              <ModelFieldLabel :label="t('access.entryModelLabel')" required />
               <el-input
                 v-model="row.model"
                 :class="{ 'is-invalid': errorsOf(row).model }"
                 :aria-invalid="errorsOf(row).model"
+                aria-required="true"
                 class="f-model"
               />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryApiKeyLabel')" optional />
+              <ModelFieldLabel :label="t('access.entryApiKeyLabel')" />
               <el-input v-model="row.apiKey" class="f-api-key" show-password />
             </label>
             <label class="field">
-              <ModelFieldLabel
-                :label="t('access.entryQueryPrefixLabel')"
-                optional
-                :hint="t('access.entryQueryPrefixHint')"
-              />
+              <ModelFieldLabel :label="t('access.entryQueryPrefixLabel')" :hint="t('access.entryQueryPrefixHint')" />
               <el-input
                 v-model="row.queryPrefix"
                 type="textarea"
@@ -125,7 +119,6 @@
             <label class="field">
               <ModelFieldLabel
                 :label="t('access.entryPassagePrefixLabel')"
-                optional
                 :hint="t('access.entryPassagePrefixHint')"
               />
               <el-input
@@ -138,7 +131,6 @@
             <label class="field">
               <ModelFieldLabel
                 :label="t('access.entryMinSimilarityLabel')"
-                optional
                 :hint="t('access.entryMinSimilarityHint')"
               />
               <el-input
@@ -201,7 +193,7 @@
       :closable="false"
       class="settings-hint"
     />
-    <p class="form-hint">{{ t('access.optionalFieldsHint') }} · {{ t('access.embeddingFormHint') }}</p>
+    <p class="form-hint">{{ t('access.requiredFieldsHint') }} · {{ t('access.embeddingFormHint') }}</p>
     <div class="form-actions">
       <el-button :icon="Plus" @click="addEntry">{{ t('access.embeddingAdd') }}</el-button>
       <span class="form-actions-main">
@@ -647,6 +639,7 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
   gap: 6px;
 }
 .entry {
+  background: var(--el-fill-color-blank);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
 }

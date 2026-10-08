@@ -173,7 +173,7 @@ fn semantic_search_hybrid_and_fallback() {
         json!({
             "embedding_models": [{
                 "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-                "id": "mock-embed", "name": "mock-embed", "model": "mock-embed",
+                "id": "mock-embed", "model": "mock-embed",
                 "api_key": "sk-test"
             }]
         }),
@@ -971,7 +971,7 @@ fn reranker_reorders_and_degrades() {
         port,
         json!({ "rerank_models": [{
             "base_url": format!("http://127.0.0.1:{rerank_port}/v1"),
-            "id": "mock-rerank", "name": "mock-rerank", "model": "mock-rerank"
+            "id": "mock-rerank", "model": "mock-rerank"
         }] }),
     );
 
