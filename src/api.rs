@@ -391,31 +391,60 @@ pub fn handle(
             }
             ("POST", ["embeddings", "test"]) => {
                 ctx.require(Cap::Admin)?;
-                let configs = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-                    st.embedding_configs().map_err(ToolError::from)
-                })?;
-                if configs.is_empty() {
+                let args = match args_from_body() {
+                    Ok(m) => m,
+                    Err(e) => return Ok(bad_request(e)),
+                };
+                // Two modes: an explicit `entries` array probes exactly what the caller sent (the
+                // admin editor verifies the values on screen — a candidate that is disabled or not
+                // saved yet is the interesting case), otherwise every enabled candidate in the
+                // settings list is probed: the list the search-time failover would walk.
+                let entries: Vec<crate::embed::EmbedEntry> = match args.get("entries") {
+                    Some(v) => match parse_probe_entries(v, crate::embed::EmbedEntry::from_json) {
+                        Ok(entries) => entries,
+                        Err(e) => return Ok(bad_request(e)),
+                    },
+                    None => store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                        st.embedding_entries().map_err(ToolError::from)
+                    })?
+                    .into_iter()
+                    .filter(|e| e.usable().is_some())
+                    .collect(),
+                };
+                if entries.is_empty() {
                     return Ok(bad_request(ToolError::invalid(
-                        "no enabled, fully specified embedding entry exists (embedding settings)",
+                        "nothing to test: no enabled, fully specified embedding entry exists (embedding settings)",
                     )));
                 }
-                // Every enabled candidate is probed: the list is exactly what the failover loop
-                // would walk, so the UI can show per-candidate health at once
-                let mut results = Vec::with_capacity(configs.len());
+                let mut results = Vec::with_capacity(entries.len());
                 let mut all_ok = true;
-                for cfg in &configs {
+                for (index, entry) in entries.iter().enumerate() {
+                    // An incomplete candidate is reported in place, never skipped: the reply keeps
+                    // one verdict per request position so the UI can line them up with its rows
+                    let Some(cfg) = entry.config() else {
+                        all_ok = false;
+                        results.push(json!({
+                            "index": index,
+                            "model": entry.model,
+                            "ok": false,
+                            "error": "incomplete candidate: base_url and model are both required",
+                        }));
+                        continue;
+                    };
                     let start = std::time::Instant::now();
                     match crate::embed::embed_texts(
-                        cfg,
+                        &cfg,
                         // The probe text goes through the query side: the prefix is part of the
                         // effective configuration being tested
                         &[crate::embed::embed_query_text(
-                            cfg,
+                            &cfg,
                             "connection test 连接测试",
                         )],
                         crate::embed::BATCH_TIMEOUT,
                     ) {
                         Ok(vectors) => results.push(json!({
+                            "index": index,
+                            "key": cfg.vector_key(),
                             "model": cfg.model,
                             "ok": true,
                             "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
@@ -423,7 +452,13 @@ pub fn handle(
                         })),
                         Err(e) => {
                             all_ok = false;
-                            results.push(json!({ "model": cfg.model, "ok": false, "error": e }));
+                            results.push(json!({
+                                "index": index,
+                                "key": cfg.vector_key(),
+                                "model": cfg.model,
+                                "ok": false,
+                                "error": e,
+                            }));
                         }
                     }
                 }
@@ -431,27 +466,53 @@ pub fn handle(
             }
             ("POST", ["rerank", "test"]) => {
                 ctx.require(Cap::Admin)?;
-                let configs = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-                    st.rerank_configs().map_err(ToolError::from)
-                })?;
-                if configs.is_empty() {
+                let args = match args_from_body() {
+                    Ok(m) => m,
+                    Err(e) => return Ok(bad_request(e)),
+                };
+                // Same two modes as the embedding probe (see above), with a one-document rerank
+                // as the exercised operation
+                let entries: Vec<crate::rerank::RerankEntry> = match args.get("entries") {
+                    Some(v) => {
+                        match parse_probe_entries(v, crate::rerank::RerankEntry::from_json) {
+                            Ok(entries) => entries,
+                            Err(e) => return Ok(bad_request(e)),
+                        }
+                    }
+                    None => store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                        st.rerank_entries().map_err(ToolError::from)
+                    })?
+                    .into_iter()
+                    .filter(|e| e.usable().is_some())
+                    .collect(),
+                };
+                if entries.is_empty() {
                     return Ok(bad_request(ToolError::invalid(
-                        "no enabled, fully specified reranker entry exists (reranker settings)",
+                        "nothing to test: no enabled, fully specified reranker entry exists (reranker settings)",
                     )));
                 }
-                // Per-candidate probe with a one-document rerank: every enabled candidate is
-                // exercised, mirroring what the search-time failover would walk
-                let mut results = Vec::with_capacity(configs.len());
+                let mut results = Vec::with_capacity(entries.len());
                 let mut all_ok = true;
-                for cfg in &configs {
+                for (index, entry) in entries.iter().enumerate() {
+                    let Some(cfg) = entry.config() else {
+                        all_ok = false;
+                        results.push(json!({
+                            "index": index,
+                            "model": entry.model,
+                            "ok": false,
+                            "error": "incomplete candidate: base_url and model are both required",
+                        }));
+                        continue;
+                    };
                     let start = std::time::Instant::now();
                     match crate::rerank::rerank(
-                        cfg,
+                        &cfg,
                         "connection test 连接测试",
                         &["a relevant document 一篇相关文档".to_string()],
                         crate::rerank::RERANK_TIMEOUT,
                     ) {
                         Ok(scores) => results.push(json!({
+                            "index": index,
                             "model": cfg.model,
                             "ok": true,
                             "scored": scores.len(),
@@ -459,7 +520,12 @@ pub fn handle(
                         })),
                         Err(e) => {
                             all_ok = false;
-                            results.push(json!({ "model": cfg.model, "ok": false, "error": e }));
+                            results.push(json!({
+                                "index": index,
+                                "model": cfg.model,
+                                "ok": false,
+                                "error": e,
+                            }));
                         }
                     }
                 }
@@ -684,6 +750,26 @@ fn push_canonical<'a, T>(
         serde_json::to_string(&values).map_err(|e| ToolError::invalid(format!("{key}: {e}")))?;
     updates.push((key, canonical));
     Ok(())
+}
+
+/// Parse the explicit `entries` array of a connection-probe request: one leniently parsed element
+/// per array element, in request order (the reply keeps a verdict per position, so the caller can
+/// line the results up with its rows). The write-path validation is deliberately not applied here:
+/// probing what is on screen is exactly how a half-filled candidate gets diagnosed.
+fn parse_probe_entries<T>(
+    v: &Value,
+    parse: impl Fn(&Value) -> Option<T>,
+) -> Result<Vec<T>, ToolError> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| ToolError::invalid("'entries' must be an array"))?;
+    let entries: Vec<T> = arr.iter().filter_map(parse).collect();
+    if entries.len() != arr.len() {
+        return Err(ToolError::invalid(
+            "every 'entries' element must be an object",
+        ));
+    }
+    Ok(entries)
 }
 
 /// Validate and canonicalize one ordered model-candidate list from the settings PUT body.

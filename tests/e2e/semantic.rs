@@ -721,6 +721,49 @@ fn embedding_multi_model_caches_and_failover() {
     assert_eq!(results[1]["model"], "mock-b");
     assert_eq!(results[1]["ok"], true);
 
+    // An explicit `entries` array probes exactly what was sent: the admin editor verifies the
+    // values currently on screen, before they are enabled or saved
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/embeddings/test",
+        Some(
+            &json!({
+                "entries": [
+                    {
+                        "enabled": false,
+                        "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+                        "model": "draft-model"
+                    },
+                    { "enabled": true, "base_url": "", "model": "incomplete" }
+                ]
+            })
+            .to_string(),
+        ),
+    );
+    assert_eq!(status, 200);
+    let draft = json_body(&body);
+    assert_eq!(
+        draft["ok"], false,
+        "the incomplete candidate fails: {draft}"
+    );
+    let results = draft["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2, "one verdict per request position");
+    assert_eq!(results[0]["index"], 0);
+    assert_eq!(results[0]["model"], "draft-model");
+    assert_eq!(
+        results[0]["ok"], true,
+        "a disabled, unsaved candidate can still be probed: {draft}"
+    );
+    assert_eq!(results[0]["dim"], MOCK_DIM);
+    assert_eq!(results[0]["key"], "draft-model");
+    assert_eq!(results[1]["index"], 1);
+    assert_eq!(results[1]["ok"], false);
+    assert!(results[1]["error"]
+        .as_str()
+        .unwrap()
+        .contains("base_url and model"));
+
     drop(server);
     cleanup(&db);
 }
@@ -978,6 +1021,29 @@ fn reranker_reorders_and_degrades() {
     assert_eq!(test["ok"], true);
     assert_eq!(test["results"][0]["ok"], true);
     assert_eq!(test["results"][0]["scored"], 1);
+
+    // An explicit `entries` array probes the caller's own values (an unsaved draft candidate)
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/rerank/test",
+        Some(
+            &json!({ "entries": [{
+                "enabled": false,
+                "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
+                "model": "draft-rerank"
+            }] })
+            .to_string(),
+        ),
+    );
+    assert_eq!(status, 200);
+    let draft = json_body(&body);
+    assert_eq!(draft["results"][0]["model"], "draft-rerank");
+    assert_eq!(
+        draft["results"][0]["ok"], true,
+        "a disabled, unsaved reranker can still be probed: {draft}"
+    );
+    assert_eq!(draft["results"][0]["index"], 0);
 
     // Reranker settings roundtrip: canonical entries echoed
     let (_, body, _) = request(port, "GET", "/api/settings", None);

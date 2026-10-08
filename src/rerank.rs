@@ -68,7 +68,16 @@ impl RerankEntry {
 
     /// The operational view: enabled and fully specified.
     pub fn usable(&self) -> Option<RerankConfig> {
-        if !self.enabled || self.base_url.trim().is_empty() || self.model.trim().is_empty() {
+        if !self.enabled {
+            return None;
+        }
+        self.config()
+    }
+
+    /// The same view without the enabled gate (see `embed::EmbedEntry::config`): the admin probe
+    /// verifies what is on screen, before it is enabled or saved.
+    pub fn config(&self) -> Option<RerankConfig> {
+        if self.base_url.trim().is_empty() || self.model.trim().is_empty() {
             return None;
         }
         Some(RerankConfig {

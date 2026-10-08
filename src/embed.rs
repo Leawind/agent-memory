@@ -128,7 +128,17 @@ impl EmbedEntry {
 
     /// The operational view: usable only when enabled and base_url / model are both non-empty.
     pub fn usable(&self) -> Option<EmbedConfig> {
-        if !self.enabled || self.base_url.trim().is_empty() || self.model.trim().is_empty() {
+        if !self.enabled {
+            return None;
+        }
+        self.config()
+    }
+
+    /// The same view without the enabled gate: what a candidate would do if it were switched on.
+    /// The admin connection probe tests exactly this, so a candidate can be verified before it is
+    /// enabled or saved.
+    pub fn config(&self) -> Option<EmbedConfig> {
+        if self.base_url.trim().is_empty() || self.model.trim().is_empty() {
             return None;
         }
         Some(EmbedConfig {
@@ -795,6 +805,13 @@ mod tests {
         assert!(!full.enabled);
         assert_eq!(full.vector_key(), "e5|q=query: |p=passage: ");
         assert!(full.usable().is_none(), "disabled = not operational");
+        // ... but a disabled candidate still has an operational view: the connection probe checks
+        // exactly what was configured, before the switch is turned on
+        assert_eq!(
+            full.config().expect("complete entry").model,
+            "e5",
+            "the enabled gate lives in usable(), not in config()"
+        );
         // The usable view is the operational config (trimmed), enabled via the entry
         let enabled = EmbedEntry {
             enabled: true,
