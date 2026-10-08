@@ -39,7 +39,7 @@ describe('TagRulesCard', () => {
       {
         path: '/api/tag-rules/preview',
         method: 'POST',
-        body: { constraints: [{ name: 'exclusivity', expression: 'mutex(a,b)' }] },
+        body: { constraints: [{ name: 'exclusivity', expression: 'mutex(a,b)' }], derivations: [] },
       },
     ])
     expect(wrapper.text()).toContain('有 1 条记忆违反规则')
@@ -70,7 +70,7 @@ describe('TagRulesCard', () => {
     await wrapper.findAll('input')[1].setValue('!child|parent')
     await save().trigger('click')
     await flushPromises()
-    expect(writes).toEqual([{ constraints: [{ name: 'family', expression: '!child|parent' }] }])
+    expect(writes).toEqual([{ constraints: [{ name: 'family', expression: '!child|parent' }], derivations: [] }])
     expect(wrapper.emitted('changed')).toHaveLength(1)
     wrapper.unmount()
   })

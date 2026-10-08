@@ -86,6 +86,13 @@
           <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
       </el-form-item>
+      <div v-if="derivedTags.length && !derivationPending" class="derived-tags">
+        <span>{{ t('editor.derivedTags') }}</span>
+        <el-tooltip v-for="tag in derivedTags" :key="tag.tag" :content="tag.rules.join(', ')">
+          <el-tag type="info">{{ tag.tag }}</el-tag>
+        </el-tooltip>
+      </div>
+      <p v-if="derivationPending" class="derived-tags">{{ t('editor.derivationPending') }}</p>
       <el-form-item>
         <template #label>
           <div class="content-label">
@@ -153,6 +160,11 @@ const loading = ref(false)
 const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
 // Snapshot of the loaded memory: the save button stays disabled until the form differs
 const original = ref({ summary: '', content: '', tags: [] as string[] })
+const derivedTags = ref<Array<{ tag: string; rules: string[] }>>([])
+const derivationPending = computed(
+  () =>
+    !!form.value.id && JSON.stringify([...form.value.tags].sort()) !== JSON.stringify([...original.value.tags].sort()),
+)
 
 const dirty = computed(() => {
   if (!props.memoryId) return false
@@ -180,12 +192,14 @@ watch(
     // Reset optimistically so a slow fetch never shows the previously edited memory's data
     form.value = { id: null, summary: '', content: '', tags: [] }
     original.value = { summary: '', content: '', tags: [] }
+    derivedTags.value = []
     if (props.memoryId) {
       loading.value = true
       try {
         const full = await getMemory(client, props.memoryId)
-        form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
-        original.value = { summary: full.summary, content: full.content, tags: [...full.tags] }
+        form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.original_tags] }
+        original.value = { summary: full.summary, content: full.content, tags: [...full.original_tags] }
+        derivedTags.value = full.derived_tags
       } catch (e: unknown) {
         toastError(e instanceof Error ? e.message : String(e))
         emit('update:visible', false)
@@ -340,6 +354,13 @@ function blockWhileSaving(done: () => void): void {
 </script>
 
 <style scoped>
+.derived-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--el-text-color-secondary);
+}
 .content-label {
   display: flex;
   justify-content: space-between;

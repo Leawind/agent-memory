@@ -11,6 +11,8 @@ export interface MemorySummary {
 export interface MemoryFull extends MemorySummary {
   created: string
   content: string
+  original_tags: string[]
+  derived_tags: Array<{ tag: string; rules: string[] }>
 }
 
 /** Write responses are echo-free: only facts the client cannot derive from its own request */
@@ -228,6 +230,7 @@ export interface TagRulePreview {
   valid: boolean
   total_violations: number
   violations: Array<{ id: string; summary: string; rules: string[] }>
+  positive_cycles: boolean
 }
 
 /** Caller identity summary returned by /api/whoami (mode=open means full capabilities in permissions; mode=anonymous means the configured capability set of the anonymous identity) */

@@ -318,7 +318,17 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
     let ids = req_id_list(args, "ids", 50)?;
     let (numeric, invalid) = split_ids(&ids);
     let (found, missing) = st.get_memories(&numeric)?;
-    let memories: Vec<Value> = found.iter().map(|m| m.full_view()).collect();
+    let memories: Vec<Value> = found
+        .iter()
+        .map(|m| {
+            let mut view = m.full_view();
+            let provenance = st
+                .memory_tag_provenance(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?;
+            view["original_tags"] = provenance["original_tags"].clone();
+            view["derived_tags"] = provenance["derived_tags"].clone();
+            Ok(view)
+        })
+        .collect::<Result<_, String>>()?;
     let mut out = json!({"memories": memories});
     // Sparse: a fully successful read is just the memories array
     if !missing.is_empty() {
@@ -637,7 +647,7 @@ pub fn memory_merge(
     validate_content(&merged_content)?;
     // Source tag ids join the target (INSERT OR IGNORE dedups the overlap); no auto-creation —
     // both memories' tags already exist by definition
-    let source_tag_ids = st.tag_ids_for_names(&source.tags)?;
+    let source_tag_ids = st.original_tag_ids(source_id)?;
     st.update_memory(
         target_id,
         summary.as_deref(),

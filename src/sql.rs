@@ -24,10 +24,11 @@ pub const MEMORY_IDS_WITH_TAG: &str = include_str!("../sql/memory_ids_with_tag.s
 pub const PURGE_MEMORIES_WITH_TAG: &str = include_str!("../sql/purge_memories_with_tag.sql");
 pub const MEMORY_INSERT: &str = include_str!("../sql/memory_insert.sql");
 pub const MEMORY_LINK_TAG: &str = include_str!("../sql/memory_link_tag.sql");
-pub const MEMORY_UNLINK_TAG: &str = include_str!("../sql/memory_unlink_tag.sql");
+pub const MEMORY_CLEAR_TAGS: &str = include_str!("../sql/memory_clear_tags.sql");
 pub const MEMORY_BY_ID: &str = include_str!("../sql/memory_by_id.sql");
 pub const MEMORY_EXISTS: &str = include_str!("../sql/memory_exists.sql");
 pub const MEMORY_TAGS_OF: &str = include_str!("../sql/memory_tags_of.sql");
+pub const MEMORY_TAG_ORIGINS: &str = include_str!("../sql/memory_tag_origins.sql");
 pub const MEMORY_ALL: &str = include_str!("../sql/memory_all.sql");
 pub const MEMORY_TAG_PAIRS: &str = include_str!("../sql/memory_tag_pairs.sql");
 pub const MEMORY_TAG_ID_PAIRS: &str = include_str!("../sql/memory_tag_id_pairs.sql");
@@ -120,10 +121,11 @@ mod tests {
             ("PURGE_MEMORIES_WITH_TAG", PURGE_MEMORIES_WITH_TAG),
             ("MEMORY_INSERT", MEMORY_INSERT),
             ("MEMORY_LINK_TAG", MEMORY_LINK_TAG),
-            ("MEMORY_UNLINK_TAG", MEMORY_UNLINK_TAG),
+            ("MEMORY_CLEAR_TAGS", MEMORY_CLEAR_TAGS),
             ("MEMORY_BY_ID", MEMORY_BY_ID),
             ("MEMORY_EXISTS", MEMORY_EXISTS),
             ("MEMORY_TAGS_OF", MEMORY_TAGS_OF),
+            ("MEMORY_TAG_ORIGINS", MEMORY_TAG_ORIGINS),
             ("MEMORY_ALL", MEMORY_ALL),
             ("MEMORY_TAG_PAIRS", MEMORY_TAG_PAIRS),
             ("MEMORY_TAG_ID_PAIRS", MEMORY_TAG_ID_PAIRS),

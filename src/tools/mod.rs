@@ -1188,7 +1188,7 @@ mod tests {
     fn tag_rule_listing_is_read_only_and_schema_validated() {
         let path = temp_db("tag-rule-list");
         let result = call_as(&path, &[Cap::Read], TAG_RULE_LIST, json!({})).unwrap();
-        assert_eq!(result, json!({"constraints": []}));
+        assert_eq!(result, json!({"constraints": [], "derivations": []}));
         assert!(call(&path, TAG_RULE_LIST, json!({"unexpected": true})).is_err());
         assert!(matches!(
             call_as(&path, &[], TAG_RULE_LIST, json!({})),

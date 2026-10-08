@@ -76,7 +76,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_RULE_LIST,
-            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
+            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Positive derivations use => or <=>, with &/| premises and conjunctive conclusions; positive cycles use the least fixed point. Negation, mutex and deriving convention are forbidden in derivations. Constraints check the union of original and derived tags. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
             json!({"type": "object", "properties": {}, "additionalProperties": false}),
             true, false,
         ),
@@ -119,7 +119,7 @@ pub fn tool_definitions() -> Value {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true. Format: only letters, digits, '_', '-' and '.'."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description."}
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description. These are original tags; positive rules may add derived tags before constraints are checked."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -161,7 +161,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_GET,
-            "Reveal the full content of one or more memories by id (progressive disclosure level 2). Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
+            "Reveal the full content and tag provenance of one or more memories by id (progressive disclosure level 2). tags contains the effective union; original_tags is the editable source set; derived_tags lists tags and supporting rule names, including tags that also have an original source. Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
             json!({
                 "type": "object",
                 "properties": {
@@ -182,7 +182,7 @@ pub fn tool_definitions() -> Value {
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
                     "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Original tag sources to remove. Derived-only tags cannot be removed directly: remove their original premises or ask the administrator to change the rule. A removed original may remain derived while another premise supports it."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
@@ -208,7 +208,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_MERGE,
-            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; tags become the union of both. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired. The response never echoes the input: a clean merge answers with an empty object, everything reported is a reference report or warning note.",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; original tag sources become the union of both and rules recompute the effective set. Only original tag sources are merged; derived tags are recomputed under the rules. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired. The response never echoes the input: a clean merge answers with an empty object, everything reported is a reference report or warning note.",
             json!({
                 "type": "object",
                 "properties": {

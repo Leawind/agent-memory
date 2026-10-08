@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE TABLE IF NOT EXISTS memory_tags (
     memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    original INTEGER NOT NULL DEFAULT 1 CHECK (original IN (0, 1)),
+    derived INTEGER NOT NULL DEFAULT 0 CHECK (derived IN (0, 1)),
+    CHECK (original = 1 OR derived = 1),
     PRIMARY KEY (memory_id, tag_id)
 );
 

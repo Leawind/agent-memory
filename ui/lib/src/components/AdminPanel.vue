@@ -66,7 +66,12 @@
 
             <SearchLimitsCard v-show="activeSection === 'embedding'" :limits="searchLimits" @changed="load" />
 
-            <TagRulesCard v-show="activeSection === 'tagRules'" :rules="tagRules" @changed="load" />
+            <TagRulesCard
+              v-show="activeSection === 'tagRules'"
+              :rules="tagRules"
+              :derivations="tagDerivations"
+              @changed="load"
+            />
 
             <PromptSettingsCard
               v-show="activeSection === 'prompt'"
@@ -138,6 +143,7 @@ const embeddingModels = ref<EmbedModelEntry[]>([])
 const rerankModels = ref<RerankModelEntry[]>([])
 const searchLimits = ref<SearchLimits>({ semantic_candidates: 100, rerank_candidates: 50 })
 const tagRules = ref<TagRule[]>([])
+const tagDerivations = ref<TagRule[]>([])
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
@@ -177,7 +183,7 @@ async function load(): Promise<void> {
         default_instructions?: string | null
       }>('/api/settings'),
       api.get<import('../types').StatsInfo>('/api/stats'),
-      api.get<{ constraints?: TagRule[] }>('/api/tag-rules'),
+      api.get<{ constraints?: TagRule[]; derivations?: TagRule[] }>('/api/tag-rules'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
     // When unset, prefill the built-in default directly (what you see is what applies); the card derives its faded state from the content
@@ -190,6 +196,7 @@ async function load(): Promise<void> {
     searchLimits.value = settings?.search_limits ?? { semantic_candidates: 100, rerank_candidates: 50 }
     stats.value = statsResp ?? null
     tagRules.value = Array.isArray(rules?.constraints) ? rules.constraints : []
+    tagDerivations.value = Array.isArray(rules?.derivations) ? rules.derivations : []
   })
 }
 

@@ -13,6 +13,8 @@ const fullMemory = {
   summary: '已有记忆摘要',
   content: '正文内容',
   tags: ['t1'],
+  original_tags: ['t1'],
+  derived_tags: [],
   created: '2026-10-04 08:00',
   updated: '2026-10-04 08:00',
 }
@@ -60,6 +62,38 @@ describe('MemoryEditorDialog', () => {
       vi.fn(() => Promise.resolve(jsonResponse(fullMemory))),
     )
     document.body.innerHTML = ''
+  })
+
+  it('edits only original sources and shows derived tags separately', async () => {
+    const writes: Array<{ remove_tags: string[]; add_tags: string[] }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string | URL, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({ updated: true }))
+        }
+        return Promise.resolve(
+          jsonResponse({
+            ...fullMemory,
+            tags: ['vue3', 'web'],
+            original_tags: ['vue3'],
+            derived_tags: [{ tag: 'web', rules: ['framework domain'] }],
+          }),
+        )
+      }),
+    )
+    const wrapper = await openDialog('m7')
+    const select = dialogEl().querySelector('.el-select')!
+    expect(select.textContent).toContain('vue3')
+    expect(select.textContent).not.toContain('web')
+    expect(dialogEl().querySelector('.derived-tags')?.textContent).toContain('web')
+    await new DOMWrapper(select.querySelector('.el-tag__close')!).trigger('click')
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    expect(writes[0].remove_tags).toEqual(['vue3'])
+    expect(writes[0].add_tags).toEqual([])
+    wrapper.unmount()
   })
 
   it('editing: titled 记忆 #<id>, locked while fetching, save stays disabled until edited', async () => {

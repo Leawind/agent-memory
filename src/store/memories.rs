@@ -46,7 +46,8 @@ impl Store {
         created_at: u64,
         updated_at: u64,
     ) -> Result<i64, String> {
-        self.validate_tag_constraints(tag_ids)?;
+        let closure = self.tag_rules()?.closure(tag_ids)?;
+        self.validate_tag_constraints(&closure.effective)?;
         self.conn
             .execute(
                 sql::MEMORY_INSERT,
@@ -54,11 +55,7 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
         let id = self.conn.last_insert_rowid();
-        for tag_id in tag_ids {
-            self.conn
-                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id])
-                .map_err(|e| e.to_string())?;
-        }
+        self.replace_effective_tags(id, tag_ids, &closure)?;
         Ok(id)
     }
 
@@ -230,15 +227,27 @@ impl Store {
             ));
         }
         let mut changed = false;
-        let names = self.tags_of(id)?;
-        let mut final_tags = self.tag_ids_for_names(&names)?;
+        let original = self.original_tag_ids(id)?;
+        let effective = self.tag_ids_for_names(&self.tags_of(id)?)?;
+        for tag_id in remove_tag_ids {
+            if effective.contains(tag_id) && !original.contains(tag_id) {
+                return Err("cannot remove a derived-only tag directly; remove its original premises or change the derivation rule".into());
+            }
+        }
+        let mut final_tags = original.clone();
         for tag_id in add_tag_ids {
             if !final_tags.contains(tag_id) {
                 final_tags.push(*tag_id);
             }
         }
         final_tags.retain(|id| !remove_tag_ids.contains(id));
-        self.validate_tag_constraints(&final_tags)?;
+        let closure = self.tag_rules()?.closure(&final_tags)?;
+        self.validate_tag_constraints(&closure.effective)?;
+        let mut sorted_original = original;
+        sorted_original.sort_unstable();
+        final_tags.sort_unstable();
+        final_tags.dedup();
+        changed |= sorted_original != final_tags;
         if summary.is_some() || content.is_some() {
             self.conn
                 .execute(
@@ -254,20 +263,7 @@ impl Store {
         // Contract (defs.rs): add_tags runs before remove_tags; when both lists contain the same
         // tag the final result is removal (the explicit remove intent wins). Tag-only changes do
         // not touch updated_at — see the doc above.
-        for tag_id in add_tag_ids {
-            let n = self
-                .conn
-                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id])
-                .map_err(|e| e.to_string())?;
-            changed = changed || n > 0;
-        }
-        for tag_id in remove_tag_ids {
-            let n = self
-                .conn
-                .execute(sql::MEMORY_UNLINK_TAG, params![id, tag_id])
-                .map_err(|e| e.to_string())?;
-            changed = changed || n > 0;
-        }
+        self.replace_effective_tags(id, &final_tags, &closure)?;
         Ok(changed)
     }
 

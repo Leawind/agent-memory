@@ -96,8 +96,17 @@ enum Tok {
 
 /// Parse an expression; errors carry the char position (1-based) of the offending token.
 pub fn parse(input: &str) -> Result<TagExpr, String> {
-    if input.chars().count() > 4096 {
-        return Err("expression exceeds 4096 characters".into());
+    parse_bounded(input, 4096)
+}
+
+/// Persistent rules have room for up to 256 renamed tags of 100 characters each.
+pub fn parse_rule(input: &str) -> Result<TagExpr, String> {
+    parse_bounded(input, 32768)
+}
+
+fn parse_bounded(input: &str, max_chars: usize) -> Result<TagExpr, String> {
+    if input.chars().count() > max_chars {
+        return Err(format!("expression exceeds {max_chars} characters"));
     }
     let tokens = tokenize(input)?;
     if tokens.len() > 256 {
