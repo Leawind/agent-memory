@@ -39,7 +39,12 @@
             @dragstart="onDragStart(i)"
             @dragend="onDragEnd"
           >
-            <el-icon><Rank /></el-icon>
+            <!-- GitHub-style grip: two columns of three dots, the usual drag affordance -->
+            <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path
+                d="M10 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+              />
+            </svg>
           </span>
           <button type="button" class="entry-toggle" @click="row.open = !row.open">
             <el-icon class="entry-caret"><ArrowRight /></el-icon>
@@ -195,7 +200,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ArrowRight, CircleCheckFilled, CircleCloseFilled, Plus, Rank } from '@element-plus/icons-vue'
+import { ArrowRight, CircleCheckFilled, CircleCloseFilled, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
@@ -604,6 +609,9 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
   display: inline-flex;
   color: var(--el-text-color-placeholder);
   cursor: grab;
+}
+.grip {
+  display: block;
 }
 .entry-handle:active {
   cursor: grabbing;
