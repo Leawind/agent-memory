@@ -6,6 +6,7 @@
   "scripts": {
     "build": "cross-env GOMAXPROCS=4 pnpm --filter @agent-memory/ui run build && cross-env GOMAXPROCS=2 pnpm --filter @agent-memory/app run build",
     "test": "pnpm --filter @agent-memory/ui run test && pnpm --filter @agent-memory/app run test",
+    "eval:search": "node scripts/search-eval.ts",
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

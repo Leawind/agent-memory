@@ -1,0 +1,202 @@
+{
+  "description": "Small hand-labeled keyword/tag/lifecycle regression corpus; it does not measure embedding or reranker model quality.",
+  "memories": [
+    {
+      "key": "borrow",
+      "summary": "Rust borrow checker rules",
+      "content": "Rust ownership and borrow checker restrictions. Prefer short borrow lifetimes and explicit ownership transfers.",
+      "tags": ["rust", "procedure"],
+      "age_days": 300,
+      "kind": "procedure"
+    },
+    {
+      "key": "borrow-checklist",
+      "summary": "Borrow checklist",
+      "content": "Check reference lifetimes before changing ownership. The borrow checklist helps diagnose mutable reference errors.",
+      "tags": ["rust"],
+      "age_days": 100,
+      "kind": "procedure"
+    },
+    {
+      "key": "traits",
+      "summary": "Rust trait bounds",
+      "content": "Rust traits express shared behavior and generic constraints.",
+      "tags": ["rust"],
+      "age_days": 90
+    },
+    {
+      "key": "cargo",
+      "summary": "Cargo build procedure",
+      "content": "Use cargo build and cargo test in the Rust workspace.",
+      "tags": ["rust"],
+      "age_days": 30,
+      "kind": "procedure"
+    },
+    {
+      "key": "corrosion",
+      "summary": "Rust on garden tools",
+      "content": "Remove rust from metal surfaces using a brush and dry storage.",
+      "tags": ["garden"],
+      "age_days": 1
+    },
+    {
+      "key": "vue",
+      "summary": "Vue3 app bootstrap",
+      "content": "Build a browser app with Vue3 composition functions and route components.",
+      "tags": ["vue3"],
+      "age_days": 14,
+      "kind": "procedure"
+    },
+    {
+      "key": "react",
+      "summary": "React app state",
+      "content": "React components use state and effects in browser apps.",
+      "tags": ["react"],
+      "age_days": 7,
+      "kind": "procedure"
+    },
+    {
+      "key": "http",
+      "summary": "Web HTTP cache semantics",
+      "content": "Web caches must respect authorization and cache control headers.",
+      "tags": ["web"],
+      "age_days": 400
+    },
+    {
+      "key": "browser",
+      "summary": "Browser app accessibility",
+      "content": "Accessible browser apps provide labels and keyboard navigation.",
+      "tags": ["web"],
+      "age_days": 40
+    },
+    {
+      "key": "release-current",
+      "summary": "Release deployment context",
+      "content": "Release deployment uses the staging environment this week.",
+      "tags": ["release"],
+      "age_days": 1,
+      "kind": "context"
+    },
+    {
+      "key": "release-old",
+      "summary": "Earlier release deployment context",
+      "content": "Release deployment previously used a temporary environment.",
+      "tags": ["release"],
+      "age_days": 365,
+      "kind": "context"
+    },
+    {
+      "key": "release-archive",
+      "summary": "Archived release deployment plan",
+      "content": "Release deployment plan retained for historical inspection.",
+      "tags": ["release"],
+      "age_days": 1,
+      "kind": "context",
+      "archived": true
+    },
+    {
+      "key": "release-expired",
+      "summary": "Expired release deployment token",
+      "content": "Release deployment context expired after the maintenance window.",
+      "tags": ["release"],
+      "age_days": 0,
+      "kind": "context",
+      "expired": true
+    },
+    {
+      "key": "checksum",
+      "summary": "Checksum algorithm reference",
+      "content": "Checksum algorithm invariants remain useful even for old durable facts.",
+      "tags": ["algorithm"],
+      "age_days": 1200
+    },
+    {
+      "key": "checksum-new",
+      "summary": "Recent checksum algorithm note",
+      "content": "Checksum algorithm terminology for recent documentation.",
+      "tags": ["algorithm"],
+      "age_days": 1
+    },
+    {
+      "key": "mod-combined",
+      "summary": "Minecraft custom block registration",
+      "content": "Register custom blocks using the supported engine extension points.",
+      "tags": ["minecraft-modding"],
+      "age_days": 70,
+      "kind": "procedure"
+    },
+    {
+      "key": "mod-separate",
+      "summary": "Minecraft entity component extension",
+      "content": "Attach reusable entity components through supported extension APIs.",
+      "tags": ["minecraft", "modding"],
+      "age_days": 50,
+      "kind": "procedure"
+    },
+    {
+      "key": "game",
+      "summary": "Minecraft survival notes",
+      "content": "Prepare food and shelter before exploring caves.",
+      "tags": ["minecraft"],
+      "age_days": 2
+    },
+    {
+      "key": "loan",
+      "summary": "Borrow a library book",
+      "content": "Borrow a library book and return it before its due date.",
+      "tags": ["book"],
+      "age_days": 3
+    },
+    {
+      "key": "popular-unrelated",
+      "summary": "Gardening schedule",
+      "content": "Water seedlings regularly and keep soil moist.",
+      "tags": ["garden"],
+      "age_days": 0,
+      "kind": "context",
+      "uses": 100
+    }
+  ],
+  "derivations": [
+    { "name": "vue-web", "expression": "vue3 => web" },
+    { "name": "react-web", "expression": "react => web" },
+    { "name": "mod-equivalence", "expression": "minecraft-modding <=> minecraft & modding" }
+  ],
+  "cases": [
+    { "name": "cross-field-and", "query": "rust borrow", "relevance": { "borrow": 3, "borrow-checklist": 2 } },
+    {
+      "name": "literal-ambiguity",
+      "query": "rust",
+      "relevance": { "borrow": 3, "borrow-checklist": 2, "traits": 2, "cargo": 1 }
+    },
+    { "name": "derived-category", "query": "web", "relevance": { "http": 3, "vue": 2, "react": 2, "browser": 2 } },
+    { "name": "mixed-field-app", "query": "web app", "relevance": { "vue": 3, "react": 2, "browser": 2 } },
+    { "name": "fresh-context", "query": "release deployment", "relevance": { "release-current": 3, "release-old": 1 } },
+    { "name": "durable-facts", "query": "checksum algorithm", "relevance": { "checksum": 3, "checksum-new": 2 } },
+    {
+      "name": "equivalence-forward-and-backward",
+      "query": "minecraft modding",
+      "relevance": { "mod-combined": 3, "mod-separate": 3 }
+    },
+    { "name": "boolean-filter", "query": "borrow", "tag_expr": "!rust", "relevance": { "loan": 3 } },
+    {
+      "name": "mutex-filter",
+      "query": "web",
+      "tag_expr": "mutex(vue3,react)",
+      "relevance": { "http": 3, "vue": 2, "react": 2, "browser": 2 }
+    },
+    {
+      "name": "explicit-archive",
+      "query": "release deployment",
+      "state": "archived",
+      "relevance": { "release-archive": 3 }
+    },
+    {
+      "name": "explicit-expiry",
+      "query": "release deployment",
+      "state": "expired",
+      "relevance": { "release-expired": 3 }
+    },
+    { "name": "unrelated-popularity-cannot-recall", "query": "nonexistent-query", "relevance": {} }
+  ]
+}
