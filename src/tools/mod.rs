@@ -24,8 +24,8 @@ use std::path::Path;
 
 pub use defs::{
     tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIFECYCLE,
-    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST,
-    TAG_RULE_LIST, TAG_UPDATE, TOOL_NAMES,
+    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE,
+    TAG_LIST, TAG_RULE_LIST, TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -99,7 +99,22 @@ pub fn execute_with_db(
     let pre = crate::notify::capture(db_path, name, args);
     let mut out = store::with_db_in(db_path, mode, |st| execute(st, ctx, name, args))?;
     after_commit(db_path, name, args, &mut out, pre);
+    after_read(db_path, ctx, name, &out);
     Ok(out)
+}
+
+/// Only successful full-content reads reinforce a memory; previews never do.
+pub fn after_read(db_path: &Path, ctx: &IdentityCtx, name: &str, out: &Value) {
+    if name != MEMORY_GET {
+        return;
+    }
+    let ids: std::collections::BTreeSet<i64> = out["memories"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m["id"].as_str().and_then(Store::parse_id))
+        .collect();
+    crate::access::record_reads(db_path, &ctx.name, &ids.into_iter().collect::<Vec<_>>());
 }
 
 /// The post-commit hook sequence, shared by every server face (MCP `execute_with_db`, REST
@@ -161,6 +176,7 @@ pub fn execute(
         defs::MEMORY_MERGE => memory_ops::memory_merge(st, ctx, map),
         defs::MEMORY_DELETE => memory_ops::memory_delete(st, map),
         defs::MEMORY_LIFECYCLE => memory_ops::memory_lifecycle(st, map),
+        defs::MEMORY_USE => memory_ops::memory_use(st, ctx, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }
 }

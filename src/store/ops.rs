@@ -493,6 +493,7 @@ impl Store {
                     "created_at": created_at,
                     "updated_at": updated_at,
                     "lifecycle": self.lifecycle_get(id)?,
+                    "access": self.access_export(id)?,
                 }),
             );
         }
@@ -626,7 +627,13 @@ impl Store {
                     .map_err(|error| format!("invalid exported lifecycle: {error}"))?;
                 self.lifecycle_put(id, &meta)?;
             }
+            if let Some(value) = m.get("access") {
+                let history = serde_json::from_value(value.clone())
+                    .map_err(|e| format!("invalid exported access history: {e}"))?;
+                self.access_import(id, &history)?;
+            }
         }
+        self.access_rebuild()?;
         Ok((memories.len(), created_tags))
     }
 }

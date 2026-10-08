@@ -1,0 +1,1 @@
+SELECT memory_id FROM memory_access_events UNION SELECT memory_id FROM memory_access_buckets

@@ -150,7 +150,13 @@ pub fn read(store_path: &Path, ctx: &IdentityCtx, uri: &str) -> ResourceResult {
     }
     match parse_uri(uri).map_err(|m| ResourceError::invalid(m, json!({ "uri": uri })))? {
         Target::Tag(name) => read_tag(store_path, uri, &name),
-        Target::Memory(raw_id) => read_memory(store_path, uri, &raw_id),
+        Target::Memory(raw_id) => {
+            let out = read_memory(store_path, uri, &raw_id)?;
+            if let Some(id) = Store::parse_id(&raw_id) {
+                crate::access::record_reads(store_path, &ctx.name, &[id]);
+            }
+            Ok(out)
+        }
     }
 }
 

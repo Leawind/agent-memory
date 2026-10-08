@@ -18,6 +18,7 @@
 //! `embeddings` each carry their data operations as `impl Store`; `ops` holds the aggregate queries (health check / statistics /
 //! export/import), `tx` is the transaction entry point, and `migrate` is the migration runner.
 
+mod access;
 mod embeddings;
 mod identities;
 mod lifecycle;
@@ -30,7 +31,7 @@ mod tags;
 mod tx;
 
 pub use memories::ListFilter;
-pub use tx::{with_db_in, TxMode};
+pub use tx::{with_db_in, with_db_in_timeout, TxMode};
 
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
@@ -71,6 +72,10 @@ pub fn normalize_path(p: &Path) -> PathBuf {
 impl Store {
     /// Open the database: create directories, set WAL/busy_timeout/foreign keys, run migrations.
     pub fn open(path: &Path) -> Result<Store, String> {
+        Self::open_with_timeout(path, Duration::from_millis(BUSY_TIMEOUT_MS))
+    }
+
+    pub fn open_with_timeout(path: &Path, timeout: Duration) -> Result<Store, String> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)
@@ -79,7 +84,7 @@ impl Store {
         }
         let conn = Connection::open(path)
             .map_err(|e| format!("cannot open database at {}: {}", path.display(), e))?;
-        conn.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))
+        conn.busy_timeout(timeout)
             .map_err(|e| format!("cannot set busy timeout: {e}"))?;
         // WAL: reads and writers do not exclude each other; writers queue via SQLite's own locking + busy_timeout.
         // When the last connection closes cleanly, SQLite checkpoints automatically, leaving a single portable .db file.

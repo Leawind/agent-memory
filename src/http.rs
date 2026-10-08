@@ -61,6 +61,7 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, verbose: bool) -> i32 {
         }
     };
     let server = Arc::new(server);
+    crate::access::start_maintenance(db_path);
     eprintln!(
         "agent-memory v{}: server listening on http://{}",
         env!("CARGO_PKG_VERSION"),

@@ -104,6 +104,27 @@ fn state_filter(args: &Map<String, Value>) -> Result<String, ToolError> {
     Ok(state)
 }
 
+pub fn memory_use(
+    st: &Store,
+    ctx: &IdentityCtx,
+    args: &Map<String, Value>,
+) -> Result<Value, ToolError> {
+    let raw = req_str(args, "id")?;
+    let id = Store::parse_id(&raw).ok_or_else(|| ToolError::invalid("id must follow m<N>"))?;
+    if !st.memory_exists(id)? {
+        return Err(ToolError::not_found(format!("memory '{raw}' not found")));
+    }
+    let key = req_str(args, "event_key")?;
+    if key.is_empty() || key.chars().count() > 100 || key.chars().any(char::is_control) {
+        return Err(ToolError::invalid(
+            "event_key must contain 1..100 characters without control characters",
+        ));
+    }
+    let (recorded, reinforced) =
+        st.access_append(id, &ctx.name, crate::access::Kind::Use, Some(&key), now())?;
+    Ok(json!({"recorded": recorded, "reinforced": reinforced}))
+}
+
 pub fn memory_lifecycle(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let raw_id = req_str(args, "id")?;
     let id = Store::parse_id(&raw_id).ok_or_else(|| ToolError::invalid("id must follow m<N>"))?;

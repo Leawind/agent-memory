@@ -26,6 +26,7 @@ pub const MEMORY_EDIT: &str = "memory_edit";
 pub const MEMORY_MERGE: &str = "memory_merge";
 pub const MEMORY_DELETE: &str = "memory_delete";
 pub const MEMORY_LIFECYCLE: &str = "memory_lifecycle";
+pub const MEMORY_USE: &str = "memory_use";
 
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
@@ -42,6 +43,7 @@ pub const TOOL_NAMES: &[&str] = &[
     MEMORY_MERGE,
     MEMORY_DELETE,
     MEMORY_LIFECYCLE,
+    MEMORY_USE,
 ];
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
@@ -50,6 +52,14 @@ const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memorie
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
+        def(
+            MEMORY_USE,
+            "Record that a memory was actually used in a decision or action. Search/list exposure does not reinforce memory; successful full reads are recorded automatically with weaker weight. Use this only for actual use, not for merely seeing a result. event_key is a caller-generated idempotency key (1-100 chars, retained for 30 days); retries with the same key and identity do not count twice. Repeated uses by the same identity within 60 seconds are logged but receive zero extra reinforcement. Access never overrides expiry or archives. Returns recorded and reinforced flags, never memory content.",
+            json!({"type": "object", "properties": {
+                "id": {"type": "string", "pattern": "^m[0-9]+$"},
+                "event_key": {"type": "string", "minLength": 1, "maxLength": 100}
+            }, "required": ["id", "event_key"], "additionalProperties": false}), false, false,
+        ),
         def(
             MEMORY_LIFECYCLE,
             "Set a memory's content kind, expiry, pin or archive status. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
@@ -317,7 +327,9 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
         MEMORY_CREATE => &[Cap::Create],
-        TAG_LIST | TAG_RULE_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET => &[Cap::Read],
+        TAG_LIST | TAG_RULE_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => {
+            &[Cap::Read]
+        }
         MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],

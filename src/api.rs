@@ -19,8 +19,8 @@ use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
     self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST,
-    TAG_UPDATE,
+    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST,
+    TAG_RULE_LIST, TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -64,6 +64,26 @@ pub fn handle(
     // carries them so a short-circuit returns the whole request as that error kind.
     let result: Result<(u16, Value), ToolError> = (|| -> Result<(u16, Value), ToolError> {
         match (method, segments.as_slice()) {
+            ("GET", ["access", "stats"]) => {
+                ctx.require(Cap::Admin)?;
+                store::with_db_in(db_path, tx_mode, |st| {
+                    st.access_stats().map(|v| (200, v)).map_err(ToolError::from)
+                })
+            }
+            ("POST", ["access", action @ ("compact" | "rebuild")]) => {
+                ctx.require(Cap::Admin)?;
+                if !args_from_body()?.is_empty() {
+                    return Err(ToolError::invalid("maintenance accepts no arguments"));
+                }
+                store::with_db_in(db_path, TxMode::Write, |st| {
+                    let processed = if *action == "compact" {
+                        st.access_compact(crate::model::now())?
+                    } else {
+                        st.access_rebuild()?
+                    };
+                    Ok((200, json!({"processed": processed})))
+                })
+            }
             ("GET", ["tag-rules"]) => store::with_db_in(db_path, tx_mode, |st| {
                 tools::execute(st, ctx, TAG_RULE_LIST, &json!({})).map(|v| (200, v))
             }),
@@ -679,20 +699,42 @@ pub fn handle(
                 args.insert("id".into(), json!(mem_id));
                 tool_write(db_path, ctx, MEMORY_LIFECYCLE, &Value::Object(args))
             }
-            ("GET", ["memories", mem_id]) => store::with_db_in(db_path, tx_mode, |st| {
-                tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] })).map(|v| {
-                    let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
-                        || v["invalid_ids"].as_array().is_some_and(|m| !m.is_empty());
-                    if not_found {
-                        (
-                            404,
-                            json!({ "error": format!("memory '{}' not found", mem_id) }),
-                        )
-                    } else {
-                        (200, v["memories"][0].clone())
+            ("GET", ["memories", mem_id, "usage"]) => {
+                ctx.require(Cap::Read)?;
+                let id = store::Store::parse_id(mem_id)
+                    .ok_or_else(|| ToolError::invalid("id must follow m<N>"))?;
+                store::with_db_in(db_path, tx_mode, |st| {
+                    if !st.memory_exists(id)? {
+                        return Err(ToolError::not_found("memory not found"));
                     }
+                    let state = st.access_projection(id)?;
+                    Ok((
+                        200,
+                        json!({"score": state.value(crate::model::now()), "reads": state.reads, "uses": state.uses}),
+                    ))
                 })
-            }),
+            }
+            ("POST", ["memories", mem_id, "use"]) => {
+                let mut args = args_from_body()?;
+                args.insert("id".into(), json!(mem_id));
+                tool_write(db_path, ctx, MEMORY_USE, &Value::Object(args))
+            }
+            ("GET", ["memories", mem_id]) => {
+                let v = store::with_db_in(db_path, tx_mode, |st| {
+                    tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] }))
+                })?;
+                tools::after_read(db_path, ctx, MEMORY_GET, &v);
+                let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
+                    || v["invalid_ids"].as_array().is_some_and(|m| !m.is_empty());
+                if not_found {
+                    Ok((
+                        404,
+                        json!({ "error": format!("memory '{}' not found", mem_id) }),
+                    ))
+                } else {
+                    Ok((200, v["memories"][0].clone()))
+                }
+            }
             ("PUT", ["memories", mem_id]) => {
                 let args = match args_from_body() {
                     Ok(m) => m,
@@ -1066,6 +1108,101 @@ mod tests {
         assert_eq!(query_get(q, "limit").as_deref(), Some("20"));
         assert_eq!(query_get(q, "empty").as_deref(), Some(""));
         assert_eq!(query_get(q, "missing"), None);
+    }
+
+    #[test]
+    fn full_reads_and_explicit_use_have_distinct_permission_and_scoring_boundaries() {
+        let db = crate::store::test_support::temp_db("access-api");
+        crate::store::test_support::cleanup(&db);
+        assert_eq!(
+            handle(
+                &db,
+                &open_ctx(),
+                "POST",
+                "/api/memories",
+                "",
+                br#"{"summary":"Test","content":"secret"}"#
+            )
+            .0,
+            200
+        );
+        let reader = ctx_with(&[Cap::Read]);
+        for path in ["/api/memories", "/api/memories/m1/usage"] {
+            assert_eq!(handle(&db, &reader, "GET", path, "", &[]).0, 200);
+        }
+        assert_eq!(
+            store::Store::open(&db).unwrap().access_stats().unwrap()["raw_events"],
+            0
+        );
+        assert_eq!(
+            handle(&db, &reader, "GET", "/api/memories/m999", "", &[]).0,
+            404
+        );
+        assert_eq!(
+            handle(
+                &db,
+                &ctx_with(&[Cap::Update]),
+                "GET",
+                "/api/memories/m1",
+                "",
+                &[]
+            )
+            .0,
+            403
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                handle(&db, &reader, "GET", "/api/memories/m1", "", &[]).0,
+                200
+            );
+        }
+        let usage = handle(&db, &reader, "GET", "/api/memories/m1/usage", "", &[]).1;
+        assert_eq!(usage["reads"], 2);
+        assert!((usage["score"].as_f64().unwrap() - 0.25).abs() < 1e-5);
+        assert!(usage.get("content").is_none());
+        let (status, result) = handle(
+            &db,
+            &reader,
+            "POST",
+            "/api/memories/m1/use",
+            "",
+            br#"{"event_key":"action-1"}"#,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(result, json!({"recorded":true,"reinforced":true}));
+        assert_eq!(
+            handle(
+                &db,
+                &reader,
+                "POST",
+                "/api/memories/m1/use",
+                "",
+                br#"{"event_key":"action-1"}"#
+            )
+            .1["recorded"],
+            false
+        );
+        assert_eq!(
+            handle(
+                &db,
+                &reader,
+                "POST",
+                "/api/memories/m1/use",
+                "",
+                br#"{"event_key":""}"#
+            )
+            .0,
+            400
+        );
+        assert_eq!(
+            handle(&db, &reader, "POST", "/api/access/rebuild", "", &[]).0,
+            403
+        );
+        assert_eq!(
+            handle(&db, &open_ctx(), "POST", "/api/access/rebuild", "", &[]).0,
+            200
+        );
+        crate::store::test_support::cleanup(&db);
     }
 
     #[test]

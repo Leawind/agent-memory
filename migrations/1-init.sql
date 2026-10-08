@@ -46,6 +46,39 @@ CREATE TABLE IF NOT EXISTS memory_lifecycle (
     pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))
 );
 
+-- Access scoring version 1 has a fixed 30-day half-life. Hourly compaction keeps
+-- sufficient statistics for this scoring version; original timestamps beyond retention
+-- cannot be replayed under an arbitrary new decay formula.
+CREATE TABLE IF NOT EXISTS memory_access_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    actor TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('read', 'use')),
+    occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
+    weight REAL NOT NULL CHECK (weight >= 0),
+    UNIQUE (memory_id, actor, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_access_events_time ON memory_access_events(occurred_at, id);
+CREATE INDEX IF NOT EXISTS idx_access_events_credit ON memory_access_events(memory_id, actor, kind, occurred_at);
+
+CREATE TABLE IF NOT EXISTS memory_access_projection (
+    memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    score REAL NOT NULL CHECK (score >= 0),
+    as_of INTEGER NOT NULL CHECK (as_of >= 0),
+    reads INTEGER NOT NULL CHECK (reads >= 0),
+    uses INTEGER NOT NULL CHECK (uses >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS memory_access_buckets (
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    bucket_end INTEGER NOT NULL,
+    score REAL NOT NULL CHECK (score >= 0),
+    reads INTEGER NOT NULL CHECK (reads >= 0),
+    uses INTEGER NOT NULL CHECK (uses >= 0),
+    PRIMARY KEY (memory_id, bucket_end)
+);
+
 -- identities：访问身份（token 即身份，无账号/注册/登录——由操作者经 Web UI
 -- 或 CLI 签发）。permissions 为能力清单 JSON（如 {"read":true,"admin":false,...}），
 -- 键集合由 src/auth.rs 的登记表校验，未知键在写入前被拒绝。token 只存 SHA-256

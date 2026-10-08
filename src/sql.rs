@@ -37,6 +37,20 @@ pub const MEMORY_LIST_COUNT: &str = include_str!("../sql/memory_list_count.sql")
 pub const MEMORY_UPDATE_FIELDS: &str = include_str!("../sql/memory_update_fields.sql");
 pub const MEMORY_DELETE: &str = include_str!("../sql/memory_delete.sql");
 pub const MEMORY_SUMMARIES: &str = include_str!("../sql/memory_summaries.sql");
+pub const ACCESS_EVENT_INSERT: &str = include_str!("../sql/access_event_insert.sql");
+pub const ACCESS_RECENT_CREDIT: &str = include_str!("../sql/access_recent_credit.sql");
+pub const ACCESS_PROJECTION_GET: &str = include_str!("../sql/access_projection_get.sql");
+pub const ACCESS_PROJECTION_PUT: &str = include_str!("../sql/access_projection_put.sql");
+pub const ACCESS_PROJECTION_ALL: &str = include_str!("../sql/access_projection_all.sql");
+pub const ACCESS_PROJECTION_CLEAR: &str = include_str!("../sql/access_projection_clear.sql");
+pub const ACCESS_EVENTS_FOR: &str = include_str!("../sql/access_events_for.sql");
+pub const ACCESS_COMPACT_BATCH: &str = include_str!("../sql/access_compact_batch.sql");
+pub const ACCESS_BUCKET_PUT: &str = include_str!("../sql/access_bucket_put.sql");
+pub const ACCESS_BUCKETS_FOR: &str = include_str!("../sql/access_buckets_for.sql");
+pub const ACCESS_DELETE_BATCH: &str = include_str!("../sql/access_delete_batch.sql");
+pub const ACCESS_MEMORY_IDS: &str = include_str!("../sql/access_memory_ids.sql");
+pub const ACCESS_STATS: &str = include_str!("../sql/access_stats.sql");
+pub const ACCESS_EVENTS_EXPORT: &str = include_str!("../sql/access_events_export.sql");
 pub const LIFECYCLE_GET: &str = include_str!("../sql/lifecycle_get.sql");
 pub const LIFECYCLE_ALL: &str = include_str!("../sql/lifecycle_all.sql");
 pub const LIFECYCLE_PUT: &str = include_str!("../sql/lifecycle_put.sql");
@@ -137,6 +151,20 @@ mod tests {
             ("MEMORY_UPDATE_FIELDS", MEMORY_UPDATE_FIELDS),
             ("MEMORY_DELETE", MEMORY_DELETE),
             ("MEMORY_SUMMARIES", MEMORY_SUMMARIES),
+            ("ACCESS_EVENT_INSERT", ACCESS_EVENT_INSERT),
+            ("ACCESS_RECENT_CREDIT", ACCESS_RECENT_CREDIT),
+            ("ACCESS_PROJECTION_GET", ACCESS_PROJECTION_GET),
+            ("ACCESS_PROJECTION_PUT", ACCESS_PROJECTION_PUT),
+            ("ACCESS_PROJECTION_ALL", ACCESS_PROJECTION_ALL),
+            ("ACCESS_PROJECTION_CLEAR", ACCESS_PROJECTION_CLEAR),
+            ("ACCESS_EVENTS_FOR", ACCESS_EVENTS_FOR),
+            ("ACCESS_COMPACT_BATCH", ACCESS_COMPACT_BATCH),
+            ("ACCESS_BUCKET_PUT", ACCESS_BUCKET_PUT),
+            ("ACCESS_BUCKETS_FOR", ACCESS_BUCKETS_FOR),
+            ("ACCESS_DELETE_BATCH", ACCESS_DELETE_BATCH),
+            ("ACCESS_MEMORY_IDS", ACCESS_MEMORY_IDS),
+            ("ACCESS_STATS", ACCESS_STATS),
+            ("ACCESS_EVENTS_EXPORT", ACCESS_EVENTS_EXPORT),
             ("LIFECYCLE_GET", LIFECYCLE_GET),
             ("LIFECYCLE_ALL", LIFECYCLE_ALL),
             ("LIFECYCLE_PUT", LIFECYCLE_PUT),

@@ -33,7 +33,25 @@ pub fn with_db_in<T, E>(
 where
     E: From<String>,
 {
-    let store = Store::open(path).map_err(E::from)?;
+    with_db_in_timeout(
+        path,
+        mode,
+        std::time::Duration::from_millis(super::BUSY_TIMEOUT_MS),
+        f,
+    )
+}
+
+/// A shorter deadline is used only for best-effort companions to completed reads.
+pub fn with_db_in_timeout<T, E>(
+    path: &Path,
+    mode: TxMode,
+    timeout: std::time::Duration,
+    f: impl FnOnce(&Store) -> Result<T, E>,
+) -> Result<T, E>
+where
+    E: From<String>,
+{
+    let store = Store::open_with_timeout(path, timeout).map_err(E::from)?;
     let begin = match mode {
         TxMode::ReadOnly => "BEGIN DEFERRED",
         TxMode::Write => "BEGIN IMMEDIATE",

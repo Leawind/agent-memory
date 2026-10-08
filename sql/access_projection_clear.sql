@@ -1,0 +1,1 @@
+DELETE FROM memory_access_projection

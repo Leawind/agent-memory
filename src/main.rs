@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+mod access;
 mod api;
 mod auth;
 mod embed;

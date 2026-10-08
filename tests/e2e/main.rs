@@ -10,6 +10,7 @@
 //!
 //! The HTTP client is a minimal hand-written implementation on std::net, no dev dependencies (see `common`).
 
+mod access;
 mod auth;
 mod cli;
 mod common;
