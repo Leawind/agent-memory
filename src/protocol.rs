@@ -596,11 +596,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn temp_db(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "agent-memory-proto-{}-{}.db",
-            std::process::id(),
-            tag
-        ))
+        crate::store::test_support::temp_db(&format!("proto-{tag}"))
     }
 
     fn cleanup(path: &Path) {

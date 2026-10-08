@@ -297,18 +297,9 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    static SEQ: AtomicU32 = AtomicU32::new(0);
 
     fn temp_db(tag: &str) -> PathBuf {
-        let n = SEQ.fetch_add(1, Ordering::SeqCst);
-        std::env::temp_dir().join(format!(
-            "agent-memory-tools-{}-{}-{}.db",
-            std::process::id(),
-            tag,
-            n
-        ))
+        crate::store::test_support::temp_db(&format!("tools-{tag}"))
     }
 
     fn call(path: &Path, name: &str, args: Value) -> Result<Value, ToolError> {

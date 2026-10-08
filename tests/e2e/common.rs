@@ -143,6 +143,22 @@ impl Drop for HttpProc {
     }
 }
 
+fn connect(port: u16) -> Result<TcpStream, std::io::Error> {
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let stream = TcpStream::connect_timeout(&address, Duration::from_secs(2))?;
+    // A just-released listener port can be selected as the client's source port before
+    // the child binds it. Windows can establish that socket with itself.
+    if stream.local_addr()? == stream.peer_addr()? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "test client connected to itself before the server bound its port",
+        ));
+    }
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    Ok(stream)
+}
+
 /// Send an HTTP/1.1 request and read the full response (Connection: close).
 pub(crate) fn try_request(
     port: u16,
@@ -151,7 +167,7 @@ pub(crate) fn try_request(
     body: Option<&str>,
     extra_headers: &[(&str, &str)],
 ) -> Result<(u16, Vec<u8>, String), std::io::Error> {
-    let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+    let mut stream = connect(port)?;
     let payload = body.unwrap_or("");
     let mut req =
         format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
@@ -271,7 +287,7 @@ impl SseStream {
         body: &str,
         extra_headers: &[(&str, &str)],
     ) -> Result<SseStream, std::io::Error> {
-        let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+        let mut stream = connect(port)?;
         let mut req = format!("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n");
         for (k, v) in extra_headers {
             write!(req, "{k}: {v}\r\n").unwrap();

@@ -5,6 +5,52 @@ use serde_json::json;
 use crate::common::{cleanup, encodeURIComponent, json_body, request, temp_db, HttpProc};
 
 #[test]
+fn rest_reads_succeed_while_a_maintenance_writer_holds_the_database() {
+    let db = temp_db("maintenance-read");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "maintenance-read");
+    assert_eq!(
+        request(
+            server.port,
+            "POST",
+            "/api/memories",
+            Some(r#"{"summary":"committed topic","content":"body"}"#)
+        )
+        .0,
+        200
+    );
+    let mut connection = rusqlite::Connection::open(&db).unwrap();
+    let writer = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    let started = std::time::Instant::now();
+    let search = request(
+        server.port,
+        "GET",
+        "/api/memories?query=topic&mode=keyword",
+        None,
+    );
+    assert_eq!(search.0, 200);
+    assert_eq!(json_body(&search.1)["total_matches"], 1);
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    let started = std::time::Instant::now();
+    let full = request(server.port, "GET", "/api/memories/m1", None);
+    assert_eq!(full.0, 200);
+    assert_eq!(json_body(&full.1)["content"], "body");
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    let stats = json_body(&request(server.port, "GET", "/api/access/stats", None).1);
+    assert_eq!(stats["raw_events"], 0);
+    assert_eq!(stats["dropped_read_events"], 1);
+    writer.rollback().unwrap();
+    drop(connection);
+    assert_eq!(request(server.port, "GET", "/api/memories/m1", None).0, 200);
+    let stats = json_body(&request(server.port, "GET", "/api/access/stats", None).1);
+    assert_eq!(stats["raw_events"], 1);
+    drop(server);
+    cleanup(&db);
+}
+
+#[test]
 fn two_server_processes_share_one_db() {
     let db = temp_db("share");
     cleanup(&db);

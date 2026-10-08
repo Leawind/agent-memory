@@ -74,6 +74,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn initialized_database_reads_do_not_wait_for_an_existing_writer() {
+        let path = temp_db("read-during-maintenance");
+        cleanup(&path);
+        with_db_in(&path, TxMode::Write, |st| {
+            st.insert_memory("Committed", "", &[], 1, 1)
+        })
+        .unwrap();
+        with_db_in(&path, TxMode::Write, |writer| -> Result<(), String> {
+            writer.insert_memory("Uncommitted", "", &[], 1, 1)?;
+            let started = std::time::Instant::now();
+            let snapshot = with_db_in_timeout(
+                &path,
+                TxMode::ReadOnly,
+                std::time::Duration::from_millis(50),
+                |reader| reader.stats(),
+            )?;
+            assert_eq!(snapshot["memories"], 1);
+            assert!(started.elapsed() < std::time::Duration::from_secs(1));
+            Ok(())
+        })
+        .unwrap();
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(
+            reopened.conn.total_changes(),
+            0,
+            "opening an initialized database must not perform fixture writes"
+        );
+        assert_eq!(reopened.stats().unwrap()["memories"], 2);
+        drop(reopened);
+        cleanup(&path);
+    }
+
+    #[test]
     fn with_db_rolls_back_on_error() {
         let path = temp_db("tx");
         cleanup(&path);

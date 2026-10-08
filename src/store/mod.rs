@@ -33,7 +33,7 @@ mod tx;
 pub use memories::ListFilter;
 pub use tx::{with_db_in, with_db_in_timeout, TxMode};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -99,17 +99,25 @@ impl Store {
         migrate::run_migrations(&conn)?;
         verify_schema(&conn)?;
         // The reserved tag is a permanent fixture of the store: seed it at open so existence
-        // checks (tag_expr validation, did-you-mean, resource reads) never depend on whether
-        // an admin has created it yet. INSERT OR IGNORE keeps admin-customized rows intact.
-        conn.execute(
-            sql::TAG_SEED_RESERVED,
-            rusqlite::params![
-                crate::model::RESERVED_TAG,
-                crate::model::RESERVED_TAG_DESCRIPTION,
-                crate::model::now() as i64
-            ],
-        )
-        .map_err(|e| format!("cannot seed the reserved tag: {e}"))?;
+        // checks never depend on an admin creating it. An existing fixture must not
+        // take a write lock during read-only requests or advance its AUTOINCREMENT sequence.
+        let seeded = conn
+            .query_row(sql::TAG_EXISTS, [crate::model::RESERVED_TAG], |_| Ok(()))
+            .optional()
+            .map_err(|e| format!("cannot check the reserved tag: {e}"))?
+            .is_some();
+        if !seeded {
+            // Concurrent first opens may both observe absence; IGNORE makes seeding idempotent.
+            conn.execute(
+                sql::TAG_SEED_RESERVED,
+                rusqlite::params![
+                    crate::model::RESERVED_TAG,
+                    crate::model::RESERVED_TAG_DESCRIPTION,
+                    crate::model::now() as i64
+                ],
+            )
+            .map_err(|e| format!("cannot seed the reserved tag: {e}"))?;
+        }
         Ok(Store {
             path: normalize_path(path),
             conn,
@@ -282,12 +290,19 @@ fn verify_schema(conn: &Connection) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
 
     pub(crate) fn temp_db(tag: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "agent-memory-store-{}-{}.db",
+            "agent-memory-store-{}-{tag}-{stamp}-{seq}.db",
             std::process::id(),
-            tag
         ))
     }
 
