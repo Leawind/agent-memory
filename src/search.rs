@@ -58,8 +58,7 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
-/// Keyword search over memories. Tag filtering lives one layer up (the tag expression narrows
-/// the ranked candidates in the tool handler), so both recall channels stay filter-symmetric.
+/// The caller applies eligibility filters before either recall channel ranks candidates.
 pub fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
     let terms = parse_query(query);
     if terms.is_empty() {

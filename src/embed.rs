@@ -623,9 +623,8 @@ pub fn hybrid_hits(
     vector_k: usize,
     min_similarity: f32,
 ) -> Vec<Hit> {
-    // Vector pass: every memory with a stored vector above the floor is a candidate, ranked by
-    // cosine descending (tag filtering narrows the fused hits one layer up, so both recall
-    // channels stay symmetric)
+    // The caller supplies eligible memories only, so top-k cannot be consumed by
+    // memories outside the tag filter.
     let mut vector_ranked: Vec<(usize, f32)> = memories
         .iter()
         .enumerate()

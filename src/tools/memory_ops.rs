@@ -174,7 +174,13 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         }
     };
 
-    let memories = st.all_memories()?;
+    // Eligibility must precede every channel's top-k selection: filtering after
+    // vector truncation can discard its entire head and hide eligible memories.
+    let memories: Vec<_> = st
+        .all_memories()?
+        .into_iter()
+        .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
+        .collect();
     let keyword_hits = search::run(&memories, &query);
     // Ids of the keyword channel's hits, for the keyword_matches report below (the semantic pass
     // consumes the hits themselves). The keyword channel is AND-limited so every hit survives fusion;
@@ -240,16 +246,6 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
             vector_model = model;
             hits
         }
-    };
-
-    // The tag expression (leaves, regex atoms and operators alike) narrows the ranked
-    // candidates per memory tag set — including the vector-only hits the fusion introduced
-    let hits: Vec<search::Hit> = match &tag_expr {
-        Some(expr) => hits
-            .into_iter()
-            .filter(|h| expr.eval(&memories[h.idx].tags))
-            .collect(),
-        None => hits,
     };
 
     // Rerank stage: a configured cross-encoder re-scores the candidate pool (recall wide,

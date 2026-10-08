@@ -141,6 +141,83 @@ fn put_settings(port: u16, body: Value) {
     );
 }
 
+#[test]
+fn semantic_tag_filter_applies_before_recall_limit() {
+    let db = temp_db("semantic-filter-cap");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "semantic-filter-cap");
+    let port = server.port;
+    let query = "needle-query";
+    let query_bucket = mock_bucket(query);
+
+    let mut selected_id = Value::Null;
+    for i in 0..25 {
+        let summary = format!("candidate {i}");
+        let content = (0..100)
+            .map(|n| format!("alternate wording {n}"))
+            .find(|body| mock_bucket(&mock_memory_text(&summary, body)) == query_bucket)
+            .unwrap();
+        let selected = i == 24;
+        let (status, body, _) = request(
+            port,
+            "POST",
+            "/api/memories",
+            Some(
+                &json!({
+                    "summary": summary,
+                    "content": content,
+                    "tags": if selected { vec!["selected"] } else { Vec::new() },
+                    "create_missing_tags": true
+                })
+                .to_string(),
+            ),
+        );
+        assert_eq!(status, 200);
+        if selected {
+            selected_id = json_body(&body)["id"].clone();
+        }
+    }
+
+    let (mock_port, _) = spawn_mock_embedding();
+    put_settings(
+        port,
+        json!({"embedding_models": [{
+            "id": "mock-embed", "model": "mock-embed",
+            "base_url": format!("http://127.0.0.1:{mock_port}/v1")
+        }]}),
+    );
+    let mut remaining = 25;
+    for _ in 0..25 {
+        let (status, body, _) = request(port, "POST", "/api/embeddings/backfill", None);
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+        remaining = json_body(&body)["remaining"].as_u64().unwrap();
+        if remaining == 0 {
+            break;
+        }
+    }
+    assert_eq!(remaining, 0);
+
+    for expression in ["selected", "selected&!convention", "/^selected$/"] {
+        let (status, body, _) = request(
+            port,
+            "GET",
+            &format!(
+                "/api/memories?query={query}&tag_expr={}&limit=1&mode=hybrid",
+                encodeURIComponent(expression)
+            ),
+            None,
+        );
+        assert_eq!(status, 200);
+        let result = json_body(&body);
+        assert_eq!(result["total_matches"], 1, "{result}");
+        assert_eq!(result["results"][0]["id"], selected_id);
+        assert!(result["results"][0].get("content").is_none());
+    }
+
+    drop(server);
+    cleanup(&db);
+}
+
 /// Service available: hybrid recalls memories with zero keyword hits that are semantically in the same bucket;
 /// service unavailable: falls back to keywords and flags semantic_fallback.
 #[test]
