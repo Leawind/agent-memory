@@ -391,6 +391,53 @@ mod tests {
     }
 
     #[test]
+    fn partial_hourly_batches_preserve_scores_and_counts_during_rebuild() {
+        let path = temp_db("access-partial-bucket");
+        cleanup(&path);
+        store::with_db_in(&path, TxMode::Write, |st| -> Result<(), String> {
+            let id = st.insert_memory("Busy memory", "", &[], 1, 1)?;
+            let at = 7200;
+            let later = at + 2 * access::RAW_RETENTION_SECONDS;
+            let history = access::History {
+                scoring_version: access::SCORING_VERSION,
+                events: (0..10_001)
+                    .map(|index| access::Event {
+                        actor: "fixture".into(),
+                        event_key: format!("event-{index}"),
+                        kind: if index % 2 == 0 {
+                            Kind::Use
+                        } else {
+                            Kind::Read
+                        },
+                        occurred_at: at + index % 3600,
+                        weight: if index == 0 { 1.0 } else { 0.0 },
+                    })
+                    .collect(),
+                buckets: vec![],
+            };
+            st.access_import(id, &history)?;
+            st.access_rebuild()?;
+            let before = st.access_projection(id)?;
+            assert_eq!((before.reads, before.uses), (5000, 5001));
+            assert_eq!(st.access_compact(later)?, 10_000);
+            assert_eq!(st.access_stats()?["raw_events"], 1);
+            st.access_rebuild()?;
+            let partial = st.access_projection(id)?;
+            assert_eq!((partial.reads, partial.uses), (before.reads, before.uses));
+            assert!((partial.value(later) - before.value(later)).abs() < 1e-12);
+            assert_eq!(st.access_compact(later)?, 1);
+            assert_eq!(st.access_compact(later)?, 0);
+            st.access_rebuild()?;
+            let after = st.access_projection(id)?;
+            assert_eq!((after.reads, after.uses), (before.reads, before.uses));
+            assert!((after.value(later) - before.value(later)).abs() < 1e-12);
+            Ok(())
+        })
+        .unwrap();
+        cleanup(&path);
+    }
+
+    #[test]
     fn access_write_rollback_and_best_effort_read_deadline() {
         let path = temp_db("access-rollback");
         cleanup(&path);
