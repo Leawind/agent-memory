@@ -9,7 +9,7 @@
 //! or      := and ("|" | "||" and)*
 //! and     := unary ("&" | "&&" unary)*
 //! unary   := ("!" unary) | primary
-//! primary := "(" expr ")" | tag | regex
+//! primary := "(" expr ")" | "mutex(" expr ("," expr)+ ")" | tag | regex
 //! tag     := quoted | bare
 //! quoted  := '"' (escape | char)* '"' | "'" (escape | char)* "'"
 //! bare    := 1+ chars outside whitespace, parentheses, "&|!", quotes
@@ -34,6 +34,8 @@ pub enum TagExpr {
     Not(Box<TagExpr>),
     All(Box<TagExpr>, Box<TagExpr>),
     Any(Box<TagExpr>, Box<TagExpr>),
+    /// At most one operand is true; zero is allowed.
+    Mutex(Vec<TagExpr>),
 }
 
 impl TagExpr {
@@ -46,6 +48,7 @@ impl TagExpr {
             TagExpr::Not(inner) => !inner.eval(tags),
             TagExpr::All(a, b) => a.eval(tags) && b.eval(tags),
             TagExpr::Any(a, b) => a.eval(tags) || b.eval(tags),
+            TagExpr::Mutex(args) => args.iter().filter(|a| a.eval(tags)).take(2).count() <= 1,
         }
     }
 
@@ -70,6 +73,11 @@ impl TagExpr {
                 a.collect_names(out);
                 b.collect_names(out);
             }
+            TagExpr::Mutex(args) => {
+                for arg in args {
+                    arg.collect_names(out);
+                }
+            }
         }
     }
 }
@@ -81,17 +89,28 @@ enum Tok {
     Amp,
     Pipe,
     Bang,
+    Comma,
     Tag(String),
     Regex(String),
 }
 
 /// Parse an expression; errors carry the char position (1-based) of the offending token.
 pub fn parse(input: &str) -> Result<TagExpr, String> {
+    if input.chars().count() > 4096 {
+        return Err("expression exceeds 4096 characters".into());
+    }
     let tokens = tokenize(input)?;
+    if tokens.len() > 256 {
+        return Err("expression exceeds 256 tokens".into());
+    }
     if tokens.is_empty() {
         return Err("empty expression".to_string());
     }
-    let mut p = Parser { tokens, pos: 0 };
+    let mut p = Parser {
+        tokens,
+        pos: 0,
+        depth: 0,
+    };
     let expr = p.parse_or()?;
     if let Some((tok, pos)) = p.peek() {
         return Err(format!(
@@ -126,6 +145,7 @@ fn tokenize(input: &str) -> Result<Vec<(Tok, usize)>, String> {
                 out.push((Tok::Pipe, pos));
             }
             '!' => out.push((Tok::Bang, pos)),
+            ',' => out.push((Tok::Comma, pos)),
             '"' | '\'' => {
                 let quote = c;
                 let mut name = String::new();
@@ -208,7 +228,7 @@ fn tokenize(input: &str) -> Result<Vec<(Tok, usize)>, String> {
                 let mut name = String::new();
                 while i < chars.len() {
                     let ch = chars[i];
-                    if ch.is_whitespace() || "()&|!\"'".contains(ch) {
+                    if ch.is_whitespace() || "(),&|!\"'".contains(ch) {
                         break;
                     }
                     name.push(ch);
@@ -230,6 +250,7 @@ fn describe(tok: &Tok) -> String {
         Tok::Amp => "'&'".to_string(),
         Tok::Pipe => "'|'".to_string(),
         Tok::Bang => "'!'".to_string(),
+        Tok::Comma => "','".to_string(),
         Tok::Tag(name) => format!("tag '{name}'"),
         Tok::Regex(pattern) => format!("regular expression '/{pattern}/'"),
     }
@@ -238,6 +259,7 @@ fn describe(tok: &Tok) -> String {
 struct Parser {
     tokens: Vec<(Tok, usize)>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -272,6 +294,16 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<TagExpr, String> {
+        if self.depth >= 64 {
+            return Err("expression exceeds nesting depth 64".into());
+        }
+        self.depth += 1;
+        let result = self.parse_nested_unary();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_nested_unary(&mut self) -> Result<TagExpr, String> {
         if matches!(self.peek(), Some((Tok::Bang, _))) {
             self.pos += 1;
             let inner = self.parse_unary()?;
@@ -293,6 +325,23 @@ impl Parser {
                 match self.next() {
                     Some((Tok::RParen, _)) => Ok(inner),
                     _ => Err(format!("missing ')' for '(' at position {pos}")),
+                }
+            }
+            Tok::Tag(name) if name == "mutex" && matches!(self.peek(), Some((Tok::LParen, _))) => {
+                self.pos += 1;
+                let mut args = vec![self.parse_or()?];
+                while matches!(self.peek(), Some((Tok::Comma, _))) {
+                    self.pos += 1;
+                    args.push(self.parse_or()?);
+                }
+                if args.len() < 2 {
+                    return Err(format!(
+                        "mutex requires at least two operands at position {pos}"
+                    ));
+                }
+                match self.next() {
+                    Some((Tok::RParen, _)) => Ok(TagExpr::Mutex(args)),
+                    _ => Err(format!("missing ')' for mutex at position {pos}")),
                 }
             }
             Tok::Tag(name) => Ok(TagExpr::Tag(name)),
@@ -457,5 +506,31 @@ mod tests {
         assert!(eval("!a", &[]));
         assert!(eval("!(a|b)", &["c"]));
         assert!(!eval("!(a|b)", &["b"]));
+    }
+
+    #[test]
+    fn mutex_supports_zero_one_and_compound_operands() {
+        eval_equivalent("mutex(a,b,c)", "!((a&b)|(a&c)|(b&c))");
+        assert!(eval("mutex(a,b,c)", &[]));
+        assert!(!eval("mutex(a,b,c)", &["a", "c"]));
+        assert!(eval("mutex(a&b,c)", &["a", "c"]));
+        assert!(!eval("mutex(a&b,c)", &["a", "b", "c"]));
+        assert_eq!(
+            parse("mutex(a&b,c)").unwrap().tag_names(),
+            vec!["a", "b", "c"]
+        );
+        assert!(eval("mutex", &["mutex"]));
+        for input in ["mutex()", "mutex(a)", "mutex(a,)", "mutex(a,b", "a,b"] {
+            assert!(parse(input).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn parser_bounds_untrusted_expression_size_and_depth() {
+        assert!(parse(&"a".repeat(4097)).is_err());
+        assert!(parse(&format!("{}a", "!".repeat(65))).is_err());
+        assert!(parse(&format!("{}a{}", "(".repeat(65), ")".repeat(65))).is_err());
+        assert!(parse(&vec!["a"; 130].join("|")).is_err());
+        assert!(parse(&format!("{}a", "!".repeat(32))).is_ok());
     }
 }
