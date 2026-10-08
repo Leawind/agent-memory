@@ -9,8 +9,7 @@ import { setMemoryUILocale } from '../../index'
 import RerankerSettingsCard from './RerankerSettingsCard.vue'
 import type { RerankModelEntry } from '../../types'
 
-// Reordering is delegated to SortableJS, which owns the DOM half of a drag; the tests drive the
-// callback it fires on a drop, so the geometry that produces those two indices stays its business
+// Mirror SortableJS moving the DOM before its drop callback, including Vue's keyed rendering.
 const sortable = vi.hoisted(() => ({ created: [] as Array<{ el: Element; options: SortableOptions }> }))
 
 vi.mock('sortablejs', () => ({
@@ -25,7 +24,20 @@ vi.mock('sortablejs', () => ({
 
 /** Drop the row at `from` onto the position `to`, the way SortableJS reports it */
 function drop(from: number, to: number): void {
-  sortable.created[sortable.created.length - 1].options.onEnd!({ oldIndex: from, newIndex: to } as SortableEvent)
+  const instance = sortable.created[sortable.created.length - 1]
+  const entries = Array.from(instance.el.children)
+  const item = entries[from]
+  instance.options.onChoose?.({ item } as SortableEvent)
+  instance.el.insertBefore(item, from < to ? entries[to].nextSibling : entries[to])
+  instance.options.onEnd!({
+    item,
+    from: instance.el,
+    to: instance.el,
+    oldIndex: from,
+    newIndex: to,
+    oldDraggableIndex: from,
+    newDraggableIndex: to,
+  } as SortableEvent)
 }
 
 function jsonResponse(body: unknown) {

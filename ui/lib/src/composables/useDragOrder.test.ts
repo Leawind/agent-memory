@@ -1,10 +1,7 @@
-// useDragOrder tests. SortableJS is mocked: the DOM half of a drag (geometry, drag image, the
-// animated shift) is the library's and is exercised in a real browser, while the half that is ours
-// is what these tests pin down — the container and options we hand over, and that a drop becomes
-// exactly one splice-move in the rows we were given.
+// Mirror SortableJS's DOM move before its drop event, then let Vue patch the keyed list.
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, h, ref } from 'vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import type { SortableEvent, SortableOptions } from 'sortablejs'
 import { moveRow, useDragOrder } from './useDragOrder'
 
@@ -38,15 +35,29 @@ function setup(rows: string[], options?: { item?: string; handle?: string }) {
           h(
             'div',
             { ref: listEl },
-            list.value.map((r) => h('div', { class: 'entry' }, r)),
+            list.value.map((r) => h('div', { class: 'entry', key: r }, r)),
           )
       },
     }),
   )
   const made = () => sortable.created[sortable.created.length - 1]
-  /** The callback SortableJS fires with the two positions it just swapped in the DOM */
-  const reportDrop = (oldIndex: number, newIndex: number) =>
-    made().options.onEnd!({ oldIndex, newIndex } as SortableEvent)
+  const reportDrop = (from: number, to: number, indices?: Partial<SortableEvent>) => {
+    const entries = Array.from(made().el.children)
+    const item = entries[from]
+    const event = {
+      item,
+      from: made().el,
+      to: made().el,
+      oldIndex: from,
+      newIndex: to,
+      oldDraggableIndex: from,
+      newDraggableIndex: to,
+      ...indices,
+    } as SortableEvent
+    made().options.onChoose?.(event)
+    made().el.insertBefore(item, from < to ? entries[to].nextSibling : entries[to])
+    made().options.onEnd!(event)
+  }
   return { wrapper, list, made, reportDrop }
 }
 
@@ -92,9 +103,45 @@ describe('useDragOrder', () => {
   })
 
   it('follows the drop: the rows come out in the order the user left them', async () => {
-    const { list, reportDrop } = setup(['a', 'b', 'c'])
+    const { wrapper, list, reportDrop } = setup(['a', 'b', 'c'])
     reportDrop(0, 2)
+    await nextTick()
     expect(list.value).toEqual(['b', 'c', 'a'])
+    expect(wrapper.findAll('.entry').map((el) => el.text())).toEqual(list.value)
+    wrapper.unmount()
+  })
+
+  it('uses the final DOM position when drop indices still count a removed fallback clone', async () => {
+    const { wrapper, list, reportDrop } = setup(['a', 'b', 'c', 'd'])
+    // Sortable measures indices before removing its fallback ghost, then calls onEnd afterwards.
+    reportDrop(0, 3, { newIndex: 4, newDraggableIndex: 4 })
+    await nextTick()
+    expect(list.value).toEqual(['b', 'c', 'd', 'a'])
+    expect(wrapper.findAll('.entry').map((el) => el.text())).toEqual(list.value)
+    // Subsequent renders and drags must retain the new order.
+    reportDrop(3, 1)
+    await nextTick()
+    expect(list.value).toEqual(['b', 'a', 'c', 'd'])
+    expect(wrapper.findAll('.entry').map((el) => el.text())).toEqual(list.value)
+    wrapper.unmount()
+  })
+
+  it('keeps the keyed DOM and data aligned through successive moves in both directions', async () => {
+    const { wrapper, list, reportDrop } = setup(['a', 'b', 'c', 'd'])
+    for (const [from, to] of [
+      [3, 0],
+      [0, 3],
+      [1, 2],
+      [2, 0],
+      [0, 1],
+    ]) {
+      const expected = move(list.value, from, to)
+      reportDrop(from, to)
+      await nextTick()
+      expect(list.value).toEqual(expected)
+      expect(wrapper.findAll('.entry').map((el) => el.text())).toEqual(expected)
+    }
+    wrapper.unmount()
   })
 
   it('stops listening when the component is gone', () => {

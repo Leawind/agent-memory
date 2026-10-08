@@ -4,9 +4,9 @@
 // gap where the row will land, animates the rows in between, uses the whole row as the drag image,
 // and falls back to pointer events on touch screens.
 //
-// It owns the DOM move; the data move is ours. onEnd reports the two positions SortableJS just
-// swapped, and moveRow() applies the same move to the caller's array, which is what re-renders the
-// list in the new order. Nothing else about the rows is touched — a drop only reorders.
+// Sortable moves the DOM while dragging. Restore that move before updating Vue's keyed rows,
+// so Vue patches from the DOM order it last rendered. Drop positions come from the actual rows:
+// Sortable's reported indices can still count a fallback ghost that has just been removed.
 import Sortable from 'sortablejs'
 import { onBeforeUnmount, onMounted, type Ref } from 'vue'
 
@@ -33,11 +33,17 @@ export interface DragOrderOptions {
  */
 export function useDragOrder<T>(listEl: Ref<HTMLElement | null>, rows: Ref<T[]>, options: DragOrderOptions = {}) {
   let sortable: Sortable | null = null
+  let chosen: { item: HTMLElement; nextSibling: ChildNode | null; from: number } | null = null
+  const itemSelector = options.item ?? '.entry'
+
+  function items(list: HTMLElement): Element[] {
+    return Array.from(list.children).filter((el) => el.matches(itemSelector))
+  }
 
   onMounted(() => {
     if (!listEl.value) return
     sortable = Sortable.create(listEl.value, {
-      draggable: options.item ?? '.entry',
+      draggable: itemSelector,
       handle: options.handle ?? '.entry-handle',
       animation: 150,
       // The row left in the list while another is in flight is the landing preview. Its own class
@@ -45,12 +51,34 @@ export function useDragOrder<T>(listEl: Ref<HTMLElement | null>, rows: Ref<T[]>,
       // browser from the row itself) gets a separate one so it can be styled as a carried element.
       ghostClass: 'is-ghost',
       fallbackClass: 'is-drag',
-      onEnd: (evt) => moveRow(rows.value, evt.oldIndex ?? 0, evt.newIndex ?? 0),
+      // Choose happens before any drag clones or ghosts are inserted into the list.
+      onChoose: (evt) => {
+        const list = listEl.value
+        chosen = list
+          ? { item: evt.item, nextSibling: evt.item.nextSibling, from: items(list).indexOf(evt.item) }
+          : null
+      },
+      onEnd: (evt) => {
+        const start = chosen
+        chosen = null
+        const list = listEl.value
+        if (!start || !list || start.item !== evt.item || evt.item.parentNode !== list) return
+        const to = items(list).indexOf(evt.item)
+        // Keep the original sibling (including Vue's fragment anchor), rather than appending
+        // past that anchor when the row originally occupied the last position.
+        list.insertBefore(evt.item, start.nextSibling?.parentNode === list ? start.nextSibling : null)
+        if (start.from === to || start.from < 0 || to < 0 || start.from >= rows.value.length || to >= rows.value.length)
+          return
+        const reordered = [...rows.value]
+        moveRow(reordered, start.from, to)
+        rows.value = reordered
+      },
     })
   })
 
   onBeforeUnmount(() => {
     sortable?.destroy()
     sortable = null
+    chosen = null
   })
 }
