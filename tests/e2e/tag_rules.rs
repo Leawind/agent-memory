@@ -44,6 +44,16 @@ fn constraints_cover_publication_writes_renames_and_restore() {
     assert_eq!(create(json!(["child"]), "missing parent").0, 400);
     assert_eq!(create(json!(["child", "parent"]), "valid family").0, 200);
     assert_eq!(create(json!([]), "zero animals allowed").0, 200);
+    assert_eq!(
+        api(
+            port,
+            "POST",
+            "/api/memories",
+            Some(json!({"summary": "summary-only backup"}))
+        )
+        .0,
+        200
+    );
 
     let (status, _) = api(
         port,

@@ -598,8 +598,7 @@ impl Store {
                 .ok_or("invalid export: memory without content")?;
             let summary =
                 validate_nonempty_len(summary, "summary", crate::model::MAX_SUMMARY_CHARS)?;
-            let content =
-                validate_nonempty_len(content, "content", crate::model::MAX_CONTENT_CHARS)?;
+            let content = validate_max_len(content, "content", crate::model::MAX_CONTENT_CHARS)?;
             let created_at = m.get("created_at").and_then(Value::as_u64).unwrap_or(0);
             let updated_at = m
                 .get("updated_at")
