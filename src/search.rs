@@ -5,6 +5,45 @@
 use crate::model::Memory;
 use std::collections::HashMap;
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    pub semantic_candidates: usize,
+    pub rerank_candidates: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            semantic_candidates: 100,
+            rerank_candidates: 50,
+        }
+    }
+}
+
+impl Limits {
+    pub fn parse(value: &serde_json::Value) -> Result<Self, String> {
+        let limits: Self = serde_json::from_value(value.clone())
+            .map_err(|e| format!("invalid search_limits: {e}"))?;
+        if !(1..=1000).contains(&limits.semantic_candidates)
+            || !(1..=1000).contains(&limits.rerank_candidates)
+        {
+            return Err("search candidate limits must be between 1 and 1000".into());
+        }
+        if limits.semantic_candidates < limits.rerank_candidates {
+            return Err("semantic_candidates must be at least rerank_candidates".into());
+        }
+        Ok(limits)
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "semantic_candidates": self.semantic_candidates,
+            "rerank_candidates": self.rerank_candidates,
+        })
+    }
+}
+
 /// One term receives its best tag match only; taxonomy expansion is not evidence.
 const W_TAG_EXACT: i64 = 40;
 const W_TAG_SUBSTR: i64 = 25;
@@ -619,5 +658,28 @@ mod tests {
         let hits = run(&memories, "web");
         assert_eq!(hits[0].idx, 1);
         assert_eq!(hits[0].score, hits[1].score);
+    }
+
+    #[test]
+    fn candidate_limits_validate_the_full_retrieval_budget() {
+        use serde_json::json;
+        for value in [
+            json!(null),
+            json!({"unknown": 1}),
+            json!({"rerank_candidates": 0}),
+            json!({"semantic_candidates": 1001}),
+            json!({"semantic_candidates": 10, "rerank_candidates": 20}),
+            json!({"rerank_candidates": 2.5}),
+            json!({"rerank_candidates": "20"}),
+        ] {
+            assert!(Limits::parse(&value).is_err(), "{value}");
+        }
+        assert_eq!(Limits::parse(&json!({})).unwrap().semantic_candidates, 100);
+        assert_eq!(
+            Limits::parse(&json!({"semantic_candidates": 2, "rerank_candidates": 2}))
+                .unwrap()
+                .rerank_candidates,
+            2
+        );
     }
 }

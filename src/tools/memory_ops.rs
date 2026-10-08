@@ -185,10 +185,9 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // Count literal candidates once even when both independent channels support them.
     let keyword_idx: std::collections::HashSet<usize> =
         keyword_hits.iter().flatten().map(|h| h.idx).collect();
-    // The semantic channel's candidate cap: the top vector candidates by cosine, scaled to how much
-    // the caller reads (without it the vector channel pulls in every stored vector and total_matches
-    // degenerates to the store size)
-    let vector_k = (limit as usize * 2).max(20);
+    // Page size must not change recall or the head that the reranker scores.
+    let limits = st.search_limits()?;
+    let vector_k = limits.semantic_candidates;
 
     // Semantic path: auto passes through per configuration, hybrid requires it explicitly, keyword never comes here.
     // Embedding services all unavailable (timeout/error) → fall back to the keyword pass and flag it,
@@ -252,7 +251,7 @@ pub fn memory_search(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // the silent fallback when no reranker answers. Filtering runs first so no rerank work is
     // spent on candidates the tag expression would drop anyway.
     let (hits, reranked_by) = if matches!(mode, SearchMode::Auto | SearchMode::Hybrid) {
-        rerank_pass(st, hits, &memories, &query)
+        rerank_pass(st, hits, &memories, &query, limits.rerank_candidates)
     } else {
         (hits, None)
     };
@@ -811,6 +810,7 @@ fn rerank_pass(
     hits: Vec<search::Hit>,
     memories: &[crate::model::Memory],
     query: &str,
+    candidates: usize,
 ) -> (Vec<search::Hit>, Option<String>) {
     let configs = match st.rerank_configs() {
         Ok(configs) => configs,
@@ -823,10 +823,7 @@ fn rerank_pass(
         return (hits, None);
     }
     let mut iter = hits.into_iter();
-    let mut slots: Vec<Option<search::Hit>> = (&mut iter)
-        .take(crate::rerank::CANDIDATE_POOL)
-        .map(Some)
-        .collect();
+    let mut slots: Vec<Option<search::Hit>> = (&mut iter).take(candidates).map(Some).collect();
     let tail: Vec<search::Hit> = iter.collect();
     let documents: Vec<String> = slots
         .iter()

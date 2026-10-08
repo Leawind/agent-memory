@@ -181,7 +181,7 @@ fn semantic_tag_filter_applies_before_recall_limit() {
     let (mock_port, _) = spawn_mock_embedding();
     put_settings(
         port,
-        json!({"embedding_models": [{
+        json!({"search_limits": {"semantic_candidates": 20, "rerank_candidates": 20}, "embedding_models": [{
             "id": "mock-embed", "model": "mock-embed",
             "base_url": format!("http://127.0.0.1:{mock_port}/v1")
         }]}),
@@ -196,6 +196,23 @@ fn semantic_tag_filter_applies_before_recall_limit() {
         }
     }
     assert_eq!(remaining, 0);
+
+    let mut first_id = Value::Null;
+    for limit in [1, 5, 50] {
+        let (status, body, _) = request(
+            port,
+            "GET",
+            &format!("/api/memories?query={query}&limit={limit}"),
+            None,
+        );
+        assert_eq!(status, 200);
+        let result = json_body(&body);
+        assert_eq!(result["total_matches"], 20);
+        if first_id.is_null() {
+            first_id = result["results"][0]["id"].clone();
+        }
+        assert_eq!(result["results"][0]["id"], first_id);
+    }
 
     for expression in ["selected", "selected&!convention", "/^selected$/"] {
         let (status, body, _) = request(
@@ -213,6 +230,74 @@ fn semantic_tag_filter_applies_before_recall_limit() {
         assert_eq!(result["results"][0]["id"], selected_id);
         assert!(result["results"][0].get("content").is_none());
     }
+
+    drop(server);
+    cleanup(&db);
+}
+
+#[test]
+fn candidate_budgets_are_configurable_and_page_independent() {
+    let db = temp_db("search-budgets");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "search-budgets");
+    let port = server.port;
+    let (_, body, _) = request(port, "GET", "/api/settings", None);
+    assert_eq!(
+        json_body(&body)["search_limits"],
+        json!({"semantic_candidates": 100, "rerank_candidates": 50})
+    );
+    let (status, _, _) = request(port, "PUT", "/api/settings", Some(&json!({
+        "instructions": "must not persist", "search_limits": {"semantic_candidates": 2, "rerank_candidates": 3}
+    }).to_string()));
+    assert_eq!(status, 400);
+    let (_, body, _) = request(port, "GET", "/api/settings", None);
+    assert!(json_body(&body)["instructions"].is_null());
+
+    for summary in ["alpha first", "alpha second", "alpha third"] {
+        let (status, _, _) = request(
+            port,
+            "POST",
+            "/api/memories",
+            Some(&json!({"summary": summary}).to_string()),
+        );
+        assert_eq!(status, 200);
+    }
+    let (mock_port, seen) = spawn_mock_reranker();
+    put_settings(
+        port,
+        json!({
+            "rerank_models": [{"id": "mock", "model": "mock", "base_url": format!("http://127.0.0.1:{mock_port}/v1")}],
+            "search_limits": {"semantic_candidates": 2, "rerank_candidates": 2}
+        }),
+    );
+    for (limit, offset, expected) in [
+        (1, 0, "alpha second"),
+        (1, 1, "alpha first"),
+        (3, 0, "alpha second"),
+    ] {
+        let (status, body, _) = request(
+            port,
+            "GET",
+            &format!("/api/memories?query=alpha&limit={limit}&offset={offset}"),
+            None,
+        );
+        assert_eq!(status, 200);
+        let result = json_body(&body);
+        assert_eq!(result["total_matches"], 3);
+        assert_eq!(result["results"][0]["summary"], expected);
+        assert!(result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item.get("content").is_none()));
+    }
+    assert!(seen.lock().unwrap().iter().all(|(_, docs)| docs.len() == 2));
+    put_settings(
+        port,
+        json!({"search_limits": {"semantic_candidates": 3, "rerank_candidates": 3}}),
+    );
+    let (_, body, _) = request(port, "GET", "/api/memories?query=alpha", None);
+    assert_eq!(json_body(&body)["results"][0]["summary"], "alpha third");
 
     drop(server);
     cleanup(&db);

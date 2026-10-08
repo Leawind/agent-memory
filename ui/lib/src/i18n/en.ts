@@ -271,6 +271,11 @@ export default {
     cacheLeftoverTitle: 'Unconfigured caches',
     cacheUnconfigured: 'Unconfigured',
     rerankTitle: 'Reranking models',
+    searchLimitsTitle: 'Candidate budget',
+    semanticCandidates: 'Semantic candidates',
+    rerankCandidates: 'Reranking candidates',
+    searchLimitsHint:
+      'Semantic candidates must cover the reranking pool. Page size changes returned results, not the candidate budget.',
     rerankPitch:
       'Add OpenAI-compatible /rerank candidates (local: Xinference, TEI, …): once saved, the fused search candidates are re-ordered by relevance. Candidates are probed in list order with automatic failover.',
     rerankUntested: 'Reranker candidates are configured but the connection has not been tested yet.',

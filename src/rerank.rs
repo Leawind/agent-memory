@@ -101,10 +101,6 @@ pub static RERANK_FAILOVER: crate::embed::Failover = crate::embed::Failover::new
 /// documents is fast on GPU and takes a few seconds on CPU — past this the fused order is kept.
 pub const RERANK_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How many of the fused candidates enter the rerank stage (the funnel: recall wide, rerank
-/// narrow). The tail keeps its fused order behind the reranked head.
-pub const CANDIDATE_POOL: usize = 50;
-
 /// Rerank `documents` against `query`, returning `(document index, relevance score)` pairs in
 /// descending score order. Any network/parsing failure is an Err; the caller degrades to the
 /// incoming order.

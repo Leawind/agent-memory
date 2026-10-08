@@ -64,6 +64,8 @@
 
             <RerankerSettingsCard v-show="activeSection === 'embedding'" :models="rerankModels" @changed="load" />
 
+            <SearchLimitsCard v-show="activeSection === 'embedding'" :limits="searchLimits" @changed="load" />
+
             <PromptSettingsCard
               v-show="activeSection === 'prompt'"
               :instructions="instructions"
@@ -96,13 +98,14 @@ import { t } from '../i18n'
 import { useApiClient } from '../api/client'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import { toastSuccess } from '../toast'
-import type { EmbedModelEntry, RerankModelEntry, WhoAmI } from '../types'
+import type { EmbedModelEntry, RerankModelEntry, SearchLimits, WhoAmI } from '../types'
 import { run, type IdentityRow } from './admin/caps'
 import AuthCard from './admin/AuthCard.vue'
 import IdentityFormDialog from './admin/IdentityFormDialog.vue'
 import TokenOnceDialog from './admin/TokenOnceDialog.vue'
 import EmbeddingSettingsCard from './admin/EmbeddingSettingsCard.vue'
 import RerankerSettingsCard from './admin/RerankerSettingsCard.vue'
+import SearchLimitsCard from './admin/SearchLimitsCard.vue'
 import PromptSettingsCard from './admin/PromptSettingsCard.vue'
 import BackupCard from './admin/BackupCard.vue'
 import DoctorCard from './admin/DoctorCard.vue'
@@ -130,6 +133,7 @@ const authRequired = ref(false)
 const anonymousPermissions = ref<Record<string, boolean> | null>(null)
 const embeddingModels = ref<EmbedModelEntry[]>([])
 const rerankModels = ref<RerankModelEntry[]>([])
+const searchLimits = ref<SearchLimits>({ semantic_candidates: 100, rerank_candidates: 50 })
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
@@ -164,6 +168,7 @@ async function load(): Promise<void> {
         anonymous_permissions?: Record<string, boolean> | null
         embedding_models?: EmbedModelEntry[]
         rerank_models?: RerankModelEntry[]
+        search_limits?: SearchLimits
         default_instructions?: string | null
       }>('/api/settings'),
       api.get<import('../types').StatsInfo>('/api/stats'),
@@ -176,6 +181,7 @@ async function load(): Promise<void> {
     anonymousPermissions.value = settings?.anonymous_permissions ?? null
     embeddingModels.value = Array.isArray(settings?.embedding_models) ? settings.embedding_models : []
     rerankModels.value = Array.isArray(settings?.rerank_models) ? settings.rerank_models : []
+    searchLimits.value = settings?.search_limits ?? { semantic_candidates: 100, rerank_candidates: 50 }
     stats.value = statsResp ?? null
   })
 }

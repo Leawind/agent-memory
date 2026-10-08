@@ -261,6 +261,10 @@ export default {
     cacheLeftoverTitle: '未配置的缓存',
     cacheUnconfigured: '未配置',
     rerankTitle: '重排模型',
+    searchLimitsTitle: '候选预算',
+    semanticCandidates: '语义候选数',
+    rerankCandidates: '重排候选数',
+    searchLimitsHint: '语义候选数须至少覆盖重排候选数。分页只改变返回条数，不改变候选预算。',
     rerankPitch:
       '添加 OpenAI 兼容 /rerank 的候选（本地可用 Xinference、TEI 等），保存后搜索的融合候选会按相关性重排；候选按列表顺序探活，失败自动切换下一个。',
     rerankUntested: '重排候选已配置，尚未检测连接。',

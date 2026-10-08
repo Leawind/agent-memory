@@ -125,11 +125,44 @@ describe('AdminPanel', () => {
     // v-show toggles inline display: exactly the active section's card is visible
     const displays = () =>
       wrapper.findAll('.admin-sections .el-card').map((c) => (c.element as HTMLElement).style.display)
-    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none', 'none'])
+    expect(displays()).toEqual(['', 'none', 'none', 'none', 'none', 'none', 'none'])
     await items[4].trigger('click')
-    expect(displays()).toEqual(['none', 'none', 'none', 'none', 'none', ''])
+    expect(displays()).toEqual(['none', 'none', 'none', 'none', 'none', 'none', ''])
     await items[1].trigger('click')
-    expect(displays()).toEqual(['none', '', '', 'none', 'none', 'none'])
+    expect(displays()).toEqual(['none', '', '', '', 'none', 'none', 'none'])
+    wrapper.unmount()
+  })
+
+  it('candidate budgets reject an undersized recall pool and save both limits together', async () => {
+    const writes: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        if (String(url).includes('/api/settings') && init?.method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({}))
+        }
+        if (String(url).includes('/api/settings')) {
+          return Promise.resolve(jsonResponse({ search_limits: { semantic_candidates: 30, rerank_candidates: 20 } }))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mount(AdminPanel, {
+      props: { who: { name: 'alice', mode: 'token', permissions: ALL_TRUE } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    const card = wrapper.find('.search-limits-card')
+    const inputs = card.findAll('input')
+    const save = card.findAll('button').find((button) => button.text() === '保存')!
+    await inputs[0].setValue('10')
+    expect(save.attributes('disabled')).toBeDefined()
+    await inputs[0].setValue('40')
+    expect(save.attributes('disabled')).toBeUndefined()
+    await save.trigger('click')
+    await flushPromises()
+    expect(writes).toEqual([{ search_limits: { semantic_candidates: 40, rerank_candidates: 20 } }])
     wrapper.unmount()
   })
 

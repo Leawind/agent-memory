@@ -107,6 +107,11 @@ export interface RerankModelEntry {
   api_key?: string | null
 }
 
+export interface SearchLimits {
+  semantic_candidates: number
+  rerank_candidates: number
+}
+
 /** Per-candidate verdict from the connection tests: `index` is the request position, so an editor
  *  can line results up with its rows even when a candidate is incomplete */
 export interface EmbedTestResult {

@@ -214,6 +214,7 @@ pub fn handle(
                                 .map(|p| p.to_json()),
                             "embedding_models": embedding_models,
                             "rerank_models": rerank_models,
+                            "search_limits": st.search_limits()?.to_json(),
                             // Built-in default prompt: what the UI shows as the "restore default" target
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
@@ -232,6 +233,7 @@ pub fn handle(
                     store::Store::SETTING_ANONYMOUS_PERMISSIONS,
                     store::Store::SETTING_EMBEDDING_MODELS,
                     store::Store::SETTING_RERANK_MODELS,
+                    store::Store::SETTING_SEARCH_LIMITS,
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
@@ -251,6 +253,13 @@ pub fn handle(
                 for key in VALID_KEYS {
                     match args.get(*key) {
                         None => continue, // omitted = leave this item unchanged
+                        Some(v) if *key == store::Store::SETTING_SEARCH_LIMITS => {
+                            let limits = match crate::search::Limits::parse(v) {
+                                Ok(limits) => limits,
+                                Err(e) => return Ok(bad_request(ToolError::invalid(e))),
+                            };
+                            updates.push((key, limits.to_json().to_string()));
+                        }
                         Some(v) if *key == store::Store::SETTING_ANONYMOUS_PERMISSIONS => {
                             let parsed = match v {
                                 Value::Null => None,

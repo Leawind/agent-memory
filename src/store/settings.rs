@@ -7,6 +7,19 @@ use rusqlite::params;
 use super::Store;
 
 impl Store {
+    pub const SETTING_SEARCH_LIMITS: &'static str = "search_limits";
+
+    pub fn search_limits(&self) -> Result<crate::search::Limits, String> {
+        match self.settings_get(Self::SETTING_SEARCH_LIMITS)? {
+            Some(raw) => {
+                let value = serde_json::from_str(&raw)
+                    .map_err(|e| format!("corrupt search_limits JSON: {e}"))?;
+                crate::search::Limits::parse(&value)
+            }
+            None => Ok(crate::search::Limits::default()),
+        }
+    }
+
     /// Read a server setting; returns None when the key does not exist.
     pub fn settings_get(&self, key: &str) -> Result<Option<String>, String> {
         match self
