@@ -22,7 +22,7 @@
     <div ref="listEl" class="entry-list">
       <div
         v-for="(row, i) in draft"
-        :key="row.id"
+        :key="row.uiKey"
         class="entry"
         :class="{ 'is-off': !row.enabled, 'is-open': row.open }"
       >
@@ -37,8 +37,9 @@
           </span>
           <button type="button" class="entry-toggle" @click="row.open = !row.open">
             <el-icon class="entry-caret"><ArrowRight /></el-icon>
-            <span class="entry-index">#{{ i + 1 }}</span>
-            <span class="entry-name">{{ row.model.trim() || t('access.embeddingEntryUntitled') }}</span>
+            <span class="entry-name">{{
+              row.name.trim() || row.model.trim() || t('access.embeddingEntryUntitled')
+            }}</span>
           </button>
           <span class="entry-tags">
             <span v-if="verdictOf(row)" class="entry-verdict" :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'">
@@ -65,6 +66,14 @@
         <div v-if="row.open" class="entry-detail">
           <div class="field-grid">
             <label class="field">
+              <span class="field-label">{{ t('access.entryIdLabel') }}</span>
+              <el-input v-model="row.modelId" class="f-id" :placeholder="t('access.entryIdPlaceholder')" />
+            </label>
+            <label class="field">
+              <span class="field-label">{{ t('access.entryNameLabel') }}</span>
+              <el-input v-model="row.name" class="f-name" />
+            </label>
+            <label class="field">
               <span class="field-label">{{ t('access.entryBaseUrlLabel') }}</span>
               <el-input v-model="row.baseUrl" class="f-base-url" :placeholder="t('access.entryBaseUrlPlaceholder')" />
             </label>
@@ -84,7 +93,7 @@
           </div>
 
           <div class="entry-actions">
-            <el-button size="small" :loading="testingRowId === row.id" @click="testRow(row)">
+            <el-button size="small" :loading="testingRowId === row.uiKey" @click="testRow(row)">
               {{ t('access.embeddingTest') }}
             </el-button>
             <span class="spacer" />
@@ -132,7 +141,9 @@ const api = useApiClient()
 
 // ---- Draft rows: form fields plus UI state (expanded / verdict), keyed by a stable id ----
 interface EntryDraft {
-  id: number
+  uiKey: number
+  modelId: string
+  name: string
   enabled: boolean
   baseUrl: string
   model: string
@@ -147,6 +158,8 @@ let nextId = 1
 /** One row's canonical write shape — exactly what a settings PUT sends for that row */
 function entryPayload(r: EntryDraft) {
   return {
+    id: r.modelId.trim(),
+    name: r.name.trim(),
     enabled: r.enabled,
     base_url: r.baseUrl.trim(),
     model: r.model.trim(),
@@ -160,7 +173,9 @@ function payloadKey(r: EntryDraft): string {
 
 function toDraftRow(e: RerankModelEntry): EntryDraft {
   return {
-    id: nextId++,
+    uiKey: nextId++,
+    modelId: e.id,
+    name: e.name,
     enabled: e.enabled,
     baseUrl: e.base_url,
     model: e.model,
@@ -184,13 +199,12 @@ watch(
   (models) => {
     if (dirty.value) return
     saved.value = models.map(toDraftRow)
-    draft.value = models.map((e, i) => {
+    draft.value = models.map((e) => {
       const fresh = toDraftRow(e)
-      const prev = draft.value[i]
-      // Same candidate at the same position = the row the operator was just looking at: keep its
-      // UI state across the reload (a verdict is only shown while its payload still matches)
-      if (!prev || payloadKey(prev) !== payloadKey(fresh)) return fresh
-      return { ...fresh, id: prev.id, open: prev.open, probe: prev.probe }
+      const prev = draft.value.find((r) => r.modelId === fresh.modelId)
+      // Keep row state by the persisted ID when settings are reloaded.
+      if (!prev) return fresh
+      return { ...fresh, uiKey: prev.uiKey, open: prev.open, probe: prev.probe }
     })
   },
   { immediate: true, deep: true },
@@ -202,7 +216,9 @@ useDragOrder(listEl, draft)
 
 function addEntry(): void {
   draft.value.push({
-    id: nextId++,
+    uiKey: nextId++,
+    modelId: '',
+    name: '',
     enabled: true,
     baseUrl: '',
     model: '',
@@ -217,7 +233,7 @@ function removeEntry(i: number): void {
 }
 
 function complete(r: EntryDraft): boolean {
-  return r.baseUrl.trim() !== '' && r.model.trim() !== ''
+  return r.modelId.trim() !== '' && r.name.trim() !== '' && r.baseUrl.trim() !== '' && r.model.trim() !== ''
 }
 
 // ---- Probes: per row (exactly that row's current values) and over the whole list ----
@@ -250,7 +266,7 @@ async function testAll(): Promise<void> {
 
 async function testRow(row: EntryDraft): Promise<void> {
   if (testingRowId.value !== null) return
-  testingRowId.value = row.id
+  testingRowId.value = row.uiKey
   try {
     const out = await run(() => testRerankers(api, [entryPayload(row)]))
     if (out) record([row], out.results)
@@ -265,7 +281,11 @@ const failures = computed(() =>
   enabledRows.value
     .map((r) => ({ r, verdict: verdictOf(r) }))
     .filter((x): x is { r: EntryDraft; verdict: RerankTestResult } => x.verdict != null && !x.verdict.ok)
-    .map((x) => ({ id: x.r.id, model: x.r.model.trim(), error: x.verdict.error ?? t('access.entryTestFail') })),
+    .map((x) => ({
+      id: x.r.uiKey,
+      model: x.r.name.trim() || x.r.model.trim(),
+      error: x.verdict.error ?? t('access.entryTestFail'),
+    })),
 )
 
 const state = computed<CardState>(() => {
@@ -420,12 +440,6 @@ async function save(): Promise<void> {
 }
 .entry.is-open .entry-caret {
   transform: rotate(90deg);
-}
-.entry-index {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-  font-variant-numeric: tabular-nums;
 }
 .entry-name {
   font-weight: 500;

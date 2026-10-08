@@ -227,8 +227,8 @@ fn rest_api_end_to_end() {
         "/api/settings",
         Some(
             r#"{ "embedding_models": [
-                {"model": "e5", "base_url": "http://x/v1", "query_prefix": "query: ", "min_similarity": 0.45, "unknown_field": 1},
-                {"model": "", "base_url": "", "enabled": false}
+                {"id": "e5", "name": "e5", "model": "e5", "base_url": "http://x/v1", "query_prefix": "query: ", "min_similarity": 0.45, "unknown_field": 1},
+                {"id": "draft", "name": "Draft", "model": "", "base_url": "", "enabled": false}
             ]}"#,
         ),
     );
@@ -256,7 +256,7 @@ fn rest_api_end_to_end() {
         port,
         "PUT",
         "/api/settings",
-        Some(r#"{ "embedding_models": [{"model": "x"}] }"#),
+        Some(r#"{ "embedding_models": [{"id": "x", "name": "x", "model": "x"}] }"#),
     );
     assert_eq!(status, 400);
     // Out-of-range per-entry floor -> 400
@@ -265,7 +265,7 @@ fn rest_api_end_to_end() {
         "PUT",
         "/api/settings",
         Some(
-            r#"{ "embedding_models": [{"model": "x", "base_url": "http://x", "min_similarity": 3}] }"#,
+            r#"{ "embedding_models": [{"id": "x", "name": "x", "model": "x", "base_url": "http://x", "min_similarity": 3}] }"#,
         ),
     );
     assert_eq!(status, 400);
@@ -274,7 +274,7 @@ fn rest_api_end_to_end() {
         port,
         "PUT",
         "/api/settings",
-        Some(r#"{ "embedding_models": {"model": "x"} }"#),
+        Some(r#"{ "embedding_models": {"id": "x", "name": "x", "model": "x"} }"#),
     );
     assert_eq!(status, 400);
 

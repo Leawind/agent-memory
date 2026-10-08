@@ -20,6 +20,22 @@ impl Store {
     }
 
     pub fn settings_put(&self, key: &str, value: &str) -> Result<(), String> {
+        if key == Self::SETTING_EMBEDDING_MODELS {
+            if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(value) {
+                for entry in items.iter().filter_map(crate::embed::EmbedEntry::from_json) {
+                    if let Some(fingerprint) = entry.fingerprint() {
+                        if !entry.id.is_empty()
+                            && self
+                                .settings_get(&format!("embedding_cache:{}", entry.id))?
+                                .as_deref()
+                                != Some(&fingerprint)
+                        {
+                            self.embedding_delete_model(&entry.id)?;
+                        }
+                    }
+                }
+            }
+        }
         self.conn
             .execute(sql::SETTINGS_PUT, params![key, value])
             .map(|_| ())
@@ -180,9 +196,9 @@ mod tests {
         st.settings_put(
             Store::SETTING_EMBEDDING_MODELS,
             r#"[
-                {"base_url": "http://x/v1", "model": "e5", "query_prefix": "query: ", "passage_prefix": "passage: ", "min_similarity": 0.45},
-                {"base_url": "http://y/v1", "model": "m3", "enabled": false, "min_similarity": 0},
-                {"base_url": "", "model": "draft", "min_similarity": 0.2}
+                {"base_url": "http://x/v1", "id": "e5", "name": "e5", "model": "e5", "query_prefix": "query: ", "passage_prefix": "passage: ", "min_similarity": 0.45},
+                {"base_url": "http://y/v1", "id": "m3", "name": "m3", "model": "m3", "enabled": false, "min_similarity": 0},
+                {"base_url": "", "id": "draft", "name": "draft", "model": "draft", "min_similarity": 0.2}
             ]"#,
         )
         .unwrap();
@@ -198,7 +214,7 @@ mod tests {
         assert_eq!(e5.query_prefix.as_deref(), Some("query: "));
         assert_eq!(e5.passage_prefix.as_deref(), Some("passage: "));
         assert!((e5.min_similarity - 0.45).abs() < 1e-6);
-        assert_eq!(e5.vector_key(), "e5|q=query: |p=passage: ");
+        assert_eq!(e5.vector_key(), "e5");
 
         let m3 = entries[1].usable();
         assert!(m3.is_none(), "disabled = not operational");

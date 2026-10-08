@@ -53,8 +53,8 @@ CREATE TABLE IF NOT EXISTS identities (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_token_hash ON identities(token_hash);
 
 -- memory_embeddings：语义搜索的向量缓存（派生数据，可随时用补跑重建）。
--- 每条记忆 × 每个向量身份一行：model 列存向量身份指纹（模型名 + 指令前缀，
--- 见 embed::vector_key），不同模型/前缀的缓存互不覆盖、可共存，由运行时
+-- 每条记忆 × 每个模型 ID 一行：model 列存用户指定的稳定 ID，
+-- 指纹由 settings 中的 embedding_cache:<ID> 记录。不同 ID 的缓存互不覆盖，由运行时
 -- 选中的身份决定使用哪一份。正文变更时按 memory_id 整体失效（所有身份的
 -- 缓存同时作废，各自补跑）。vec 为 f32 小端字节序列。
 -- 外键级联：删除记忆时该记忆的全部向量随之消失。

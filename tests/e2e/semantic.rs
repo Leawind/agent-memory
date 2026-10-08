@@ -173,7 +173,7 @@ fn semantic_search_hybrid_and_fallback() {
         json!({
             "embedding_models": [{
                 "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-                "model": "mock-embed",
+                "id": "mock-embed", "name": "mock-embed", "model": "mock-embed",
                 "api_key": "sk-test"
             }]
         }),
@@ -287,7 +287,7 @@ fn semantic_search_hybrid_and_fallback() {
         port,
         json!({ "embedding_models": [{
             "base_url": format!("http://127.0.0.1:{dead}/v1"),
-            "model": "mock-embed"
+            "id": "mock-embed", "name": "mock-embed", "model": "mock-embed"
         }] }),
     );
     for mode in ["", "&mode=hybrid"] {
@@ -332,7 +332,7 @@ fn embedding_write_fallback_then_backfill() {
         json!({
             "embedding_models": [{
                 "base_url": format!("http://127.0.0.1:{dead}/v1"),
-                "model": "mock-embed"
+                "id": "mock-embed", "name": "mock-embed", "model": "mock-embed"
             }]
         }),
     );
@@ -388,7 +388,7 @@ fn embedding_write_fallback_then_backfill() {
         port,
         json!({ "embedding_models": [{
             "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-            "model": "mock-embed"
+            "id": "mock-embed", "name": "mock-embed", "model": "mock-embed"
         }] }),
     );
     let (status, body, _) = request(
@@ -473,7 +473,7 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
         json!({
             "embedding_models": [{
                 "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-                "model": "mock-embed",
+                "id": "mock-embed", "name": "mock-embed", "model": "mock-embed",
                 "query_prefix": "q>> ",
                 "passage_prefix": "p>> "
             }]
@@ -550,7 +550,7 @@ fn embedding_prefixes_apply_and_rekey_vectors() {
         port,
         json!({ "embedding_models": [{
             "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-            "model": "mock-embed",
+            "id": "mock-embed", "name": "mock-embed", "model": "mock-embed",
             "query_prefix": "q>> ",
             "passage_prefix": "p2>> "
         }] }),
@@ -587,8 +587,8 @@ fn embedding_multi_model_caches_and_failover() {
         port,
         json!({
             "embedding_models": [
-                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "model": "mock-a"},
-                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "model": "mock-b"}
+                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "id": "mock-a", "name": "mock-a", "model": "mock-a"},
+                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "id": "mock-b", "name": "mock-b", "model": "mock-b"}
             ]
         }),
     );
@@ -689,8 +689,8 @@ fn embedding_multi_model_caches_and_failover() {
         port,
         json!({
             "embedding_models": [
-                {"base_url": format!("http://127.0.0.1:{dead}/v1"), "model": "dead-model"},
-                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "model": "mock-b"}
+                {"base_url": format!("http://127.0.0.1:{dead}/v1"), "id": "dead-model", "name": "dead-model", "model": "dead-model"},
+                {"base_url": format!("http://127.0.0.1:{mock_port}/v1"), "id": "mock-b", "name": "mock-b", "model": "mock-b"}
             ]
         }),
     );
@@ -733,9 +733,9 @@ fn embedding_multi_model_caches_and_failover() {
                     {
                         "enabled": false,
                         "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-                        "model": "draft-model"
+                        "id": "draft-model", "name": "draft-model", "model": "draft-model"
                     },
-                    { "enabled": true, "base_url": "", "model": "incomplete" }
+                    { "enabled": true, "base_url": "", "id": "incomplete", "name": "incomplete", "model": "incomplete" }
                 ]
             })
             .to_string(),
@@ -777,6 +777,81 @@ fn get_caches(port: u16) -> Vec<Value> {
         .clone()
 }
 
+#[test]
+fn embedding_cache_ids_survive_reordering_and_renaming() {
+    let db = temp_db("semantic-cache-ids");
+    cleanup(&db);
+    let (mock_port, seen) = spawn_mock_embedding();
+    let server = HttpProc::start(&db, "semantic-cache-ids");
+    let port = server.port;
+    // Create before configuring models so only explicit backfills call the mock.
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary":"identity probe","content":"body"}"#),
+    );
+    assert_eq!(status, 200);
+    let mut a = json!({"id":"local-a", "name":"First service", "model":"shared-model", "base_url":format!("http://127.0.0.1:{mock_port}/v1")});
+    let mut b = a.clone();
+    b["id"] = json!("local-b");
+    b["name"] = json!("Second service");
+    put_settings(port, json!({"embedding_models":[a.clone(), b.clone()]}));
+    for id in ["local-a", "local-b"] {
+        let (status, body, _) = request(
+            port,
+            "POST",
+            "/api/embeddings/backfill",
+            Some(&json!({"model_key":id}).to_string()),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(json_body(&body)["processed"], 1);
+    }
+    let before = seen.lock().unwrap().len();
+    a["name"] = json!("Renamed service");
+    put_settings(port, json!({"embedding_models":[b.clone(), a.clone()]}));
+    let caches = get_caches(port);
+    for id in ["local-a", "local-b"] {
+        let cache = caches.iter().find(|c| c["key"] == id).unwrap();
+        assert_eq!(cache["embedded"], 1);
+        assert_eq!(cache["pending"], 0);
+    }
+    assert_eq!(
+        caches.iter().find(|c| c["key"] == "local-a").unwrap()["name"],
+        "Renamed service"
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        before,
+        "renaming and reordering must not re-embed"
+    );
+    // Changing a fingerprint under the same ID invalidates only that cache.
+    a["passage_prefix"] = json!("passage: ");
+    put_settings(port, json!({"embedding_models":[b.clone(), a.clone()]}));
+    let caches = get_caches(port);
+    let cache_a = caches.iter().find(|c| c["key"] == "local-a").unwrap();
+    assert_eq!(cache_a["embedded"], 0);
+    assert_eq!(cache_a["pending"], 1);
+    assert_eq!(
+        caches.iter().find(|c| c["key"] == "local-b").unwrap()["embedded"],
+        1
+    );
+    // A new ID starts with its own cache; the old cache stays separately deletable.
+    b["id"] = json!("local-c");
+    put_settings(port, json!({"embedding_models":[b, a]}));
+    let caches = get_caches(port);
+    assert_eq!(
+        caches.iter().find(|c| c["key"] == "local-b").unwrap()["configured"],
+        false
+    );
+    assert_eq!(
+        caches.iter().find(|c| c["key"] == "local-c").unwrap()["pending"],
+        1
+    );
+    drop(server);
+    cleanup(&db);
+}
+
 fn find_cache<'a>(caches: &'a [Value], model: &str) -> &'a Value {
     caches
         .iter()
@@ -799,7 +874,7 @@ fn rest_create_reports_similar_to_and_merge_route_works() {
         json!({
             "embedding_models": [{
                 "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-                "model": "mock-embed"
+                "id": "mock-embed", "name": "mock-embed", "model": "mock-embed"
             }]
         }),
     );
@@ -896,7 +971,7 @@ fn reranker_reorders_and_degrades() {
         port,
         json!({ "rerank_models": [{
             "base_url": format!("http://127.0.0.1:{rerank_port}/v1"),
-            "model": "mock-rerank"
+            "id": "mock-rerank", "name": "mock-rerank", "model": "mock-rerank"
         }] }),
     );
 
@@ -987,7 +1062,7 @@ fn reranker_reorders_and_degrades() {
         port,
         json!({ "rerank_models": [{
             "base_url": format!("http://127.0.0.1:{dead}/v1"),
-            "model": "mock-rerank"
+            "id": "mock-rerank", "name": "mock-rerank", "model": "mock-rerank"
         }] }),
     );
     let out = fused("");
@@ -1012,7 +1087,7 @@ fn reranker_reorders_and_degrades() {
         port,
         json!({ "rerank_models": [{
             "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-            "model": "mock-rerank"
+            "id": "mock-rerank", "name": "mock-rerank", "model": "mock-rerank"
         }] }),
     );
     let (status, body, _) = request(port, "POST", "/api/rerank/test", None);
@@ -1031,7 +1106,7 @@ fn reranker_reorders_and_degrades() {
             &json!({ "entries": [{
                 "enabled": false,
                 "base_url": format!("http://127.0.0.1:{mock_port}/v1"),
-                "model": "draft-rerank"
+                "id": "draft-rerank", "name": "draft-rerank", "model": "draft-rerank"
             }] })
             .to_string(),
         ),

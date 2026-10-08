@@ -101,7 +101,7 @@ describe('AdminPanel', () => {
     expect(createBtn!.element.closest('.el-card__header')).toBeNull()
     expect(createBtn!.element.closest('.el-card__body')).toBeTruthy()
     // Semantic search cards: the candidate editor (empty) plus the reranker card, status-first
-    expect(html).toContain('语义搜索')
+    expect(html).toContain('向量模型')
     expect(html).toContain('重排')
     expect(html).toContain('添加')
     // Missing-key fallback no longer appears (vue-i18n echoes the key itself when missing)
@@ -121,7 +121,7 @@ describe('AdminPanel', () => {
     })
     await flushPromises()
     const items = wrapper.findAll('.admin-nav .nav-item')
-    expect(items.map((i) => i.text())).toEqual(['身份与访问', '语义搜索', '自定义提示词', '备份导入导出', '数据体检'])
+    expect(items.map((i) => i.text())).toEqual(['身份与访问', '搜索模型', '自定义提示词', '备份导入导出', '数据体检'])
     // v-show toggles inline display: exactly the active section's card is visible
     const displays = () =>
       wrapper.findAll('.admin-sections .el-card').map((c) => (c.element as HTMLElement).style.display)
@@ -263,6 +263,8 @@ describe('AdminPanel', () => {
       .findAll('button')
       .find((b) => b.text() === '添加')!
       .trigger('click')
+    await wrapper.findAll('.entry')[0].find('.f-id input')!.setValue('local-vector')
+    await wrapper.findAll('.entry')[0].find('.f-name input')!.setValue('Local vector')
     await wrapper.findAll('.entry')[0].find('.f-model input')!.setValue('bge-m3-x')
     await wrapper.findAll('.entry')[0].find('.f-base-url input')!.setValue('http://svc:9/v1')
     const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存')!
@@ -274,6 +276,8 @@ describe('AdminPanel', () => {
       JSON.stringify({
         embedding_models: [
           {
+            id: 'local-vector',
+            name: 'Local vector',
             enabled: true,
             base_url: 'http://svc:9/v1',
             model: 'bge-m3-x',

@@ -33,6 +33,8 @@ function jsonResponse(body: unknown) {
 }
 
 const ENTRY: RerankModelEntry = {
+  id: 'local-model',
+  name: 'bge-reranker-v2-m3',
   enabled: true,
   base_url: 'http://rerank:9/v1',
   model: 'bge-reranker-v2-m3',
@@ -97,6 +99,19 @@ beforeEach(() => {
 })
 
 describe('RerankerSettingsCard', () => {
+  it('renders display names without sequence numbers and keeps expansion by ID on reload', async () => {
+    const first = { ...ENTRY, name: 'Local reranker' }
+    const second = { ...ENTRY, id: 'cloud-reranker', name: 'Cloud reranker' }
+    const { wrapper } = await mountCard([first, second])
+    expect(wrapper.findAll('.entry-name').map((n) => n.text())).toEqual(['Local reranker', 'Cloud reranker'])
+    expect(wrapper.find('.entry-index').exists()).toBe(false)
+    await expand(wrapper, 0)
+    await wrapper.setProps({ models: [second, first] })
+    await flushPromises()
+    expect(row(wrapper, 0).find('.entry-detail').exists()).toBe(false)
+    expect(row(wrapper, 1).find('.entry-detail').exists()).toBe(true)
+    wrapper.unmount()
+  })
   it('renders unconfigured with an empty list, no cache section and disabled actions', async () => {
     const { wrapper, calls } = mountCard([])
     expect(badge(wrapper)).toBe('未配置')
@@ -118,7 +133,7 @@ describe('RerankerSettingsCard', () => {
       row(wrapper)
         .findAll('.field-label')
         .map((l) => l.text()),
-    ).toEqual(['服务地址（base_url）', '模型名', 'API Key'])
+    ).toEqual(['模型 ID', '显示名称', '服务地址（base_url）', 'API 模型名', 'API Key'])
     expect(button(wrapper, '删除', row(wrapper))).toBeTruthy()
     expect(button(wrapper, '检测', row(wrapper))).toBeTruthy()
     wrapper.unmount()
@@ -130,13 +145,24 @@ describe('RerankerSettingsCard', () => {
       [(r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined)],
     )
     await button(wrapper, '添加')!.trigger('click')
+    await row(wrapper).find('.f-id input').setValue('rerank-local')
+    await row(wrapper).find('.f-name input').setValue('Local reranker')
     await row(wrapper).find('.f-model input').setValue('bge-reranker-v2-m3')
     await row(wrapper).find('.f-base-url input').setValue('http://rerank:9/v1')
     await button(wrapper, '保存')!.trigger('click')
     await flushPromises()
     const put = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!)
     expect(put).toEqual({
-      rerank_models: [{ enabled: true, base_url: 'http://rerank:9/v1', model: 'bge-reranker-v2-m3', api_key: null }],
+      rerank_models: [
+        {
+          id: 'rerank-local',
+          name: 'Local reranker',
+          enabled: true,
+          base_url: 'http://rerank:9/v1',
+          model: 'bge-reranker-v2-m3',
+          api_key: null,
+        },
+      ],
     })
     expect(wrapper.emitted('changed')).toHaveLength(1)
     wrapper.unmount()
@@ -145,7 +171,7 @@ describe('RerankerSettingsCard', () => {
 
   it('probes one candidate in place, with the values on screen', async () => {
     const { wrapper, calls } = await mountCard(
-      [ENTRY, { ...ENTRY, model: 'dead', base_url: 'http://dead:9/v1' }],
+      [ENTRY, { ...ENTRY, id: 'dead', name: 'dead', model: 'dead', base_url: 'http://dead:9/v1' }],
       [
         (r) =>
           r.url.includes('/api/rerank/test')
@@ -159,7 +185,9 @@ describe('RerankerSettingsCard', () => {
     await button(wrapper, '检测', row(wrapper, 1))!.trigger('click')
     await flushPromises()
     expect(JSON.parse(calls.find((c) => c.url.includes('/api/rerank/test'))!.body!)).toEqual({
-      entries: [{ enabled: true, base_url: 'http://dead:9/v1', model: 'dead-2', api_key: null }],
+      entries: [
+        { id: 'dead', name: 'dead', enabled: true, base_url: 'http://dead:9/v1', model: 'dead-2', api_key: null },
+      ],
     })
     expect(row(wrapper, 1).find('.entry-verdict').text()).toBe('正常 · 1 篇已打分 · 30ms')
     wrapper.unmount()
@@ -191,7 +219,7 @@ describe('RerankerSettingsCard', () => {
 
   it('reorders candidates by dragging the handle', async () => {
     const { wrapper, calls } = await mountCard(
-      [ENTRY, { ...ENTRY, model: 'second' }],
+      [ENTRY, { ...ENTRY, id: 'second', name: 'second', model: 'second' }],
       [(r) => (r.url.includes('/api/settings') && r.method === 'PUT' ? { saved: true } : undefined)],
     )
     expect(sortable.created[0].el).toBe(wrapper.find('.entry-list').element)

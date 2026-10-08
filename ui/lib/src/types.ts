@@ -85,6 +85,8 @@ export interface MemorySearchResp {
 
 /** One ordered embedding candidate (settings.embedding_models element, canonical server shape) */
 export interface EmbedModelEntry {
+  id: string
+  name: string
   enabled: boolean
   base_url: string
   model: string
@@ -97,6 +99,8 @@ export interface EmbedModelEntry {
 
 /** One ordered reranker candidate (settings.rerank_models element) */
 export interface RerankModelEntry {
+  id: string
+  name: string
   enabled: boolean
   base_url: string
   model: string
@@ -135,10 +139,11 @@ export interface RerankTestResp {
   results: RerankTestResult[]
 }
 
-/** One vector-cache identity (GET /api/embeddings/caches): keys are model+prefix identities */
+/** One vector-cache identity (GET /api/embeddings/caches): keys are user-assigned model IDs */
 export interface VectorCacheInfo {
   key: string
-  /** Display convenience: the raw model name with identity suffixes stripped */
+  name?: string
+  /** Configured API model name, or the ID of an unconfigured cache */
   model: string
   embedded: number
   pending: number

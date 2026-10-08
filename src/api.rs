@@ -538,26 +538,31 @@ pub fn handle(
                     let cached = st.embedding_cached_models().map_err(ToolError::from)?;
                     // Union of identities with rows and identities configured (a configured but
                     // never-backfilled model still shows up, with zero embedded)
-                    let mut keys: Vec<String> = entries.iter().map(|e| e.vector_key()).collect();
+                    let mut keys: Vec<String> = entries
+                        .iter()
+                        .filter(|e| !e.id.is_empty())
+                        .map(|e| e.vector_key())
+                        .collect();
                     for (key, _) in &cached {
                         if !keys.contains(key) {
                             keys.push(key.clone());
                         }
                     }
                     keys.sort();
+                    keys.dedup();
                     let mut caches = Vec::with_capacity(keys.len());
                     for key in keys {
-                        let embedded = cached
-                            .iter()
-                            .find(|(k, _)| *k == key)
-                            .map(|(_, n)| *n)
-                            .unwrap_or(0);
+                        let entry = entries.iter().find(|e| e.id == key);
+                        let fingerprint = entry.and_then(|e| e.fingerprint());
+                        let embedded = st
+                            .embedding_embedded_count(&key, fingerprint.as_deref())
+                            .map_err(ToolError::from)?;
                         caches.push(json!({
                             "key": key,
-                            // Display convenience: the raw model name (identity suffixes stripped)
-                            "model": key.split('|').next().unwrap_or(&key),
+                            "model": entry.map(|e| e.model.as_str()).unwrap_or(&key),
+                            "name": entry.map(|e| e.name.as_str()).unwrap_or(&key),
                             "embedded": embedded,
-                            "pending": st.embedding_pending_count(&key).map_err(ToolError::from)?,
+                            "pending": st.embedding_pending_count(&key, fingerprint.as_deref()).map_err(ToolError::from)?,
                             "configured": entries
                                 .iter()
                                 .any(|e| e.vector_key() == key && e.usable().is_some()),
@@ -781,6 +786,7 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
         .as_array()
         .ok_or_else(|| ToolError::invalid(format!("{key} must be an array")))?;
     let mut entries = Vec::with_capacity(arr.len());
+    let mut ids = std::collections::HashSet::new();
     for (i, item) in arr.iter().enumerate() {
         let obj = item
             .as_object()
@@ -806,6 +812,7 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
         };
         let base_url = opt_string("base_url")?.unwrap_or_default();
         let model = opt_string("model")?.unwrap_or_default();
+        let (id, name) = parse_model_identity(key, i, item, &mut ids)?;
         if enabled && (base_url.trim().is_empty() || model.trim().is_empty()) {
             return Err(ToolError::invalid(format!(
                 "{key}[{i}]: an enabled entry needs a non-empty base_url and model"
@@ -829,6 +836,8 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
             }
         };
         entries.push(crate::embed::EmbedEntry {
+            id,
+            name,
             enabled,
             base_url,
             model,
@@ -851,6 +860,7 @@ fn parse_rerank_entries(
         .as_array()
         .ok_or_else(|| ToolError::invalid(format!("{key} must be an array")))?;
     let mut entries = Vec::with_capacity(arr.len());
+    let mut ids = std::collections::HashSet::new();
     for (i, item) in arr.iter().enumerate() {
         let obj = item
             .as_object()
@@ -876,12 +886,15 @@ fn parse_rerank_entries(
         };
         let base_url = opt_string("base_url")?.unwrap_or_default();
         let model = opt_string("model")?.unwrap_or_default();
+        let (id, name) = parse_model_identity(key, i, item, &mut ids)?;
         if enabled && (base_url.trim().is_empty() || model.trim().is_empty()) {
             return Err(ToolError::invalid(format!(
                 "{key}[{i}]: an enabled entry needs a non-empty base_url and model"
             )));
         }
         entries.push(crate::rerank::RerankEntry {
+            id,
+            name,
             enabled,
             base_url,
             model,
@@ -889,6 +902,32 @@ fn parse_rerank_entries(
         });
     }
     Ok(entries)
+}
+
+fn parse_model_identity(
+    key: &str,
+    index: usize,
+    item: &Value,
+    ids: &mut std::collections::HashSet<String>,
+) -> Result<(String, String), ToolError> {
+    let required = |field: &str| {
+        item.get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                ToolError::invalid(format!("{key}[{index}].{field} must be a non-empty string"))
+            })
+    };
+    let id = required("id")?;
+    let name = required("name")?;
+    if !ids.insert(id.clone()) {
+        return Err(ToolError::invalid(format!(
+            "{key}[{index}]: duplicate id '{id}'"
+        )));
+    }
+    Ok((id, name))
 }
 
 /// Query string of GET /api/memories → memory_list / memory_search parameters.
@@ -927,6 +966,41 @@ mod tests {
     use super::*;
     use crate::auth::Cap;
     use serde_json::json;
+
+    #[test]
+    fn model_lists_require_unique_ids_and_display_names() {
+        for key in ["embedding_models", "rerank_models"] {
+            let parse = |value: &Value| -> Result<Vec<Value>, ToolError> {
+                if key == "embedding_models" {
+                    parse_model_entries(key, value)
+                        .map(|entries| entries.iter().map(|e| e.to_json()).collect())
+                } else {
+                    parse_rerank_entries(key, value)
+                        .map(|entries| entries.iter().map(|e| e.to_json()).collect())
+                }
+            };
+            let valid = json!([
+                {"id":" local ", "name":" Local model ", "base_url":"http://x", "model":"shared"},
+                {"id":"cloud", "name":"Cloud model", "base_url":"http://y", "model":"shared"}
+            ]);
+            let entries = parse(&valid).unwrap();
+            assert_eq!(entries[0]["id"], "local");
+            assert_eq!(entries[0]["name"], "Local model");
+            for field in ["id", "name"] {
+                for invalid in [Value::Null, json!("  "), json!(3)] {
+                    let mut candidate = valid.clone();
+                    candidate[0][field] = invalid;
+                    assert!(parse(&candidate).is_err(), "{key}: {field}");
+                }
+                let mut candidate = valid.clone();
+                candidate[0].as_object_mut().unwrap().remove(field);
+                assert!(parse(&candidate).is_err());
+            }
+            let mut duplicate = valid;
+            duplicate[1]["id"] = json!("local");
+            assert!(parse(&duplicate).is_err());
+        }
+    }
 
     fn open_ctx() -> IdentityCtx {
         IdentityCtx::open_mode()

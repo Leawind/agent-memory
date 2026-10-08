@@ -25,7 +25,7 @@
     <div ref="listEl" class="entry-list">
       <div
         v-for="(row, i) in draft"
-        :key="row.id"
+        :key="row.uiKey"
         class="entry"
         :class="{ 'is-off': !row.enabled, 'is-open': row.open }"
       >
@@ -40,8 +40,9 @@
           </span>
           <button type="button" class="entry-toggle" @click="row.open = !row.open">
             <el-icon class="entry-caret"><ArrowRight /></el-icon>
-            <span class="entry-index">#{{ i + 1 }}</span>
-            <span class="entry-name">{{ row.model.trim() || t('access.embeddingEntryUntitled') }}</span>
+            <span class="entry-name">{{
+              row.name.trim() || row.model.trim() || t('access.embeddingEntryUntitled')
+            }}</span>
           </button>
           <span class="entry-tags">
             <span v-if="verdictOf(row)" class="entry-verdict" :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'">
@@ -67,6 +68,14 @@
 
         <div v-if="row.open" class="entry-detail">
           <div class="field-grid">
+            <label class="field">
+              <span class="field-label">{{ t('access.entryIdLabel') }}</span>
+              <el-input v-model="row.modelId" class="f-id" :placeholder="t('access.entryIdPlaceholder')" />
+            </label>
+            <label class="field">
+              <span class="field-label">{{ t('access.entryNameLabel') }}</span>
+              <el-input v-model="row.name" class="f-name" />
+            </label>
             <label class="field">
               <span class="field-label">{{ t('access.entryBaseUrlLabel') }}</span>
               <el-input v-model="row.baseUrl" class="f-base-url" :placeholder="t('access.entryBaseUrlPlaceholder')" />
@@ -111,7 +120,7 @@
           </div>
 
           <div class="entry-actions">
-            <el-button size="small" :loading="testingRowId === row.id" @click="testRow(row)">
+            <el-button size="small" :loading="testingRowId === row.uiKey" @click="testRow(row)">
               {{ t('access.embeddingTest') }}
             </el-button>
             <span v-if="cacheOf(row)" class="cache-detail">
@@ -132,7 +141,7 @@
               v-if="(cacheOf(row)?.embedded ?? 0) > 0"
               size="small"
               :loading="deletingKey === identityOf(row)"
-              @click="deleteCacheAt(identityOf(row), row.model.trim(), cacheOf(row)!.embedded)"
+              @click="deleteCacheAt(identityOf(row), row.name.trim() || row.modelId.trim(), cacheOf(row)!.embedded)"
             >
               {{ t('access.cacheDelete') }}
             </el-button>
@@ -177,12 +186,16 @@
     <div v-if="leftovers.length" class="cache-leftovers">
       <div class="cache-title">{{ t('access.cacheLeftoverTitle') }}</div>
       <div v-for="c in leftovers" :key="c.key" class="cache-row">
-        <span class="cache-model" :title="c.key">{{ c.model }}</span>
+        <span class="cache-model" :title="c.key">{{ c.name || c.key }}</span>
         <span class="cache-counts">
           {{ t('access.cacheRowSummary', { embedded: c.embedded, pending: c.pending }) }}
           <el-tag size="small" type="info">{{ t('access.cacheUnconfigured') }}</el-tag>
         </span>
-        <el-button size="small" :loading="deletingKey === c.key" @click="deleteCacheAt(c.key, c.model, c.embedded)">
+        <el-button
+          size="small"
+          :loading="deletingKey === c.key"
+          @click="deleteCacheAt(c.key, c.name || c.key, c.embedded)"
+        >
           {{ t('access.cacheDelete') }}
         </el-button>
       </div>
@@ -214,10 +227,12 @@ const api = useApiClient()
 const { backfill, cancelBackfill } = useAdmin()
 
 // ---- Draft rows: form fields plus UI state (expanded / verdict / progress) ----
-// `id` is the stable key and the verdict's owner: rows are keyed by it, so reordering never
+// `uiKey` is the stable rendering key and the verdict's owner: rows are keyed by it, so reordering never
 // mixes up which row a verdict or an open panel belongs to.
 interface EntryDraft {
-  id: number
+  uiKey: number
+  modelId: string
+  name: string
   enabled: boolean
   baseUrl: string
   model: string
@@ -237,6 +252,8 @@ let nextId = 1
 /** One row's canonical write shape — exactly what a settings PUT sends for that row */
 function entryPayload(r: EntryDraft) {
   return {
+    id: r.modelId.trim(),
+    name: r.name.trim(),
     enabled: r.enabled,
     base_url: r.baseUrl.trim(),
     model: r.model.trim(),
@@ -253,7 +270,9 @@ function payloadKey(r: EntryDraft): string {
 
 function toDraftRow(e: EmbedModelEntry): EntryDraft {
   return {
-    id: nextId++,
+    uiKey: nextId++,
+    modelId: e.id,
+    name: e.name,
     enabled: e.enabled,
     baseUrl: e.base_url,
     model: e.model,
@@ -285,14 +304,12 @@ watch(
   (models) => {
     if (dirty.value) return
     saved.value = models.map(toDraftRow)
-    draft.value = models.map((e, i) => {
+    draft.value = models.map((e) => {
       const fresh = toDraftRow(e)
-      const prev = draft.value[i]
-      // Same candidate at the same position (same vector identity) = the row the operator was just
-      // looking at: keep its identity-bound UI state across the reload. Its verdict stays valid
-      // only while the payload matches, which verdictOf checks on every render.
-      if (!prev || identityOf(prev) !== identityOf(fresh)) return fresh
-      return { ...fresh, id: prev.id, open: prev.open, probe: prev.probe }
+      const prev = draft.value.find((r) => r.modelId === fresh.modelId)
+      // Keep row state by the persisted ID when settings are reloaded.
+      if (!prev) return fresh
+      return { ...fresh, uiKey: prev.uiKey, open: prev.open, probe: prev.probe }
     })
   },
   { immediate: true, deep: true },
@@ -304,7 +321,9 @@ useDragOrder(listEl, draft)
 
 function addEntry(): void {
   draft.value.push({
-    id: nextId++,
+    uiKey: nextId++,
+    modelId: '',
+    name: '',
     enabled: true,
     baseUrl: '',
     model: '',
@@ -323,31 +342,30 @@ function removeEntry(i: number): void {
 }
 
 function complete(r: EntryDraft): boolean {
-  return r.baseUrl.trim() !== '' && r.model.trim() !== ''
+  return r.modelId.trim() !== '' && r.name.trim() !== '' && r.baseUrl.trim() !== '' && r.model.trim() !== ''
 }
 
-// ---- Vector identity: model + instruction prefixes, mirroring embed::EmbedConfig::vector_key.
-// The bare model is the key when both prefixes are absent, so the cache keys the server reports
-// and the keys derived here agree. ----
-function vectorKey(model: string, queryPrefix?: string | null, passagePrefix?: string | null): string {
-  const modelName = model.trim()
-  const q = queryPrefix ? queryPrefix : null
-  const p = passagePrefix ? passagePrefix : null
-  return q === null && p === null ? modelName : `${modelName}|q=${q ?? ''}|p=${p ?? ''}`
-}
-
+// Cache IDs remain stable across reordering and display-name changes.
 function identityOf(r: EntryDraft): string {
-  return vectorKey(r.model, r.queryPrefix, r.passagePrefix)
+  return r.modelId.trim()
 }
 
-const savedKeys = computed(() => props.models.map((m) => vectorKey(m.model, m.query_prefix, m.passage_prefix)))
+function fingerprintOf(r: EntryDraft): string {
+  return JSON.stringify([r.baseUrl.trim().replace(/\/+$/, ''), r.model.trim(), r.queryPrefix, r.passagePrefix])
+}
 
-/** The identity that was configured before the edits (the invalidation warning compares identities) */
-const identityChanged = computed(() => {
-  const before = saved.value.map(identityOf)
-  const after = draft.value.map(identityOf)
-  return before.length !== after.length || after.some((k, i) => k !== before[i])
-})
+const changedCacheKeys = computed(
+  () =>
+    new Set(
+      saved.value
+        .filter((before) => {
+          const after = draft.value.find((r) => identityOf(r) === identityOf(before))
+          return !after || fingerprintOf(after) !== fingerprintOf(before)
+        })
+        .map(identityOf),
+    ),
+)
+const identityChanged = computed(() => changedCacheKeys.value.size > 0)
 
 // ---- Vector caches (per identity) ----
 const caches = ref<VectorCacheInfo[]>([])
@@ -355,7 +373,9 @@ const deletingKey = ref<string | null>(null)
 const runningRowId = ref<number | null>(null)
 
 const cacheByKey = computed(() => new Map(caches.value.map((c) => [c.key, c])))
-const vectorCount = computed(() => caches.value.reduce((sum, c) => sum + c.embedded, 0))
+const vectorCount = computed(() =>
+  caches.value.reduce((sum, c) => sum + (changedCacheKeys.value.has(c.key) ? c.embedded : 0), 0),
+)
 /** Identities no row claims anymore: nothing can backfill them, so they are listed apart and are
  *  only deletable. A row's own cache, however unconfigured it is (disabled or half-filled), is
  *  reported by that row instead of being repeated here. */
@@ -373,8 +393,8 @@ function cacheOf(r: EntryDraft): VectorCacheInfo | undefined {
 function canBackfill(r: EntryDraft): boolean {
   const cache = cacheOf(r)
   if (!cache || cache.pending === 0 || !r.enabled) return false
-  const idx = savedKeys.value.indexOf(identityOf(r))
-  return idx >= 0 && props.models[idx].enabled === true
+  const savedEntry = saved.value.find((entry) => identityOf(entry) === identityOf(r))
+  return !!savedEntry && savedEntry.enabled && fingerprintOf(savedEntry) === fingerprintOf(r)
 }
 
 async function refreshCaches(): Promise<void> {
@@ -423,7 +443,7 @@ async function testAll(): Promise<void> {
 
 async function testRow(row: EntryDraft): Promise<void> {
   if (testingRowId.value !== null) return
-  testingRowId.value = row.id
+  testingRowId.value = row.uiKey
   try {
     const out = await run(() => testEmbeddings(api, [entryPayload(row)]))
     if (out) record([row], out.results)
@@ -438,7 +458,11 @@ const failures = computed(() =>
   enabledRows.value
     .map((r) => ({ r, verdict: verdictOf(r) }))
     .filter((x): x is { r: EntryDraft; verdict: EmbedTestResult } => x.verdict != null && !x.verdict.ok)
-    .map((x) => ({ id: x.r.id, model: x.r.model.trim(), error: x.verdict.error ?? t('access.entryTestFail') })),
+    .map((x) => ({
+      id: x.r.uiKey,
+      model: x.r.name.trim() || x.r.model.trim(),
+      error: x.verdict.error ?? t('access.entryTestFail'),
+    })),
 )
 
 const state = computed<CardState>(() => {
@@ -498,7 +522,7 @@ function progressPct(row: EntryDraft): number {
 
 async function startBackfill(row: EntryDraft): Promise<void> {
   if (runningRowId.value !== null) return
-  runningRowId.value = row.id
+  runningRowId.value = row.uiKey
   row.progress = { done: 0, total: cacheOf(row)?.pending ?? 0 }
   try {
     const out = await run(() =>
@@ -647,12 +671,6 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
 }
 .entry.is-open .entry-caret {
   transform: rotate(90deg);
-}
-.entry-index {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-  font-variant-numeric: tabular-nums;
 }
 .entry-name {
   font-weight: 500;

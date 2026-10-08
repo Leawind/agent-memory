@@ -32,6 +32,8 @@ impl RerankConfig {
 /// operational view.
 #[derive(Clone, Debug)]
 pub struct RerankEntry {
+    pub id: String,
+    pub name: String,
     pub enabled: bool,
     pub base_url: String,
     pub model: String,
@@ -49,6 +51,8 @@ impl RerankEntry {
                 .filter(|s| !s.is_empty())
         };
         Some(RerankEntry {
+            id: string("id").unwrap_or_default().trim().to_string(),
+            name: string("name").unwrap_or_default().trim().to_string(),
             enabled: obj.get("enabled").and_then(Value::as_bool).unwrap_or(true),
             base_url: string("base_url").unwrap_or_default(),
             model: string("model").unwrap_or_default(),
@@ -59,6 +63,8 @@ impl RerankEntry {
     /// Canonical JSON for the settings round-trip (GET → UI → PUT).
     pub fn to_json(&self) -> Value {
         json!({
+            "id": self.id,
+            "name": self.name,
             "enabled": self.enabled,
             "base_url": self.base_url,
             "model": self.model,
@@ -68,7 +74,7 @@ impl RerankEntry {
 
     /// The operational view: enabled and fully specified.
     pub fn usable(&self) -> Option<RerankConfig> {
-        if !self.enabled {
+        if !self.enabled || self.id.is_empty() || self.name.is_empty() {
             return None;
         }
         self.config()

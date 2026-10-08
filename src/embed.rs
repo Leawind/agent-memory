@@ -26,6 +26,7 @@ use std::time::Duration;
 /// local services such as Ollama/LM Studio share the same shape).
 #[derive(Clone, Debug)]
 pub struct EmbedConfig {
+    pub id: String,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -43,21 +44,20 @@ pub struct EmbedConfig {
 }
 
 impl EmbedConfig {
-    /// Identity of the embedding function: the model plus its instruction prefixes. Stored
-    /// vectors are keyed by this, not by the raw model name — a prefix change silently changes
-    /// what the stored vectors mean, so it must orphan them exactly like a model switch does
-    /// (they go pending and re-embed under the new key). Both prefixes empty = the historical
-    /// key, just the model, keeping existing databases stable.
+    /// Stable, user-assigned cache identity, independent of order and display name.
     pub fn vector_key(&self) -> String {
-        match (&self.query_prefix, &self.passage_prefix) {
-            (None, None) => self.model.clone(),
-            (q, p) => format!(
-                "{}|q={}|p={}",
-                self.model,
-                q.as_deref().unwrap_or(""),
-                p.as_deref().unwrap_or("")
-            ),
-        }
+        self.id.clone()
+    }
+
+    /// Cache validity is separate from identity. JSON avoids delimiter collisions.
+    pub fn fingerprint(&self) -> String {
+        json!([
+            self.base_url.trim_end_matches('/'),
+            self.model,
+            self.query_prefix.as_deref().unwrap_or(""),
+            self.passage_prefix.as_deref().unwrap_or("")
+        ])
+        .to_string()
     }
 
     fn endpoint(&self) -> String {
@@ -70,6 +70,8 @@ impl EmbedConfig {
 /// operational view is `config` (usable only when enabled and fully specified).
 #[derive(Clone, Debug)]
 pub struct EmbedEntry {
+    pub id: String,
+    pub name: String,
     pub enabled: bool,
     pub base_url: String,
     pub model: String,
@@ -95,6 +97,8 @@ impl EmbedEntry {
                 .filter(|s| !s.is_empty())
         };
         Some(EmbedEntry {
+            id: string("id").unwrap_or_default().trim().to_string(),
+            name: string("name").unwrap_or_default().trim().to_string(),
             enabled: obj.get("enabled").and_then(Value::as_bool).unwrap_or(true),
             base_url: string("base_url").unwrap_or_default(),
             model: string("model").unwrap_or_default(),
@@ -114,6 +118,8 @@ impl EmbedEntry {
     /// hint precision and would make every GET→PUT cycle churn the stored value.
     pub fn to_json(&self) -> Value {
         json!({
+            "id": self.id,
+            "name": self.name,
             "enabled": self.enabled,
             "base_url": self.base_url,
             "model": self.model,
@@ -128,7 +134,7 @@ impl EmbedEntry {
 
     /// The operational view: usable only when enabled and base_url / model are both non-empty.
     pub fn usable(&self) -> Option<EmbedConfig> {
-        if !self.enabled {
+        if !self.enabled || self.id.is_empty() || self.name.is_empty() {
             return None;
         }
         self.config()
@@ -142,6 +148,7 @@ impl EmbedEntry {
             return None;
         }
         Some(EmbedConfig {
+            id: self.id.clone(),
             base_url: self.base_url.trim().to_string(),
             model: self.model.trim().to_string(),
             api_key: self.api_key.clone(),
@@ -151,19 +158,13 @@ impl EmbedEntry {
         })
     }
 
-    /// This candidate's vector identity (its slice of the embeddings cache), enabled or not —
-    /// a disabled model's cache still exists and is still manageable. The model name is trimmed
-    /// exactly like in `usable`, so both views produce the same identity.
+    /// A disabled model's cache remains manageable under the same ID.
     pub fn vector_key(&self) -> String {
-        EmbedConfig {
-            base_url: String::new(),
-            model: self.model.trim().to_string(),
-            api_key: None,
-            query_prefix: self.query_prefix.clone(),
-            passage_prefix: self.passage_prefix.clone(),
-            min_similarity: 0.0,
-        }
-        .vector_key()
+        self.id.clone()
+    }
+
+    pub fn fingerprint(&self) -> Option<String> {
+        self.config().map(|cfg| cfg.fingerprint())
     }
 }
 
@@ -384,6 +385,18 @@ impl EmbedOutcome {
     }
 }
 
+fn ensure_current_config(st: &Store, cfg: &EmbedConfig) -> Result<(), String> {
+    if st
+        .embedding_configs()?
+        .iter()
+        .any(|current| current.id == cfg.id && current.fingerprint() == cfg.fingerprint())
+    {
+        Ok(())
+    } else {
+        Err("embedding configuration changed while the request was in flight".into())
+    }
+}
+
 /// Backfill one batch for the given candidate's identity: read the pending list (read-only transaction)
 /// → call the embedding service (outside transactions) → write vectors and count what is left (one write
 /// transaction — the same connection serves both, so a full pass opens two databases, not three).
@@ -396,7 +409,7 @@ pub fn process_pending_for(
 ) -> Result<EmbedOutcome, String> {
     let batch = batch.clamp(1, MAX_BATCH);
     let pending = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        st.embedding_pending_batch(&cfg.vector_key(), batch)
+        st.embedding_pending_batch(&cfg.vector_key(), &cfg.fingerprint(), batch)
     })?;
     if pending.is_empty() {
         return Ok(EmbedOutcome::Processed {
@@ -414,10 +427,11 @@ pub fn process_pending_for(
     // Storing and counting share one write transaction: the count sees this batch's puts, so the
     // reported remaining is identical to a post-commit recount
     let remaining = crate::store::with_db_in(db_path, TxMode::Write, |st| {
+        ensure_current_config(st, cfg)?;
         for ((id, _, _), vec) in pending.iter().zip(&vectors) {
-            st.embedding_put(*id, &cfg.vector_key(), vec)?;
+            st.embedding_put(*id, &cfg.vector_key(), &cfg.fingerprint(), vec)?;
         }
-        st.embedding_pending_count(&cfg.vector_key())
+        st.embedding_pending_count(&cfg.vector_key(), Some(&cfg.fingerprint()))
     })?;
     Ok(EmbedOutcome::Processed {
         processed: pending.len(),
@@ -502,7 +516,7 @@ pub const DEDUP_SIMILARITY: f32 = 0.90;
 /// advisory and degrades silently upstream; the vector stays queued for the backfill).
 fn ensure_vector_for(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<(), String> {
     let loaded = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        let Some(row) = st.embedding_pending_for(&cfg.vector_key(), id)? else {
+        let Some(row) = st.embedding_pending_for(&cfg.vector_key(), &cfg.fingerprint(), id)? else {
             return Ok(None); // vector already stored under this identity (or the memory is gone)
         };
         Ok::<_, String>(Some(row))
@@ -519,7 +533,8 @@ fn ensure_vector_for(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<(), S
         return Ok(());
     };
     crate::store::with_db_in(db_path, TxMode::Write, |st| {
-        st.embedding_put(id, &cfg.vector_key(), &vec)
+        ensure_current_config(st, cfg)?;
+        st.embedding_put(id, &cfg.vector_key(), &cfg.fingerprint(), &vec)
     })
 }
 
@@ -529,7 +544,7 @@ fn ensure_vector_for(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<(), S
 fn dedup_scan(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<Vec<Value>, String> {
     ensure_vector_for(db_path, id, cfg)?;
     crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-        let table = st.embeddings_active(&cfg.vector_key())?;
+        let table = st.embeddings_active(&cfg.vector_key(), &cfg.fingerprint())?;
         let Some(mine) = table.get(&id) else {
             return Ok(Vec::new());
         };
@@ -716,6 +731,7 @@ mod tests {
 
     fn cfg(model: &str, q: Option<&str>, p: Option<&str>) -> EmbedConfig {
         EmbedConfig {
+            id: model.into(),
             base_url: "http://x".into(),
             model: model.into(),
             api_key: None,
@@ -723,6 +739,41 @@ mod tests {
             passage_prefix: p.map(str::to_string),
             min_similarity: 0.0,
         }
+    }
+
+    #[test]
+    fn changed_configuration_rejects_in_flight_vectors() {
+        use crate::store::test_support::{cleanup, temp_db};
+        let path = temp_db("embedding-stale-config");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let mut entry =
+            json!({"id":"service", "name":"Service", "model":"model", "base_url":"http://x"});
+        st.settings_put(
+            Store::SETTING_EMBEDDING_MODELS,
+            &json!([entry.clone()]).to_string(),
+        )
+        .unwrap();
+        let original = st.embedding_configs().unwrap()[0].clone();
+        assert!(ensure_current_config(&st, &original).is_ok());
+        st.insert_memory("s", "body", &[], 1, 1).unwrap();
+        st.embedding_put(1, &original.id, &original.fingerprint(), &[1.0])
+            .unwrap();
+        entry["model"] = json!("replacement");
+        st.settings_put(Store::SETTING_EMBEDDING_MODELS, &json!([entry]).to_string())
+            .unwrap();
+        assert!(ensure_current_config(&st, &original).is_err());
+        assert!(st
+            .embeddings_active(&original.id, &original.fingerprint())
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            st.embedding_pending_count(&original.id, Some(&original.fingerprint()))
+                .unwrap(),
+            1
+        );
+        drop(st);
+        cleanup(&path);
     }
 
     /// The semantic recall floor: weak candidates never enter the fusion, so a query matching
@@ -762,40 +813,37 @@ mod tests {
         );
     }
 
-    /// Prefixes apply verbatim to their own side only, and the vector identity covers them:
-    /// a prefix change must re-key stored vectors exactly like a model change does.
+    /// Prefixes change cache validity while the user-assigned ID stays stable.
     #[test]
-    fn prefixes_apply_per_side_and_enter_vector_key() {
+    fn prefixes_apply_per_side_and_change_fingerprint() {
         let bare = cfg("bge-m3", None, None);
         assert_eq!(bare.vector_key(), "bge-m3");
         assert_eq!(embed_query_text(&bare, "find x"), "find x");
         assert_eq!(embed_passage_text(&bare, "t", "b"), "t\n\nb");
 
         let e5 = cfg("e5", Some("query: "), Some("passage: "));
-        assert_eq!(
-            e5.vector_key(),
-            "bge-m3|q=query: |p=passage: ".replace("bge-m3", "e5")
-        );
+        assert_eq!(e5.vector_key(), "e5");
+        assert_ne!(e5.fingerprint(), cfg("e5", None, None).fingerprint());
         // Trailing space of "query: " is part of the instruction — never trimmed
         assert_eq!(embed_query_text(&e5, "find x"), "query: find x");
         assert_eq!(embed_passage_text(&e5, "t", "b"), "passage: t\n\nb");
 
         // Only one side set: the key reflects exactly what is configured
-        assert_eq!(
-            cfg("e5", Some("query: "), None).vector_key(),
-            "e5|q=query: |p="
+        assert_ne!(
+            cfg("e5", Some("query: "), None).fingerprint(),
+            e5.fingerprint()
         );
     }
 
     /// Entry parsing (settings array elements): defaults applied leniently, disabled or
     /// incomplete entries excluded from the operational pool but preserved for the round-trip,
-    /// and the vector identity follows model + prefixes exactly like a raw config.
+    /// and the cache identity follows the user-assigned ID.
     #[test]
     fn entry_parsing_lenient_defaults_and_usable_view() {
         let full = EmbedEntry::from_json(&json!({
             "enabled": false,
             "base_url": " http://x/v1 ",
-            "model": " e5 ",
+            "id": "e5", "name": "e5", "model": " e5 ",
             "api_key": "sk",
             "query_prefix": "query: ",
             "passage_prefix": "passage: ",
@@ -803,7 +851,7 @@ mod tests {
         }))
         .expect("full entry parses");
         assert!(!full.enabled);
-        assert_eq!(full.vector_key(), "e5|q=query: |p=passage: ");
+        assert_eq!(full.vector_key(), "e5");
         assert!(full.usable().is_none(), "disabled = not operational");
         // ... but a disabled candidate still has an operational view: the connection probe checks
         // exactly what was configured, before the switch is turned on
@@ -830,7 +878,7 @@ mod tests {
 
         // Wrong inner types normalize instead of failing; out-of-range floors fall back to default
         let odd = EmbedEntry::from_json(&json!({
-            "base_url": "http://x", "model": "m", "enabled": "yes", "min_similarity": 7.0,
+            "base_url": "http://x", "id": "m", "name": "m", "model": "m", "enabled": "yes", "min_similarity": 7.0,
         }))
         .expect("lenient parse");
         let usable = odd.usable().expect("model+url present = usable");
@@ -1055,17 +1103,21 @@ mod tests {
         // Configure semantic search (the hint reads the same settings the search path does)
         st.settings_put(
             crate::store::Store::SETTING_EMBEDDING_MODELS,
-            r#"[{"base_url": "http://127.0.0.1:9", "model": "test-model"}]"#,
+            r#"[{"base_url": "http://127.0.0.1:9", "id": "test-model", "name": "test-model", "model": "test-model"}]"#,
         )
         .unwrap();
 
+        let fingerprint = st.embedding_configs().unwrap()[0].fingerprint();
         // m2 is a near-duplicate of m1 (similarity 1), m3 is unrelated
         st.insert_memory("a", "body a", &[], 1, 1).unwrap();
         st.insert_memory("b", "body b", &[], 1, 1).unwrap();
         st.insert_memory("c", "body c", &[], 1, 1).unwrap();
-        st.embedding_put(1, "test-model", &[1.0, 0.0]).unwrap();
-        st.embedding_put(2, "test-model", &[0.999, 0.045]).unwrap();
-        st.embedding_put(3, "test-model", &[0.0, 1.0]).unwrap();
+        st.embedding_put(1, "test-model", &fingerprint, &[1.0, 0.0])
+            .unwrap();
+        st.embedding_put(2, "test-model", &fingerprint, &[0.999, 0.045])
+            .unwrap();
+        st.embedding_put(3, "test-model", &fingerprint, &[0.0, 1.0])
+            .unwrap();
 
         let mut result = serde_json::json!({"id": "m1"});
         dedup_hint(&path, &mut result);
@@ -1084,7 +1136,8 @@ mod tests {
         cleanup(&path2);
         let st2 = Store::open(&path2).unwrap();
         st2.insert_memory("a", "body", &[], 1, 1).unwrap();
-        st2.embedding_put(1, "test-model", &[1.0]).unwrap();
+        st2.embedding_put(1, "test-model", "unused", &[1.0])
+            .unwrap();
         let mut result = serde_json::json!({"id": "m1"});
         dedup_hint(&path2, &mut result);
         assert!(result.get("similar_to").is_none());

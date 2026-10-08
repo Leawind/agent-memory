@@ -785,7 +785,7 @@ fn semantic_pass(
     let Some(query_vec) = query_vecs.into_iter().next() else {
         return (keyword_hits, false, None);
     };
-    let table = match st.embeddings_active(&cfg.vector_key()) {
+    let table = match st.embeddings_active(&cfg.vector_key(), &cfg.fingerprint()) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("semantic search skipped (cannot load embeddings): {e}");

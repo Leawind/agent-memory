@@ -306,7 +306,8 @@ impl Store {
     fn check_embedding_coverage(&self) -> Result<Vec<String>, String> {
         let mut issues = Vec::new();
         for cfg in self.embedding_configs()? {
-            let pending = self.embedding_pending_count(&cfg.vector_key())?;
+            let pending =
+                self.embedding_pending_count(&cfg.vector_key(), Some(&cfg.fingerprint()))?;
             if pending > 0 {
                 issues.push(format!(
                     "{pending} memories lack up-to-date embeddings (model '{}'); \
@@ -366,7 +367,7 @@ impl Store {
         // Embedding section: the head entry's numbers stay top-level for convenience (the UI and
         // CLI read them), while `models` carries every candidate with its own cache coverage.
         // Cache coverage is keyed by identity: two entries may share a model name and still have
-        // separate caches (instruction prefixes are part of the identity).
+        // separate caches (each has a user-assigned ID).
         let entries = self.embedding_entries()?;
         let configs: Vec<_> = entries.iter().filter_map(|e| e.usable()).collect();
         let embedding = if configs.is_empty() {
@@ -378,12 +379,19 @@ impl Store {
                 .map(|e| {
                     let mut item = json!({
                         "key": e.vector_key(),
+                        "name": e.name,
                         "model": e.model,
                         "enabled": e.enabled,
                     });
                     if let Some(cfg) = e.usable() {
-                        item["embedded"] = json!(self.embedding_embedded_count(&cfg.vector_key())?);
-                        item["pending"] = json!(self.embedding_pending_count(&cfg.vector_key())?);
+                        item["embedded"] = json!(self.embedding_embedded_count(
+                            &cfg.vector_key(),
+                            Some(&cfg.fingerprint())
+                        )?);
+                        item["pending"] = json!(self.embedding_pending_count(
+                            &cfg.vector_key(),
+                            Some(&cfg.fingerprint())
+                        )?);
                     }
                     Ok::<_, String>(item)
                 })
@@ -391,8 +399,8 @@ impl Store {
             json!({
                 "enabled": true,
                 "model": head.model,
-                "embedded": self.embedding_embedded_count(&head.vector_key())?,
-                "pending": self.embedding_pending_count(&head.vector_key())?,
+                "embedded": self.embedding_embedded_count(&head.vector_key(), Some(&head.fingerprint()))?,
+                "pending": self.embedding_pending_count(&head.vector_key(), Some(&head.fingerprint()))?,
                 "models": models,
             })
         };

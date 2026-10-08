@@ -7,8 +7,41 @@ use std::collections::HashMap;
 use super::Store;
 
 impl Store {
+    /// Derived, per-cache metadata lives beside settings so no schema migration is needed.
+    /// A missing or mismatched fingerprint makes all vectors pending under the same ID.
+    fn embedding_cache_key(
+        &self,
+        model: &str,
+        fingerprint: Option<&str>,
+    ) -> Result<String, String> {
+        match fingerprint {
+            Some(expected)
+                if self
+                    .settings_get(&format!("embedding_cache:{model}"))?
+                    .as_deref()
+                    != Some(expected) =>
+            {
+                Ok(String::new())
+            }
+            _ => Ok(model.to_string()),
+        }
+    }
+
     /// Store one vector (upsert: re-embedding the same memory overwrites the old row).
-    pub fn embedding_put(&self, id: i64, model: &str, vec: &[f32]) -> Result<(), String> {
+    pub fn embedding_put(
+        &self,
+        id: i64,
+        model: &str,
+        fingerprint: &str,
+        vec: &[f32],
+    ) -> Result<(), String> {
+        if self
+            .embedding_cache_key(model, Some(fingerprint))?
+            .is_empty()
+        {
+            self.embedding_delete_model(model)?;
+            self.settings_put(&format!("embedding_cache:{model}"), fingerprint)?;
+        }
         self.conn
             .execute(
                 sql::EMBEDDING_PUT,
@@ -33,13 +66,18 @@ impl Store {
     }
 
     /// All vectors for the current model, for the in-memory cosine pass of hybrid search.
-    pub fn embeddings_active(&self, model: &str) -> Result<HashMap<i64, Vec<f32>>, String> {
+    pub fn embeddings_active(
+        &self,
+        model: &str,
+        fingerprint: &str,
+    ) -> Result<HashMap<i64, Vec<f32>>, String> {
+        let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
             .prepare(sql::EMBEDDING_ACTIVE_ALL)
             .map_err(|e| e.to_string())?;
         let rows = st
-            .query_map([model], |r| {
+            .query_map([&model], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
             })
             .map_err(|e| e.to_string())?;
@@ -69,17 +107,24 @@ impl Store {
 
     /// Delete every cached vector of one identity (per-model cache management); returns the row count.
     pub fn embedding_delete_model(&self, model: &str) -> Result<usize, String> {
-        self.conn
+        let deleted = self
+            .conn
             .execute(sql::EMBEDDING_DELETE_MODEL, [model])
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        self.conn
+            .execute(sql::SETTINGS_DELETE, [format!("embedding_cache:{model}")])
+            .map_err(|e| e.to_string())?;
+        Ok(deleted)
     }
 
     /// One pending backfill batch: memories lacking vectors for the current model, id ascending (with title and content for embedding).
     pub fn embedding_pending_batch(
         &self,
         model: &str,
+        fingerprint: &str,
         limit: usize,
     ) -> Result<Vec<(i64, String, String)>, String> {
+        let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
             .prepare(sql::EMBEDDING_PENDING_BATCH)
@@ -103,8 +148,10 @@ impl Store {
     pub fn embedding_pending_for(
         &self,
         model: &str,
+        fingerprint: &str,
         id: i64,
     ) -> Result<Option<(i64, String, String)>, String> {
+        let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
             .prepare(sql::EMBEDDING_PENDING_FOR)
@@ -124,18 +171,28 @@ impl Store {
         }
     }
 
-    pub fn embedding_pending_count(&self, model: &str) -> Result<usize, String> {
+    pub fn embedding_pending_count(
+        &self,
+        model: &str,
+        fingerprint: Option<&str>,
+    ) -> Result<usize, String> {
+        let model = self.embedding_cache_key(model, fingerprint)?;
         self.conn
-            .query_row(sql::EMBEDDING_PENDING_COUNT, [model], |r| {
+            .query_row(sql::EMBEDDING_PENDING_COUNT, [&model], |r| {
                 r.get::<_, i64>(0)
             })
             .map(|n| n as usize)
             .map_err(|e| e.to_string())
     }
 
-    pub fn embedding_embedded_count(&self, model: &str) -> Result<usize, String> {
+    pub fn embedding_embedded_count(
+        &self,
+        model: &str,
+        fingerprint: Option<&str>,
+    ) -> Result<usize, String> {
+        let model = self.embedding_cache_key(model, fingerprint)?;
         self.conn
-            .query_row(sql::EMBEDDING_EMBEDDED_COUNT, [model], |r| {
+            .query_row(sql::EMBEDDING_EMBEDDED_COUNT, [&model], |r| {
                 r.get::<_, i64>(0)
             })
             .map(|n| n as usize)
