@@ -16,6 +16,7 @@ mod http;
 mod lifecycle;
 mod model;
 mod notify;
+mod predicate;
 mod protocol;
 mod rerank;
 mod resources;

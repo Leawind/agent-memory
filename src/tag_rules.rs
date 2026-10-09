@@ -1,6 +1,6 @@
 //! Persistent constraints bind stable tag ids, while the public form uses current names.
 
-use crate::tag_expr::{self, TagExpr};
+use crate::tag_expr::{self, TagAtom, TagExpr};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -46,28 +46,16 @@ pub struct Constraint {
     pub expression: Expr,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "op", content = "args")]
-pub enum Expr {
-    Tag(i64),
-    Not(Box<Expr>),
-    All(Box<Expr>, Box<Expr>),
-    Any(Box<Expr>, Box<Expr>),
-    Mutex(Vec<Expr>),
-}
+pub type Expr = crate::predicate::Predicate<i64>;
 
 impl Expr {
     fn positive(&self) -> bool {
-        match self {
-            Self::Tag(_) => true,
-            Self::All(a, b) | Self::Any(a, b) => a.positive() && b.positive(),
-            _ => false,
-        }
+        self.positive_with(&|_| true)
     }
 
     fn heads(&self) -> Result<Vec<i64>, String> {
         match self {
-            Self::Tag(id) => Ok(vec![*id]),
+            Self::Atom(id) => Ok(vec![*id]),
             Self::All(a, b) => {
                 let mut ids = a.heads()?;
                 ids.extend(b.heads()?);
@@ -80,52 +68,27 @@ impl Expr {
     }
 
     fn tag_ids(&self, ids: &mut HashSet<i64>) {
-        match self {
-            Self::Tag(id) => {
-                ids.insert(*id);
-            }
-            Self::All(a, b) | Self::Any(a, b) => {
-                a.tag_ids(ids);
-                b.tag_ids(ids);
-            }
-            Self::Not(a) => a.tag_ids(ids),
-            Self::Mutex(args) => {
-                for a in args {
-                    a.tag_ids(ids);
-                }
-            }
-        }
+        self.visit_atoms(&mut |id| {
+            ids.insert(*id);
+        });
     }
     fn bind(expr: TagExpr, tags: &HashMap<String, i64>) -> Result<Self, String> {
-        Ok(match expr {
-            TagExpr::Tag(name) => Self::Tag(*tags.get(&name).ok_or_else(|| {
+        expr.try_map(&mut |atom| match atom {
+            TagAtom::Tag(name) => Ok(*tags.get(&name).ok_or_else(|| {
                 format!("unknown tag '{name}' in rule; create the tag first")
             })?),
-            TagExpr::Regex(_) => return Err("persistent rules require literal tag names; regex atoms are only supported in queries".into()),
-            TagExpr::Not(a) => Self::Not(Box::new(Self::bind(*a, tags)?)),
-            TagExpr::All(a, b) => Self::All(Box::new(Self::bind(*a, tags)?), Box::new(Self::bind(*b, tags)?)),
-            TagExpr::Any(a, b) => Self::Any(Box::new(Self::bind(*a, tags)?), Box::new(Self::bind(*b, tags)?)),
-            TagExpr::Mutex(args) => Self::Mutex(args.into_iter().map(|a| Self::bind(a, tags)).collect::<Result<_, _>>()?),
+            TagAtom::Regex(_) => Err("persistent rules require literal tag names; regex atoms are only supported in queries".into()),
         })
     }
 
     pub fn eval(&self, tags: &[i64]) -> bool {
-        match self {
-            Self::Tag(id) => tags.contains(id),
-            Self::Not(a) => !a.eval(tags),
-            Self::All(a, b) => a.eval(tags) && b.eval(tags),
-            Self::Any(a, b) => a.eval(tags) || b.eval(tags),
-            Self::Mutex(args) => args.iter().filter(|a| a.eval(tags)).take(2).count() <= 1,
-        }
+        self.eval_with(&|id| tags.contains(id))
     }
 
     pub fn references(&self, id: i64) -> bool {
-        match self {
-            Self::Tag(tag) => *tag == id,
-            Self::Not(a) => a.references(id),
-            Self::All(a, b) | Self::Any(a, b) => a.references(id) || b.references(id),
-            Self::Mutex(args) => args.iter().any(|a| a.references(id)),
-        }
+        let mut found = false;
+        self.visit_atoms(&mut |tag| found |= *tag == id);
+        found
     }
 
     fn display(&self, tags: &HashMap<i64, String>) -> Result<String, String> {
@@ -144,7 +107,7 @@ impl Expr {
             _ => 4,
         };
         let rendered = match self {
-            Self::Tag(id) => tags
+            Self::Atom(id) => tags
                 .get(id)
                 .ok_or_else(|| format!("rule references missing tag id {id}"))?
                 .clone(),

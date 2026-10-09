@@ -26,59 +26,39 @@
 //! names are an error with a did-you-mean hint, mirroring tag linking on writes). Regex atoms
 //! carry no names and match dynamically.
 
-/// A parsed expression: one node per operator, leaves are tag names or compiled regexes.
+use crate::predicate::Predicate;
+
+pub type TagExpr = Predicate<TagAtom>;
+
+/// Query atoms use names; the rule compiler binds literal atoms to stable ids.
 #[derive(Debug, Clone)]
-pub enum TagExpr {
+pub enum TagAtom {
     Tag(String),
     Regex(Box<regex::Regex>),
-    Not(Box<TagExpr>),
-    All(Box<TagExpr>, Box<TagExpr>),
-    Any(Box<TagExpr>, Box<TagExpr>),
-    /// At most one operand is true; zero is allowed.
-    Mutex(Vec<TagExpr>),
 }
 
 impl TagExpr {
     /// Evaluate against one memory's tag set: a leaf passes when the set carries the name, a
     /// regex when any name in the set matches.
     pub fn eval(&self, tags: &[String]) -> bool {
-        match self {
-            TagExpr::Tag(name) => tags.iter().any(|t| t == name),
-            TagExpr::Regex(re) => tags.iter().any(|t| re.is_match(t)),
-            TagExpr::Not(inner) => !inner.eval(tags),
-            TagExpr::All(a, b) => a.eval(tags) && b.eval(tags),
-            TagExpr::Any(a, b) => a.eval(tags) || b.eval(tags),
-            TagExpr::Mutex(args) => args.iter().filter(|a| a.eval(tags)).take(2).count() <= 1,
-        }
+        self.eval_with(&|atom| match atom {
+            TagAtom::Tag(name) => tags.iter().any(|t| t == name),
+            TagAtom::Regex(re) => tags.iter().any(|t| re.is_match(t)),
+        })
     }
 
     /// Leaf tag names in first-appearance order, deduplicated (for store-side existence checks).
     /// Regex atoms match dynamically and contribute none.
     pub fn tag_names(&self) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
-        self.collect_names(&mut out);
-        out
-    }
-
-    fn collect_names<'a>(&'a self, out: &mut Vec<&'a str>) {
-        match self {
-            TagExpr::Tag(name) => {
+        self.visit_atoms(&mut |atom| {
+            if let TagAtom::Tag(name) = atom {
                 if !out.contains(&name.as_str()) {
-                    out.push(name);
+                    out.push(name.as_str());
                 }
             }
-            TagExpr::Regex(_) => {}
-            TagExpr::Not(inner) => inner.collect_names(out),
-            TagExpr::All(a, b) | TagExpr::Any(a, b) => {
-                a.collect_names(out);
-                b.collect_names(out);
-            }
-            TagExpr::Mutex(args) => {
-                for arg in args {
-                    arg.collect_names(out);
-                }
-            }
-        }
+        });
+        out
     }
 }
 
@@ -353,12 +333,12 @@ impl Parser {
                     _ => Err(format!("missing ')' for mutex at position {pos}")),
                 }
             }
-            Tok::Tag(name) => Ok(TagExpr::Tag(name)),
+            Tok::Tag(name) => Ok(TagExpr::Atom(TagAtom::Tag(name))),
             Tok::Regex(pattern) => {
                 let re = regex::Regex::new(&pattern).map_err(|e| {
                     format!("invalid regular expression '/{pattern}/' at position {pos}: {e}")
                 })?;
-                Ok(TagExpr::Regex(Box::new(re)))
+                Ok(TagExpr::Atom(TagAtom::Regex(Box::new(re))))
             }
             other => Err(format!(
                 "unexpected {} at position {pos}: a tag, regex or '(' was expected",
