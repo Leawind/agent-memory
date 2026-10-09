@@ -208,3 +208,36 @@ fn decay_selectors_use_named_and_derived_tags_and_protect_references() {
     )
     .unwrap();
 }
+
+#[test]
+fn maximum_flat_predicate_can_be_saved_and_reopened() {
+    let path = setup("maximum-flat");
+    let ctx = IdentityCtx::open_mode();
+    let expression = vec!["a"; 128].join("&");
+    set(&path, &ctx, "global", "flat", &expression).unwrap();
+    assert!(execute_with_db(
+        &path,
+        &ctx,
+        MEMORY_LIST,
+        &json!({"tag_expr":vec!["@flat";33].join("&")})
+    )
+    .is_err());
+    assert_eq!(
+        execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@flat"})).unwrap()["total"],
+        1
+    );
+    store::with_db_in(&path,store::TxMode::Write,|st| -> Result<(),String> {
+        st.replace_tag_rules(&json!({"constraints":[{"name":"flat-constraint","expression":expression}],"derivations":[]}),false)?;
+        st.settings_put(Store::SETTING_LIFECYCLE_POLICY,&json!({"rules":[{"predicate":expression,"half_life_days":7}]}).to_string())?;
+        Ok(())
+    }).unwrap();
+    store::with_db_in(&path, store::TxMode::ReadOnly, |st| -> Result<(), String> {
+        assert_eq!(
+            st.tag_rules_view()?["constraints"][0]["expression"],
+            expression
+        );
+        assert_eq!(st.lifecycle_policy()?.rules[0].predicate, expression);
+        Ok(())
+    })
+    .unwrap();
+}

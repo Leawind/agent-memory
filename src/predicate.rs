@@ -1,15 +1,112 @@
 //! Pure Boolean predicates shared by query syntax and bound rule expressions.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "op", content = "args")]
+#[derive(Debug, Clone)]
 pub enum Predicate<A> {
     Atom(A),
     Not(Box<Self>),
     All(Box<Self>, Box<Self>),
     Any(Box<Self>, Box<Self>),
     Mutex(Vec<Self>),
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "op", content = "args")]
+enum StoredNode<A> {
+    Atom(A),
+    Not,
+    All,
+    Any,
+    Mutex(usize),
+}
+
+// Postfix storage keeps JSON nesting constant even for long valid flat expressions.
+impl<A: Serialize> Serialize for Predicate<A> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut pending = vec![(self, false)];
+        let mut nodes = Vec::new();
+        while let Some((node, visited)) = pending.pop() {
+            if visited {
+                nodes.push(match node {
+                    Self::Atom(a) => StoredNode::Atom(a),
+                    Self::Not(_) => StoredNode::Not,
+                    Self::All(..) => StoredNode::All,
+                    Self::Any(..) => StoredNode::Any,
+                    Self::Mutex(args) => StoredNode::Mutex(args.len()),
+                });
+                continue;
+            }
+            pending.push((node, true));
+            match node {
+                Self::Atom(_) => {}
+                Self::Not(a) => pending.push((a, false)),
+                Self::All(a, b) | Self::Any(a, b) => {
+                    pending.push((b, false));
+                    pending.push((a, false));
+                }
+                Self::Mutex(args) => pending.extend(args.iter().rev().map(|arg| (arg, false))),
+            }
+        }
+        nodes.serialize(serializer)
+    }
+}
+
+impl<'de, A: Deserialize<'de>> Deserialize<'de> for Predicate<A> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let nodes = Vec::<StoredNode<A>>::deserialize(deserializer)?;
+        if nodes.is_empty() || nodes.len() > 8192 {
+            return Err(D::Error::custom(
+                "stored predicate must contain 1..8192 nodes",
+            ));
+        }
+        let mut stack: Vec<(Self, usize)> = Vec::new();
+        for node in nodes {
+            let (expression, depth) = match node {
+                StoredNode::Atom(a) => (Self::Atom(a), 0),
+                StoredNode::Not => {
+                    let (a, depth) = stack
+                        .pop()
+                        .ok_or_else(|| D::Error::custom("invalid predicate operand stack"))?;
+                    (Self::Not(Box::new(a)), depth + 1)
+                }
+                StoredNode::All | StoredNode::Any => {
+                    let (b, bd) = stack
+                        .pop()
+                        .ok_or_else(|| D::Error::custom("invalid predicate operand stack"))?;
+                    let (a, ad) = stack
+                        .pop()
+                        .ok_or_else(|| D::Error::custom("invalid predicate operand stack"))?;
+                    let expr = if matches!(node, StoredNode::All) {
+                        Self::All(Box::new(a), Box::new(b))
+                    } else {
+                        Self::Any(Box::new(a), Box::new(b))
+                    };
+                    (expr, ad.max(bd) + 1)
+                }
+                StoredNode::Mutex(count) => {
+                    if count < 2 || count > stack.len() {
+                        return Err(D::Error::custom("invalid mutex operand count"));
+                    }
+                    let operands = stack.split_off(stack.len() - count);
+                    let depth = operands.iter().map(|(_, depth)| *depth).max().unwrap_or(0) + 1;
+                    (
+                        Self::Mutex(operands.into_iter().map(|(expr, _)| expr).collect()),
+                        depth,
+                    )
+                }
+            };
+            if depth > 128 {
+                return Err(D::Error::custom("stored predicate depth exceeds 128"));
+            }
+            stack.push((expression, depth));
+        }
+        if stack.len() != 1 {
+            return Err(D::Error::custom("invalid predicate operand stack"));
+        }
+        Ok(stack.pop().expect("validated single expression").0)
+    }
 }
 
 impl<A> Predicate<A> {
@@ -159,6 +256,8 @@ mod tests {
                     .unwrap())
             })
             .unwrap();
+        let bound: Predicate<usize> =
+            serde_json::from_str(&serde_json::to_string(&bound).unwrap()).unwrap();
         for subset in 0..8 {
             assert_eq!(
                 expression.eval_with(&|name| subset
@@ -174,5 +273,21 @@ mod tests {
         let mut names = Vec::new();
         expression.visit_atoms(&mut |name| names.push(*name));
         assert_eq!(names, ["a", "b", "b", "c"]);
+    }
+
+    #[test]
+    fn stored_predicates_reject_malformed_stacks_and_excessive_depth() {
+        use serde_json::json;
+        for value in [
+            json!([]),
+            json!([{"op":"Not"}]),
+            json!([{"op":"Atom","args":1},{"op":"Atom","args":2}]),
+            json!([{"op":"Atom","args":1},{"op":"Mutex","args":1}]),
+        ] {
+            assert!(serde_json::from_value::<Predicate<i64>>(value).is_err());
+        }
+        let mut nodes = vec![json!({"op":"Atom","args":1})];
+        nodes.extend((0..129).map(|_| json!({"op":"Not"})));
+        assert!(serde_json::from_value::<Predicate<i64>>(json!(nodes)).is_err());
     }
 }

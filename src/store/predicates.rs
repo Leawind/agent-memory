@@ -273,19 +273,31 @@ impl Store {
         let namespace = ctx.predicate_namespace()?;
         let registry = self.predicate_registry(&namespace)?;
         let tags = self.tag_id_names()?;
+        let mut atoms = 0usize;
         let expanded = expr.try_expand(&mut |atom| match atom {
-            TagAtom::Named(name) => registry
-                .expanded
-                .get(&registry.lookup(&name)?)
-                .ok_or("unresolved predicate")?
-                .clone()
-                .try_map(&mut |id| {
+            TagAtom::Named(name) => {
+                let predicate = registry
+                    .expanded
+                    .get(&registry.lookup(&name)?)
+                    .ok_or("unresolved predicate")?;
+                predicate.visit_atoms(&mut |_| atoms += 1);
+                if atoms > 4096 {
+                    return Err("expanded query exceeds 4096 atoms".to_string());
+                }
+                predicate.clone().try_map(&mut |id| {
                     tags.get(&id)
                         .cloned()
                         .map(TagAtom::Tag)
                         .ok_or_else(|| format!("predicate references missing tag id {id}"))
-                }),
-            atom => Ok(TagExpr::Atom(atom)),
+                })
+            }
+            atom => {
+                atoms += 1;
+                if atoms > 4096 {
+                    return Err("expanded query exceeds 4096 atoms".to_string());
+                }
+                Ok(TagExpr::Atom(atom))
+            }
         })?;
         crate::named_predicates::validate_expansion(&expanded)?;
         Ok(expanded)
