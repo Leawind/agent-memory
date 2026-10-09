@@ -64,6 +64,21 @@ pub fn handle(
     // carries them so a short-circuit returns the whole request as that error kind.
     let result: Result<(u16, Value), ToolError> = (|| -> Result<(u16, Value), ToolError> {
         match (method, segments.as_slice()) {
+            ("GET", ["predicates"]) => store::with_db_in(db_path, tx_mode, |st| {
+                tools::execute(st, ctx, tools::PREDICATE_LIST, &json!({})).map(|v| (200, v))
+            }),
+            ("PUT", ["predicates"]) => tool_write(
+                db_path,
+                ctx,
+                tools::PREDICATE_SET,
+                &Value::Object(args_from_body()?),
+            ),
+            ("DELETE", ["predicates"]) => tool_write(
+                db_path,
+                ctx,
+                tools::PREDICATE_DELETE,
+                &Value::Object(args_from_body()?),
+            ),
             ("GET", ["search", "runtime"]) => {
                 ctx.require(Cap::Admin)?;
                 store::with_db_in(db_path, tx_mode, |st| {

@@ -70,9 +70,11 @@ impl Store {
             ))
         });
         match row {
-            Ok((_id, name, perms_json)) => {
+            Ok((id, name, perms_json)) => {
                 let perms = parse_stored_permissions(&perms_json)?;
-                Ok(Some(crate::auth::IdentityCtx::new(&name, perms)))
+                let mut ctx = crate::auth::IdentityCtx::new(&name, perms);
+                ctx.identity_id = Some(id);
+                Ok(Some(ctx))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.to_string()),

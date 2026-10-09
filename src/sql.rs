@@ -6,6 +6,9 @@
 //! one-to-one correspondence is guarded by the `sql_files_are_all_registered` test.
 
 pub const TAG_EXISTS: &str = include_str!("../sql/tag_exists.sql");
+pub const PREDICATE_ALL: &str = include_str!("../sql/predicate_all.sql");
+pub const PREDICATE_PUT: &str = include_str!("../sql/predicate_put.sql");
+pub const PREDICATE_DELETE: &str = include_str!("../sql/predicate_delete.sql");
 pub const TAG_CREATE: &str = include_str!("../sql/tag_create.sql");
 pub const TAG_AUTOCREATE: &str = include_str!("../sql/tag_autocreate.sql");
 pub const TAG_SEED_RESERVED: &str = include_str!("../sql/tag_seed_reserved.sql");
@@ -123,6 +126,9 @@ mod tests {
         // because of where '_' sits in ASCII), so constants are derived into file names before sorting against the disk listing.
         let mut expected_files: Vec<String> = vec![
             ("TAG_EXISTS", TAG_EXISTS),
+            ("PREDICATE_ALL", PREDICATE_ALL),
+            ("PREDICATE_PUT", PREDICATE_PUT),
+            ("PREDICATE_DELETE", PREDICATE_DELETE),
             ("TAG_CREATE", TAG_CREATE),
             ("TAG_AUTOCREATE", TAG_AUTOCREATE),
             ("TAG_SEED_RESERVED", TAG_SEED_RESERVED),

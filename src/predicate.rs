@@ -13,6 +13,69 @@ pub enum Predicate<A> {
 }
 
 impl<A> Predicate<A> {
+    pub fn try_expand<B, E>(
+        self,
+        atom: &mut impl FnMut(A) -> Result<Predicate<B>, E>,
+    ) -> Result<Predicate<B>, E> {
+        Ok(match self {
+            Self::Atom(value) => atom(value)?,
+            Self::Not(a) => Predicate::Not(Box::new(a.try_expand(atom)?)),
+            Self::All(a, b) => {
+                Predicate::All(Box::new(a.try_expand(atom)?), Box::new(b.try_expand(atom)?))
+            }
+            Self::Any(a, b) => {
+                Predicate::Any(Box::new(a.try_expand(atom)?), Box::new(b.try_expand(atom)?))
+            }
+            Self::Mutex(args) => Predicate::Mutex(
+                args.into_iter()
+                    .map(|a| a.try_expand(atom))
+                    .collect::<Result<_, _>>()?,
+            ),
+        })
+    }
+
+    pub fn display(&self, atom: &impl Fn(&A) -> Result<String, String>) -> Result<String, String> {
+        self.display_at(atom, 0)
+    }
+
+    fn display_at(
+        &self,
+        atom: &impl Fn(&A) -> Result<String, String>,
+        parent: u8,
+    ) -> Result<String, String> {
+        let precedence = match self {
+            Self::Any(..) => 1,
+            Self::All(..) => 2,
+            Self::Not(..) => 3,
+            _ => 4,
+        };
+        let rendered = match self {
+            Self::Atom(a) => atom(a)?,
+            Self::Not(a) => format!("!{}", a.display_at(atom, precedence)?),
+            Self::All(a, b) => format!(
+                "{}&{}",
+                a.display_at(atom, precedence)?,
+                b.display_at(atom, precedence)?
+            ),
+            Self::Any(a, b) => format!(
+                "{}|{}",
+                a.display_at(atom, precedence)?,
+                b.display_at(atom, precedence)?
+            ),
+            Self::Mutex(args) => format!(
+                "mutex({})",
+                args.iter()
+                    .map(|a| a.display(atom))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(",")
+            ),
+        };
+        Ok(if precedence < parent {
+            format!("({rendered})")
+        } else {
+            rendered
+        })
+    }
     pub fn eval_with(&self, atom: &impl Fn(&A) -> bool) -> bool {
         match self {
             Self::Atom(value) => atom(value),

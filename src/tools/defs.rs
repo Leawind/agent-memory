@@ -15,6 +15,9 @@ use std::sync::OnceLock;
 pub const TAG_CREATE: &str = "tag_create";
 pub const TAG_LIST: &str = "tag_list";
 pub const TAG_RULE_LIST: &str = "tag_rule_list";
+pub const PREDICATE_LIST: &str = "predicate_list";
+pub const PREDICATE_SET: &str = "predicate_set";
+pub const PREDICATE_DELETE: &str = "predicate_delete";
 pub const TAG_UPDATE: &str = "tag_update";
 pub const TAG_DELETE: &str = "tag_delete";
 pub const MEMORY_CREATE: &str = "memory_create";
@@ -32,6 +35,9 @@ pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
     TAG_LIST,
     TAG_RULE_LIST,
+    PREDICATE_LIST,
+    PREDICATE_SET,
+    PREDICATE_DELETE,
     TAG_UPDATE,
     TAG_DELETE,
     MEMORY_CREATE,
@@ -48,10 +54,19 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive; quote names containing operators, whitespace or parentheses ('single' or \"double\" quotes, backslash escapes). Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
+        def(PREDICATE_LIST,
+            "List global and your own named tag predicates, including name, predicate, description and scope. @name resolves your predicate first, then global; @global::name and @user::name choose explicitly. User scope belongs to the token identity; open-mode callers share local scope and anonymous callers share anonymous scope. Predicate names follow tag naming rules. Returns predicate definitions only, never memory content.",
+            json!({"type":"object", "properties":{}, "additionalProperties":false}), true, false),
+        def(PREDICATE_SET,
+            "Create or replace a named Boolean tag predicate. Names follow tag naming rules (1-100 Unicode letters/digits or _-.; starts with letter/digit/_). Predicate supports &, |, !, mutex and @references; persisted predicates use literal tags, not regex. References bind stable IDs and cycles are rejected. description is required (may be empty, max 512 chars). User scope is the default; global scope requires the independent predicate_manage_global permission in addition to read. Global definitions only reference global predicates. Changes revalidate global rules and all memories atomically; nonmonotone definitions cannot be used by derivations. Returns a saved flag only.",
+            json!({"type":"object","properties":{"name":{"type":"string"},"predicate":{"type":"string","minLength":1,"maxLength":32768},"description":{"type":"string","maxLength":512},"scope":{"type":"string","enum":["user","global"],"default":"user"}},"required":["name","predicate","description"],"additionalProperties":false}), false, false),
+        def(PREDICATE_DELETE,
+            "Delete your named predicate, or a global predicate with predicate_manage_global. Referenced predicates must first be removed from definitions, rules and decay policies. scope defaults to user. Returns a deleted flag only.",
+            json!({"type":"object","properties":{"name":{"type":"string"},"scope":{"type":"string","enum":["user","global"],"default":"user"}},"required":["name"],"additionalProperties":false}), false, true),
         def(
             MEMORY_USE,
             "Record that a memory was actually used in a decision or action. Search/list exposure does not reinforce memory; successful full reads are recorded automatically with weaker weight. Use this only for actual use, not for merely seeing a result. event_key is a caller-generated idempotency key (1-100 chars, retained for 30 days); retries with the same key and identity do not count twice. Repeated uses by the same identity within 60 seconds are logged but receive zero extra reinforcement. Access never overrides expiry or archives. Returns recorded and reinforced flags, never memory content.",
@@ -325,6 +340,8 @@ pub fn affects_search(tool: &str) -> bool {
     matches!(
         tool,
         TAG_CREATE
+            | PREDICATE_SET
+            | PREDICATE_DELETE
             | TAG_UPDATE
             | TAG_DELETE
             | MEMORY_CREATE
@@ -374,8 +391,8 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(
-            read_only, 5,
-            "the contract should have exactly 5 read-only tools"
+            read_only, 6,
+            "the contract should have exactly 6 read-only tools"
         );
     }
 

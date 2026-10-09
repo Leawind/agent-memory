@@ -12,7 +12,7 @@ use std::collections::HashMap;
 impl Store {
     pub const SETTING_TAG_RULES: &'static str = "tag_rules";
 
-    fn tag_id_names(&self) -> Result<HashMap<i64, String>, String> {
+    pub fn tag_id_names(&self) -> Result<HashMap<i64, String>, String> {
         let mut statement = self
             .conn
             .prepare(sql::TAG_EXPORT_ALL)
@@ -23,19 +23,46 @@ impl Store {
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
-    pub fn tag_rules(&self) -> Result<Rules, String> {
+    pub fn stored_tag_rules(&self) -> Result<Rules<crate::named_predicates::Atom>, String> {
         match self.settings_get(Self::SETTING_TAG_RULES)? {
-            None => Ok(Rules::default()),
+            None => Ok(Rules {
+                constraints: Vec::new(),
+                derivations: Vec::new(),
+            }),
             Some(raw) => serde_json::from_str(&raw).map_err(|e| format!("corrupt tag rules: {e}")),
         }
     }
 
-    pub fn tag_rules_view(&self) -> Result<Value, String> {
-        serde_json::to_value(self.tag_rules()?.specs(&self.tag_id_names()?)?)
-            .map_err(|e| e.to_string())
+    pub fn tag_rules(&self) -> Result<Rules, String> {
+        let registry = self.predicate_registry("global")?;
+        let rules = self
+            .stored_tag_rules()?
+            .try_map(&mut |expr| registry.resolve(expr))?;
+        for direction in rules.derivations.iter().flat_map(|r| &r.directions) {
+            if !direction.predicate.positive_with(&|_| true) {
+                return Err(
+                    "derivations require positive monotone predicates, including named references"
+                        .into(),
+                );
+            }
+        }
+        Ok(rules)
     }
 
-    pub fn compile_tag_rules(&self, value: &Value) -> Result<Rules, String> {
+    pub fn tag_rules_view(&self) -> Result<Value, String> {
+        let registry = self.predicate_registry("global")?;
+        let tags = self.tag_id_names()?;
+        serde_json::to_value(
+            self.stored_tag_rules()?
+                .specs_using(&tags, &|expr| registry.display(expr, &tags))?,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn compile_tag_rules(
+        &self,
+        value: &Value,
+    ) -> Result<Rules<crate::named_predicates::Atom>, String> {
         let specs: RuleSpecs =
             serde_json::from_value(value.clone()).map_err(|e| format!("invalid tag rules: {e}"))?;
         let tags = self
@@ -43,12 +70,36 @@ impl Store {
             .into_iter()
             .map(|(id, name)| (name, id))
             .collect();
-        Rules::compile(specs, &tags)
+        let registry = self.predicate_registry("global")?;
+        Rules::compile_using(
+            specs,
+            &tags,
+            &|expr| registry.bind(expr, &tags),
+            &crate::named_predicates::Atom::Tag,
+            &|expr| Ok(registry.resolve(expr)?.positive_with(&|_| true)),
+        )
     }
 
     /// The caller holds an IMMEDIATE transaction for validation and publication together.
     pub fn replace_tag_rules(&self, value: &Value, preview: bool) -> Result<Value, String> {
-        let rules = self.compile_tag_rules(value)?;
+        let stored = self.compile_tag_rules(value)?;
+        let registry = self.predicate_registry("global")?;
+        let rules = stored.try_map(&mut |expr| registry.resolve(expr))?;
+        let result = self.apply_tag_rules(&rules, preview)?;
+        if !preview {
+            self.settings_put(
+                Self::SETTING_TAG_RULES,
+                &serde_json::to_string(&stored).map_err(|e| e.to_string())?,
+            )?;
+        }
+        Ok(result)
+    }
+
+    pub fn recompute_tag_rules(&self) -> Result<(), String> {
+        self.apply_tag_rules(&self.tag_rules()?, false).map(|_| ())
+    }
+
+    fn apply_tag_rules(&self, rules: &Rules, preview: bool) -> Result<Value, String> {
         let mut violations = Vec::new();
         let mut count = 0;
         let mut recomputed = Vec::new();
@@ -80,10 +131,6 @@ impl Store {
                 .join(", ");
             return Err(format!("tag rules rejected: {count} existing memories violate constraints ({ids}); preview the rules for details"));
         }
-        self.settings_put(
-            Self::SETTING_TAG_RULES,
-            &serde_json::to_string(&rules).map_err(|e| e.to_string())?,
-        )?;
         for (id, original, closure) in recomputed {
             self.replace_effective_tags(id, &original, &closure)?;
         }
@@ -167,6 +214,15 @@ impl Store {
     pub fn assert_tag_deletable(&self, name: &str) -> Result<(), String> {
         let ids = self.tag_ids_for_names(&[name.to_string()])?;
         if let Some(id) = ids.first() {
+            if self
+                .predicate_rows(None)?
+                .iter()
+                .any(|d| d.predicate.references_tag(*id))
+            {
+                return Err(format!(
+                    "tag '{name}' is referenced by a named predicate; remove that reference first"
+                ));
+            }
             let rules = self.tag_rules()?;
             let mut refs = rules
                 .constraints

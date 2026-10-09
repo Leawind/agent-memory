@@ -96,6 +96,18 @@ CREATE TABLE IF NOT EXISTS identities (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_token_hash ON identities(token_hash);
 
+CREATE TABLE IF NOT EXISTS tag_predicates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    namespace TEXT NOT NULL,
+    owner_id INTEGER REFERENCES identities(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    predicate TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    CHECK ((owner_id IS NULL AND namespace IN ('global','local','anonymous'))
+        OR (owner_id IS NOT NULL AND namespace = 'identity:' || owner_id)),
+    UNIQUE (namespace, name)
+);
+
 -- memory_embeddings：语义搜索的向量缓存（派生数据，可随时用补跑重建）。
 -- 每条记忆 × 每个模型 ID 一行：model 列存用户指定的稳定 ID，
 -- 指纹由 settings 中的 embedding_cache:<ID> 记录。不同 ID 的缓存互不覆盖，由运行时

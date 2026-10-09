@@ -502,6 +502,7 @@ impl Store {
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
             "tag_rules": self.tag_rules_view()?,
+            "predicates": self.global_predicates_view()?,
             "lifecycle_policy": self.lifecycle_policy()?,
         }))
     }
@@ -589,6 +590,7 @@ impl Store {
         }
 
         let empty_rules = json!({"constraints": []});
+        self.import_global_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
         if let Some(value) = dump.get("lifecycle_policy") {
             let policy = crate::lifecycle::Policy::parse(value)?;
             self.settings_put(

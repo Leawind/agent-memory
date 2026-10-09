@@ -34,6 +34,7 @@ pub type TagExpr = Predicate<TagAtom>;
 #[derive(Debug, Clone)]
 pub enum TagAtom {
     Tag(String),
+    Named(String),
     Regex(Box<regex::Regex>),
 }
 
@@ -44,6 +45,9 @@ impl TagExpr {
         self.eval_with(&|atom| match atom {
             TagAtom::Tag(name) => tags.iter().any(|t| t == name),
             TagAtom::Regex(re) => tags.iter().any(|t| re.is_match(t)),
+            TagAtom::Named(_) => {
+                unreachable!("named predicates must be resolved before evaluation")
+            }
         })
     }
 
@@ -332,6 +336,17 @@ impl Parser {
                     Some((Tok::RParen, _)) => Ok(TagExpr::Mutex(args)),
                     _ => Err(format!("missing ')' for mutex at position {pos}")),
                 }
+            }
+            Tok::Tag(name) if name.starts_with('@') => {
+                let reference = &name[1..];
+                let (scope, raw) = reference
+                    .split_once("::")
+                    .map_or((None, reference), |(scope, name)| (Some(scope), name));
+                if scope.is_some_and(|scope| scope != "global" && scope != "user") {
+                    return Err("predicate scope must be global or user".into());
+                }
+                crate::model::normalize_tag_name(raw)?;
+                Ok(TagExpr::Atom(TagAtom::Named(reference.to_string())))
             }
             Tok::Tag(name) => Ok(TagExpr::Atom(TagAtom::Tag(name))),
             Tok::Regex(pattern) => {

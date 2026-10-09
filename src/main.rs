@@ -15,6 +15,7 @@ mod embed;
 mod http;
 mod lifecycle;
 mod model;
+mod named_predicates;
 mod notify;
 mod predicate;
 mod protocol;

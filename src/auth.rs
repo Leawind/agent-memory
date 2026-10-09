@@ -22,16 +22,18 @@ pub enum Cap {
     Update,
     Delete,
     TagManage,
+    PredicateManageGlobal,
     Admin,
 }
 
 impl Cap {
-    pub const ALL: [Cap; 6] = [
+    pub const ALL: [Cap; 7] = [
         Cap::Read,
         Cap::Create,
         Cap::Update,
         Cap::Delete,
         Cap::TagManage,
+        Cap::PredicateManageGlobal,
         Cap::Admin,
     ];
 
@@ -42,6 +44,7 @@ impl Cap {
             Cap::Update => "update",
             Cap::Delete => "delete",
             Cap::TagManage => "tag_manage",
+            Cap::PredicateManageGlobal => "predicate_manage_global",
             Cap::Admin => "admin",
         }
     }
@@ -136,6 +139,7 @@ pub enum Mode {
 /// Request-scoped identity context: built by the HTTP layer after resolving the Bearer token / anonymous settings, and threaded through tool and API handlers.
 #[derive(Debug, Clone)]
 pub struct IdentityCtx {
+    pub identity_id: Option<i64>,
     pub name: String,
     pub permissions: Permissions,
     pub mode: Mode,
@@ -146,6 +150,7 @@ impl IdentityCtx {
     /// which is how the UI can create the first identity and enable auth).
     pub fn open_mode() -> Self {
         IdentityCtx {
+            identity_id: None,
             name: "local".into(),
             permissions: Permissions::all(),
             mode: Mode::Open,
@@ -156,6 +161,7 @@ impl IdentityCtx {
     /// based on the settings' `anonymous_permissions`; the capability set is configured by the operator.
     pub fn anonymous(permissions: Permissions) -> Self {
         IdentityCtx {
+            identity_id: None,
             name: "anonymous".into(),
             permissions,
             mode: Mode::Anonymous,
@@ -164,6 +170,7 @@ impl IdentityCtx {
 
     pub fn new(name: &str, permissions: Permissions) -> Self {
         IdentityCtx {
+            identity_id: None,
             name: name.to_string(),
             permissions,
             mode: Mode::Token,
@@ -172,6 +179,17 @@ impl IdentityCtx {
 
     pub fn can(&self, cap: Cap) -> bool {
         self.permissions.has(cap)
+    }
+
+    pub fn predicate_namespace(&self) -> Result<String, String> {
+        match self.mode {
+            Mode::Open => Ok("local".into()),
+            Mode::Anonymous => Ok("anonymous".into()),
+            Mode::Token => self
+                .identity_id
+                .map(|id| format!("identity:{id}"))
+                .ok_or_else(|| "token identity has no stable id".into()),
+        }
     }
 
     pub fn require(&self, cap: Cap) -> Result<(), ToolError> {
@@ -209,6 +227,7 @@ impl IdentityCtx {
     pub fn summary(&self) -> Value {
         json!({
             "name": self.name,
+            "identity_id": self.identity_id,
             "mode": self.mode.as_str(),
             "permissions": self.permissions.to_json(),
         })
@@ -276,7 +295,7 @@ mod tests {
         let parsed = Permissions::from_json(&p.to_json()).unwrap();
         assert_eq!(p, parsed);
         assert_eq!(parsed.names(), vec!["read", "admin"]);
-        assert_eq!(Permissions::all().names().len(), 6);
+        assert_eq!(Permissions::all().names().len(), 7);
     }
 
     #[test]

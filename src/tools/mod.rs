@@ -13,6 +13,9 @@
 mod defs;
 mod memory_ops;
 mod params;
+mod predicate_ops;
+#[cfg(test)]
+mod predicate_tests;
 mod render;
 mod tag_ops;
 
@@ -24,8 +27,9 @@ use std::path::Path;
 
 pub use defs::{
     tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIFECYCLE,
-    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE,
-    TAG_LIST, TAG_RULE_LIST, TAG_UPDATE, TOOL_NAMES,
+    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE,
+    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST, TAG_UPDATE,
+    TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -161,6 +165,11 @@ pub fn execute(
     check_known_args(name, map)?;
     if TOOL_NAMES.contains(&name) {
         ctx.require_all(defs::required_caps(name))?;
+        if matches!(name, PREDICATE_SET | PREDICATE_DELETE)
+            && predicate_ops::scope(map)? == "global"
+        {
+            ctx.require(Cap::PredicateManageGlobal)?;
+        }
         reserved_tag_guard(st, ctx, name, map)?;
     }
 
@@ -168,10 +177,13 @@ pub fn execute(
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
         defs::TAG_RULE_LIST => st.tag_rules_view().map_err(ToolError::from),
+        PREDICATE_LIST => st.predicate_list(ctx).map_err(ToolError::from),
+        PREDICATE_SET => predicate_ops::set(st, ctx, map),
+        PREDICATE_DELETE => predicate_ops::delete(st, ctx, map),
         defs::TAG_UPDATE => tag_ops::tag_update(st, map),
         defs::TAG_DELETE => tag_ops::tag_delete(st, map),
         defs::MEMORY_CREATE => memory_ops::memory_create(st, map),
-        defs::MEMORY_LIST => memory_ops::memory_list(st, map),
+        defs::MEMORY_LIST => memory_ops::memory_list(st, ctx, map),
         defs::MEMORY_SEARCH => memory_ops::memory_search(st, ctx, map),
         defs::MEMORY_GET => memory_ops::memory_get(st, map),
         defs::MEMORY_UPDATE => memory_ops::memory_update(st, map),

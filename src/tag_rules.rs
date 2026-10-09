@@ -1,6 +1,8 @@
 //! Persistent constraints bind stable tag ids, while the public form uses current names.
 
-use crate::tag_expr::{self, TagAtom, TagExpr};
+#[cfg(test)]
+use crate::tag_expr::TagAtom;
+use crate::tag_expr::{self, TagExpr};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -35,22 +37,22 @@ pub struct DerivationParts {
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Rules {
-    pub constraints: Vec<Constraint>,
+#[serde(deny_unknown_fields, bound(deserialize = "A: Deserialize<'de>"))]
+pub struct Rules<A = i64> {
+    pub constraints: Vec<Constraint<A>>,
     #[serde(default)]
-    pub derivations: Vec<Derivation>,
+    pub derivations: Vec<Derivation<A>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Derivation {
+pub struct Derivation<A = i64> {
     pub name: String,
-    pub directions: Vec<DerivedRule>,
+    pub directions: Vec<DerivedRule<A>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct DerivedRule {
-    pub predicate: Expr,
+pub struct DerivedRule<A = i64> {
+    pub predicate: crate::predicate::Predicate<A>,
     pub derived: Vec<i64>,
 }
 
@@ -68,9 +70,9 @@ pub struct Closure {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Constraint {
+pub struct Constraint<A = i64> {
     pub name: String,
-    pub expression: Expr,
+    pub expression: crate::predicate::Predicate<A>,
 }
 
 pub type Expr = crate::predicate::Predicate<i64>;
@@ -85,12 +87,14 @@ impl Expr {
             ids.insert(*id);
         });
     }
+    #[cfg(test)]
     fn bind(expr: TagExpr, tags: &HashMap<String, i64>) -> Result<Self, String> {
         expr.try_map(&mut |atom| match atom {
             TagAtom::Tag(name) => Ok(*tags.get(&name).ok_or_else(|| {
                 format!("unknown tag '{name}' in rule; create the tag first")
             })?),
             TagAtom::Regex(_) => Err("persistent rules require literal tag names; regex atoms are only supported in queries".into()),
+            TagAtom::Named(_) => Err("named predicates require a scoped registry".into()),
         })
     }
 
@@ -103,56 +107,16 @@ impl Expr {
         self.visit_atoms(&mut |tag| found |= *tag == id);
         found
     }
-
-    fn display(&self, tags: &HashMap<i64, String>) -> Result<String, String> {
-        self.display_with_precedence(tags, 0)
-    }
-
-    fn display_with_precedence(
-        &self,
-        tags: &HashMap<i64, String>,
-        parent: u8,
-    ) -> Result<String, String> {
-        let precedence = match self {
-            Self::Any(..) => 1,
-            Self::All(..) => 2,
-            Self::Not(..) => 3,
-            _ => 4,
-        };
-        let rendered = match self {
-            Self::Atom(id) => tags
-                .get(id)
-                .ok_or_else(|| format!("rule references missing tag id {id}"))?
-                .clone(),
-            Self::Not(a) => format!("!{}", a.display_with_precedence(tags, precedence)?),
-            Self::All(a, b) => format!(
-                "{}&{}",
-                a.display_with_precedence(tags, precedence)?,
-                b.display_with_precedence(tags, precedence)?
-            ),
-            Self::Any(a, b) => format!(
-                "{}|{}",
-                a.display_with_precedence(tags, precedence)?,
-                b.display_with_precedence(tags, precedence)?
-            ),
-            Self::Mutex(args) => format!(
-                "mutex({})",
-                args.iter()
-                    .map(|a| a.display(tags))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(",")
-            ),
-        };
-        Ok(if precedence < parent {
-            format!("({rendered})")
-        } else {
-            rendered
-        })
-    }
 }
 
-impl Rules {
-    pub fn compile(specs: RuleSpecs, tags: &HashMap<String, i64>) -> Result<Self, String> {
+impl<A> Rules<A> {
+    pub fn compile_using(
+        specs: RuleSpecs,
+        tags: &HashMap<String, i64>,
+        bind: &impl Fn(TagExpr) -> Result<crate::predicate::Predicate<A>, String>,
+        tag_atom: &impl Fn(i64) -> A,
+        positive: &impl Fn(&crate::predicate::Predicate<A>) -> Result<bool, String>,
+    ) -> Result<Self, String> {
         if specs.constraints.len() > 128 || specs.derivations.len() > 128 {
             return Err("at most 128 constraints and 128 derivations are allowed".into());
         }
@@ -166,7 +130,7 @@ impl Rules {
             if !names.insert(name.clone()) {
                 return Err(format!("duplicate rule name '{name}'"));
             }
-            let expression = Expr::bind(tag_expr::parse_rule(&spec.expression)?, tags)
+            let expression = bind(tag_expr::parse_rule(&spec.expression)?)
                 .map_err(|e| format!("rule '{name}': {e}"))?;
             constraints.push(Constraint { name, expression });
         }
@@ -176,7 +140,7 @@ impl Rules {
                 DerivationSpec::Predicate(parts) => (
                     parts.name,
                     vec![DerivedRule {
-                        predicate: Expr::bind(tag_expr::parse_rule(&parts.predicate)?, tags)?,
+                        predicate: bind(tag_expr::parse_rule(&parts.predicate)?)?,
                         derived: bind_set(parts.derived, tags)?,
                     }],
                 ),
@@ -198,17 +162,17 @@ impl Rules {
                         let left = parse_set(left, tags)?;
                         vec![
                             DerivedRule {
-                                predicate: conjunction(&left),
+                                predicate: conjunction(&left, tag_atom),
                                 derived: right.clone(),
                             },
                             DerivedRule {
-                                predicate: conjunction(&right),
+                                predicate: conjunction(&right, tag_atom),
                                 derived: left,
                             },
                         ]
                     } else {
                         vec![DerivedRule {
-                            predicate: Expr::bind(tag_expr::parse_rule(left)?, tags)?,
+                            predicate: bind(tag_expr::parse_rule(left)?)?,
                             derived: right,
                         }]
                     };
@@ -222,7 +186,12 @@ impl Rules {
             if !names.insert(name.clone()) {
                 return Err(format!("duplicate rule name '{name}'"));
             }
-            if directions.iter().any(|r| !r.predicate.positive()) {
+            if directions
+                .iter()
+                .map(|r| positive(&r.predicate))
+                .collect::<Result<Vec<_>, _>>()?
+                .contains(&false)
+            {
                 return Err(
                     "derivations must be positive: negation and mutex are not allowed".into(),
                 );
@@ -241,7 +210,11 @@ impl Rules {
         })
     }
 
-    pub fn specs(&self, tags: &HashMap<i64, String>) -> Result<RuleSpecs, String> {
+    pub fn specs_using(
+        &self,
+        tags: &HashMap<i64, String>,
+        display: &impl Fn(&crate::predicate::Predicate<A>) -> Result<String, String>,
+    ) -> Result<RuleSpecs, String> {
         Ok(RuleSpecs {
             derivations: self
                 .derivations
@@ -256,7 +229,7 @@ impl Rules {
                     } else {
                         format!(
                             "{} => {}",
-                            rule.directions[0].predicate.display(tags)?,
+                            display(&rule.directions[0].predicate)?,
                             display_set(&rule.directions[0].derived, tags)?
                         )
                     };
@@ -272,10 +245,72 @@ impl Rules {
                 .map(|rule| {
                     Ok(RuleSpec {
                         name: rule.name.clone(),
-                        expression: rule.expression.display(tags)?,
+                        expression: display(&rule.expression)?,
                     })
                 })
                 .collect::<Result<_, String>>()?,
+        })
+    }
+
+    pub fn try_map<B>(
+        &self,
+        bind: &mut impl FnMut(
+            &crate::predicate::Predicate<A>,
+        ) -> Result<crate::predicate::Predicate<B>, String>,
+    ) -> Result<Rules<B>, String> {
+        Ok(Rules {
+            constraints: self
+                .constraints
+                .iter()
+                .map(|r| {
+                    Ok(Constraint {
+                        name: r.name.clone(),
+                        expression: bind(&r.expression)?,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+            derivations: self
+                .derivations
+                .iter()
+                .map(|r| {
+                    Ok(Derivation {
+                        name: r.name.clone(),
+                        directions: r
+                            .directions
+                            .iter()
+                            .map(|d| {
+                                Ok(DerivedRule {
+                                    predicate: bind(&d.predicate)?,
+                                    derived: d.derived.clone(),
+                                })
+                            })
+                            .collect::<Result<_, String>>()?,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+        })
+    }
+}
+
+impl Rules {
+    #[cfg(test)]
+    pub fn compile(specs: RuleSpecs, tags: &HashMap<String, i64>) -> Result<Self, String> {
+        Self::compile_using(
+            specs,
+            tags,
+            &|expr| Expr::bind(expr, tags),
+            &|id| id,
+            &|expr| Ok(expr.positive()),
+        )
+    }
+    #[cfg(test)]
+    pub fn specs(&self, tags: &HashMap<i64, String>) -> Result<RuleSpecs, String> {
+        self.specs_using(tags, &|expr| {
+            expr.display(&|id| {
+                tags.get(id)
+                    .cloned()
+                    .ok_or_else(|| format!("missing tag id {id}"))
+            })
         })
     }
 
@@ -395,11 +430,11 @@ fn parse_set(raw: &str, tags: &HashMap<String, i64>) -> Result<Vec<i64>, String>
     bind_set(raw.split(',').map(str::to_string).collect(), tags)
 }
 
-fn conjunction(ids: &[i64]) -> Expr {
+fn conjunction<A>(ids: &[i64], atom: &impl Fn(i64) -> A) -> crate::predicate::Predicate<A> {
     ids.iter()
         .copied()
-        .map(Expr::Atom)
-        .reduce(|a, b| Expr::All(Box::new(a), Box::new(b)))
+        .map(|id| crate::predicate::Predicate::Atom(atom(id)))
+        .reduce(|a, b| crate::predicate::Predicate::All(Box::new(a), Box::new(b)))
         .expect("validated nonempty set")
 }
 

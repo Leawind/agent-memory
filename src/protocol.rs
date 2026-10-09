@@ -766,7 +766,7 @@ mod tests {
         let instructions = resp["result"]["instructions"].as_str().unwrap();
         assert_eq!(
             instructions,
-            "这是团队共享记忆库，提交前先检索。\n\nCaller identity: alice; permissions: read, create, update, delete, tag_manage, admin."
+            "这是团队共享记忆库，提交前先检索。\n\nCaller identity: alice; permissions: read, create, update, delete, tag_manage, predicate_manage_global, admin."
         );
         cleanup(&store);
     }
