@@ -8,11 +8,6 @@
   >
     <p>{{ t(`lifecycle.${metadata.state}`) }}</p>
     <el-form label-position="top" :disabled="saving" @submit.prevent>
-      <el-form-item :label="t('lifecycle.kind')">
-        <el-select v-model="draft.kind">
-          <el-option v-for="kind in kinds" :key="kind" :value="kind" :label="t(`lifecycle.${kind}`)" />
-        </el-select>
-      </el-form-item>
       <el-form-item :label="t('lifecycle.expires')">
         <el-date-picker v-model="expiry" type="datetime" clearable :placeholder="t('lifecycle.noExpiry')" />
       </el-form-item>
@@ -42,10 +37,8 @@ import type { LifecycleMetadata } from '../types'
 
 const props = defineProps<{ visible: boolean; memoryId: string; metadata: LifecycleMetadata }>()
 const emit = defineEmits<{ 'update:visible': [value: boolean]; saved: [] }>()
-const kinds = ['fact', 'preference', 'procedure', 'context', 'event'] as const
 const api = useApiClient()
 const initial = () => ({
-  kind: props.metadata.kind,
   pinned: props.metadata.pinned,
   archived: props.metadata.archived_at !== null,
 })

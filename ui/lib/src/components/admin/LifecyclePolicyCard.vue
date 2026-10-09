@@ -3,19 +3,52 @@
     <el-card shadow="never">
       <template #header>{{ t('lifecycle.policyTitle') }}</template>
       <el-form label-position="top" @submit.prevent>
-        <el-form-item v-for="kind in kinds" :key="kind" :label="t(`lifecycle.${kind}`)">
+        <p class="hint">{{ t('lifecycle.orderHint') }}</p>
+        <div v-for="(rule, index) in draft.rules" :key="index" class="decay-rule">
+          <el-form-item :label="t('predicates.expression')"
+            ><el-input v-model="rule.predicate" :maxlength="32768" placeholder="@temporary &amp; !durable"
+          /></el-form-item>
           <div class="half-life-row">
-            <el-checkbox :model-value="draft.half_life_days[kind] !== null" @change="setDecay(kind, !!$event)">
-              {{ t('lifecycle.enableDecay') }}
-            </el-checkbox>
+            <el-checkbox
+              :model-value="rule.half_life_days !== null"
+              @change="rule.half_life_days = $event ? 30 : null"
+              >{{ t('lifecycle.enableDecay') }}</el-checkbox
+            >
             <el-input-number
-              v-if="draft.half_life_days[kind] !== null"
-              v-model="draft.half_life_days[kind]"
+              v-if="rule.half_life_days !== null"
+              v-model="rule.half_life_days"
               :min="1"
               :max="36500"
               :precision="1"
             />
-            <span>{{ draft.half_life_days[kind] === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
+            <span>{{ rule.half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
+            <el-button :disabled="index === 0" @click="move(index, -1)">{{ t('lifecycle.moveUp') }}</el-button>
+            <el-button :disabled="index === draft.rules.length - 1" @click="move(index, 1)">{{
+              t('lifecycle.moveDown')
+            }}</el-button>
+            <el-button @click="draft.rules.splice(index, 1)">{{ t('common.delete') }}</el-button>
+          </div>
+        </div>
+        <el-button
+          :disabled="draft.rules.length >= 128"
+          @click="draft.rules.push({ predicate: '', half_life_days: 30 })"
+          >{{ t('lifecycle.addRule') }}</el-button
+        >
+        <el-form-item :label="t('lifecycle.defaultDecay')">
+          <div class="half-life-row">
+            <el-checkbox
+              :model-value="draft.default_half_life_days !== null"
+              @change="draft.default_half_life_days = $event ? 30 : null"
+              >{{ t('lifecycle.enableDecay') }}</el-checkbox
+            >
+            <el-input-number
+              v-if="draft.default_half_life_days !== null"
+              v-model="draft.default_half_life_days"
+              :min="1"
+              :max="36500"
+              :precision="1"
+            />
+            <span>{{ draft.default_half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
           </div>
         </el-form-item>
         <el-form-item :label="t('lifecycle.freshnessWeight')">
@@ -59,15 +92,16 @@ import { computed, ref, watch } from 'vue'
 import { useApiClient } from '../../api/client'
 import { t } from '../../i18n'
 import { toastSuccess } from '../../toast'
-import type { AccessStats, LifecyclePolicy, LifecycleMetadata } from '../../types'
+import type { AccessStats, LifecyclePolicy } from '../../types'
 import { run } from './caps'
 
 const props = defineProps<{ policy: LifecyclePolicy; active: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const api = useApiClient()
-const kinds = ['fact', 'preference', 'procedure', 'context', 'event'] as const
-const defaults = { fact: 365, preference: 365, procedure: 730, context: 30, event: 7 }
-const copy = (policy: LifecyclePolicy): LifecyclePolicy => ({ ...policy, half_life_days: { ...policy.half_life_days } })
+const copy = (policy: LifecyclePolicy): LifecyclePolicy => ({
+  ...policy,
+  rules: policy.rules.map((rule) => ({ ...rule })),
+})
 const draft = ref(copy(props.policy))
 const stats = ref<AccessStats | null>(null)
 const saving = ref(false)
@@ -88,16 +122,20 @@ watch(
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(props.policy))
 const valid = computed(
   () =>
-    Object.values(draft.value.half_life_days).every(
+    [draft.value.default_half_life_days, ...draft.value.rules.map((rule) => rule.half_life_days)].every(
       (days) => days === null || (Number.isFinite(days) && days >= 1 && days <= 36500),
     ) &&
+    draft.value.rules.every((rule) => !!rule.predicate.trim()) &&
     [draft.value.freshness_weight, draft.value.reinforcement_weight].every(
       (weight) => Number.isFinite(weight) && weight >= 0 && weight <= 5,
     ),
 )
 
-function setDecay(kind: LifecycleMetadata['kind'], enabled: boolean): void {
-  draft.value.half_life_days[kind] = enabled ? (draft.value.half_life_days[kind] ?? defaults[kind]) : null
+function move(index: number, direction: number): void {
+  const next = index + direction
+  if (next < 0 || next >= draft.value.rules.length) return
+  const [rule] = draft.value.rules.splice(index, 1)
+  draft.value.rules.splice(next, 0, rule!)
 }
 
 async function save(): Promise<void> {

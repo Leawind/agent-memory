@@ -209,3 +209,59 @@ impl BoundExpr {
         found
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn row(id: i64, predicate: BoundExpr) -> Definition {
+        Definition {
+            id,
+            namespace: "global".into(),
+            name: format!("p{id}"),
+            predicate,
+            description: String::new(),
+        }
+    }
+    #[test]
+    fn cached_dag_expansion_is_bounded_by_dependency_depth_and_size() {
+        let rows = (0..70)
+            .map(|id| {
+                row(
+                    id,
+                    BoundExpr::Atom(if id == 0 {
+                        Atom::Tag(1)
+                    } else {
+                        Atom::Named(id - 1)
+                    }),
+                )
+            })
+            .collect();
+        assert!(Registry::new(rows, "global".into()).is_err());
+        let rows = (0..15)
+            .map(|id| {
+                row(
+                    id,
+                    if id == 0 {
+                        BoundExpr::Atom(Atom::Tag(1))
+                    } else {
+                        BoundExpr::All(
+                            Box::new(BoundExpr::Atom(Atom::Named(id - 1))),
+                            Box::new(BoundExpr::Atom(Atom::Named(id - 1))),
+                        )
+                    },
+                )
+            })
+            .collect();
+        assert!(Registry::new(rows, "global".into()).is_err());
+        let registry = Registry::new(
+            vec![
+                row(0, BoundExpr::Atom(Atom::Tag(1))),
+                row(1, BoundExpr::Not(Box::new(BoundExpr::Atom(Atom::Named(0))))),
+            ],
+            "global".into(),
+        )
+        .unwrap();
+        assert!(registry.expanded[&1].eval(&[]));
+        assert!(!registry.expanded[&1].eval(&[1]));
+    }
+}

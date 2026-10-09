@@ -490,6 +490,10 @@ mod tests {
         cleanup(&path);
         let now = crate::model::now();
         store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {
+            st.settings_put(
+                Store::SETTING_LIFECYCLE_POLICY,
+                &json!({"default_half_life_days":30}).to_string(),
+            )?;
             for (summary, time) in [
                 ("topic old", now - 60 * 86400),
                 ("topic new", now),
@@ -497,10 +501,7 @@ mod tests {
                 ("topic expired", now),
             ] {
                 let id = st.insert_memory(summary, "body", &[], time, time)?;
-                let mut meta = crate::lifecycle::Metadata {
-                    kind: crate::lifecycle::Kind::Context,
-                    ..Default::default()
-                };
+                let mut meta = crate::lifecycle::Metadata::default();
                 if id == 4 {
                     meta.expires_at = Some(0);
                 }

@@ -19,7 +19,7 @@ const detailPayload = {
   created: '2026-10-04 07:00',
   original_tags: ['t1'],
   derived_tags: [],
-  lifecycle: { kind: 'fact', expires_at: null, archived_at: null, pinned: false, state: 'active' },
+  lifecycle: { expires_at: null, archived_at: null, pinned: false, state: 'active' },
   updated: '2026-10-04 08:00',
 }
 const searchPayload = {

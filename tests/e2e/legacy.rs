@@ -83,7 +83,7 @@ fn legacy_client_full_flow() {
     // The full tool surface works with no envelope at all
     let (status, resp) = legacy_post(port, &rpc(json!(3), "tools/list", json!({})), &[]);
     assert_eq!(status, 200);
-    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 15);
+    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 18);
 
     let (status, resp) = legacy_post(
         port,

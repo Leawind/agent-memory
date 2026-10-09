@@ -5,17 +5,15 @@
       "key": "borrow",
       "summary": "Rust borrow checker rules",
       "content": "Rust ownership and borrow checker restrictions. Prefer short borrow lifetimes and explicit ownership transfers.",
-      "tags": ["rust", "procedure"],
-      "age_days": 300,
-      "kind": "procedure"
+      "tags": ["rust", "procedure", "procedure"],
+      "age_days": 300
     },
     {
       "key": "borrow-checklist",
       "summary": "Borrow checklist",
       "content": "Check reference lifetimes before changing ownership. The borrow checklist helps diagnose mutable reference errors.",
-      "tags": ["rust"],
-      "age_days": 100,
-      "kind": "procedure"
+      "tags": ["rust", "procedure"],
+      "age_days": 100
     },
     {
       "key": "traits",
@@ -28,9 +26,8 @@
       "key": "cargo",
       "summary": "Cargo build procedure",
       "content": "Use cargo build and cargo test in the Rust workspace.",
-      "tags": ["rust"],
-      "age_days": 30,
-      "kind": "procedure"
+      "tags": ["rust", "procedure"],
+      "age_days": 30
     },
     {
       "key": "corrosion",
@@ -43,17 +40,15 @@
       "key": "vue",
       "summary": "Vue3 app bootstrap",
       "content": "Build a browser app with Vue3 composition functions and route components.",
-      "tags": ["vue3"],
-      "age_days": 14,
-      "kind": "procedure"
+      "tags": ["vue3", "procedure"],
+      "age_days": 14
     },
     {
       "key": "react",
       "summary": "React app state",
       "content": "React components use state and effects in browser apps.",
-      "tags": ["react"],
-      "age_days": 7,
-      "kind": "procedure"
+      "tags": ["react", "procedure"],
+      "age_days": 7
     },
     {
       "key": "http",
@@ -73,34 +68,30 @@
       "key": "release-current",
       "summary": "Release deployment context",
       "content": "Release deployment uses the staging environment this week.",
-      "tags": ["release"],
-      "age_days": 1,
-      "kind": "context"
+      "tags": ["release", "context"],
+      "age_days": 1
     },
     {
       "key": "release-old",
       "summary": "Earlier release deployment context",
       "content": "Release deployment previously used a temporary environment.",
-      "tags": ["release"],
-      "age_days": 365,
-      "kind": "context"
+      "tags": ["release", "context"],
+      "age_days": 365
     },
     {
       "key": "release-archive",
       "summary": "Archived release deployment plan",
       "content": "Release deployment plan retained for historical inspection.",
-      "tags": ["release"],
+      "tags": ["release", "context"],
       "age_days": 1,
-      "kind": "context",
       "archived": true
     },
     {
       "key": "release-expired",
       "summary": "Expired release deployment token",
       "content": "Release deployment context expired after the maintenance window.",
-      "tags": ["release"],
+      "tags": ["release", "context"],
       "age_days": 0,
-      "kind": "context",
       "expired": true
     },
     {
@@ -121,17 +112,15 @@
       "key": "mod-combined",
       "summary": "Minecraft custom block registration",
       "content": "Register custom blocks using the supported engine extension points.",
-      "tags": ["minecraft-modding"],
-      "age_days": 70,
-      "kind": "procedure"
+      "tags": ["minecraft-modding", "procedure"],
+      "age_days": 70
     },
     {
       "key": "mod-separate",
       "summary": "Minecraft entity component extension",
       "content": "Attach reusable entity components through supported extension APIs.",
-      "tags": ["minecraft", "modding"],
-      "age_days": 50,
-      "kind": "procedure"
+      "tags": ["minecraft", "modding", "procedure"],
+      "age_days": 50
     },
     {
       "key": "game",
@@ -151,52 +140,136 @@
       "key": "popular-unrelated",
       "summary": "Gardening schedule",
       "content": "Water seedlings regularly and keep soil moist.",
-      "tags": ["garden"],
+      "tags": ["garden", "context"],
       "age_days": 0,
-      "kind": "context",
       "uses": 100
     }
   ],
   "derivations": [
-    { "name": "vue-web", "expression": "vue3 => web" },
-    { "name": "react-web", "expression": "react => web" },
-    { "name": "mod-equivalence", "expression": "minecraft-modding <=> minecraft, modding" }
+    {
+      "name": "vue-web",
+      "expression": "vue3 => web"
+    },
+    {
+      "name": "react-web",
+      "expression": "react => web"
+    },
+    {
+      "name": "mod-equivalence",
+      "expression": "minecraft-modding <=> minecraft, modding"
+    }
   ],
   "cases": [
-    { "name": "cross-field-and", "query": "rust borrow", "relevance": { "borrow": 3, "borrow-checklist": 2 } },
+    {
+      "name": "cross-field-and",
+      "query": "rust borrow",
+      "relevance": {
+        "borrow": 3,
+        "borrow-checklist": 2
+      }
+    },
     {
       "name": "literal-ambiguity",
       "query": "rust",
-      "relevance": { "borrow": 3, "borrow-checklist": 2, "traits": 2, "cargo": 1 }
+      "relevance": {
+        "borrow": 3,
+        "borrow-checklist": 2,
+        "traits": 2,
+        "cargo": 1
+      }
     },
-    { "name": "derived-category", "query": "web", "relevance": { "http": 3, "vue": 2, "react": 2, "browser": 2 } },
-    { "name": "mixed-field-app", "query": "web app", "relevance": { "vue": 3, "react": 2, "browser": 2 } },
-    { "name": "fresh-context", "query": "release deployment", "relevance": { "release-current": 3, "release-old": 1 } },
-    { "name": "durable-facts", "query": "checksum algorithm", "relevance": { "checksum": 3, "checksum-new": 2 } },
+    {
+      "name": "derived-category",
+      "query": "web",
+      "relevance": {
+        "http": 3,
+        "vue": 2,
+        "react": 2,
+        "browser": 2
+      }
+    },
+    {
+      "name": "mixed-field-app",
+      "query": "web app",
+      "relevance": {
+        "vue": 3,
+        "react": 2,
+        "browser": 2
+      }
+    },
+    {
+      "name": "fresh-context",
+      "query": "release deployment",
+      "relevance": {
+        "release-current": 3,
+        "release-old": 1
+      }
+    },
+    {
+      "name": "durable-facts",
+      "query": "checksum algorithm",
+      "relevance": {
+        "checksum": 3,
+        "checksum-new": 2
+      }
+    },
     {
       "name": "equivalence-forward-and-backward",
       "query": "minecraft modding",
-      "relevance": { "mod-combined": 3, "mod-separate": 3 }
+      "relevance": {
+        "mod-combined": 3,
+        "mod-separate": 3
+      }
     },
-    { "name": "boolean-filter", "query": "borrow", "tag_expr": "!rust", "relevance": { "loan": 3 } },
+    {
+      "name": "boolean-filter",
+      "query": "borrow",
+      "tag_expr": "!rust",
+      "relevance": {
+        "loan": 3
+      }
+    },
     {
       "name": "mutex-filter",
       "query": "web",
       "tag_expr": "mutex(vue3,react)",
-      "relevance": { "http": 3, "vue": 2, "react": 2, "browser": 2 }
+      "relevance": {
+        "http": 3,
+        "vue": 2,
+        "react": 2,
+        "browser": 2
+      }
     },
     {
       "name": "explicit-archive",
       "query": "release deployment",
       "state": "archived",
-      "relevance": { "release-archive": 3 }
+      "relevance": {
+        "release-archive": 3
+      }
     },
     {
       "name": "explicit-expiry",
       "query": "release deployment",
       "state": "expired",
-      "relevance": { "release-expired": 3 }
+      "relevance": {
+        "release-expired": 3
+      }
     },
-    { "name": "unrelated-popularity-cannot-recall", "query": "nonexistent-query", "relevance": {} }
+    {
+      "name": "unrelated-popularity-cannot-recall",
+      "query": "nonexistent-query",
+      "relevance": {}
+    }
+  ],
+  "decay_rules": [
+    {
+      "predicate": "procedure",
+      "half_life_days": 730
+    },
+    {
+      "predicate": "context",
+      "half_life_days": 30
+    }
   ]
 }

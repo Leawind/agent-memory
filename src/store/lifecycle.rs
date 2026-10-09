@@ -1,25 +1,13 @@
 use super::Store;
-use crate::{
-    lifecycle::{Kind, Metadata},
-    sql,
-};
+use crate::{lifecycle::Metadata, sql};
 use rusqlite::params;
 use std::collections::HashMap;
 
 fn decode(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<Metadata> {
-    let raw: String = row.get(start)?;
-    let kind: Kind = serde_json::from_value(serde_json::Value::String(raw)).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            start,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
-    })?;
     Ok(Metadata {
-        kind,
-        expires_at: row.get::<_, Option<i64>>(start + 1)?.map(|t| t as u64),
-        archived_at: row.get::<_, Option<i64>>(start + 2)?.map(|t| t as u64),
-        pinned: row.get(start + 3)?,
+        expires_at: row.get::<_, Option<i64>>(start)?.map(|t| t as u64),
+        archived_at: row.get::<_, Option<i64>>(start + 1)?.map(|t| t as u64),
+        pinned: row.get(start + 2)?,
     })
 }
 
@@ -48,13 +36,11 @@ impl Store {
 
     pub fn lifecycle_put(&self, id: i64, meta: &Metadata) -> Result<(), String> {
         meta.validate()?;
-        let kind = serde_json::to_value(meta.kind).map_err(|e| e.to_string())?;
         self.conn
             .execute(
                 sql::LIFECYCLE_PUT,
                 params![
                     id,
-                    kind.as_str(),
                     meta.expires_at.map(|t| t as i64),
                     meta.archived_at.map(|t| t as i64),
                     meta.pinned

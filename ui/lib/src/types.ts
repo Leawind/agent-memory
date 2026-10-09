@@ -10,7 +10,6 @@ export interface MemorySummary {
 }
 
 export interface LifecycleMetadata {
-  kind: 'fact' | 'preference' | 'procedure' | 'context' | 'event'
   expires_at: number | null
   archived_at: number | null
   pinned: boolean
@@ -151,7 +150,8 @@ export interface SearchRuntime {
 }
 
 export interface LifecyclePolicy {
-  half_life_days: Record<LifecycleMetadata['kind'], number | null>
+  rules: Array<{ predicate: string; half_life_days: number | null }>
+  default_half_life_days: number | null
   freshness_weight: number
   reinforcement_weight: number
 }
@@ -273,6 +273,13 @@ export interface ImportResp {
 export interface TagRule {
   name: string
   expression: string
+}
+
+export interface NamedPredicate {
+  name: string
+  scope: 'user' | 'global'
+  predicate: string
+  description: string
 }
 
 export interface TagRulePreview {

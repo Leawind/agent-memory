@@ -77,10 +77,9 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_LIFECYCLE,
-            "Set a memory's content kind, expiry, pin or archive status. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
+            "Set a memory's expiry, pin or archive status. Content classification uses ordinary tags and predicate-selected decay rules. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
             json!({"type": "object", "properties": {
                 "id": {"type": "string", "pattern": "^m[0-9]+$"},
-                "kind": {"type": "string", "enum": ["fact", "preference", "procedure", "context", "event"]},
                 "expires_at": {"type": ["integer", "null"], "minimum": 0, "maximum": crate::lifecycle::MAX_TIMESTAMP, "description": "Unix epoch seconds; null clears expiry."},
                 "archived": {"type": "boolean", "description": "True archives; false restores. An expired memory also needs its expiry cleared or extended to be active."},
                 "pinned": {"type": "boolean"}

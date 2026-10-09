@@ -167,7 +167,8 @@ const defaultSearchLimits: SearchLimits = {
 const searchLimits = ref<SearchLimits>(defaultSearchLimits)
 const tagRules = ref<TagRule[]>([])
 const defaultLifecyclePolicy: LifecyclePolicy = {
-  half_life_days: { fact: null, preference: 365, procedure: 730, context: 30, event: 7 },
+  rules: [],
+  default_half_life_days: null,
   freshness_weight: 0.2,
   reinforcement_weight: 0.1,
 }

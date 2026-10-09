@@ -15,7 +15,6 @@ interface Memory {
   content: string
   tags: string[]
   age_days: number
-  kind?: string
   archived?: boolean
   expired?: boolean
   uses?: number
@@ -29,6 +28,7 @@ interface Case {
 }
 interface Fixture {
   description: string
+  decay_rules: { predicate: string; half_life_days: number | null }[]
   memories: Memory[]
   derivations: { name: string; expression: string }[]
   cases: Case[]
@@ -158,7 +158,6 @@ async function run() {
             created_at: time,
             updated_at: time,
             lifecycle: {
-              kind: memory.kind ?? 'fact',
               pinned: false,
               archived_at: memory.archived ? now : null,
               expires_at: memory.expired ? now - 1 : null,
@@ -187,6 +186,7 @@ async function run() {
     for (const variant of variants) {
       await api('PUT', '/api/settings', {
         lifecycle_policy: {
+          rules: fixture.decay_rules,
           freshness_weight: variant.freshness_weight,
           reinforcement_weight: variant.reinforcement_weight,
         },

@@ -5,7 +5,7 @@ import { setMemoryUILocale } from '../index'
 import MemoryLifecycleDialog from './MemoryLifecycleDialog.vue'
 
 describe('MemoryLifecycleDialog', () => {
-  it('restores an archive while preserving its explicit expiry and content kind', async () => {
+  it('restores an archive while preserving its explicit expiry', async () => {
     setMemoryUILocale('zh')
     document.body.innerHTML = ''
     const calls: unknown[] = []
@@ -20,7 +20,7 @@ describe('MemoryLifecycleDialog', () => {
       props: {
         visible: true,
         memoryId: 'm7',
-        metadata: { kind: 'event', expires_at: 1700000000, archived_at: 1690000000, pinned: true, state: 'archived' },
+        metadata: { expires_at: 1700000000, archived_at: 1690000000, pinned: true, state: 'archived' },
       },
       global: { plugins: [ElementPlus] },
     })
@@ -36,7 +36,7 @@ describe('MemoryLifecycleDialog', () => {
       {
         path: '/api/memories/m7/lifecycle',
         method: 'PUT',
-        body: { kind: 'event', pinned: true, archived: false, expires_at: 1700000000 },
+        body: { pinned: true, archived: false, expires_at: 1700000000 },
       },
     ])
     expect(wrapper.emitted('saved')).toHaveLength(1)

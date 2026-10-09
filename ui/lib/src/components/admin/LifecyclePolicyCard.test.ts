@@ -6,7 +6,8 @@ import type { LifecyclePolicy } from '../../types'
 import LifecyclePolicyCard from './LifecyclePolicyCard.vue'
 
 const policy: LifecyclePolicy = {
-  half_life_days: { fact: null, preference: 365, procedure: 730, context: 30, event: 7 },
+  rules: [],
+  default_half_life_days: null,
   freshness_weight: 0.2,
   reinforcement_weight: 0.1,
 }
@@ -38,9 +39,9 @@ describe('LifecyclePolicyCard', () => {
     expect(calls[0]).toMatchObject({
       path: '/api/settings',
       method: 'PUT',
-      body: { lifecycle_policy: { half_life_days: { fact: 365 } } },
+      body: { lifecycle_policy: { default_half_life_days: 30 } },
     })
-    expect(policy.half_life_days.fact).toBeNull()
+    expect(policy.default_half_life_days).toBeNull()
     expect(wrapper.emitted('changed')).toHaveLength(1)
     await wrapper
       .findAll('button')

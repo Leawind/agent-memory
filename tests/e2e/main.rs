@@ -17,6 +17,7 @@ mod common;
 mod legacy;
 mod lifecycle;
 mod mcp;
+mod predicates;
 mod resources;
 mod rest;
 mod semantic;

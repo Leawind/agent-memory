@@ -4,21 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_TIMESTAMP: u64 = 253_402_300_799;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    #[default]
-    Fact,
-    Preference,
-    Procedure,
-    Context,
-    Event,
-}
-
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Metadata {
-    pub kind: Kind,
     pub expires_at: Option<u64>,
     pub archived_at: Option<u64>,
     pub pinned: bool,
@@ -60,40 +48,31 @@ impl Metadata {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct HalfLives {
-    pub fact: Option<f64>,
-    pub preference: Option<f64>,
-    pub procedure: Option<f64>,
-    pub context: Option<f64>,
-    pub event: Option<f64>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecayRule<P = String> {
+    pub predicate: P,
+    pub half_life_days: Option<f64>,
 }
 
-impl Default for HalfLives {
-    fn default() -> Self {
-        Self {
-            fact: None,
-            preference: Some(365.0),
-            procedure: Some(730.0),
-            context: Some(30.0),
-            event: Some(7.0),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct Policy {
-    pub half_life_days: HalfLives,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(
+    default,
+    deny_unknown_fields,
+    bound(deserialize = "P: Deserialize<'de>")
+)]
+pub struct Policy<P = String> {
+    pub rules: Vec<DecayRule<P>>,
+    pub default_half_life_days: Option<f64>,
     pub freshness_weight: f64,
     pub reinforcement_weight: f64,
 }
 
-impl Default for Policy {
+impl<P> Default for Policy<P> {
     fn default() -> Self {
         Self {
-            half_life_days: HalfLives::default(),
+            rules: Vec::new(),
+            default_half_life_days: None,
             freshness_weight: 0.2,
             reinforcement_weight: 0.1,
         }
@@ -104,9 +83,14 @@ impl Policy {
     pub fn parse(value: &serde_json::Value) -> Result<Self, String> {
         let policy: Self = serde_json::from_value(value.clone())
             .map_err(|e| format!("invalid lifecycle_policy: {e}"))?;
-        let h = &policy.half_life_days;
-        if [h.fact, h.preference, h.procedure, h.context, h.event]
-            .into_iter()
+        if policy.rules.len() > 128 {
+            return Err("at most 128 decay rules are allowed".into());
+        }
+        if policy
+            .rules
+            .iter()
+            .map(|r| r.half_life_days)
+            .chain([policy.default_half_life_days])
             .flatten()
             .any(|days| !days.is_finite() || !(1.0..=36500.0).contains(&days))
         {
@@ -118,21 +102,46 @@ impl Policy {
         {
             return Err("lifecycle RRF weights must be between 0 and 5".into());
         }
+        for rule in &policy.rules {
+            crate::tag_expr::parse_rule(&rule.predicate)?;
+        }
         Ok(policy)
     }
+}
 
-    pub fn freshness(&self, meta: &Metadata, updated_at: u64, now: u64) -> f64 {
+impl<P> Policy<P> {
+    pub fn try_map<B>(
+        &self,
+        bind: &mut impl FnMut(&P) -> Result<B, String>,
+    ) -> Result<Policy<B>, String> {
+        Ok(Policy {
+            rules: self
+                .rules
+                .iter()
+                .map(|r| {
+                    Ok(DecayRule {
+                        predicate: bind(&r.predicate)?,
+                        half_life_days: r.half_life_days,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+            default_half_life_days: self.default_half_life_days,
+            freshness_weight: self.freshness_weight,
+            reinforcement_weight: self.reinforcement_weight,
+        })
+    }
+}
+
+impl Policy<crate::tag_expr::TagExpr> {
+    pub fn freshness(&self, meta: &Metadata, tags: &[String], updated_at: u64, now: u64) -> f64 {
         if meta.pinned {
             return 1.0;
         }
-        let h = &self.half_life_days;
-        let half_life = match meta.kind {
-            Kind::Fact => h.fact,
-            Kind::Preference => h.preference,
-            Kind::Procedure => h.procedure,
-            Kind::Context => h.context,
-            Kind::Event => h.event,
-        };
+        let half_life = self
+            .rules
+            .iter()
+            .find(|r| r.predicate.eval(tags))
+            .map_or(self.default_half_life_days, |r| r.half_life_days);
         half_life.map_or(1.0, |days| {
             (-std::f64::consts::LN_2 * now.saturating_sub(updated_at) as f64 / (days * 86400.0))
                 .exp()
@@ -146,7 +155,7 @@ pub fn rank_channels(
     eligible: &std::collections::HashSet<usize>,
     lifecycle: &std::collections::HashMap<i64, Metadata>,
     usage: &std::collections::HashMap<i64, crate::access::Projection>,
-    policy: &Policy,
+    policy: &Policy<crate::tag_expr::TagExpr>,
     now: u64,
 ) -> [Vec<crate::search::Hit>; 2] {
     let default_meta = Metadata::default();
@@ -156,6 +165,7 @@ pub fn rank_channels(
         let id = crate::store::Store::parse_id(&memory.id).unwrap_or(0);
         let freshness = policy.freshness(
             lifecycle.get(&id).unwrap_or(&default_meta),
+            &memory.tags,
             memory.updated_at,
             now,
         );
@@ -202,27 +212,30 @@ mod tests {
     }
 
     #[test]
-    fn content_kind_controls_half_life_without_erasing_hard_expiry() {
-        let policy = Policy::default();
+    fn ordered_predicate_rules_support_overrides_fallback_and_pins() {
+        let policy = Policy::parse(&serde_json::json!({"rules":[{"predicate":"durable", "half_life_days":null},{"predicate":"temporary|event", "half_life_days":7}], "default_half_life_days":30})).unwrap();
+        let policy = policy
+            .try_map(&mut |raw| crate::tag_expr::parse_rule(raw))
+            .unwrap();
         let mut meta = Metadata::default();
-        assert_eq!(policy.freshness(&meta, 0, 100 * 365 * 86400), 1.0);
-        for (kind, days) in [
-            (Kind::Preference, 365),
-            (Kind::Procedure, 730),
-            (Kind::Context, 30),
-            (Kind::Event, 7),
-        ] {
-            meta.kind = kind;
-            assert!((policy.freshness(&meta, 100, 100 + days * 86400) - 0.5).abs() < 1e-12);
-        }
+        assert_eq!(
+            policy.freshness(
+                &meta,
+                &["durable".into(), "temporary".into()],
+                0,
+                30 * 86400
+            ),
+            1.0
+        );
+        assert!((policy.freshness(&meta, &["temporary".into()], 0, 7 * 86400) - 0.5).abs() < 1e-12);
+        assert!((policy.freshness(&meta, &[], 0, 30 * 86400) - 0.5).abs() < 1e-12);
         meta.pinned = true;
         meta.expires_at = Some(100);
-        assert_eq!(policy.freshness(&meta, 0, 1000), 1.0);
+        assert_eq!(policy.freshness(&meta, &[], 0, 1000), 1.0);
         assert!(!meta.matches("active", 1000));
-        meta.pinned = false;
-        assert_eq!(policy.freshness(&meta, 1000, 100), 1.0);
         for invalid in [
-            serde_json::json!({"half_life_days":{"context":0}}),
+            serde_json::json!({"default_half_life_days":0}),
+            serde_json::json!({"rules":[{"predicate":"a","half_life_days":-1}]}),
             serde_json::json!({"freshness_weight":-1}),
             serde_json::json!({"typo":1}),
         ] {

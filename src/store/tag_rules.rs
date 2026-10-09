@@ -215,6 +215,16 @@ impl Store {
         let ids = self.tag_ids_for_names(&[name.to_string()])?;
         if let Some(id) = ids.first() {
             if self
+                .stored_lifecycle_policy()?
+                .rules
+                .iter()
+                .any(|r| r.predicate.references_tag(*id))
+            {
+                return Err(format!(
+                    "tag '{name}' is referenced by a decay policy; remove that reference first"
+                ));
+            }
+            if self
                 .predicate_rows(None)?
                 .iter()
                 .any(|d| d.predicate.references_tag(*id))

@@ -1,7 +1,14 @@
 <template>
   <div ref="rootRef" class="am-workspace" :class="{ 'is-stacked': narrow, 'is-dragging': dragging }">
     <aside class="amws-aside" :style="narrow ? undefined : { width: `${sidebarWidth}px` }">
-      <TagsSidebar ref="sidebar" :active="panelExpr" @select="toggleFilter" @edit="openTag" @create="createTag" />
+      <TagsSidebar
+        ref="sidebar"
+        :active="panelExpr"
+        @select="toggleFilter"
+        @edit="openTag"
+        @create="createTag"
+        @predicates="predicateVisible = true"
+      />
     </aside>
 
     <!-- Drag handle between sidebar and list: adjusts the sidebar width within bounds.
@@ -32,6 +39,11 @@
       @saved="onTagChanged"
       @deleted="onTagChanged"
     />
+    <PredicateDialog
+      v-model:visible="predicateVisible"
+      @changed="onTagChanged"
+      @apply="panel?.toggleTagFilter($event)"
+    />
   </div>
 </template>
 
@@ -42,6 +54,8 @@ import type { TagView } from '../types'
 import MemoriesPanel from './MemoriesPanel.vue'
 import TagsSidebar from './TagsSidebar.vue'
 import TagDialog from './TagDialog.vue'
+import PredicateDialog from './PredicateDialog.vue'
+const predicateVisible = ref(false)
 
 const rootRef = ref<HTMLElement | null>(null)
 
@@ -138,6 +152,7 @@ function onTagChanged(): void {
 // when the identity changes to pull the latest data on both sides
 defineExpose({
   refresh: () => {
+    predicateVisible.value = false
     refreshSidebar()
     panel.value?.refresh()
   },

@@ -137,6 +137,13 @@ pub fn handle(
                     Ok(m) => Value::Object(m),
                     Err(e) => return Ok(bad_request(e)),
                 };
+                if dump
+                    .get("predicates")
+                    .and_then(Value::as_array)
+                    .is_some_and(|rows| !rows.is_empty())
+                {
+                    ctx.require(Cap::PredicateManageGlobal)?;
+                }
                 store::with_db_in(db_path, TxMode::Write, |st| {
                     st.import_dump(&dump)
                         .map_err(ToolError::invalid)

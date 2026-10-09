@@ -15,7 +15,7 @@
         />
       </el-tooltip>
     </div>
-
+    <el-button @click="emit('predicates')">{{ t('predicates.title') }}</el-button>
     <div v-loading="loading" class="sb-list">
       <p v-if="!loading && rows.length === 0" class="sb-none">{{ t('tags.none') }}</p>
       <button
@@ -74,6 +74,7 @@ const emit = defineEmits<{
   select: [tag: TagView]
   edit: [tag: TagView]
   create: []
+  predicates: []
 }>()
 
 const { rows, loading, reload } = useTags()

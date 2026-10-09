@@ -142,11 +142,6 @@ pub fn memory_lifecycle(st: &Store, args: &Map<String, Value>) -> Result<Value, 
     }
     let before = st.lifecycle_get(id)?;
     let mut meta = before.clone();
-    if let Some(kind) = opt_str(args, "kind")? {
-        meta.kind = serde_json::from_value(json!(kind)).map_err(|_| {
-            ToolError::invalid("kind must be fact, preference, procedure, context or event")
-        })?;
-    }
     if args.contains_key("expires_at") {
         meta.expires_at = opt_u64(args, "expires_at")?;
     }
@@ -358,7 +353,7 @@ pub fn memory_search(
 
     let mut eligible = keyword_idx.clone();
     eligible.extend(vector_hits.iter().map(|hit| hit.idx));
-    let policy = st.lifecycle_policy()?;
+    let policy = st.lifecycle_policy_compiled()?;
     let priors = crate::lifecycle::rank_channels(
         &memories,
         &eligible,

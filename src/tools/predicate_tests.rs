@@ -152,3 +152,59 @@ fn backup_restores_forward_references_rules_and_stable_tag_binding() {
         1
     );
 }
+
+#[test]
+fn decay_selectors_use_named_and_derived_tags_and_protect_references() {
+    let path = setup("decay");
+    let ctx = IdentityCtx::open_mode();
+    set(&path, &ctx, "global", "category", "c").unwrap();
+    store::with_db_in(&path,store::TxMode::Write,|st| -> Result<(),String> {
+        st.replace_tag_rules(&json!({"constraints":[],"derivations":[{"name":"classify","expression":"a => c"}]}),false)?;
+        st.settings_put(Store::SETTING_LIFECYCLE_POLICY,&json!({"rules":[{"predicate":"@category&!b", "half_life_days":7}],"default_half_life_days":30}).to_string())?;
+        let policy = st.lifecycle_policy_compiled()?;
+        let memory = &st.get_memories(&[1])?.0[0];
+        assert!((policy.freshness(&st.lifecycle_get(1)?,&memory.tags,100,100+7*86400)-0.5).abs()<1e-12);
+        Ok(())
+    }).unwrap();
+    assert!(execute_with_db(
+        &path,
+        &ctx,
+        PREDICATE_DELETE,
+        &json!({"scope":"global","name":"category"})
+    )
+    .is_err());
+    assert!(execute_with_db(&path, &ctx, TAG_DELETE, &json!({"name":"b"})).is_err());
+    assert!(execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"!@missing"})).is_err());
+    execute_with_db(
+        &path,
+        &ctx,
+        TAG_UPDATE,
+        &json!({"name":"b","new_name":"beta"}),
+    )
+    .unwrap();
+    let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
+    assert!(dump["lifecycle_policy"]["rules"][0]["predicate"]
+        .as_str()
+        .unwrap()
+        .contains("beta"));
+    let restored = path.with_extension("restored.db");
+    store::with_db_in(
+        &restored,
+        store::TxMode::Write,
+        |st| -> Result<(), String> {
+            st.import_dump(&dump)?;
+            assert!(
+                (st.lifecycle_policy_compiled()?.freshness(
+                    &crate::lifecycle::Metadata::default(),
+                    &["a".into(), "c".into()],
+                    0,
+                    7 * 86400
+                ) - 0.5)
+                    .abs()
+                    < 1e-12
+            );
+            Ok(())
+        },
+    )
+    .unwrap();
+}

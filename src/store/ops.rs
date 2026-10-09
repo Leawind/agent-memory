@@ -518,7 +518,10 @@ impl Store {
         // The reserved tag is a permanent fixture seeded at open, not user data: a fresh
         // database always carries exactly that one row, so it does not block import.
         let unreserved_tags = self.tag_count_unreserved()?;
-        if empty["memories"].as_u64().unwrap_or(0) != 0 || unreserved_tags != 0 {
+        if empty["memories"].as_u64().unwrap_or(0) != 0
+            || unreserved_tags != 0
+            || !self.predicate_rows(None)?.is_empty()
+        {
             return Err(
                 "target database is not empty; import refuses to merge -- point --db at a fresh database".into(),
             );

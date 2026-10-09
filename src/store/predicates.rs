@@ -198,6 +198,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         self.validate_all_predicate_scopes()?;
         if scope == "global" {
+            self.lifecycle_policy_compiled()?;
             self.recompute_tag_rules()?;
         }
         Ok(json!({"saved":true}))
@@ -246,6 +247,11 @@ impl Store {
                 .derivations
                 .iter()
                 .flat_map(|r| &r.directions)
+                .any(|r| r.predicate.references_named(id))
+            || self
+                .stored_lifecycle_policy()?
+                .rules
+                .iter()
                 .any(|r| r.predicate.references_named(id))
         {
             return Err(

@@ -1,6 +1,25 @@
 // English messages — keys must mirror zh.ts exactly (guarded by i18n.test.ts)
 export default {
+  predicates: {
+    search: 'Search',
+    title: 'Tag predicates',
+    name: 'Name',
+    scope: 'Scope',
+    user: 'User',
+    global: 'Global',
+    expression: 'Predicate',
+    create: 'New predicate',
+    hint: "Click a definition to edit. {'@'}name checks your scope before global; {'@'}global::name and {'@'}user::name select explicitly. Open callers share local scope; anonymous callers share anonymous scope.",
+    namesHint:
+      'Names contain 1–100 letters, digits, underscores, hyphens or dots; start with a letter, digit or underscore. Derivations require positive predicates.',
+  },
   lifecycle: {
+    orderHint:
+      'Match original and derived tags in order; the first matching rule wins. Selectors can reference global named predicates.',
+    defaultDecay: 'Fallback when no rule matches',
+    addRule: 'Add decay rule',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
     nav: 'Lifecycle',
     policyTitle: 'Freshness and reinforcement',
     enableDecay: 'Enable decay',
@@ -26,12 +45,6 @@ export default {
     archived: 'Archived',
     expired: 'Expired',
     all: 'All states',
-    kind: 'Content kind',
-    fact: 'Durable fact',
-    preference: 'Preference',
-    procedure: 'Procedure',
-    context: 'Short-term context',
-    event: 'Event',
     expires: 'Expiry time',
     noExpiry: 'No expiry',
     pinned: 'Pinned (exempt from freshness decay)',
@@ -52,7 +65,7 @@ export default {
     searchPlaceholderSemantic: 'Search memories (keywords + semantic)…',
     tagExprPlaceholder: "Filter by tag expression, e.g. (a&b){'|'}c",
     tagExprHelp:
-      "Set algebra: & and, {'|'} or, ! not, parentheses — (a&b){'|'}c = tagged a AND b, or tagged c. /regex/ matches tag names.",
+      "Set algebra: & and, {'|'} or, ! not, parentheses — (a&b){'|'}c = tagged a AND b, or tagged c. /regex/ matches tag names. {'@'}name references a named predicate; press Enter to apply.",
     exprEmpty: 'No memory satisfies the tag expression',
     modeAuto: 'Auto',
     modeKeyword: 'Keyword only',
@@ -205,6 +218,7 @@ export default {
     capCreate: 'Create memories',
     capUpdate: 'Update memories',
     capDelete: 'Delete memories',
+    capPredicateManageGlobal: 'Manage global predicates',
     capTagManage: 'Manage tags',
     capAdmin: 'Admin',
     copyToken: 'Copy token',
