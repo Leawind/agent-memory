@@ -169,7 +169,7 @@ export default {
     constraintsTitle: '组合约束',
     derivationsTitle: '标签蕴含与派生',
     derivationsHint:
-      "正向规则支持 vue3 => web、minecraft-modding <=> minecraft & modding。前提允许 &、{'|'}；结论只允许标签和 &。正向循环可以收敛，删除原始标签后会重新推导。不能派生 convention。",
+      "正向规则支持 vue3 => web、minecraft-modding <=> minecraft, modding。前提允许 &、{'|'}；结论为逗号分隔的标签集合。正向循环可以收敛，删除原始标签后会重新推导。不能派生 convention。",
     positiveCycles: '包含正向循环，按最小固定点推导',
     previewRules: '检查现有记忆',
     rulesValid: '全部现有记忆符合规则',

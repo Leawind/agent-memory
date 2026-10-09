@@ -172,7 +172,7 @@ export default {
     constraintsTitle: 'Combination constraints',
     derivationsTitle: 'Tag implications and derivations',
     derivationsHint:
-      "Positive rules support vue3 => web and minecraft-modding <=> minecraft & modding. Premises allow & and {'|'}; conclusions allow tags joined by &. Positive cycles converge; removing original tags recomputes the closure. convention cannot be derived.",
+      "Positive rules support vue3 => web and minecraft-modding <=> minecraft, modding. Premises allow & and {'|'}; outputs are comma-separated tag sets. Positive cycles converge; removing original tags recomputes the closure. convention cannot be derived.",
     positiveCycles: 'Positive cycles detected; inference uses the least fixed point',
     previewRules: 'Check existing memories',
     rulesValid: 'All existing memories satisfy the rules',

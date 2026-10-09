@@ -16,7 +16,22 @@ pub struct RuleSpec {
 pub struct RuleSpecs {
     pub constraints: Vec<RuleSpec>,
     #[serde(default)]
-    pub derivations: Vec<RuleSpec>,
+    pub derivations: Vec<DerivationSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum DerivationSpec {
+    Expression(RuleSpec),
+    Predicate(DerivationParts),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DerivationParts {
+    pub name: String,
+    pub predicate: String,
+    pub derived: Vec<String>,
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
@@ -30,9 +45,21 @@ pub struct Rules {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Derivation {
     pub name: String,
-    pub left: Expr,
-    pub right: Expr,
-    pub bidirectional: bool,
+    pub directions: Vec<DerivedRule>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DerivedRule {
+    pub predicate: Expr,
+    pub derived: Vec<i64>,
+}
+
+impl Derivation {
+    pub fn references(&self, id: i64) -> bool {
+        self.directions
+            .iter()
+            .any(|r| r.predicate.references(id) || r.derived.contains(&id))
+    }
 }
 
 pub struct Closure {
@@ -51,20 +78,6 @@ pub type Expr = crate::predicate::Predicate<i64>;
 impl Expr {
     fn positive(&self) -> bool {
         self.positive_with(&|_| true)
-    }
-
-    fn heads(&self) -> Result<Vec<i64>, String> {
-        match self {
-            Self::Atom(id) => Ok(vec![*id]),
-            Self::All(a, b) => {
-                let mut ids = a.heads()?;
-                ids.extend(b.heads()?);
-                ids.sort_unstable();
-                ids.dedup();
-                Ok(ids)
-            }
-            _ => Err("derivation conclusions must be tag names joined by &".into()),
-        }
     }
 
     fn tag_ids(&self, ids: &mut HashSet<i64>) {
@@ -159,48 +172,68 @@ impl Rules {
         }
         let mut derivations = Vec::new();
         for spec in specs.derivations {
-            let name = spec.name.trim().to_string();
+            let (name, directions) = match spec {
+                DerivationSpec::Predicate(parts) => (
+                    parts.name,
+                    vec![DerivedRule {
+                        predicate: Expr::bind(tag_expr::parse_rule(&parts.predicate)?, tags)?,
+                        derived: bind_set(parts.derived, tags)?,
+                    }],
+                ),
+                DerivationSpec::Expression(spec) => {
+                    if spec.expression.chars().count() > 32768 {
+                        return Err("derivation exceeds 32768 characters".into());
+                    }
+                    let bidirectional = spec.expression.contains("<=>");
+                    let arrow = if bidirectional { "<=>" } else { "=>" };
+                    let (left, right) = spec
+                        .expression
+                        .split_once(arrow)
+                        .ok_or("derivation requires => or <=>")?;
+                    if right.contains("=>") {
+                        return Err("derivation must contain exactly one arrow".into());
+                    }
+                    let right = parse_set(right, tags)?;
+                    let directions = if bidirectional {
+                        let left = parse_set(left, tags)?;
+                        vec![
+                            DerivedRule {
+                                predicate: conjunction(&left),
+                                derived: right.clone(),
+                            },
+                            DerivedRule {
+                                predicate: conjunction(&right),
+                                derived: left,
+                            },
+                        ]
+                    } else {
+                        vec![DerivedRule {
+                            predicate: Expr::bind(tag_expr::parse_rule(left)?, tags)?,
+                            derived: right,
+                        }]
+                    };
+                    (spec.name, directions)
+                }
+            };
+            let name = name.trim().to_string();
             if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
                 return Err("rule name must be 1-100 characters without control characters".into());
             }
             if !names.insert(name.clone()) {
                 return Err(format!("duplicate rule name '{name}'"));
             }
-            if spec.expression.chars().count() > 32768 {
-                return Err("derivation exceeds 32768 characters".into());
-            }
-            let bidirectional = spec.expression.contains("<=>");
-            let arrow = if bidirectional { "<=>" } else { "=>" };
-            let (left, right) = spec
-                .expression
-                .split_once(arrow)
-                .ok_or("derivation requires => or <=>")?;
-            if right.contains("=>") {
-                return Err("derivation must contain exactly one arrow".into());
-            }
-            let left = Expr::bind(tag_expr::parse_rule(left)?, tags)?;
-            let right = Expr::bind(tag_expr::parse_rule(right)?, tags)?;
-            if !left.positive() || !right.positive() {
+            if directions.iter().any(|r| !r.predicate.positive()) {
                 return Err(
                     "derivations must be positive: negation and mutex are not allowed".into(),
                 );
             }
-            let mut heads = right.heads()?;
-            if bidirectional {
-                heads.extend(left.heads()?);
-            }
             if tags
                 .get(crate::model::RESERVED_TAG)
-                .is_some_and(|id| heads.contains(id))
+                .is_some_and(|id| directions.iter().any(|r| r.derived.contains(id)))
             {
                 return Err("the reserved convention tag cannot be derived".into());
             }
-            derivations.push(Derivation {
-                name,
-                left,
-                right,
-                bidirectional,
-            });
+            derivations.push(Derivation { name, directions });
         }
         Ok(Self {
             constraints,
@@ -214,15 +247,23 @@ impl Rules {
                 .derivations
                 .iter()
                 .map(|rule| {
-                    Ok(RuleSpec {
+                    let expression = if rule.directions.len() == 2 {
+                        format!(
+                            "{} <=> {}",
+                            display_set(&rule.directions[1].derived, tags)?,
+                            display_set(&rule.directions[0].derived, tags)?
+                        )
+                    } else {
+                        format!(
+                            "{} => {}",
+                            rule.directions[0].predicate.display(tags)?,
+                            display_set(&rule.directions[0].derived, tags)?
+                        )
+                    };
+                    Ok(DerivationSpec::Expression(RuleSpec {
                         name: rule.name.clone(),
-                        expression: format!(
-                            "{} {} {}",
-                            rule.left.display(tags)?,
-                            if rule.bidirectional { "<=>" } else { "=>" },
-                            rule.right.display(tags)?
-                        ),
-                    })
+                        expression,
+                    }))
                 })
                 .collect::<Result<_, String>>()?,
             constraints: self
@@ -250,7 +291,7 @@ impl Rules {
     /// from original tags on every recomputation prevents unsupported cycles surviving deletion.
     pub fn closure(&self, original: &[i64]) -> Result<Closure, String> {
         for rule in &self.derivations {
-            if !rule.left.positive() || !rule.right.positive() {
+            if rule.directions.iter().any(|r| !r.predicate.positive()) {
                 return Err("stored derivations must be positive".into());
             }
         }
@@ -261,16 +302,11 @@ impl Rules {
         loop {
             let mut changed = false;
             for rule in &self.derivations {
-                let directions = [(&rule.left, &rule.right), (&rule.right, &rule.left)];
-                for (premise, conclusion) in
-                    directions
-                        .into_iter()
-                        .take(if rule.bidirectional { 2 } else { 1 })
-                {
-                    if !premise.eval(&effective) {
+                for direction in &rule.directions {
+                    if !direction.predicate.eval(&effective) {
                         continue;
                     }
-                    for id in conclusion.heads()? {
+                    for id in direction.derived.iter().copied() {
                         let sources = derived.entry(id).or_default();
                         if !sources.contains(&rule.name) {
                             sources.push(rule.name.clone());
@@ -298,14 +334,14 @@ impl Rules {
     pub fn has_positive_cycles(&self) -> Result<bool, String> {
         let mut edges: HashMap<i64, HashSet<i64>> = HashMap::new();
         for rule in &self.derivations {
-            for (premise, conclusion) in [(&rule.left, &rule.right), (&rule.right, &rule.left)]
-                .into_iter()
-                .take(if rule.bidirectional { 2 } else { 1 })
-            {
+            for direction in &rule.directions {
                 let mut inputs = HashSet::new();
-                premise.tag_ids(&mut inputs);
+                direction.predicate.tag_ids(&mut inputs);
                 for input in inputs {
-                    edges.entry(input).or_default().extend(conclusion.heads()?);
+                    edges
+                        .entry(input)
+                        .or_default()
+                        .extend(direction.derived.iter().copied());
                 }
             }
         }
@@ -336,6 +372,46 @@ impl Rules {
         }
         Ok(removed < degree.len())
     }
+}
+
+fn bind_set(names: Vec<String>, tags: &HashMap<String, i64>) -> Result<Vec<i64>, String> {
+    if names.is_empty() || names.len() > 128 {
+        return Err("tag set must contain 1..128 tags".into());
+    }
+    let mut ids = Vec::new();
+    for name in names {
+        let name = crate::model::normalize_tag_name(&name)?;
+        let id = *tags
+            .get(&name)
+            .ok_or_else(|| format!("unknown tag '{name}'; create the tag first"))?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn parse_set(raw: &str, tags: &HashMap<String, i64>) -> Result<Vec<i64>, String> {
+    bind_set(raw.split(',').map(str::to_string).collect(), tags)
+}
+
+fn conjunction(ids: &[i64]) -> Expr {
+    ids.iter()
+        .copied()
+        .map(Expr::Atom)
+        .reduce(|a, b| Expr::All(Box::new(a), Box::new(b)))
+        .expect("validated nonempty set")
+}
+
+fn display_set(ids: &[i64], tags: &HashMap<i64, String>) -> Result<String, String> {
+    ids.iter()
+        .map(|id| {
+            tags.get(id)
+                .cloned()
+                .ok_or_else(|| format!("missing tag id {id}"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|names| names.join(", "))
 }
 
 #[cfg(test)]
@@ -369,7 +445,7 @@ mod tests {
 
     #[test]
     fn equivalence_expands_conjunction_in_both_directions() {
-        let rules = derivations(&["a <=> b&c"]);
+        let rules = derivations(&["a <=> b, c"]);
         assert_eq!(rules.closure(&[1]).unwrap().effective, vec![1, 2, 3]);
         assert_eq!(rules.closure(&[2, 3]).unwrap().effective, vec![1, 2, 3]);
         assert_eq!(rules.closure(&[2]).unwrap().effective, vec![2]);
@@ -377,6 +453,42 @@ mod tests {
             derivations(&["a|b => c"]).closure(&[2]).unwrap().effective,
             vec![2, 3]
         );
+    }
+
+    #[test]
+    fn predicate_and_output_set_are_independent_and_roundtrip() {
+        let tags = HashMap::from([
+            ("a".into(), 1),
+            ("b".into(), 2),
+            ("c".into(), 3),
+            ("d".into(), 4),
+            ("e".into(), 5),
+        ]);
+        for spec in [
+            json!({"name":"multi", "expression":"a&b => c, d, e"}),
+            json!({"name":"multi", "predicate":"a&b", "derived":["c","d","e","c"]}),
+        ] {
+            let rules = Rules::compile(
+                serde_json::from_value(json!({"constraints":[],"derivations":[spec]})).unwrap(),
+                &tags,
+            )
+            .unwrap();
+            assert_eq!(rules.closure(&[1]).unwrap().effective, vec![1]);
+            assert_eq!(
+                rules.closure(&[1, 2]).unwrap().effective,
+                vec![1, 2, 3, 4, 5]
+            );
+            let names = tags.iter().map(|(name, id)| (*id, name.clone())).collect();
+            let rebound = Rules::compile(rules.specs(&names).unwrap(), &tags).unwrap();
+            assert_eq!(
+                rebound.closure(&[1, 2]).unwrap().effective,
+                vec![1, 2, 3, 4, 5]
+            );
+        }
+        let rules = Rules::compile(serde_json::from_value(json!({"constraints":[], "derivations":[{"name":"dual", "expression":"a, b <=> c, d"}]})).unwrap(), &tags).unwrap();
+        assert_eq!(rules.closure(&[1]).unwrap().effective, vec![1]);
+        assert_eq!(rules.closure(&[1, 2]).unwrap().effective, vec![1, 2, 3, 4]);
+        assert_eq!(rules.closure(&[3, 4]).unwrap().effective, vec![1, 2, 3, 4]);
     }
 
     #[test]

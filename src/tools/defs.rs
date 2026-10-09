@@ -99,7 +99,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_RULE_LIST,
-            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Positive derivations use => or <=>, with &/| premises and conjunctive conclusions; positive cycles use the least fixed point. Negation, mutex and deriving convention are forbidden in derivations. Constraints check the union of original and derived tags. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
+            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Positive derivations use => or <=>, with &/| predicates and comma-separated output tag sets; positive cycles use the least fixed point. Negation, mutex and deriving convention are forbidden in derivations. Constraints check the union of original and derived tags. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
             json!({"type": "object", "properties": {}, "additionalProperties": false}),
             true, false,
         ),

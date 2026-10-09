@@ -227,7 +227,7 @@ fn derived_tags_are_searchable_retractable_and_never_promoted_by_merge_or_backup
         {"name": "framework domain", "expression": "vue3 => web"},
         {"name": "domain category", "expression": "web => frontend"},
         {"name": "positive cycle", "expression": "frontend => web"},
-        {"name": "mod equivalence", "expression": "mcmod <=> minecraft&modding"}
+        {"name": "mod equivalence", "expression": "mcmod <=> minecraft, modding"}
     ]});
     assert_eq!(
         api(port, "POST", "/api/tag-rules/preview", Some(rules.clone())).1["positive_cycles"],

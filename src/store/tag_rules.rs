@@ -178,7 +178,7 @@ impl Store {
                 rules
                     .derivations
                     .iter()
-                    .filter(|r| r.left.references(*id) || r.right.references(*id))
+                    .filter(|r| r.references(*id))
                     .map(|r| r.name.as_str()),
             );
             if !refs.is_empty() {

@@ -160,7 +160,7 @@
   "derivations": [
     { "name": "vue-web", "expression": "vue3 => web" },
     { "name": "react-web", "expression": "react => web" },
-    { "name": "mod-equivalence", "expression": "minecraft-modding <=> minecraft & modding" }
+    { "name": "mod-equivalence", "expression": "minecraft-modding <=> minecraft, modding" }
   ],
   "cases": [
     { "name": "cross-field-and", "query": "rust borrow", "relevance": { "borrow": 3, "borrow-checklist": 2 } },
