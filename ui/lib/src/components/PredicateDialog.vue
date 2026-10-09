@@ -13,7 +13,7 @@
         ><template #default="{ row }">{{ t(`predicates.${row.scope}`) }}</template></el-table-column
       >
       <el-table-column prop="predicate" :label="t('predicates.expression')" />
-      <el-table-column prop="description" :label="t('tags.description')" />
+      <el-table-column prop="description" :label="t('tags.descLabel')" />
       <el-table-column width="180"
         ><template #default="{ row }"
           ><el-button size="small" @click.stop="apply(row)">{{ t('predicates.search') }}</el-button
@@ -38,7 +38,7 @@
       <el-form-item :label="t('predicates.expression')"
         ><el-input v-model="draft.predicate" :maxlength="32768" placeholder="a&amp;!b | @other"
       /></el-form-item>
-      <el-form-item :label="t('tags.description')"
+      <el-form-item :label="t('tags.descLabel')"
         ><el-input v-model="draft.description" :maxlength="512"
       /></el-form-item>
     </el-form>

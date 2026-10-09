@@ -318,7 +318,7 @@ try {
   )
   const archived = await rpc('archive', 'tools/call', {
     name: 'memory_lifecycle',
-    arguments: { id: createdId, kind: 'context', archived: true },
+    arguments: { id: createdId, archived: true },
   })
   check('memory_lifecycle accepts a reversible archive', archived.result?.isError !== true)
   const hidden = await rpc('archive-search', 'tools/call', { name: 'memory_search', arguments: { query: '联调' } })

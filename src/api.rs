@@ -142,7 +142,7 @@ pub fn handle(
                     .and_then(Value::as_array)
                     .is_some_and(|rows| !rows.is_empty())
                 {
-                    ctx.require(Cap::PredicateManageGlobal)?;
+                    ctx.require_all(&[Cap::Read, Cap::PredicateManageGlobal])?;
                 }
                 store::with_db_in(db_path, TxMode::Write, |st| {
                     st.import_dump(&dump)
