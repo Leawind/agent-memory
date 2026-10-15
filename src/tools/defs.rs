@@ -18,6 +18,9 @@ pub const PREDICATE_LIST: &str = "predicate_list";
 pub const PREDICATE_SET: &str = "predicate_set";
 pub const PREDICATE_DELETE: &str = "predicate_delete";
 pub const TAG_UPDATE: &str = "tag_update";
+pub const KEY_SET: &str = "key_set";
+pub const KEY_LIST: &str = "key_list";
+pub const KEY_DELETE: &str = "key_delete";
 pub const TAG_DELETE: &str = "tag_delete";
 pub const MEMORY_CREATE: &str = "memory_create";
 pub const MEMORY_LIST: &str = "memory_list";
@@ -33,6 +36,9 @@ pub const MEMORY_USE: &str = "memory_use";
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
     TAG_LIST,
+    KEY_SET,
+    KEY_LIST,
+    KEY_DELETE,
     PREDICATE_LIST,
     PREDICATE_SET,
     PREDICATE_DELETE,
@@ -52,7 +58,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow tag naming rules: 1-100 Unicode letters/digits or _-.; start with a letter, digit or underscore. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Attribute predicates: key=value compares against a registered key (enum values match the 'key:value' tag, string values match rows exactly); a bare registered key tests existence. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow tag naming rules: 1-100 Unicode letters/digits or _-.; start with a letter, digit or underscore. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
@@ -108,6 +114,24 @@ pub fn tool_definitions() -> Value {
                 "additionalProperties": false
             }),
             true, false,
+        ),
+        def(
+            KEY_SET,
+            "Create or reconfigure a structured attribute key. Types: 'enum' values are reusable tag-vocabulary entries ('key:value' tags, listed by key_list), 'string' values are free per-memory text (never listed), 'bool' keys carry no value (present = true; multi is rejected). Single-valued by default; multi accepts arrays of up to 32. Unknown keys auto-register as enum + single-valued on first attribute write, so key_set exists for explicit schema decisions. Names follow tag naming rules without ':'. Changes apply to future writes; existing data is grandfathered. Returns an empty object.",
+            json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":100},"key_type":{"type":"string","enum":["enum","string","bool"],"default":"enum"},"multi":{"type":"boolean","default":false},"description":{"type":"string","maxLength":512}},"required":["name"],"additionalProperties":false}),
+            false, false,
+        ),
+        def(
+            KEY_LIST,
+            "List the registered attribute keys with type, multi flag, description and - for enum keys - the known reusable values. This is the schema contract: read it before writing attributes so values stay in the shared vocabulary instead of forking near-synonyms. Returns keys only, never memory content.",
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+            true, false,
+        ),
+        def(
+            KEY_DELETE,
+            "Delete a registered key (admin): enum values are unlinked from memories through the regular tag delete path, string/bool attribute rows are cleared, and the vocabulary discipline goes with the key. Returns deleted plus the detached memory count.",
+            json!({"type":"object","properties":{"name":{"type":"string","minLength":1}},"required":["name"],"additionalProperties":false}),
+            false, true,
         ),
         def(
             TAG_UPDATE,
@@ -353,6 +377,8 @@ pub fn affects_search(tool: &str) -> bool {
 pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
+        KEY_SET | KEY_DELETE => &[Cap::Admin],
+        KEY_LIST => &[Cap::Read],
         MEMORY_CREATE => &[Cap::Create],
         TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => {
             &[Cap::Read]
@@ -384,8 +410,8 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(
-            read_only, 5,
-            "the contract should have exactly 5 read-only tools"
+            read_only, 6,
+            "the contract should have exactly 6 read-only tools"
         );
     }
 

@@ -26,14 +26,16 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 pub use defs::{
-    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIFECYCLE,
-    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE,
-    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
-    TOOL_NAMES,
+    tool_definitions, KEY_DELETE, KEY_LIST, KEY_SET, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT,
+    MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE,
+    MEMORY_USE, PREDICATE_DELETE, PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE,
+    TAG_LIST, TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name only carries letters, digits, '_', '-' and '.' — no spaces or expression operators. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+mod keys;
+
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name only carries letters, digits, '_', '-', '.' and ':' — no spaces or expression operators. Structured values go in the 'attributes' object of memory_create/memory_update: enum-key values reuse a shared vocabulary (key_list shows every key, its type and known values; 'key=value' filters searches), string keys hold free text, bool keys are presence. Unknown keys auto-register — keep the schema tidy by reusing keys instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -175,6 +177,9 @@ pub fn execute(
 
     let out = match name {
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
+        defs::KEY_SET => keys::key_set(st, map),
+        defs::KEY_LIST => keys::key_list(st, map),
+        defs::KEY_DELETE => keys::key_delete(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
         PREDICATE_LIST => st.predicate_list(ctx).map_err(ToolError::from),
         PREDICATE_SET => predicate_ops::set(st, ctx, map),
@@ -2160,6 +2165,36 @@ mod tests {
         assert_ne!(c2["id"].as_str().unwrap(), id);
         cleanup(&path);
     }
+    #[test]
+    fn key_tools_manage_the_schema_contract() {
+        let path = temp_db("key-tools");
+        // key_list is readable by anyone; set/delete need admin (open mode has every cap)
+        call(
+            &path,
+            KEY_SET,
+            json!({"name": "project", "key_type": "enum", "description": "work projects"}),
+        )
+        .unwrap();
+        call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "s", "attributes": {"project": "apollo"}, "create_missing_tags": true}),
+        )
+        .unwrap();
+        let listing = call(&path, KEY_LIST, json!({})).unwrap();
+        assert_eq!(listing["keys"][0]["name"], "project");
+        assert_eq!(listing["keys"][0]["values"], json!(["apollo"]));
+        assert!(call(&path, KEY_LIST, json!({"unexpected": true})).is_err());
+        // Deleting the key detaches the value tag from memories
+        let deleted = call(&path, KEY_DELETE, json!({"name": "project"})).unwrap();
+        assert_eq!(deleted["deleted"], true);
+        assert_eq!(deleted["memories_updated"], 1);
+        let listing = call(&path, KEY_LIST, json!({})).unwrap();
+        assert_eq!(listing["keys"].as_array().unwrap().len(), 0);
+        assert!(call(&path, KEY_DELETE, json!({"name": "project"})).is_err());
+        cleanup(&path);
+    }
+
     #[test]
     fn tag_expr_filters_by_attribute_atoms() {
         let path = temp_db("attr-query");

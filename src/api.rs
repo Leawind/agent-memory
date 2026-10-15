@@ -20,7 +20,7 @@ use crate::store::{self, TxMode};
 use crate::tools::{
     self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
     MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST,
-    TAG_UPDATE,
+    TAG_UPDATE, KEY_DELETE, KEY_LIST, KEY_SET,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -110,6 +110,23 @@ pub fn handle(
                         st.access_rebuild()?
                     };
                     Ok((200, json!({"processed": processed})))
+                })
+            }
+            ("GET", ["keys"]) => store::with_db_in(db_path, tx_mode, |st| {
+                tools::execute(st, ctx, KEY_LIST, &json!({})).map(|v| (200, v))
+            }),
+            ("PUT", ["keys"]) => {
+                ctx.require(Cap::Admin)?;
+                let args = args_from_body()?;
+                store::with_db_in(db_path, TxMode::Write, |st| {
+                    tools::execute(st, ctx, KEY_SET, &Value::Object(args)).map(|v| (200, v))
+                })
+            }
+            ("DELETE", ["keys", key_name]) => {
+                ctx.require(Cap::Admin)?;
+                store::with_db_in(db_path, TxMode::Write, |st| {
+                    tools::execute(st, ctx, KEY_DELETE, &json!({"name": key_name}))
+                        .map(|v| (200, v))
                 })
             }
             ("GET", ["whoami"]) => Ok((200, ctx.summary())),
