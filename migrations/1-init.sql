@@ -136,3 +136,29 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- tag_keys：键注册表。标签可携带键形成 key:value 结构化值：enum 型键的值是
+-- tags 表中的 'key:value' 标签（复用标签词表的全部卫生机制）；string 型键的
+-- 值是记忆上的自由字面量（memory_attributes，不入词表）；bool 型键无值，
+-- 写入即存在。multi 标记多值键（枚举多值 = 多个 key:value 标签）。
+-- 键支持懒创建：首次写入未注册键时自动按 enum + 单值注册。
+
+CREATE TABLE IF NOT EXISTS tag_keys (
+    name TEXT PRIMARY KEY,
+    key_type TEXT NOT NULL CHECK (key_type IN ('enum', 'string', 'bool')),
+    multi INTEGER NOT NULL DEFAULT 0 CHECK (multi IN (0, 1)),
+    description TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+);
+
+-- memory_attributes：string / bool 型键的值存储（enum 型键的值在 tags 表，
+-- 不经过本表）。string 键每行一个值（multi 键多行）；bool 键写入空串行表示
+-- true，行不存在即 false。单值键由 UNIQUE(memory_id, key) 约束兜底。
+
+CREATE TABLE IF NOT EXISTS memory_attributes (
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (memory_id, key, value)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_attributes_key ON memory_attributes(key);

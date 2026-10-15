@@ -490,6 +490,7 @@ impl Store {
                     "summary": summary,
                     "content": content,
                     "tags": tags,
+                    "attributes": self.attributes_of(id)?,
                     "created_at": created_at,
                     "updated_at": updated_at,
                     "lifecycle": self.lifecycle_get(id)?,
@@ -501,7 +502,6 @@ impl Store {
             "exported_at": crate::model::now(),
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
-            "tag_rules": self.tag_rules_view()?,
             "predicates": self.global_predicates_view()?,
             "lifecycle_policy": self.lifecycle_policy()?,
         }))
@@ -592,7 +592,6 @@ impl Store {
             tag_id_by_key.insert(key.as_str(), id);
         }
 
-        let empty_rules = json!({"constraints": []});
         self.import_global_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
         if let Some(value) = dump.get("lifecycle_policy") {
             let policy = crate::lifecycle::Policy::parse(value)?;
@@ -601,7 +600,6 @@ impl Store {
                 &serde_json::to_string(&policy).map_err(|e| e.to_string())?,
             )?;
         }
-        self.replace_tag_rules(dump.get("tag_rules").unwrap_or(&empty_rules), false)?;
         for (key, m) in memories {
             let summary = m
                 .get("summary")
@@ -635,6 +633,24 @@ impl Store {
                 tag_ids.push(*id);
             }
             let id = self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
+            if let Some(rows) = m.get("attributes").and_then(Value::as_array) {
+                let mut pairs = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let pair = row
+                        .as_array()
+                        .ok_or("invalid export: memory attributes must be [key, value] arrays")?;
+                    let k = pair
+                        .first()
+                        .and_then(Value::as_str)
+                        .ok_or("invalid export: attribute key must be a string")?;
+                    let v = pair
+                        .get(1)
+                        .and_then(Value::as_str)
+                        .ok_or("invalid export: attribute value must be a string")?;
+                    pairs.push((k.to_string(), v.to_string()));
+                }
+                self.replace_attributes(id, &pairs)?;
+            }
             if let Some(value) = m.get("lifecycle") {
                 let meta = serde_json::from_value(value.clone())
                     .map_err(|error| format!("invalid exported lifecycle: {error}"))?;

@@ -221,14 +221,6 @@ impl<A> Predicate<A> {
             Self::Mutex(args) => args.iter().for_each(|arg| arg.visit_atoms(atom)),
         }
     }
-
-    pub fn positive_with(&self, atom: &impl Fn(&A) -> bool) -> bool {
-        match self {
-            Self::Atom(value) => atom(value),
-            Self::All(a, b) | Self::Any(a, b) => a.positive_with(atom) && b.positive_with(atom),
-            Self::Not(_) | Self::Mutex(_) => false,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -269,7 +261,6 @@ mod tests {
                 bound.eval_with(&|index| subset & (1 << index) != 0)
             );
         }
-        assert!(!expression.positive_with(&|_| true));
         let mut names = Vec::new();
         expression.visit_atoms(&mut |name| names.push(*name));
         assert_eq!(names, ["a", "b", "b", "c"]);

@@ -14,11 +14,13 @@ use std::sync::OnceLock;
 /// matched elsewhere fails to compile.
 pub const TAG_CREATE: &str = "tag_create";
 pub const TAG_LIST: &str = "tag_list";
-pub const TAG_RULE_LIST: &str = "tag_rule_list";
 pub const PREDICATE_LIST: &str = "predicate_list";
 pub const PREDICATE_SET: &str = "predicate_set";
 pub const PREDICATE_DELETE: &str = "predicate_delete";
 pub const TAG_UPDATE: &str = "tag_update";
+pub const KEY_SET: &str = "key_set";
+pub const KEY_LIST: &str = "key_list";
+pub const KEY_DELETE: &str = "key_delete";
 pub const TAG_DELETE: &str = "tag_delete";
 pub const MEMORY_CREATE: &str = "memory_create";
 pub const MEMORY_LIST: &str = "memory_list";
@@ -34,7 +36,9 @@ pub const MEMORY_USE: &str = "memory_use";
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
     TAG_LIST,
-    TAG_RULE_LIST,
+    KEY_SET,
+    KEY_LIST,
+    KEY_DELETE,
     PREDICATE_LIST,
     PREDICATE_SET,
     PREDICATE_DELETE,
@@ -54,7 +58,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow tag naming rules: 1-100 Unicode letters/digits or _-.; start with a letter, digit or underscore. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Attribute predicates: key=value compares against a registered key (enum values match the 'key:value' tag, string values match rows exactly); a bare registered key tests existence. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow tag naming rules: 1-100 Unicode letters/digits or _-.; start with a letter, digit or underscore. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
@@ -77,7 +81,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_LIFECYCLE,
-            "Set a memory's expiry, pin or archive status. Content classification uses ordinary tags and predicate-selected decay rules. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
+            "Set a memory's expiry, pin or archive status. Freshness decay follows the lifecycle policy: ordered key rules plus a default half-life. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
             json!({"type": "object", "properties": {
                 "id": {"type": "string", "pattern": "^m[0-9]+$"},
                 "expires_at": {"type": ["integer", "null"], "minimum": 0, "maximum": crate::lifecycle::MAX_TIMESTAMP, "description": "Unix epoch seconds; null clears expiry."},
@@ -112,10 +116,22 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            TAG_RULE_LIST,
-            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Positive derivations use => or <=>, with &/| predicates and comma-separated output tag sets; positive cycles use the least fixed point. Negation, mutex and deriving convention are forbidden in derivations. Constraints check the union of original and derived tags. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
-            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            KEY_SET,
+            "Create or reconfigure a structured attribute key. Types: 'enum' values are reusable tag-vocabulary entries ('key:value' tags, listed by key_list), 'string' values are free per-memory text (never listed), 'bool' keys carry no value (present = true; multi is rejected). Single-valued by default; multi accepts arrays of up to 32. Unknown keys auto-register as enum + single-valued on first attribute write, so key_set exists for explicit schema decisions. Names follow tag naming rules without ':'. Changes apply to future writes; existing data is grandfathered. Returns an empty object.",
+            json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":100},"key_type":{"type":"string","enum":["enum","string","bool"],"default":"enum"},"multi":{"type":"boolean","default":false},"description":{"type":"string","maxLength":512}},"required":["name"],"additionalProperties":false}),
+            false, false,
+        ),
+        def(
+            KEY_LIST,
+            "List the registered attribute keys with type, multi flag, description and - for enum keys - the known reusable values. This is the schema contract: read it before writing attributes so values stay in the shared vocabulary instead of forking near-synonyms. Returns keys only, never memory content.",
+            json!({"type":"object","properties":{},"additionalProperties":false}),
             true, false,
+        ),
+        def(
+            KEY_DELETE,
+            "Delete a registered key (admin): enum values are unlinked from memories through the regular tag delete path, string/bool attribute rows are cleared, and the vocabulary discipline goes with the key. Returns deleted plus the detached memory count.",
+            json!({"type":"object","properties":{"name":{"type":"string","minLength":1}},"required":["name"],"additionalProperties":false}),
+            false, true,
         ),
         def(
             TAG_UPDATE,
@@ -155,8 +171,9 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true. Format: only letters, digits, '_', '-' and '.'."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description. These are original tags; positive rules may add derived tags before constraints are checked."}
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tag names for this memory (no 'key:' prefix - use attributes for keyed values); must exist unless create_missing_tags is true. Format: only letters, digits, '_', '-', '.' and ':'."},
+                    "attributes": {"type": "object", "additionalProperties": true, "description": "Structured key:value attributes validated against the key registry (see key_list). Enum-key values become 'key:value' tags and reuse the tag vocabulary (create_missing_tags applies); string keys take free text (never listed); bool keys take true/false where false or null means unset. Unknown keys are lazily registered as enum + single-valued and reported via keys_autocreated. Single-valued keys take one scalar; multi-valued keys accept an array of up to 32."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names and unknown enum attribute values are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -201,7 +218,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_GET,
-            "Reveal the full content and tag provenance of one or more memories by id (progressive disclosure level 2). tags contains the effective union; original_tags is the editable source set; derived_tags lists tags and supporting rule names, including tags that also have an original source. Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
+            "Reveal the full content and tags of one or more memories by id (progressive disclosure level 2). Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
             json!({
                 "type": "object",
                 "properties": {
@@ -221,8 +238,9 @@ pub fn tool_definitions() -> Value {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
-                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Original tag sources to remove. Derived-only tags cannot be removed directly: remove their original premises or ask the administrator to change the rule. A removed original may remain derived while another premise supports it."},
+                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
+                    "attributes": {"type": "object", "additionalProperties": true, "description": "Replacement for the memory's whole keyed attribute set (omit to leave attributes unchanged; {} clears every registered key). Enum-key values are unlinked and relinked, string/bool rows are swapped wholesale. See memory_create for the value shapes."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
@@ -359,10 +377,10 @@ pub fn affects_search(tool: &str) -> bool {
 pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
+        KEY_SET | KEY_DELETE => &[Cap::Admin],
+        KEY_LIST => &[Cap::Read],
         MEMORY_CREATE => &[Cap::Create],
-        TAG_LIST | TAG_RULE_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => {
-            &[Cap::Read]
-        }
+        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => &[Cap::Read],
         MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],

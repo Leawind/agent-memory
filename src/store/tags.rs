@@ -3,6 +3,7 @@
 use crate::sql;
 use rusqlite::params;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use super::{is_unique_violation, Store};
 
@@ -232,6 +233,18 @@ impl Store {
         Ok(out)
     }
 
+    /// All tag ids with their current names (id→name view source).
+    pub fn tag_id_names(&self) -> Result<HashMap<i64, String>, String> {
+        let mut statement = self
+            .conn
+            .prepare(sql::TAG_EXPORT_ALL)
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
     /// Resolve existing tag names to internal ids; nonexistent names are skipped outright (matching the old
     /// silent no-op semantics of unlink-by-name).
     pub fn tag_ids_for_names(&self, names: &[String]) -> Result<Vec<i64>, String> {
@@ -263,6 +276,61 @@ impl Store {
                 |r| r.get(0),
             )
             .map_err(|e| e.to_string())
+    }
+
+    fn origin_rows(&self, id: i64) -> Result<Vec<(i64, String, bool, bool)>, String> {
+        let mut statement = self
+            .conn
+            .prepare(sql::MEMORY_TAG_ORIGINS)
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Tags the memory itself carries (every tag is original since derivations were removed;
+    /// the flag column remains for schema stability).
+    pub fn original_tag_ids(&self, id: i64) -> Result<Vec<i64>, String> {
+        Ok(self
+            .origin_rows(id)?
+            .into_iter()
+            .filter(|(_, _, original, _)| *original)
+            .map(|(id, _, _, _)| id)
+            .collect())
+    }
+
+    /// Replace a memory's tag links wholesale (all marked original).
+    pub fn set_memory_tags(&self, id: i64, tag_ids: &[i64]) -> Result<(), String> {
+        self.conn
+            .execute(sql::MEMORY_CLEAR_TAGS, [id])
+            .map_err(|e| e.to_string())?;
+        for tag_id in tag_ids {
+            self.conn
+                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id, true, false])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// A tag can be deleted only when no named predicate binds its id (decay rules reference
+    /// keys, not individual tags, so they no longer block tag deletion).
+    pub fn assert_tag_deletable(&self, name: &str) -> Result<(), String> {
+        let ids = self.tag_ids_for_names(&[name.to_string()])?;
+        if let Some(id) = ids.first() {
+            if self
+                .predicate_rows(None)?
+                .iter()
+                .any(|d| d.predicate.references_tag(*id))
+            {
+                return Err(format!(
+                    "tag '{name}' is referenced by a named predicate; remove that reference first"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

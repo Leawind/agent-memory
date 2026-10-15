@@ -2,10 +2,20 @@
 use crate::{
     predicate::Predicate,
     tag_expr::{TagAtom, TagExpr},
-    tag_rules::Expr,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+
+/// A fully expanded predicate over tag ids (named references resolved away).
+pub type Expr = Predicate<i64>;
+
+#[cfg(test)]
+impl Expr {
+    /// Evaluate against one memory's tag-id set.
+    pub fn eval(&self, tags: &[i64]) -> bool {
+        self.eval_with(&|id| tags.contains(id))
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Atom {
@@ -130,6 +140,10 @@ impl Registry {
             TagAtom::Regex(_) => {
                 Err("persisted predicates require literal tags; regex atoms are query-only".into())
             }
+            TagAtom::Attr { .. } => Err(
+                "attribute comparisons are query-only; named predicates accept literal tags only"
+                    .into(),
+            ),
         })
     }
 

@@ -18,9 +18,9 @@ use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
-    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST,
-    TAG_RULE_LIST, TAG_UPDATE,
+    self, ToolError, KEY_DELETE, KEY_LIST, KEY_SET, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET,
+    MEMORY_LIFECYCLE, MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE,
+    TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -112,15 +112,20 @@ pub fn handle(
                     Ok((200, json!({"processed": processed})))
                 })
             }
-            ("GET", ["tag-rules"]) => store::with_db_in(db_path, tx_mode, |st| {
-                tools::execute(st, ctx, TAG_RULE_LIST, &json!({})).map(|v| (200, v))
+            ("GET", ["keys"]) => store::with_db_in(db_path, tx_mode, |st| {
+                tools::execute(st, ctx, KEY_LIST, &json!({})).map(|v| (200, v))
             }),
-            ("PUT", ["tag-rules"]) | ("POST", ["tag-rules", "preview"]) => {
+            ("PUT", ["keys"]) => {
                 ctx.require(Cap::Admin)?;
                 let args = args_from_body()?;
                 store::with_db_in(db_path, TxMode::Write, |st| {
-                    st.replace_tag_rules(&Value::Object(args), method == "POST")
-                        .map_err(ToolError::invalid)
+                    tools::execute(st, ctx, KEY_SET, &Value::Object(args)).map(|v| (200, v))
+                })
+            }
+            ("DELETE", ["keys", key_name]) => {
+                ctx.require(Cap::Admin)?;
+                store::with_db_in(db_path, TxMode::Write, |st| {
+                    tools::execute(st, ctx, KEY_DELETE, &json!({"name": key_name}))
                         .map(|v| (200, v))
                 })
             }

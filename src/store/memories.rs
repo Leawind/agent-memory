@@ -47,8 +47,6 @@ impl Store {
         created_at: u64,
         updated_at: u64,
     ) -> Result<i64, String> {
-        let closure = self.tag_rules()?.closure(tag_ids)?;
-        self.validate_tag_constraints(&closure.effective)?;
         self.conn
             .execute(
                 sql::MEMORY_INSERT,
@@ -56,7 +54,7 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
         let id = self.conn.last_insert_rowid();
-        self.replace_effective_tags(id, tag_ids, &closure)?;
+        self.set_memory_tags(id, tag_ids)?;
         Ok(id)
     }
 
@@ -69,6 +67,7 @@ impl Store {
                 summary: r.get(1)?,
                 content: r.get(2)?,
                 tags: Vec::new(),
+                attrs: Vec::new(),
                 created_at: created as u64,
                 updated_at: updated as u64,
             })
@@ -79,6 +78,7 @@ impl Store {
             Err(e) => return Err(e.to_string()),
         };
         m.tags = self.tags_of(id)?;
+        m.attrs = self.attributes_of(id)?;
         Ok(Some(m))
     }
 
@@ -109,6 +109,7 @@ impl Store {
                     summary: r.get(1)?,
                     content: r.get(2)?,
                     tags: Vec::new(),
+                    attrs: Vec::new(),
                     created_at: created as u64,
                     updated_at: updated as u64,
                 })
@@ -129,10 +130,32 @@ impl Store {
         for (mid, name) in pairs {
             by_memory.entry(mid).or_default().push(name);
         }
+        let mut attr_stmt = self
+            .conn
+            .prepare(sql::ATTRIBUTE_PAIRS_ALL)
+            .map_err(|e| e.to_string())?;
+        let attr_pairs = attr_stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut attrs_by_memory: HashMap<i64, Vec<(String, String)>> = HashMap::new();
+        for (mid, key, value) in attr_pairs {
+            attrs_by_memory.entry(mid).or_default().push((key, value));
+        }
         for m in &mut out {
             let id = Self::parse_id(&m.id).unwrap_or(0);
             if let Some(tags) = by_memory.get(&id) {
                 m.tags = tags.clone();
+            }
+            if let Some(attrs) = attrs_by_memory.get(&id) {
+                m.attrs = attrs.clone();
             }
         }
         Ok(out)
@@ -191,6 +214,7 @@ impl Store {
                         summary: r.get(1)?,
                         content: r.get(2)?,
                         tags: Vec::new(),
+                        attrs: Vec::new(),
                         created_at: created as u64,
                         updated_at: updated as u64,
                     })
@@ -203,6 +227,7 @@ impl Store {
         for m in &mut page {
             let id = Self::parse_id(&m.id).unwrap_or(0);
             m.tags = self.tags_of(id)?;
+            m.attrs = self.attributes_of(id)?;
         }
         Ok((total, page))
     }
@@ -241,23 +266,14 @@ impl Store {
             ));
         }
         let mut changed = false;
-        let original = self.original_tag_ids(id)?;
-        let effective = self.tag_ids_for_names(&self.tags_of(id)?)?;
-        for tag_id in remove_tag_ids {
-            if effective.contains(tag_id) && !original.contains(tag_id) {
-                return Err("cannot remove a derived-only tag directly; remove its original premises or change the derivation rule".into());
-            }
-        }
-        let mut final_tags = original.clone();
+        let mut final_tags = self.original_tag_ids(id)?;
         for tag_id in add_tag_ids {
             if !final_tags.contains(tag_id) {
                 final_tags.push(*tag_id);
             }
         }
         final_tags.retain(|id| !remove_tag_ids.contains(id));
-        let closure = self.tag_rules()?.closure(&final_tags)?;
-        self.validate_tag_constraints(&closure.effective)?;
-        let mut sorted_original = original;
+        let mut sorted_original = self.original_tag_ids(id)?;
         sorted_original.sort_unstable();
         final_tags.sort_unstable();
         final_tags.dedup();
@@ -277,7 +293,7 @@ impl Store {
         // Contract (defs.rs): add_tags runs before remove_tags; when both lists contain the same
         // tag the final result is removal (the explicit remove intent wins). Tag-only changes do
         // not touch updated_at — see the doc above.
-        self.replace_effective_tags(id, &final_tags, &closure)?;
+        self.set_memory_tags(id, &final_tags)?;
         Ok(changed)
     }
 

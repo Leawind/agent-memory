@@ -29,35 +29,15 @@ impl Store {
     pub const SETTING_LIFECYCLE_POLICY: &'static str = "lifecycle_policy";
 
     pub fn lifecycle_policy(&self) -> Result<crate::lifecycle::Policy, String> {
-        let registry = self.predicate_registry("global")?;
-        let tags = self.tag_id_names()?;
-        self.stored_lifecycle_policy()?
-            .try_map(&mut |expr| registry.display(expr, &tags))
+        self.stored_lifecycle_policy()
     }
 
-    pub fn stored_lifecycle_policy(
-        &self,
-    ) -> Result<crate::lifecycle::Policy<crate::named_predicates::BoundExpr>, String> {
+    pub fn stored_lifecycle_policy(&self) -> Result<crate::lifecycle::Policy, String> {
         match self.settings_get(Self::SETTING_LIFECYCLE_POLICY)? {
             Some(raw) => serde_json::from_str(&raw)
                 .map_err(|e| format!("corrupt lifecycle_policy JSON: {e}")),
             None => Ok(crate::lifecycle::Policy::default()),
         }
-    }
-
-    pub fn lifecycle_policy_compiled(
-        &self,
-    ) -> Result<crate::lifecycle::Policy<crate::tag_expr::TagExpr>, String> {
-        let registry = self.predicate_registry("global")?;
-        let tags = self.tag_id_names()?;
-        self.stored_lifecycle_policy()?.try_map(&mut |expr| {
-            registry.resolve(expr)?.try_map(&mut |id| {
-                tags.get(&id)
-                    .cloned()
-                    .map(crate::tag_expr::TagAtom::Tag)
-                    .ok_or_else(|| format!("missing tag id {id}"))
-            })
-        })
     }
 
     pub fn search_limits(&self) -> Result<crate::search::Limits, String> {
@@ -89,18 +69,7 @@ impl Store {
             let parsed = serde_json::from_str(value)
                 .map_err(|e| format!("invalid lifecycle_policy JSON: {e}"))?;
             let policy = crate::lifecycle::Policy::parse(&parsed)?;
-            let registry = self.predicate_registry("global")?;
-            let tags = self
-                .tag_id_names()?
-                .into_iter()
-                .map(|(id, name)| (name, id))
-                .collect();
-            let bound = policy
-                .try_map(&mut |raw| registry.bind(crate::tag_expr::parse_rule(raw)?, &tags))?;
-            for rule in &bound.rules {
-                registry.resolve(&rule.predicate)?;
-            }
-            policy_raw = serde_json::to_string(&bound).map_err(|e| e.to_string())?;
+            policy_raw = serde_json::to_string(&policy).map_err(|e| e.to_string())?;
             policy_raw.as_str()
         } else {
             value
@@ -127,7 +96,6 @@ impl Store {
         if [
             Self::SETTING_SEARCH_LIMITS,
             Self::SETTING_LIFECYCLE_POLICY,
-            Self::SETTING_TAG_RULES,
             Self::SETTING_EMBEDDING_MODELS,
             Self::SETTING_RERANK_MODELS,
         ]

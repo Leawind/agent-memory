@@ -16,7 +16,11 @@ use serde_json::{json, Map, Value};
 /// unknown names get the same did-you-mean hint as tag linking on writes.
 fn resolve_tag_expr(st: &Store, ctx: &IdentityCtx, raw: &str) -> Result<TagExpr, ToolError> {
     let expr = st
-        .resolve_named_query(ctx, tag_expr::parse(raw)?)
+        .resolve_named_query(
+            ctx,
+            st.bind_query_atoms(tag_expr::parse(raw)?)
+                .map_err(ToolError::invalid)?,
+        )
         .map_err(ToolError::invalid)?;
     let mut unknown: Vec<String> = Vec::new();
     for name in expr.tag_names() {
@@ -65,8 +69,18 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // Default off: unknown tags are an error listing similar existing ones, keeping the taxonomy
     // from rotting through casual tagging; the agent opts into auto-creation explicitly.
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
+    // Structured key:value attributes: validated against the key registry (unknown keys are
+    // lazily registered as enum + single-valued), enum values link through the tag pipeline.
+    let resolved = match args.get("attributes") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
+    };
+    let mut all_tags = tags;
+    if let Some(resolved) = &resolved {
+        all_tags.extend(resolved.enum_tags.iter().cloned());
+    }
 
-    let linkage = st.link_tags(&tags, create_missing)?;
+    let linkage = st.link_tags(&all_tags, create_missing)?;
 
     // Duplicate detection (deterministic rule: titles exactly equal after normalization). Computed before insertion so the memory cannot match itself.
     // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
@@ -74,6 +88,9 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     let ts = now();
     let id = st.insert_memory(&summary, &content, &linkage.ids, ts, ts)?;
+    if let Some(resolved) = &resolved {
+        st.replace_attributes(id, &resolved.rows)?;
+    }
     // Echo-free response: the caller just stated summary/content/tags, so none of them come back —
     // only the facts it cannot derive (id, server timestamp) plus the sparse write companions
     // (three-way tag-link classification minus the derivable reused set, duplicate hints), each
@@ -89,6 +106,11 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // tags_reused is deliberately absent: it is exactly the input minus these two lists
     if !linkage.missing_description.is_empty() {
         out["tags_missing_description"] = json!(linkage.missing_description);
+    }
+    if let Some(resolved) = &resolved {
+        if !resolved.lazy_keys.is_empty() {
+            out["keys_autocreated"] = json!(resolved.lazy_keys);
+        }
     }
     if !duplicate_of.is_empty() {
         out["duplicate_of"] = json!(duplicate_of);
@@ -202,7 +224,7 @@ pub fn memory_list(
             let memories = st.all_memories()?;
             let ids: Vec<i64> = memories
                 .iter()
-                .filter(|m| expr.eval(&m.tags))
+                .filter(|m| expr.eval(&m.tags, &m.attrs))
                 .filter_map(|m| Store::parse_id(&m.id))
                 .collect();
             Some(json!(ids).to_string())
@@ -287,7 +309,11 @@ pub fn memory_search(
                 .unwrap_or(&default_lifecycle)
                 .matches(&state, query_time)
         })
-        .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
+        .filter(|m| {
+            tag_expr
+                .as_ref()
+                .is_none_or(|expr| expr.eval(&m.tags, &m.attrs))
+        })
         .collect();
     let keyword_hits = search::literal_channels(&memories, &query);
     // Count literal candidates once even when both independent channels support them.
@@ -353,7 +379,7 @@ pub fn memory_search(
 
     let mut eligible = keyword_idx.clone();
     eligible.extend(vector_hits.iter().map(|hit| hit.idx));
-    let policy = st.lifecycle_policy_compiled()?;
+    let policy = st.lifecycle_policy()?;
     let priors = crate::lifecycle::rank_channels(
         &memories,
         &eligible,
@@ -467,10 +493,6 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
         .iter()
         .map(|m| {
             let mut view = m.full_view();
-            let provenance = st
-                .memory_tag_provenance(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?;
-            view["original_tags"] = provenance["original_tags"].clone();
-            view["derived_tags"] = provenance["derived_tags"].clone();
             view["lifecycle"] = st
                 .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
                 .view(now());
@@ -549,9 +571,21 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         None => None,
     };
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    if summary.is_none() && content.is_none() && add_tags.is_none() && remove_tags.is_none() {
+    // `attributes` replaces the memory's whole keyed set: enum values of touched keys are
+    // unlinked first ({} clears every registered key), string/bool rows are swapped wholesale.
+    let attributes = args.get("attributes").filter(|v| !v.is_null());
+    let resolved = match attributes {
+        Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
+        None => None,
+    };
+    if summary.is_none()
+        && content.is_none()
+        && add_tags.is_none()
+        && remove_tags.is_none()
+        && resolved.is_none()
+    {
         return Err(ToolError::invalid(
-            "nothing to update: provide summary, content, add_tags and/or remove_tags",
+            "nothing to update: provide summary, content, add_tags, remove_tags and/or attributes",
         ));
     }
 
@@ -564,17 +598,57 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     if let Some(remove) = &remove_tags {
         remove_ids = st.tag_ids_for_names(remove)?;
     }
+    let enum_add_ids;
+    if let Some(resolved) = &resolved {
+        // Unlink the old enum values of every key the replacement touches ({} = all keys)
+        let empty_object =
+            attributes.is_some_and(|v| v.as_object().is_some_and(|object| object.is_empty()));
+        let mut replaced_keys: Vec<String> = Vec::new();
+        if empty_object {
+            replaced_keys = st.key_rows()?.into_iter().map(|k| k.name).collect();
+        } else {
+            for name in &resolved.enum_tags {
+                if let Some((key, _)) = name.split_once(':') {
+                    if !replaced_keys.iter().any(|k| k == key) {
+                        replaced_keys.push(key.to_string());
+                    }
+                }
+            }
+            for (key, _) in &resolved.rows {
+                if !replaced_keys.contains(key) {
+                    replaced_keys.push(key.clone());
+                }
+            }
+        }
+        for key in &replaced_keys {
+            let names = st.key_value_tags(key)?;
+            remove_ids.extend(st.tag_ids_for_names(&names)?);
+        }
+        if !resolved.enum_tags.is_empty() {
+            enum_add_ids = st.link_tags(&resolved.enum_tags, create_missing)?.ids;
+        } else {
+            enum_add_ids = Vec::new();
+        }
+    } else {
+        enum_add_ids = Vec::new();
+    }
 
     if !st.memory_exists(id)? {
         return Err(ToolError::not_found(format!(
             "memory '{raw_id}' not found (use memory_list or memory_search first)"
         )));
     }
+    let previous_attrs = match &resolved {
+        Some(_) => Some(st.attributes_of(id)?),
+        None => None,
+    };
 
     let add_ids = linkage_opt
         .as_ref()
         .map(|l| l.ids.clone())
         .unwrap_or_default();
+    let mut add_ids = add_ids;
+    add_ids.extend(enum_add_ids);
     let changed = st.update_memory(
         id,
         summary.as_deref(),
@@ -582,11 +656,21 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         &add_ids,
         &remove_ids,
     )?;
+    let mut changed = changed;
+    if let Some(resolved) = &resolved {
+        st.replace_attributes(id, &resolved.rows)?;
+        changed |= previous_attrs.as_ref() != Some(&st.attributes_of(id)?);
+    }
 
     // Echo-free: no view of the stored memory — summary/content/tag names were just stated by the
     // caller, and inspecting current state is a read's job (memory_get). Only the "did anything
     // actually change" flag plus the sparse write companions (same classification as memory_create)
     let mut out = json!({"updated": changed});
+    if let Some(resolved) = &resolved {
+        if !resolved.lazy_keys.is_empty() {
+            out["keys_autocreated"] = json!(resolved.lazy_keys);
+        }
+    }
     // Same three-way classification as memory_create: attached per-array, only when non-empty
     if let Some(linkage) = linkage_opt {
         if !linkage.autocreated.is_empty() {
@@ -803,6 +887,8 @@ pub fn memory_merge(
         &source_tag_ids,
         &[],
     )?;
+    // Keyed values join the union like tags do (single-value conflicts are grandfathered)
+    st.merge_attributes(target_id, source_id)?;
     let (deleted, _) = st.delete_memories(&[source_id])?;
     if deleted.is_empty() {
         // Unreachable inside the transaction (the source was just read), but never lie about a

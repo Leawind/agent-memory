@@ -21,13 +21,13 @@
 mod access;
 mod embeddings;
 mod identities;
+mod keys;
 mod lifecycle;
 mod memories;
 mod migrate;
 mod ops;
 mod predicates;
 mod settings;
-mod tag_rules;
 mod tags;
 mod tx;
 

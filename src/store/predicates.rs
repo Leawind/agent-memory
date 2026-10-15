@@ -197,10 +197,6 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
         self.validate_all_predicate_scopes()?;
-        if scope == "global" {
-            self.lifecycle_policy_compiled()?;
-            self.recompute_tag_rules()?;
-        }
         Ok(json!({"saved":true}))
     }
 
@@ -237,26 +233,8 @@ impl Store {
             .find(|d| d.namespace == namespace && d.name == name)
             .ok_or("named predicate not found")?
             .id;
-        let rules = self.stored_tag_rules()?;
-        if rows.iter().any(|d| d.predicate.references_named(id))
-            || rules
-                .constraints
-                .iter()
-                .any(|r| r.expression.references_named(id))
-            || rules
-                .derivations
-                .iter()
-                .flat_map(|r| &r.directions)
-                .any(|r| r.predicate.references_named(id))
-            || self
-                .stored_lifecycle_policy()?
-                .rules
-                .iter()
-                .any(|r| r.predicate.references_named(id))
-        {
-            return Err(
-                "predicate is still referenced; remove dependent predicates and rules first".into(),
-            );
+        if rows.iter().any(|d| d.predicate.references_named(id)) {
+            return Err("predicate is still referenced; remove dependent predicates first".into());
         }
         self.conn
             .execute(sql::PREDICATE_DELETE, [id])

@@ -658,6 +658,7 @@ mod tests {
             id: Store::format_id(id),
             summary: summary.to_string(),
             content: content.to_string(),
+            attrs: Vec::new(),
             tags: Vec::new(),
             created_at: 1,
             updated_at: 1,
