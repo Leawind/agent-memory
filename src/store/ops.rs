@@ -490,7 +490,6 @@ impl Store {
                     "summary": summary,
                     "content": content,
                     "tags": tags,
-                    "attributes": self.attributes_of(id)?,
                     "created_at": created_at,
                     "updated_at": updated_at,
                     "lifecycle": self.lifecycle_get(id)?,
@@ -498,9 +497,25 @@ impl Store {
                 }),
             );
         }
+        // The key registry must ride along: without it a restored store cannot resolve
+        // `key=value` queries or render typed attributes for the `key:value` tags.
+        let keys: Vec<Value> = self
+            .key_rows()?
+            .into_iter()
+            .map(|k| {
+                json!({
+                    "name": k.name,
+                    "key_type": k.key_type,
+                    "multi": k.multi,
+                    "description": k.description,
+                    "created_at": k.created_at,
+                })
+            })
+            .collect();
         Ok(json!({
             "exported_at": crate::model::now(),
             "tags": Value::Object(tags),
+            "keys": keys,
             "memories": Value::Object(memories),
             "predicates": self.global_predicates_view()?,
             "lifecycle_policy": self.lifecycle_policy()?,
@@ -555,6 +570,8 @@ impl Store {
 
         // Create tags (duplicates within the export file are rejected too — name is unique in the database),
         // with a export tag id → new database id mapping for translating memory references.
+        // Dump tag names are stored names: the composed `key:value` form is legal here even
+        // though input paths reject colons (values ride the tag pipeline).
         let mut tag_id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
         let mut seen_names = HashSet::with_capacity(tags.len());
         let mut created_tags = 0usize;
@@ -564,7 +581,7 @@ impl Store {
                 .and_then(Value::as_str)
                 .ok_or("invalid export: tag without name")?;
             let description = t.get("description").and_then(Value::as_str).unwrap_or("");
-            let name = crate::model::normalize_tag_name(name)?;
+            let name = crate::model::validate_stored_tag_name(name)?;
             if !seen_names.insert(name.clone()) {
                 return Err(format!("invalid export: duplicate tag name '{name}'"));
             }
@@ -590,6 +607,33 @@ impl Store {
                     .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
             };
             tag_id_by_key.insert(key.as_str(), id);
+        }
+
+        // Restore the key registry before memories so the value tags link into a complete schema.
+        // An absent section (hypothetically hand-written dumps) just means no keys.
+        if let Some(rows) = dump.get("keys").and_then(Value::as_array) {
+            for row in rows {
+                let key = super::KeyRow {
+                    name: row
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .ok_or("invalid export: key without name")?
+                        .to_string(),
+                    key_type: row
+                        .get("key_type")
+                        .and_then(Value::as_str)
+                        .ok_or("invalid export: key without type")?
+                        .to_string(),
+                    multi: row.get("multi").and_then(Value::as_bool).unwrap_or(false),
+                    description: row
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    created_at: row.get("created_at").and_then(Value::as_u64).unwrap_or(0),
+                };
+                self.key_restore(&key)?;
+            }
         }
 
         self.import_global_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
@@ -633,24 +677,6 @@ impl Store {
                 tag_ids.push(*id);
             }
             let id = self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
-            if let Some(rows) = m.get("attributes").and_then(Value::as_array) {
-                let mut pairs = Vec::with_capacity(rows.len());
-                for row in rows {
-                    let pair = row
-                        .as_array()
-                        .ok_or("invalid export: memory attributes must be [key, value] arrays")?;
-                    let k = pair
-                        .first()
-                        .and_then(Value::as_str)
-                        .ok_or("invalid export: attribute key must be a string")?;
-                    let v = pair
-                        .get(1)
-                        .and_then(Value::as_str)
-                        .ok_or("invalid export: attribute value must be a string")?;
-                    pairs.push((k.to_string(), v.to_string()));
-                }
-                self.replace_attributes(id, &pairs)?;
-            }
             if let Some(value) = m.get("lifecycle") {
                 let meta = serde_json::from_value(value.clone())
                     .map_err(|error| format!("invalid exported lifecycle: {error}"))?;
@@ -935,6 +961,48 @@ mod tests {
         let dump = st.export_dump().unwrap();
         assert_eq!(dump["memories"]["m2"]["tags"], json!([]));
         cleanup(&path);
+    }
+
+    /// The key registry rides the dump and the restore: without it a restored store cannot
+    /// resolve `key=value` queries or render typed attributes for the `key:value` tags.
+    #[test]
+    fn export_import_round_trips_the_key_registry() {
+        let src = temp_db("keys-export-src");
+        let dst = temp_db("keys-export-dst");
+        cleanup(&src);
+        cleanup(&dst);
+        let dump = {
+            let st = Store::open(&src).unwrap();
+            st.key_set("project", "enum", false, "work projects")
+                .unwrap();
+            st.key_set("count", "number", true, "").unwrap();
+            let resolved = st
+                .resolve_attributes(&serde_json::json!({"project": "apollo", "count": 3}))
+                .unwrap();
+            let ids = st.link_tags(&resolved.value_tags, true).unwrap().ids;
+            st.insert_memory("s", "body", &ids, 1, 1).unwrap();
+            st.export_dump().unwrap()
+        };
+        assert_eq!(dump["keys"].as_array().unwrap().len(), 2);
+        assert!(
+            dump.to_string().contains("project:apollo") && dump.to_string().contains("count:3"),
+            "value tags ride the tags section"
+        );
+
+        Store::open(&dst).unwrap().import_dump(&dump).unwrap();
+        let st = Store::open(&dst).unwrap();
+        let project = st.key_get("project").unwrap().unwrap();
+        assert_eq!(project.key_type, "enum");
+        assert_eq!(project.description, "work projects");
+        let memory = &st.get_memories(&[1]).unwrap().0[0];
+        assert_eq!(st.attributes_view(memory).unwrap()["count"], 3);
+        // The restored registry resolves queries and existence atoms
+        let expr = st
+            .bind_query_atoms(crate::tag_expr::parse("project=apollo").unwrap())
+            .unwrap();
+        assert_eq!(expr.tag_names(), vec!["project:apollo"]);
+        cleanup(&src);
+        cleanup(&dst);
     }
 
     #[test]

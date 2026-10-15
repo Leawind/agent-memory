@@ -9,12 +9,12 @@
 //! or      := and ("|" | "||" and)*
 //! and     := unary ("&" | "&&" unary)*
 //! unary   := ("!" unary) | primary
-//! primary := "(" expr ")" | "mutex(" expr ("," expr)+ ")" | tag | regex | attr
+//! primary := "(" expr ")" | "mutex(" expr ("," expr)+ ")" | tag | regex | keyed
 //! tag     := quoted | bare
 //! quoted  := '"' (escape | char)* '"' | "'" (escape | char)* "'"
 //! bare    := 1+ chars outside whitespace, parentheses, "&|!=!", quotes
 //! regex   := "/" (escape | char)* "/"
-//! attr    := bare "=" (bare | quoted)
+//! keyed   := bare "=" (bare | quoted)
 //! ```
 //!
 //! A regex atom passes when ANY of the memory's tag names matches (Rust regex syntax, case
@@ -25,9 +25,10 @@
 //!
 //! Parsing is pure syntax; leaf names are validated against the store by the caller (unknown
 //! names are an error with a did-you-mean hint, mirroring tag linking on writes). Regex atoms
-//! carry no names and match dynamically. An `attr` atom is syntax only: the store rewrites it
-//! by the key's registered type (enum -> the `key:value` tag, string/bool -> an attribute
-//! match) before use, and named-predicate definitions reject it as query-only.
+//! carry no names and match dynamically. A `keyed` atom is syntax only: the store rewrites it
+//! to the stored `key:value` tag (enum value, or canonical number) before use, and
+//! named-predicate definitions reject it as query-only. Values never need quoting for special
+//! characters — attribute values are identifier words or numbers, so the bare form is total.
 
 use crate::predicate::Predicate;
 
@@ -39,25 +40,24 @@ pub enum TagAtom {
     Tag(String),
     Named(String),
     Regex(Box<regex::Regex>),
-    /// `key=value` from the query text; the store rewrites it by the key's registered type.
-    /// A value-less rewrite (`key` on a registered string/bool key) means presence.
-    Attr {
+    /// `key=value` from the query text; the store rewrites it to the stored `key:value` tag
+    /// by the key's registered type (enum: the value verbatim; number: canonicalized).
+    KeyEq {
         key: String,
-        value: Option<String>,
+        value: String,
     },
 }
 
 impl TagExpr {
-    /// Evaluate against one memory's tag set and attribute rows: a leaf passes when the set
-    /// carries the name, a regex when any name matches, an attribute by exact row match
-    /// (value-less = any value of that key present).
-    pub fn eval(&self, tags: &[String], attrs: &[(String, String)]) -> bool {
+    /// Evaluate against one memory's tag set: a leaf passes when the set carries the name, a
+    /// regex when any name matches.
+    pub fn eval(&self, tags: &[String]) -> bool {
         self.eval_with(&|atom| match atom {
             TagAtom::Tag(name) => tags.iter().any(|t| t == name),
             TagAtom::Regex(re) => tags.iter().any(|t| re.is_match(t)),
-            TagAtom::Attr { key, value } => attrs
-                .iter()
-                .any(|(k, v)| k == key && value.as_deref().is_none_or(|want| v == want)),
+            TagAtom::KeyEq { .. } => {
+                unreachable!("keyed atoms must be rewritten to tag leaves before evaluation")
+            }
             TagAtom::Named(_) => {
                 unreachable!("named predicates must be resolved before evaluation")
             }
@@ -365,8 +365,8 @@ impl Parser {
                 Ok(TagExpr::Atom(TagAtom::Named(reference.to_string())))
             }
             Tok::Tag(name) => {
-                // `key=value` (attribute comparison) hangs off a plain tag token; the store
-                // rewrites the pair by the key's registered type
+                // `key=value` hangs off a plain tag token; the store rewrites the pair to the
+                // stored `key:value` tag by the key's registered type
                 if matches!(self.peek(), Some((Tok::Eq, _))) {
                     self.pos += 1;
                     let value = match self.next() {
@@ -384,10 +384,7 @@ impl Parser {
                             )
                         }
                     };
-                    return Ok(TagExpr::Atom(TagAtom::Attr {
-                        key: name,
-                        value: Some(value),
-                    }));
+                    return Ok(TagExpr::Atom(TagAtom::KeyEq { key: name, value }));
                 }
                 Ok(TagExpr::Atom(TagAtom::Tag(name)))
             }
@@ -413,7 +410,7 @@ mod tests {
         let owned: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
         parse(expr)
             .unwrap_or_else(|e| panic!("parse '{expr}' failed: {e}"))
-            .eval(&owned, &[])
+            .eval(&owned)
     }
 
     /// Evaluate two expressions over every sample tag set and require identical results —
@@ -435,10 +432,10 @@ mod tests {
             let owned: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
             let left = parse(a)
                 .unwrap_or_else(|e| panic!("parse '{a}' failed: {e}"))
-                .eval(&owned, &[]);
+                .eval(&owned);
             let right = parse(b)
                 .unwrap_or_else(|e| panic!("parse '{b}' failed: {e}"))
-                .eval(&owned, &[]);
+                .eval(&owned);
             assert_eq!(left, right, "mismatch on tags {tags:?}");
         }
     }
@@ -518,41 +515,37 @@ mod tests {
     }
 
     #[test]
-    fn attr_atoms_compare_keys_and_values() {
-        let attrs = vec![
-            ("pinned".to_string(), String::new()),
-            ("url".to_string(), "https://a".to_string()),
-            ("url".to_string(), "https://b".to_string()),
-        ];
-        let eval_attrs = |expr: &str| {
-            let owned: Vec<String> = Vec::new();
-            parse(expr).unwrap().eval(&owned, &attrs)
-        };
-        // Exact match across the row set; value-less means presence
-        assert!(eval_attrs("url=https://b"));
-        assert!(!eval_attrs("url=https://c"));
-        // A bare name stays a Tag atom at parse time; presence is a value-less Attr, which
-        // only the store's rewrite produces (covered by the store tests)
-        assert!(!eval_attrs("url"));
+    fn keyed_atoms_carry_key_and_value_for_the_store_rewrite() {
+        // Keyed atoms are pure syntax: the store rewrites them to `key:value` leaves by the
+        // key's registered type (covered by the store tests). A bare name stays a Tag atom.
+        let parsed = parse("project=agent-memory&!hidden").unwrap();
+        let mut pairs = Vec::new();
+        parsed.visit_atoms(&mut |a| {
+            if let TagAtom::KeyEq { key, value } = a {
+                pairs.push((key.clone(), value.clone()));
+            }
+        });
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(
+            pairs[0],
+            ("project".to_string(), "agent-memory".to_string())
+        );
         assert!(parse("url").unwrap().eval_with(&|atom| matches!(
             atom,
             TagAtom::Tag(name) if name == "url"
         )));
-        // Composes with the algebra like any operand; quoted values carry spaces
-        assert!(eval_attrs("url=https://a|url=https://c"));
-        assert!(!eval_attrs("url='https a b'"));
-        let parsed = parse("project=agent-memory&!hidden").unwrap();
-        let mut keys = Vec::new();
+        // Composes with the algebra like any operand; a quoted value is one token
+        let parsed = parse("key='a b'|key=c").unwrap();
+        let mut count = 0;
         parsed.visit_atoms(&mut |a| {
-            if let TagAtom::Attr { key, value } = a {
-                keys.push((key.clone(), value.clone()));
+            if let TagAtom::KeyEq { value, .. } = a {
+                count += 1;
+                if count == 1 {
+                    assert_eq!(value, "a b");
+                }
             }
         });
-        assert_eq!(keys.len(), 1);
-        assert_eq!(
-            keys[0],
-            ("project".to_string(), Some("agent-memory".to_string()))
-        );
+        assert_eq!(count, 2);
         // Missing value and lone '=' are syntax errors
         assert!(parse("url=").is_err());
         assert!(parse("=x").is_err());

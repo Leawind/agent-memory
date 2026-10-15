@@ -146,7 +146,7 @@ fn decay_rules_match_keys_and_survive_export_import() {
         &path,
         &ctx,
         MEMORY_CREATE,
-        &json!({"summary":"temp note", "tags":["temp:x"],"create_missing_tags":true}),
+        &json!({"summary":"temp note", "attributes":{"temp":"x"},"create_missing_tags":true}),
     )
     .unwrap();
     store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {

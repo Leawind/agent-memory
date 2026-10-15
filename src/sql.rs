@@ -13,12 +13,7 @@ pub const KEY_PUT: &str = include_str!("../sql/key_put.sql");
 pub const KEY_GET: &str = include_str!("../sql/key_get.sql");
 pub const KEY_ALL: &str = include_str!("../sql/key_all.sql");
 pub const KEY_DELETE: &str = include_str!("../sql/key_delete.sql");
-pub const ATTRIBUTE_CLEAR_FOR_KEY: &str = include_str!("../sql/attribute_clear_for_key.sql");
-pub const ATTRIBUTE_ALL_FOR: &str = include_str!("../sql/attribute_all_for.sql");
-pub const ATTRIBUTE_PAIRS_ALL: &str = include_str!("../sql/attribute_pairs_all.sql");
-pub const ATTRIBUTE_CLEAR_FOR_MEMORY: &str = include_str!("../sql/attribute_clear_for_memory.sql");
-pub const ATTRIBUTE_INSERT: &str = include_str!("../sql/attribute_insert.sql");
-pub const ATTRIBUTE_MERGE: &str = include_str!("../sql/attribute_merge.sql");
+pub const KEY_VALUE_TAGS: &str = include_str!("../sql/key_value_tags.sql");
 pub const TAG_CREATE: &str = include_str!("../sql/tag_create.sql");
 pub const TAG_AUTOCREATE: &str = include_str!("../sql/tag_autocreate.sql");
 pub const TAG_SEED_RESERVED: &str = include_str!("../sql/tag_seed_reserved.sql");
@@ -143,12 +138,7 @@ mod tests {
             ("KEY_GET", KEY_GET),
             ("KEY_ALL", KEY_ALL),
             ("KEY_DELETE", KEY_DELETE),
-            ("ATTRIBUTE_CLEAR_FOR_KEY", ATTRIBUTE_CLEAR_FOR_KEY),
-            ("ATTRIBUTE_ALL_FOR", ATTRIBUTE_ALL_FOR),
-            ("ATTRIBUTE_PAIRS_ALL", ATTRIBUTE_PAIRS_ALL),
-            ("ATTRIBUTE_CLEAR_FOR_MEMORY", ATTRIBUTE_CLEAR_FOR_MEMORY),
-            ("ATTRIBUTE_INSERT", ATTRIBUTE_INSERT),
-            ("ATTRIBUTE_MERGE", ATTRIBUTE_MERGE),
+            ("KEY_VALUE_TAGS", KEY_VALUE_TAGS),
             ("TAG_CREATE", TAG_CREATE),
             ("TAG_AUTOCREATE", TAG_AUTOCREATE),
             ("TAG_SEED_RESERVED", TAG_SEED_RESERVED),
