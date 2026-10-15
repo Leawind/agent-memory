@@ -18,9 +18,6 @@ pub const PREDICATE_LIST: &str = "predicate_list";
 pub const PREDICATE_SET: &str = "predicate_set";
 pub const PREDICATE_DELETE: &str = "predicate_delete";
 pub const TAG_UPDATE: &str = "tag_update";
-pub const KEY_SET: &str = "key_set";
-pub const KEY_LIST: &str = "key_list";
-pub const KEY_DELETE: &str = "key_delete";
 pub const TAG_DELETE: &str = "tag_delete";
 pub const MEMORY_CREATE: &str = "memory_create";
 pub const MEMORY_LIST: &str = "memory_list";
@@ -36,9 +33,6 @@ pub const MEMORY_USE: &str = "memory_use";
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
     TAG_LIST,
-    KEY_SET,
-    KEY_LIST,
-    KEY_DELETE,
     PREDICATE_LIST,
     PREDICATE_SET,
     PREDICATE_DELETE,
@@ -58,7 +52,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Attribute predicates: key=value matches the stored 'key:value' tag exactly (an enum value verbatim; a number in canonical form, so key=1.0 finds key:1); a bare registered key tests existence with any value. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule: 1-100 characters of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_' - no spaces, colons, quotes or expression operators. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Attribute predicates: key=value matches the stored 'key:value' tag exactly (an enum value verbatim; a number in canonical form, so key=1.0 finds key:1); a bare word that is not an existing tag but prefixes stored 'key:value' tags tests existence with any value. Named predicates use @name (user first, then global), or @global::name / @user::name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule: 1-100 characters of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_' - no spaces, colons, quotes or expression operators. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
@@ -116,24 +110,6 @@ pub fn tool_definitions() -> Value {
             true, false,
         ),
         def(
-            KEY_SET,
-            "Create or reconfigure a structured attribute key. Types: 'enum' values are reusable identifier words (tag-vocabulary entries, listed by key_list); 'number' values are numeric quantities stored in canonical decimal form (1 and 1.0 are the same value). Both are stored as 'key:value' tags and ride the tag pipeline. Single-valued by default; multi accepts arrays of up to 32. Unknown keys auto-register on first attribute write (a string value infers enum, a number infers number), so key_set exists for explicit schema decisions. Names follow the tag identifier rule (no ':'). Changes apply to future writes; existing data is grandfathered. Returns an empty object.",
-            json!({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":100},"key_type":{"type":"string","enum":["enum","number"],"default":"enum"},"multi":{"type":"boolean","default":false},"description":{"type":"string","maxLength":512}},"required":["name"],"additionalProperties":false}),
-            false, false,
-        ),
-        def(
-            KEY_LIST,
-            "List the registered attribute keys with type, multi flag, description and the known reusable values ('key:value' tags currently in the store; enum words or canonical numbers). This is the schema contract: read it before writing attributes so values stay in the shared vocabulary instead of forking near-synonyms. Returns keys only, never memory content.",
-            json!({"type":"object","properties":{},"additionalProperties":false}),
-            true, false,
-        ),
-        def(
-            KEY_DELETE,
-            "Delete a registered key (admin): its 'key:value' value tags are detached from memories through the regular tag delete path, and the vocabulary discipline goes with the key. Returns deleted plus the detached memory count.",
-            json!({"type":"object","properties":{"name":{"type":"string","minLength":1}},"required":["name"],"additionalProperties":false}),
-            false, true,
-        ),
-        def(
             TAG_UPDATE,
             "Update a tag: rename it and/or set its description (the only way to fill in a description after tag_create). Memories referencing the tag follow a rename automatically - only the label changes. Omit new_name to keep the current name; omit description to keep the current one; at least one of the two is required. The response carries only the flags renamed / description_updated telling which parts actually changed - names and descriptions are never echoed back.",
             json!({
@@ -172,7 +148,7 @@ pub fn tool_definitions() -> Value {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tag names for this memory (no 'key:' prefix - use attributes for keyed values); must exist unless create_missing_tags is true. One identifier word: Unicode letters, digits, '_', '-', '.'; no spaces, colons, quotes or operators."},
-                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Structured key:value attributes validated against the key registry (see key_list). Values are enum words (identifier-like, reusable vocabulary; create_missing_tags applies) or numbers (stored in canonical decimal form); both become 'key:value' tags. Unknown keys are lazily registered (string value infers enum, number infers number) and reported via keys_autocreated. Single-valued keys take one scalar; multi-valued keys accept an array of up to 32. Booleans are not attribute values - presence flags are plain tags."},
+                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Structured key:value attributes. Keys are identifier names (no ':') and unique per memory - one value each; values are identifier words (reusable vocabulary; create_missing_tags applies) or numbers (stored in canonical decimal form), both becoming ordinary 'key:value' tags in the shared tag vocabulary. Booleans and arrays are not attribute values - presence flags are plain tags."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names and unknown enum attribute values are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["summary"],
@@ -240,7 +216,7 @@ pub fn tool_definitions() -> Value {
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
                     "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
                     "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
-                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Replacement for the memory's whole keyed attribute set (omit to leave attributes unchanged; {} clears every key the memory carries). Values of touched keys are unlinked and relinked as 'key:value' tags. See memory_create for the value shapes."},
+                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Replacement for the memory's whole keyed attribute set (omit to leave attributes unchanged; {} clears every key the memory carries). Every keyed value is unlinked and the given ones relinked as 'key:value' tags. See memory_create for the value shapes."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
@@ -377,8 +353,6 @@ pub fn affects_search(tool: &str) -> bool {
 pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
-        KEY_SET | KEY_DELETE => &[Cap::Admin],
-        KEY_LIST => &[Cap::Read],
         MEMORY_CREATE => &[Cap::Create],
         TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => &[Cap::Read],
         MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
@@ -408,8 +382,8 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(
-            read_only, 6,
-            "the contract should have exactly 6 read-only tools"
+            read_only, 5,
+            "the contract should have exactly 5 read-only tools"
         );
     }
 

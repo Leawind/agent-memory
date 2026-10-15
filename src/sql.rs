@@ -9,10 +9,6 @@ pub const TAG_EXISTS: &str = include_str!("../sql/tag_exists.sql");
 pub const PREDICATE_ALL: &str = include_str!("../sql/predicate_all.sql");
 pub const PREDICATE_PUT: &str = include_str!("../sql/predicate_put.sql");
 pub const PREDICATE_DELETE: &str = include_str!("../sql/predicate_delete.sql");
-pub const KEY_PUT: &str = include_str!("../sql/key_put.sql");
-pub const KEY_GET: &str = include_str!("../sql/key_get.sql");
-pub const KEY_ALL: &str = include_str!("../sql/key_all.sql");
-pub const KEY_DELETE: &str = include_str!("../sql/key_delete.sql");
 pub const KEY_VALUE_TAGS: &str = include_str!("../sql/key_value_tags.sql");
 pub const TAG_CREATE: &str = include_str!("../sql/tag_create.sql");
 pub const TAG_AUTOCREATE: &str = include_str!("../sql/tag_autocreate.sql");
@@ -134,10 +130,6 @@ mod tests {
             ("PREDICATE_ALL", PREDICATE_ALL),
             ("PREDICATE_PUT", PREDICATE_PUT),
             ("PREDICATE_DELETE", PREDICATE_DELETE),
-            ("KEY_PUT", KEY_PUT),
-            ("KEY_GET", KEY_GET),
-            ("KEY_ALL", KEY_ALL),
-            ("KEY_DELETE", KEY_DELETE),
             ("KEY_VALUE_TAGS", KEY_VALUE_TAGS),
             ("TAG_CREATE", TAG_CREATE),
             ("TAG_AUTOCREATE", TAG_AUTOCREATE),

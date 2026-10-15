@@ -31,7 +31,6 @@ mod settings;
 mod tags;
 mod tx;
 
-pub use keys::KeyRow;
 pub use memories::ListFilter;
 pub use tx::{with_db_in, with_db_in_timeout, TxMode};
 

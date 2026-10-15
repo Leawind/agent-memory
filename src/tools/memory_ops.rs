@@ -79,16 +79,15 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // Default off: unknown tags are an error listing similar existing ones, keeping the taxonomy
     // from rotting through casual tagging; the agent opts into auto-creation explicitly.
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    // Structured key:value attributes: validated against the key registry (unknown keys are
-    // lazily registered — strings as enum, numbers as number), values link through the tag
-    // pipeline like any other tag.
+    // Structured key:value attributes: keys are identifier names unique per memory, values are
+    // identifier words or numbers — they link through the tag pipeline like any other tag.
     let resolved = match args.get("attributes") {
         None | Some(Value::Null) => None,
         Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
     };
     let mut all_tags = tags;
     if let Some(resolved) = &resolved {
-        all_tags.extend(resolved.value_tags.iter().cloned());
+        all_tags.extend(resolved.iter().cloned());
     }
 
     let linkage = st.link_tags(&all_tags, create_missing)?;
@@ -114,11 +113,6 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // tags_reused is deliberately absent: it is exactly the input minus these two lists
     if !linkage.missing_description.is_empty() {
         out["tags_missing_description"] = json!(linkage.missing_description);
-    }
-    if let Some(resolved) = &resolved {
-        if !resolved.lazy_keys.is_empty() {
-            out["keys_autocreated"] = json!(resolved.lazy_keys);
-        }
     }
     if !duplicate_of.is_empty() {
         out["duplicate_of"] = json!(duplicate_of);
@@ -576,12 +570,11 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         None => None,
     };
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    // `attributes` replaces the memory's whole keyed set: value tags of every touched key are
-    // unlinked first ({} clears every key the memory carries), the new values link as ordinary
-    // `key:value` tags. Input tag arrays cannot carry colons, so this is the only write path
-    // for keyed values.
-    let attributes = args.get("attributes").filter(|v| !v.is_null());
-    let resolved = match attributes {
+    // `attributes` is the replacement for the memory's whole keyed set: every `key:value` tag
+    // on the memory is unlinked first ({} clears all keyed values), then the given values link
+    // as ordinary `key:value` tags. Input tag arrays cannot carry colons, so this is the only
+    // write path for keyed values — and a key is unique per memory by construction.
+    let resolved = match args.get("attributes").filter(|v| !v.is_null()) {
         Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
         None => None,
     };
@@ -607,33 +600,18 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     }
     let value_add_ids;
     if let Some(resolved) = &resolved {
-        // Unlink the old values of every key the replacement touches ({} = all keys on the memory)
-        let empty_object =
-            attributes.is_some_and(|v| v.as_object().is_some_and(|object| object.is_empty()));
-        let replaced_keys: Vec<String> = if empty_object {
-            st.get_memories(&[id])?
-                .0
-                .first()
-                .map(|m| {
-                    m.tag_keys()
-                        .into_iter()
-                        .map(|k| k.to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        } else {
-            resolved
-                .value_tags
-                .iter()
-                .filter_map(|name| name.split_once(':').map(|(k, _)| k.to_string()))
-                .collect::<Vec<_>>()
-        };
-        for key in &replaced_keys {
-            let names = st.key_value_tags(key)?;
-            remove_ids.extend(st.tag_ids_for_names(&names)?);
-        }
-        if !resolved.value_tags.is_empty() {
-            value_add_ids = st.link_tags(&resolved.value_tags, create_missing)?.ids;
+        // Whole-set replacement: every keyed tag the memory carries is unlinked, then the
+        // replacement links ({} = the empty set, clearing all keyed values)
+        let current = st
+            .get_memories(&[id])?
+            .0
+            .first()
+            .map(|m| m.tags.clone())
+            .unwrap_or_default();
+        let keyed: Vec<String> = current.into_iter().filter(|t| t.contains(':')).collect();
+        remove_ids.extend(st.tag_ids_for_names(&keyed)?);
+        if !resolved.is_empty() {
+            value_add_ids = st.link_tags(resolved, create_missing)?.ids;
         } else {
             value_add_ids = Vec::new();
         }
@@ -665,11 +643,6 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // caller, and inspecting current state is a read's job (memory_get). Only the "did anything
     // actually change" flag plus the sparse write companions (same classification as memory_create)
     let mut out = json!({"updated": changed});
-    if let Some(resolved) = &resolved {
-        if !resolved.lazy_keys.is_empty() {
-            out["keys_autocreated"] = json!(resolved.lazy_keys);
-        }
-    }
     // Same three-way classification as memory_create: attached per-array, only when non-empty
     if let Some(linkage) = linkage_opt {
         if !linkage.autocreated.is_empty() {

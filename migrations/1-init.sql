@@ -136,17 +136,3 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-
--- tag_keys：键注册表。结构化属性值统一存储为 tags 表中的 'key:value' 标签
--- （复用标签词表的全部卫生机制）：enum 型键的值是可复用的标识符词，number 型
--- 键的值是规范十进制数（整数精确、其余最短表示，键值查询两侧同一规范化）。
--- multi 标记多值键（多值 = 多个 key:value 标签）。键支持懒创建：首次写入
--- 未注册键时，字符串值推断为 enum、数字值推断为 number。
-
-CREATE TABLE IF NOT EXISTS tag_keys (
-    name TEXT PRIMARY KEY,
-    key_type TEXT NOT NULL CHECK (key_type IN ('enum', 'number')),
-    multi INTEGER NOT NULL DEFAULT 0 CHECK (multi IN (0, 1)),
-    description TEXT NOT NULL DEFAULT '',
-    created_at INTEGER NOT NULL
-);
