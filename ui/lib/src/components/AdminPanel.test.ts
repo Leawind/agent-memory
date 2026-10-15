@@ -125,7 +125,6 @@ describe('AdminPanel', () => {
       '身份与访问',
       '搜索模型',
       '生命周期',
-      '属性键',
       '自定义提示词',
       '备份导入导出',
       '数据体检',
@@ -136,7 +135,7 @@ describe('AdminPanel', () => {
         const section = card.element.closest('.lifecycle-cards') ?? card.element
         return (section as HTMLElement).style.display !== 'none'
       })
-    expect(cards()).toHaveLength(10)
+    expect(cards()).toHaveLength(9)
     expect(visible()).toHaveLength(1)
     await items.find((item) => item.text() === '数据体检')!.trigger('click')
     expect(visible()).toHaveLength(1)
@@ -146,7 +145,7 @@ describe('AdminPanel', () => {
     await items.find((item) => item.text() === '生命周期')!.trigger('click')
     await flushPromises()
     expect(visible()).toHaveLength(2)
-    expect(cards()).toHaveLength(10)
+    expect(cards()).toHaveLength(9)
     wrapper.unmount()
   })
 

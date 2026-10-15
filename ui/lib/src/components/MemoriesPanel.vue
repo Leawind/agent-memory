@@ -87,17 +87,6 @@
               >
                 <el-tag size="small">{{ tag }}</el-tag>
               </el-tooltip>
-              <!-- Structured attributes render as their own chip kind (key: value), visually set
-                   apart from plain tags; multi values join on the card -->
-              <el-tag
-                v-for="(value, key) in card.attributes ?? {}"
-                :key="`attr:${key}`"
-                size="small"
-                type="warning"
-                effect="plain"
-              >
-                {{ key }}: {{ Array.isArray(value) ? value.join(', ') : value }}
-              </el-tag>
             </span>
           </span>
           <span class="card-meta">
@@ -162,7 +151,6 @@ import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
 import TagExprInput from './TagExprInput.vue'
-import type { MemoryAttributes } from '../types'
 
 const props = withDefaults(
   defineProps<{
@@ -214,7 +202,6 @@ interface MemoryCard {
   id: string
   summary: string
   tags: string[]
-  attributes?: MemoryAttributes
   updated: string
   snippet?: string
   score?: number
@@ -235,7 +222,6 @@ const cards = computed<MemoryCard[]>(() =>
         id: r.id,
         summary: r.summary,
         tags: r.tags,
-        attributes: r.attributes,
         updated: r.updated,
         state: r.lifecycle?.state,
       })),

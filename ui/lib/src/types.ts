@@ -34,8 +34,6 @@ export interface MemoryCreateResp {
   updated: string
   tags_autocreated?: string[]
   tags_missing_description?: string[]
-  /** Keys registered on the fly by this write's attributes (lazy schema creation) */
-  keys_autocreated?: string[]
   duplicate_of?: string[]
   /** Semantic near-duplicates (advisory): cosine >= the server threshold, best first */
   similar_to?: Array<{ id: string; similarity: number }>
@@ -52,7 +50,6 @@ export interface MemoryUpdateResp {
   updated: boolean
   tags_autocreated?: string[]
   tags_missing_description?: string[]
-  keys_autocreated?: string[]
 }
 
 export interface TagView {
@@ -66,20 +63,6 @@ export interface TagView {
 
 export interface TagListResp {
   tags: TagView[]
-}
-
-/** One registered attribute key (GET /api/keys element): values are the known reusable
- *  value halves of the store's `key:value` tags (omitted when there are none yet) */
-export interface KeyView {
-  name: string
-  type: 'enum' | 'number'
-  multi: boolean
-  description: string
-  values?: string[]
-}
-
-export interface KeyListResp {
-  keys: KeyView[]
 }
 
 export interface MemoryListResp {

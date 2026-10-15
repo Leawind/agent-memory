@@ -24,12 +24,12 @@ describe('i18n messages', () => {
     }
   })
 
-  it('renders the attribute-key registry guidance in both languages', () => {
+  it('renders the unified tag vocabulary guidance in both languages', () => {
     for (const locale of ['zh', 'en'] as const) {
       setMemoryUILocale(locale)
-      expect(t('keys.hint')).toContain('key:value')
-      expect(t('keys.typeNumberHint')).toContain('1')
-      expect(t('keys.multiHint')).toContain('32')
+      expect(t('editor.tagsHint')).toContain('key:value')
+      expect(t('editor.tagDuplicateFmt', { key: 'p' })).toContain('p')
+      expect(t('memories.tagExprHelp')).toContain('&')
     }
     setMemoryUILocale('zh')
   })

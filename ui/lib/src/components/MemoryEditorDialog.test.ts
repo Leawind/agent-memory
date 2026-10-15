@@ -12,18 +12,10 @@ const fullMemory = {
   id: 'm7',
   summary: '已有记忆摘要',
   content: '正文内容',
-  tags: ['t1'],
-  attributes: { project: 'demo', score: 3 },
+  tags: ['t1', 'project:demo', 'score:3'],
   lifecycle: { expires_at: null, archived_at: null, pinned: false, state: 'active' },
   created: '2026-10-04 08:00',
   updated: '2026-10-04 08:00',
-}
-
-const keysPayload = {
-  keys: [
-    { name: 'project', type: 'enum', multi: false, description: '所属项目' },
-    { name: 'score', type: 'number', multi: false, description: '重要度' },
-  ],
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -75,25 +67,19 @@ describe('MemoryEditorDialog', () => {
     const writes: Array<Record<string, unknown>> = []
     vi.stubGlobal(
       'fetch',
-      vi.fn((url: string | URL, init?: RequestInit) => {
+      vi.fn((_url: string | URL, init?: RequestInit) => {
         if (init?.method === 'PUT') {
           writes.push(JSON.parse(String(init.body)))
           return Promise.resolve(jsonResponse({ updated: true }))
         }
-        if (String(url).includes('/api/keys')) return Promise.resolve(jsonResponse(keysPayload))
         return Promise.resolve(jsonResponse(fullMemory))
       }),
     )
     const wrapper = await openDialog('m7')
-    // The attributes editor loads one row per key of the sparse attributes view
-    const valueInputs = () =>
-      Array.from(dialogEl().querySelectorAll('.attr-row .attr-value input')) as HTMLInputElement[]
-    expect(valueInputs().length).toBe(2)
-    expect(valueInputs()[0].value).toBe('demo')
-    expect(valueInputs()[1].value).toBe('3')
-    // Removing one plain tag saves the tag diff, but the untouched attributes stay out of the body
+    // The picker shows the one vocabulary: plain names and key:value pairs as chips alike
     const select = dialogEl().querySelector('.el-select')!
     expect(select.textContent).toContain('t1')
+    expect(select.textContent).toContain('project:demo')
     await new DOMWrapper(select.querySelector('.el-tag__close')!).trigger('click')
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
@@ -103,35 +89,7 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
-  it('editing attributes: registered number keys serialize as JSON numbers, bad values block save', async () => {
-    const writes: Array<Record<string, unknown>> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string | URL, init?: RequestInit) => {
-        if (init?.method === 'PUT') {
-          writes.push(JSON.parse(String(init.body)))
-          return Promise.resolve(jsonResponse({ updated: true }))
-        }
-        if (String(url).includes('/api/keys')) return Promise.resolve(jsonResponse(keysPayload))
-        return Promise.resolve(jsonResponse(fullMemory))
-      }),
-    )
-    const wrapper = await openDialog('m7')
-    const valueInputs = () =>
-      Array.from(dialogEl().querySelectorAll('.attr-row .attr-value input')) as HTMLInputElement[]
-    // score is a registered number key: a non-numeric value keeps save locked
-    await new DOMWrapper(valueInputs()[1]).setValue('abc')
-    expect(saveButton().disabled).toBe(true)
-    await new DOMWrapper(valueInputs()[1]).setValue('7')
-    expect(saveButton().disabled).toBe(false)
-    await new DOMWrapper(saveButton()).trigger('click')
-    await flushPromises()
-    // The whole keyed set travels as the replacement payload; score arrives as a JSON number
-    expect(writes[0].attributes).toEqual({ project: 'demo', score: 7 })
-    wrapper.unmount()
-  })
-
-  it('editing attributes: removing every row clears the keyed set with attributes: {}', async () => {
+  it('editing keyed tags: the set travels whole, numbers stay JSON numbers, removals are absent', async () => {
     const writes: Array<Record<string, unknown>> = []
     vi.stubGlobal(
       'fetch',
@@ -144,16 +102,58 @@ describe('MemoryEditorDialog', () => {
       }),
     )
     const wrapper = await openDialog('m7')
-    const removeButtons = () =>
-      Array.from(dialogEl().querySelectorAll('.attr-row button[aria-label="移除此属性"]')) as HTMLButtonElement[]
-    expect(removeButtons().length).toBe(2)
-    await new DOMWrapper(removeButtons()[0]).trigger('click')
-    await new DOMWrapper(removeButtons()[0]).trigger('click')
+    // Replacing a value: swap the score chip for a new token (driven through the form state;
+    // the select's allow-create typing is Element Plus's own concern)
+    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
+    vm.form.tags.splice(vm.form.tags.indexOf('score:3'), 1, 'score:7')
+    await flushPromises()
+    expect(saveButton().disabled).toBe(false)
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    // The whole keyed set travels as the replacement payload; numbers stay JSON numbers and
+    // remove_tags never carries the keyed names (they ride the attributes object)
+    expect(writes[0].attributes).toEqual({ project: 'demo', score: 7 })
+    expect(writes[0].remove_tags).toEqual([])
+    expect(writes[0].add_tags).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('editing keyed tags: removing every keyed chip clears the set with attributes: {}', async () => {
+    const writes: Array<Record<string, unknown>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string | URL, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({ updated: true }))
+        }
+        return Promise.resolve(jsonResponse(fullMemory))
+      }),
+    )
+    const wrapper = await openDialog('m7')
+    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
+    vm.form.tags = vm.form.tags.filter((t) => !t.includes(':'))
+    await flushPromises()
     expect(saveButton().disabled).toBe(false)
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
     // {} is the explicit clear-everything replacement on the server
     expect(writes[0].attributes).toEqual({})
+    expect(writes[0].remove_tags).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('editing keyed tags: one key cannot carry two values', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(fullMemory))),
+    )
+    const wrapper = await openDialog('m7')
+    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
+    vm.form.tags.push('project:other')
+    await flushPromises()
+    expect(saveButton().disabled).toBe(true)
+    expect(dialogEl().textContent).toContain('project')
     wrapper.unmount()
   })
 

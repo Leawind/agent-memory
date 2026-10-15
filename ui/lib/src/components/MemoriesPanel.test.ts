@@ -13,7 +13,6 @@ const listPayload = {
       id: 'm1',
       summary: '列表模式的记忆',
       tags: ['t1', 'project:demo'],
-      attributes: { project: 'demo', score: 3 },
       updated: '2026-10-04 08:00',
     },
   ],
@@ -24,7 +23,6 @@ const detailPayload = {
   summary: '列表模式的记忆',
   content: '正文内容',
   tags: ['t1', 'project:demo'],
-  attributes: { project: 'demo', score: 3 },
   created: '2026-10-04 07:00',
   lifecycle: { expires_at: null, archived_at: null, pinned: false, state: 'active' },
   updated: '2026-10-04 08:00',
@@ -81,9 +79,8 @@ describe('MemoriesPanel', () => {
     // Card layout: the summary never shares a line with the tags
     expect(wrapper.find('.am-memory-card .card-summary').text()).toBe('列表模式的记忆')
     expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('t1')
-    // Structured attributes render as their own chip kind, separate from plain tag chips
-    expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('project: demo')
-    expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('score: 3')
+    // Value-bearing tags are ordinary chips in the one tag vocabulary
+    expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('project:demo')
     wrapper.unmount()
   })
 

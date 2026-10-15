@@ -74,12 +74,6 @@ const tags = new Map(
     ['测试', '单元与端到端'],
   ].map(([name, description]) => [name, { description, created_at: t - 30 * DAY }]),
 )
-// 属性键注册表（/api/keys）：enum 值是标识词、number 值是数字，都以 `key:value` 标签存在记忆上
-const keys = new Map<string, { key_type: 'enum' | 'number'; multi: boolean; description: string }>([
-  ['project', { key_type: 'enum', multi: false, description: '所属项目' }],
-  ['score', { key_type: 'number', multi: false, description: '重要度评分' }],
-  ['phase', { key_type: 'enum', multi: true, description: '所处阶段（可多个）' }],
-])
 const predicates: Array<{ name: string; scope: 'user' | 'global'; predicate: string; description: string }> = []
 const settings = {
   auth_required: false,
@@ -106,7 +100,7 @@ const compactTime = (ts: number): string => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 // 稀疏属性视图（与真实服务端的 attributes_view 一致）：键值来自 `key:value` 标签，
-// 数值键渲染成 JSON 数字，单值是标量、多值是数组；无属性则整个省略
+// 能解析为规范数的值渲染成 JSON 数字，单值是标量、多值是数组；无属性则整个省略
 const attributesOf = (m: MockMemory): Record<string, unknown> => {
   const out: Record<string, unknown> = {}
   for (const tag of m.tags) {
@@ -114,7 +108,7 @@ const attributesOf = (m: MockMemory): Record<string, unknown> => {
     if (i <= 0) continue
     const key = tag.slice(0, i)
     const raw = tag.slice(i + 1)
-    const numeric = keys.get(key)?.key_type === 'number' ? Number(raw) : raw
+    const numeric = /^-?(0|[1-9]\d*)(\.\d+)?([eE]-?\d+)?$/.test(raw) ? Number(raw) : raw
     const current = out[key]
     if (current === undefined) out[key] = numeric
     else if (Array.isArray(current)) current.push(numeric)
@@ -149,41 +143,18 @@ const summaryView = (m: MockMemory) =>
     },
     m,
   )
-// 属性 → `key:value` 标签。PUT 的替换语义与真实服务端一致：`{}` 清空全部键，
-// 非空对象只替换出现的键（其余键原样保留）；键未注册时按值懒注册。
-function applyAttributes(m: MockMemory, attributes: Record<string, unknown>, clearAll: boolean): void {
-  if (clearAll && Object.keys(attributes).length === 0) {
-    m.tags = m.tags.filter((x) => !x.includes(':'))
-    return
-  }
+// 属性 → `key:value` 标签。PUT 的语义与真实服务端一致：整组替换——记忆上所有带
+// 冒号的标签先摘除，再链接给定的键值对（{} 即清空全部键值标签）。
+function applyAttributes(m: MockMemory, attributes: Record<string, unknown>): void {
+  m.tags = m.tags.filter((x) => !x.includes(':'))
   for (const [rawKey, value] of Object.entries(attributes)) {
     const key = rawKey.trim()
     if (!key) continue
-    const values = Array.isArray(value) ? value : [value]
-    const numeric = values.every((v) => typeof v === 'number')
-    if (!keys.has(key))
-      keys.set(key, { key_type: numeric ? 'number' : 'enum', multi: values.length > 1, description: '' })
-    m.tags = m.tags.filter((x) => !x.startsWith(`${key}:`))
-    for (const v of values) {
-      const tag = `${key}:${String(v)}`
-      if (!m.tags.includes(tag)) m.tags.push(tag)
-      if (!tags.has(tag)) tags.set(tag, { description: '', created_at: now() })
-    }
+    const tag = `${key}:${String(value)}`
+    if (!m.tags.includes(tag)) m.tags.push(tag)
+    if (!tags.has(tag)) tags.set(tag, { description: '', created_at: now() })
   }
 }
-const keyViews = () =>
-  [...keys.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, k]) => {
-      const values = [
-        ...new Set(
-          memories.flatMap((m) => m.tags.filter((x) => x.startsWith(`${name}:`)).map((x) => x.slice(name.length + 1))),
-        ),
-      ].sort()
-      const view: Record<string, unknown> = { name, type: k.key_type, multi: k.multi, description: k.description }
-      if (values.length) view.values = values
-      return view
-    })
 // 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、reserved 仅保留标签出现
 const tagViews = () =>
   [...tags.entries()]
@@ -329,7 +300,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     }
     memories.push(memory)
     if (body.attributes && typeof body.attributes === 'object') {
-      applyAttributes(memory, body.attributes as Record<string, unknown>, false)
+      applyAttributes(memory, body.attributes as Record<string, unknown>)
     }
     sendJson(res, 200, fullView(memory))
     return
@@ -352,7 +323,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     memory.tags.push(...add.filter((x) => !memory.tags.includes(x)))
     memory.tags = memory.tags.filter((x) => !remove.includes(x))
     if (body.attributes && typeof body.attributes === 'object') {
-      applyAttributes(memory, body.attributes as Record<string, unknown>, true)
+      applyAttributes(memory, body.attributes as Record<string, unknown>)
     }
     memory.updated_at = now()
     sendJson(res, 200, fullView(memory))
@@ -361,41 +332,6 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   if (segs[1] === 'memories' && segs.length === 3 && memory && method === 'DELETE') {
     memories.splice(memories.indexOf(memory), 1)
     sendJson(res, 200, null)
-    return
-  }
-
-  // 属性键注册表（/api/keys）
-  if (segs[1] === 'keys' && segs.length === 2 && method === 'GET') {
-    sendJson(res, 200, { keys: keyViews() })
-    return
-  }
-  if (segs[1] === 'keys' && segs.length === 2 && method === 'PUT') {
-    const body = await readBody(req)
-    const name = String(body.name ?? '').trim()
-    if (name) {
-      keys.set(name, {
-        key_type: body.key_type === 'number' ? 'number' : 'enum',
-        multi: body.multi === true,
-        description: String(body.description ?? ''),
-      })
-    }
-    sendJson(res, 200, {})
-    return
-  }
-  if (segs[1] === 'keys' && segs.length === 3 && method === 'DELETE') {
-    const name = decodeURIComponent(segs[2] ?? '')
-    const existed = keys.delete(name)
-    if (!existed) {
-      sendJson(res, 404, { error: `key '${name}' not found` })
-      return
-    }
-    let detached = 0
-    for (const m of memories) {
-      const before = m.tags.length
-      m.tags = m.tags.filter((x) => !x.startsWith(`${name}:`))
-      detached += before - m.tags.length
-    }
-    sendJson(res, 200, { memories_updated: detached })
     return
   }
 
