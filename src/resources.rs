@@ -241,7 +241,17 @@ fn read_tag(store_path: &Path, uri: &str, name: &str) -> ResourceResult {
             0,
             TAG_RESOURCE_LIMIT,
         )?;
-        let memories: Vec<Value> = page.iter().map(Memory::summary_view).collect();
+        let memories: Vec<Value> = page
+            .iter()
+            .map(|m| {
+                let mut view = m.summary_view();
+                let attributes = st.attributes_view(m)?;
+                if !attributes.as_object().expect("object").is_empty() {
+                    view["attributes"] = attributes;
+                }
+                Ok(view)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let memory_count = json!(count);
         let mut doc = json!({
             // Directory resource: metadata + summaries only, never content (progressive disclosure)

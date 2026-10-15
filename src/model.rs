@@ -35,16 +35,14 @@ pub struct Memory {
     pub summary: String,
     pub content: String,
     pub tags: Vec<String>,
-    /// Attribute rows for registered string/bool keys: (key, value). An empty value marks
-    /// bool presence. Enum-key values are NOT here, they are ordinary `key:value` tags.
-    pub attrs: Vec<(String, String)>,
     pub created_at: u64,
     pub updated_at: u64,
 }
 
 impl Memory {
-    /// Keys a memory carries: the prefix of every `key:value` tag plus every attribute key.
-    /// Bare tags carry no key.
+    /// Keys a memory carries: the prefix of every `key:value` tag. Bare tags carry no key.
+    /// Enum and number attribute values are both stored as such tags, so this is the single
+    /// source of the memory's keyed dimension.
     pub fn tag_keys(&self) -> Vec<&str> {
         let mut keys: Vec<&str> = Vec::new();
         for tag in &self.tags {
@@ -54,77 +52,33 @@ impl Memory {
                 }
             }
         }
-        for (key, _) in &self.attrs {
-            let key = key.as_str();
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
         keys
-    }
-
-    /// Structured attribute view: empty value = bool presence (`true`), multiple rows for a
-    /// key = array, otherwise the scalar string. Enum-key values are not included (they show
-    /// up in `tags` as `key:value` names).
-    pub fn attributes_view(&self) -> Value {
-        let mut out = serde_json::Map::new();
-        let mut seen: Vec<&str> = Vec::new();
-        for (key, _) in &self.attrs {
-            if seen.contains(&key.as_str()) {
-                continue;
-            }
-            seen.push(key);
-            let rows: Vec<&String> = self
-                .attrs
-                .iter()
-                .filter(|(k, _)| k == key)
-                .map(|(_, v)| v)
-                .collect();
-            let rendered = if rows.iter().all(|v| v.is_empty()) {
-                json!(true)
-            } else if rows.len() == 1 {
-                json!(rows[0])
-            } else {
-                json!(rows)
-            };
-            out.insert(key.clone(), rendered);
-        }
-        Value::Object(out)
     }
 
     /// First layer of progressive disclosure: summary view (no content). One compact server-local
     /// `updated` time; creation time is not exposed at this level — browsing runs on recency, and
-    /// the id already encodes creation order.
+    /// the id already encodes creation order. The typed `attributes` view is attached by the
+    /// caller (it needs the key registry; see `store::Store::attach_attributes`).
     pub fn summary_view(&self) -> Value {
-        let mut view = json!({
+        json!({
             "id": self.id,
             "tags": self.tags,
             "summary": self.summary,
             "updated": crate::util::format_local_compact(self.updated_at),
-        });
-        let attributes = self.attributes_view();
-        if !attributes.as_object().expect("object").is_empty() {
-            view["attributes"] = attributes;
-        }
-        view
+        })
     }
 
     /// Second layer of progressive disclosure: full view (with content), both timestamps as the
     /// compact server-local wall clock.
     pub fn full_view(&self) -> Value {
-        let mut view = json!({
+        json!({
             "id": self.id,
             "tags": self.tags,
             "summary": self.summary,
             "created": crate::util::format_local_compact(self.created_at),
             "updated": crate::util::format_local_compact(self.updated_at),
             "content": self.content,
-        });
-        let attributes = self.attributes_view();
-        if !attributes.as_object().expect("object").is_empty() {
-            view["attributes"] = attributes;
-        }
-        view
+        })
     }
 }
 
@@ -141,11 +95,23 @@ pub fn normalize_id(raw: &str) -> String {
     raw.trim().to_string()
 }
 
-/// Tag name normalization: trim surrounding whitespace, cap length, and enforce the tag-name
-/// format. Names are tag_expr atoms — the format keeps expression parsing unambiguous (no
-/// quoting needed, no collisions with operators/quotes/regex delimiters): Unicode letters and
-/// numbers (CJK included) plus `_`, `-`, `.` and `:` (the key:value form stores an enum value
-/// under its key), starting with a letter, number or `_`.
+/// The one identifier rule shared by bare tag names, attribute key names and enum attribute
+/// values: one word of Unicode identifier characters (XID_Continue, so letters, digits and `_`
+/// in every script including CJK), with `-` and `.` allowed after the first character. No
+/// spaces, no colon (the `key:value` separator), no quotes or expression operators — which
+/// keeps tag_expr parsing unambiguous and lets the compact display form stay quote-free.
+fn ident_regex() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"^[\p{XID_Continue}][\p{XID_Continue}\-.]*$")
+            .expect("static ident regex")
+    })
+}
+
+/// Tag name normalization: trim surrounding whitespace, cap length, enforce the identifier
+/// rule. Colons are reserved for the internally composed `key:value` value tags — input paths
+/// (tags arrays, tag_create, key names) never accept them; `key=value` in tag_expr is the
+/// way to qualify values.
 pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     let t = raw.trim();
     if t.is_empty() {
@@ -156,26 +122,85 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
             "tag name is too long (max {MAX_TAG_NAME_CHARS} characters)"
         ));
     }
-    let valid = t.chars().enumerate().all(|(i, c)| match i {
-        0 => c.is_alphanumeric() || c == '_',
-        _ => c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'),
-    });
-    if !valid {
+    if !ident_regex().is_match(t) {
         return Err(format!(
-            "invalid tag name '{t}': use letters, digits, '_', '-', '.' and ':' only, starting with a letter or digit (no spaces, quotes or expression operators)"
+            "invalid tag name '{t}': use one identifier word of letters, digits, '_', '-' or '.' (Unicode), starting with a letter, digit or '_' — no spaces, colons, quotes or expression operators"
         ));
     }
     Ok(t.to_string())
 }
 
-/// Key name normalization: the tag-name charset minus `:` — a key prefixes the stored
-/// `key:value` tag names, so a colon inside a key would make qualification ambiguous.
+/// Key name normalization: the same identifier rule as tag names (a colon inside a key would
+/// make the stored `key:value` qualification ambiguous). Kept as a named alias so call sites
+/// read as the schema concept they enforce.
 pub fn normalize_key_name(raw: &str) -> Result<String, String> {
-    let key = normalize_tag_name(raw)?;
-    if key.contains(':') {
-        return Err("key name cannot contain ':'".into());
+    normalize_tag_name(raw)
+}
+
+/// Canonical decimal text for an attribute number: integers keep their exact form (`1` and
+/// `1.0` are the same value and the same `key:1` tag), everything else takes the shortest
+/// round-trip form (`0.1`, `1e300` — the exponent keeps huge magnitudes inside the tag-name
+/// length cap); `-0` normalizes to `0`. Returns None for non-finite floats (not JSON anyway).
+pub fn canonical_number(n: &serde_json::Number) -> Option<String> {
+    if let Some(i) = n.as_i64() {
+        return Some(i.to_string());
     }
-    Ok(key)
+    if let Some(u) = n.as_u64() {
+        return Some(u.to_string());
+    }
+    let f = n.as_f64()?;
+    if !f.is_finite() {
+        return None;
+    }
+    if f == 0.0 {
+        return Some("0".to_string());
+    }
+    if f.fract() == 0.0 {
+        if f > 0.0 && f <= u64::MAX as f64 {
+            return Some((f as u64).to_string());
+        }
+        if f < 0.0 && f >= i64::MIN as f64 {
+            return Some((f as i64).to_string());
+        }
+    }
+    // serde_json's float form writes positive exponents as "e+300"; '+' is outside the
+    // identifier charset, so the canonical form drops it ("1e300") — JSON parses both alike.
+    Some(n.to_string().replace("e+", "e"))
+}
+
+/// Parse a numeric attribute value from plain text (a `key=42` query right-hand side, a dump's
+/// value half) into canonical form; anything that is not a plain JSON number is None.
+pub fn parse_number_text(text: &str) -> Option<String> {
+    let n: serde_json::Number = serde_json::from_str(text).ok()?;
+    canonical_number(&n)
+}
+
+/// Compose the stored tag name for a validated (key, value) pair. Both parts are pre-validated
+/// (identifier rule, or canonical number on the value side), so the result carries exactly one
+/// colon. Internal: input paths qualify values via `attributes`, never by naming this directly.
+pub fn compose_value_tag(key: &str, value: &str) -> String {
+    format!("{key}:{value}")
+}
+
+/// Validate a stored tag name read back from a dump: a bare identifier, or the internally
+/// composed `key:value` form with an identifier key and an identifier or canonical-number
+/// value. Input paths reject colons; this is the import-side counterpart for names the store
+/// composes itself.
+pub fn validate_stored_tag_name(raw: &str) -> Result<String, String> {
+    let t = raw.trim();
+    match t.split_once(':') {
+        None => normalize_tag_name(t),
+        Some((key, value)) => {
+            normalize_tag_name(key)?;
+            if normalize_tag_name(value).is_ok() || parse_number_text(value).is_some() {
+                Ok(t.to_string())
+            } else {
+                Err(format!(
+                    "invalid stored tag name '{t}': the value part must be an identifier word or a number"
+                ))
+            }
+        }
+    }
 }
 
 /// Identity name normalization: trim surrounding whitespace and cap length (same rules as tag names).
@@ -216,22 +241,23 @@ mod tests {
 
     #[test]
     fn tag_name_format_is_enforced() {
-        // The tag_expr atom charset: letters/digits (Unicode included), '_' '-' '.' and ':' (the
-        // key:value separator); no spaces, quotes or operators; must start with a letter, digit or '_'
+        // The shared identifier rule for tags, keys and enum values: XID_Continue characters
+        // with '-' and '.' after the first; no colon (reserved for key:value), spaces, quotes
+        // or operators
         for ok in [
             "rust",
             "_private",
+            "3d",
             "v1.2",
             "multi-hyphen_underscore.ok",
             "方案-A.1",
-            "project:agent-memory",
-            "项目:记忆库",
         ] {
             assert!(normalize_tag_name(ok).is_ok(), "{ok} should be valid");
         }
         for bad in [
-            "rust & life", // expression operator with spaces
-            "a&b",         // glued operator
+            "project:agent-memory", // colon is the key:value separator, input paths reject it
+            "rust & life",          // expression operator with spaces
+            "a&b",                  // glued operator
             "a|b",
             "!not",
             "(paren)",
@@ -249,11 +275,47 @@ mod tests {
     }
 
     #[test]
-    fn key_names_reject_colons_but_use_the_tag_charset() {
+    fn key_names_follow_the_same_identifier_rule() {
         assert_eq!(normalize_key_name(" project "), Ok("project".to_string()));
         assert!(normalize_key_name("a:b").is_err());
         assert!(normalize_key_name("").is_err());
         assert!(normalize_key_name("has space").is_err());
+    }
+
+    #[test]
+    fn numbers_canonicalize_for_storage_and_queries() {
+        let n = |text: &str| {
+            canonical_number(&serde_json::from_str::<serde_json::Number>(text).unwrap()).unwrap()
+        };
+        assert_eq!(n("42"), "42");
+        // 1 and 1.0 are the same value and the same name
+        assert_eq!(n("1.0"), "1");
+        assert_eq!(n("-3"), "-3");
+        assert_eq!(n("-3.0"), "-3");
+        assert_eq!(n("0.5"), "0.5");
+        assert_eq!(n("-0"), "0");
+        // Beyond the exact integer range the exponent form keeps names short
+        assert_eq!(n("1e300"), "1e300");
+        // Query/dump text parses through the same canonicalization
+        assert_eq!(parse_number_text("42"), Some("42".to_string()));
+        // Leading zeros are not JSON numbers: the query side uses the canonical form
+        assert_eq!(parse_number_text("042"), None);
+        assert_eq!(parse_number_text("1.0e2"), Some("100".to_string()));
+        assert_eq!(parse_number_text("abc"), None);
+        assert_eq!(parse_number_text(""), None);
+        assert_eq!(parse_number_text("1_000"), None);
+        // Composed names carry exactly one colon; import accepts what the store composes
+        assert_eq!(
+            validate_stored_tag_name("count:42"),
+            Ok("count:42".to_string())
+        );
+        assert_eq!(
+            validate_stored_tag_name("count:-3"),
+            Ok("count:-3".to_string())
+        );
+        assert!(validate_stored_tag_name("count:abc:def").is_err());
+        assert!(validate_stored_tag_name("has space:1").is_err());
+        assert_eq!(validate_stored_tag_name(" plain "), Ok("plain".to_string()));
     }
 
     #[test]
@@ -263,47 +325,10 @@ mod tests {
             summary: "s".into(),
             content: String::new(),
             tags: vec!["project:a".into(), "project:b".into(), "rust".into()],
-            attrs: Vec::new(),
             created_at: 1,
             updated_at: 2,
         };
         assert_eq!(m.tag_keys(), vec!["project"]);
-        let mut m = m;
-        m.attrs = vec![("status".into(), String::new())];
-        assert_eq!(m.tag_keys(), vec!["project", "status"]);
-    }
-
-    #[test]
-    fn attributes_render_bool_scalar_and_array() {
-        let m = Memory {
-            id: "m1".into(),
-            summary: "s".into(),
-            content: String::new(),
-            tags: vec![],
-            attrs: vec![
-                ("pinned".into(), String::new()),
-                ("project".into(), "alpha".into()),
-                ("url".into(), "https://a".into()),
-                ("url".into(), "https://b".into()),
-            ],
-            created_at: 1,
-            updated_at: 2,
-        };
-        let view = m.attributes_view();
-        assert_eq!(view["pinned"], json!(true));
-        assert_eq!(view["project"], json!("alpha"));
-        assert_eq!(view["url"], json!(["https://a", "https://b"]));
-        let empty = Memory {
-            id: "m2".into(),
-            summary: "s".into(),
-            content: String::new(),
-            tags: vec![],
-            attrs: Vec::new(),
-            created_at: 1,
-            updated_at: 2,
-        };
-        assert!(empty.summary_view().get("attributes").is_none());
-        assert!(empty.full_view().get("attributes").is_none());
     }
 
     #[test]
@@ -313,7 +338,6 @@ mod tests {
             summary: "s".into(),
             content: "secret body".into(),
             tags: vec!["t".into()],
-            attrs: Vec::new(),
             created_at: 1,
             updated_at: 2,
         };

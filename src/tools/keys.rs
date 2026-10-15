@@ -32,18 +32,18 @@ pub fn key_list(st: &Store, _args: &Map<String, Value>) -> Result<Value, ToolErr
             "multi": k.multi,
             "description": k.description,
         });
-        // Enum values are the 'key:value' tags: the value half is the vocabulary an agent
-        // can reuse. String/bool keys have no vocabulary and list nothing.
-        if k.key_type == "enum" {
-            let values = st
-                .key_value_tags(&k.name)
-                .map_err(ToolError::from)?
-                .into_iter()
-                .map(|tag| match tag.split_once(':') {
-                    Some((_, v)) => v.to_string(),
-                    None => tag,
-                })
-                .collect::<Vec<_>>();
+        // Values are the 'key:value' tags: the value halves are the known vocabulary (enum
+        // words, or numbers in canonical form) an agent can reuse.
+        let values = st
+            .key_value_tags(&k.name)
+            .map_err(ToolError::from)?
+            .into_iter()
+            .map(|tag| match tag.split_once(':') {
+                Some((_, v)) => v.to_string(),
+                None => tag,
+            })
+            .collect::<Vec<_>>();
+        if !values.is_empty() {
             row["values"] = json!(values);
         }
         rows.push(row);

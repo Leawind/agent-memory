@@ -35,7 +35,7 @@ pub use render::tool_text;
 
 mod keys;
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name only carries letters, digits, '_', '-', '.' and ':' — no spaces or expression operators. Structured values go in the 'attributes' object of memory_create/memory_update: enum-key values reuse a shared vocabulary (key_list shows every key, its type and known values; 'key=value' filters searches), string keys hold free text, bool keys are presence. Unknown keys auto-register — keep the schema tidy by reusing keys instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name is one identifier word: letters, digits, '_', '-' or '.' (Unicode), no spaces, colons, quotes or expression operators. Structured values go in the 'attributes' object of memory_create/memory_update: enum values are reusable identifier words and number values are numbers — both become 'key:value' tags and reuse the tag vocabulary (key_list shows every key, its type and known values; 'key=value' filters searches; numbers canonicalize, so 1 and 1.0 are the same value). Booleans are not attribute values — presence flags are plain tags, and free text belongs in content, not attributes. Unknown keys auto-register — keep the schema tidy by reusing keys instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -2195,36 +2195,6 @@ mod tests {
     }
 
     #[test]
-    fn tag_expr_filters_by_attribute_atoms() {
-        let path = temp_db("attr-query");
-        for (summary, attrs) in [
-            ("alpha", json!({"project": "one", "url": "https://a"})),
-            ("beta", json!({"project": "two"})),
-        ] {
-            call(
-                &path,
-                MEMORY_CREATE,
-                json!({"summary": summary, "attributes": attrs, "create_missing_tags": true}),
-            )
-            .unwrap();
-        }
-        let list = |expr: &str| {
-            call(&path, MEMORY_LIST, json!({"tag_expr": expr})).unwrap()["total"].clone()
-        };
-        // enum equality and existence
-        assert_eq!(list("project=one"), 1);
-        assert_eq!(list("project"), 2);
-        // string equality matches exact rows; bool/string key existence
-        assert_eq!(list("url=https://a"), 1);
-        assert_eq!(list("url"), 1);
-        // composes with the algebra; unknown values get the tag did-you-mean path
-        assert_eq!(list("project=one&url=https://a"), 1);
-        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "project=three"})).is_err());
-        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "nokey=1"})).is_err());
-        cleanup(&path);
-    }
-
-    #[test]
     fn attributes_flow_through_create_get_update_and_clear() {
         let path = temp_db("attributes-flow");
         let _ctx = IdentityCtx::open_mode();
@@ -2234,32 +2204,40 @@ mod tests {
             json!({
                 "summary": "kv memory",
                 "tags": ["rust"],
-                "attributes": {"project": "agent-memory", "url": "https://x", "pinned": true},
+                "attributes": {"project": "agent-memory", "count": 2, "scores": [1, 2]},
                 "create_missing_tags": true
             }),
         )
         .unwrap();
+        // serde_json object iteration is alphabetical, so the autocreated list is too
         assert_eq!(
             created["keys_autocreated"],
-            json!(["pinned", "project", "url"])
+            json!(["count", "project", "scores"])
         );
-        // enum value became a tag listed in tags_autocreated too
-        assert!(created["tags_autocreated"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t == "project:agent-memory"));
+        // enum and number values became tags listed in tags_autocreated too
+        for value in ["project:agent-memory", "count:2", "scores:1", "scores:2"] {
+            assert!(
+                created["tags_autocreated"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|t| t == value),
+                "{value} in tags_autocreated: {created}"
+            );
+        }
         let id = created["id"].as_str().unwrap().to_string();
-        // Enum values read back as 'key:value' tags; string/bool keys render in attributes
+        // Values read back as 'key:value' tags; the typed attributes view renders numbers
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
-        assert!(got["tags"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t == "project:agent-memory"));
-        assert_eq!(got["attributes"]["url"], "https://x");
-        assert_eq!(got["attributes"]["pinned"], true);
-        // Replacement unlinks the old enum value and swaps string/bool rows; bare tags survive
+        for value in ["project:agent-memory", "count:2", "scores:1", "scores:2"] {
+            assert!(
+                got["tags"].as_array().unwrap().iter().any(|t| t == value),
+                "{value} in tags: {got}"
+            );
+        }
+        assert_eq!(got["attributes"]["project"], "agent-memory");
+        assert_eq!(got["attributes"]["count"], 2);
+        assert_eq!(got["attributes"]["scores"], json!([1, 2]));
+        // Replacement unlinks the old values of touched keys; untouched keys survive
         let updated = call(
             &path,
             MEMORY_UPDATE,
@@ -2278,15 +2256,14 @@ mod tests {
             .unwrap()
             .iter()
             .any(|t| t == "project:agent-memory"));
-        assert!(got["attributes"].get("url").is_none());
-        assert!(got["attributes"].get("pinned").is_none());
-        assert_eq!(got["tags"].as_array().unwrap().len(), 2);
-        // {} clears every registered key
+        assert_eq!(got["attributes"]["count"], 2, "untouched key survives");
+        assert_eq!(got["tags"].as_array().unwrap().len(), 5);
+        // {} clears every key the memory carries
         call(&path, MEMORY_UPDATE, json!({"id": id, "attributes": {}})).unwrap();
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
         assert!(got.get("attributes").is_none());
         assert_eq!(got["tags"], json!(["rust"]));
-        // Validation errors surface as Invalid with the key spelled out
+        // Validation errors surface as Invalid with the key spelled out; bools are not values
         let err = call(
             &path,
             MEMORY_UPDATE,
@@ -2294,6 +2271,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("single-valued"), "{err}");
+        let err = call(
+            &path,
+            MEMORY_UPDATE,
+            json!({"id": id, "attributes": {"count": "42"}}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("number key"), "{err}");
+        // The tags array cannot carry the composed names (the backdoor is closed)
+        let err = call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "s", "tags": ["project:alpha"]}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid tag name"), "{err}");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_expr_filters_by_attribute_atoms() {
+        let path = temp_db("attr-query");
+        for (summary, attrs) in [
+            ("alpha", json!({"project": "one", "count": 3})),
+            ("beta", json!({"project": "two"})),
+        ] {
+            call(
+                &path,
+                MEMORY_CREATE,
+                json!({"summary": summary, "attributes": attrs, "create_missing_tags": true}),
+            )
+            .unwrap();
+        }
+        let list = |expr: &str| {
+            call(&path, MEMORY_LIST, json!({"tag_expr": expr})).unwrap()["total"].clone()
+        };
+        // enum equality and existence
+        assert_eq!(list("project=one"), 1);
+        assert_eq!(list("project"), 2);
+        // number equality canonicalizes (3.0 finds the stored 3); number-key existence
+        assert_eq!(list("count=3.0"), 1);
+        assert_eq!(list("count"), 1);
+        // composes with the algebra; unknown values get the tag did-you-mean path
+        assert_eq!(list("project=one&count=3"), 1);
+        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "project=three"})).is_err());
+        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "nokey=1"})).is_err());
         cleanup(&path);
     }
 }

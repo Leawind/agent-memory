@@ -57,6 +57,16 @@ fn opt_tag_expr(
     Ok(expr)
 }
 
+/// Attach the typed `attributes` view (derived from the `key:value` tags + key registry) to a
+/// memory view, only when the memory carries at least one registered key — sparse by default.
+fn attach_attributes(st: &Store, m: &crate::model::Memory, view: &mut Value) -> Result<(), String> {
+    let attributes = st.attributes_view(m)?;
+    if !attributes.as_object().expect("object").is_empty() {
+        view["attributes"] = attributes;
+    }
+    Ok(())
+}
+
 pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let summary = validate_summary(&req_str(args, "summary")?)?;
     // Content is optional: a summary-only memory stores an empty body (whitespace counts as none)
@@ -70,14 +80,15 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // from rotting through casual tagging; the agent opts into auto-creation explicitly.
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
     // Structured key:value attributes: validated against the key registry (unknown keys are
-    // lazily registered as enum + single-valued), enum values link through the tag pipeline.
+    // lazily registered — strings as enum, numbers as number), values link through the tag
+    // pipeline like any other tag.
     let resolved = match args.get("attributes") {
         None | Some(Value::Null) => None,
         Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
     };
     let mut all_tags = tags;
     if let Some(resolved) = &resolved {
-        all_tags.extend(resolved.enum_tags.iter().cloned());
+        all_tags.extend(resolved.value_tags.iter().cloned());
     }
 
     let linkage = st.link_tags(&all_tags, create_missing)?;
@@ -88,9 +99,6 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     let ts = now();
     let id = st.insert_memory(&summary, &content, &linkage.ids, ts, ts)?;
-    if let Some(resolved) = &resolved {
-        st.replace_attributes(id, &resolved.rows)?;
-    }
     // Echo-free response: the caller just stated summary/content/tags, so none of them come back —
     // only the facts it cannot derive (id, server timestamp) plus the sparse write companions
     // (three-way tag-link classification minus the derivable reused set, duplicate hints), each
@@ -224,7 +232,7 @@ pub fn memory_list(
             let memories = st.all_memories()?;
             let ids: Vec<i64> = memories
                 .iter()
-                .filter(|m| expr.eval(&m.tags, &m.attrs))
+                .filter(|m| expr.eval(&m.tags))
                 .filter_map(|m| Store::parse_id(&m.id))
                 .collect();
             Some(json!(ids).to_string())
@@ -245,10 +253,10 @@ pub fn memory_list(
     let memories: Vec<Value> = page
         .iter()
         .map(|m| {
+            let id = Store::parse_id(&m.id).ok_or("invalid stored memory id")?;
             let mut view = m.summary_view();
-            view["lifecycle"] = st
-                .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
-                .view(now());
+            attach_attributes(st, m, &mut view)?;
+            view["lifecycle"] = st.lifecycle_get(id)?.view(now());
             Ok(view)
         })
         .collect::<Result<_, String>>()?;
@@ -309,11 +317,7 @@ pub fn memory_search(
                 .unwrap_or(&default_lifecycle)
                 .matches(&state, query_time)
         })
-        .filter(|m| {
-            tag_expr
-                .as_ref()
-                .is_none_or(|expr| expr.eval(&m.tags, &m.attrs))
-        })
+        .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
         .collect();
     let keyword_hits = search::literal_channels(&memories, &query);
     // Count literal candidates once even when both independent channels support them.
@@ -493,6 +497,7 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
         .iter()
         .map(|m| {
             let mut view = m.full_view();
+            attach_attributes(st, m, &mut view)?;
             view["lifecycle"] = st
                 .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
                 .view(now());
@@ -571,8 +576,10 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         None => None,
     };
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    // `attributes` replaces the memory's whole keyed set: enum values of touched keys are
-    // unlinked first ({} clears every registered key), string/bool rows are swapped wholesale.
+    // `attributes` replaces the memory's whole keyed set: value tags of every touched key are
+    // unlinked first ({} clears every key the memory carries), the new values link as ordinary
+    // `key:value` tags. Input tag arrays cannot carry colons, so this is the only write path
+    // for keyed values.
     let attributes = args.get("attributes").filter(|v| !v.is_null());
     let resolved = match attributes {
         Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
@@ -598,39 +605,40 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     if let Some(remove) = &remove_tags {
         remove_ids = st.tag_ids_for_names(remove)?;
     }
-    let enum_add_ids;
+    let value_add_ids;
     if let Some(resolved) = &resolved {
-        // Unlink the old enum values of every key the replacement touches ({} = all keys)
+        // Unlink the old values of every key the replacement touches ({} = all keys on the memory)
         let empty_object =
             attributes.is_some_and(|v| v.as_object().is_some_and(|object| object.is_empty()));
-        let mut replaced_keys: Vec<String> = Vec::new();
-        if empty_object {
-            replaced_keys = st.key_rows()?.into_iter().map(|k| k.name).collect();
+        let replaced_keys: Vec<String> = if empty_object {
+            st.get_memories(&[id])?
+                .0
+                .first()
+                .map(|m| {
+                    m.tag_keys()
+                        .into_iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
         } else {
-            for name in &resolved.enum_tags {
-                if let Some((key, _)) = name.split_once(':') {
-                    if !replaced_keys.iter().any(|k| k == key) {
-                        replaced_keys.push(key.to_string());
-                    }
-                }
-            }
-            for (key, _) in &resolved.rows {
-                if !replaced_keys.contains(key) {
-                    replaced_keys.push(key.clone());
-                }
-            }
-        }
+            resolved
+                .value_tags
+                .iter()
+                .filter_map(|name| name.split_once(':').map(|(k, _)| k.to_string()))
+                .collect::<Vec<_>>()
+        };
         for key in &replaced_keys {
             let names = st.key_value_tags(key)?;
             remove_ids.extend(st.tag_ids_for_names(&names)?);
         }
-        if !resolved.enum_tags.is_empty() {
-            enum_add_ids = st.link_tags(&resolved.enum_tags, create_missing)?.ids;
+        if !resolved.value_tags.is_empty() {
+            value_add_ids = st.link_tags(&resolved.value_tags, create_missing)?.ids;
         } else {
-            enum_add_ids = Vec::new();
+            value_add_ids = Vec::new();
         }
     } else {
-        enum_add_ids = Vec::new();
+        value_add_ids = Vec::new();
     }
 
     if !st.memory_exists(id)? {
@@ -638,17 +646,13 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
             "memory '{raw_id}' not found (use memory_list or memory_search first)"
         )));
     }
-    let previous_attrs = match &resolved {
-        Some(_) => Some(st.attributes_of(id)?),
-        None => None,
-    };
 
     let add_ids = linkage_opt
         .as_ref()
         .map(|l| l.ids.clone())
         .unwrap_or_default();
     let mut add_ids = add_ids;
-    add_ids.extend(enum_add_ids);
+    add_ids.extend(value_add_ids);
     let changed = st.update_memory(
         id,
         summary.as_deref(),
@@ -656,11 +660,6 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         &add_ids,
         &remove_ids,
     )?;
-    let mut changed = changed;
-    if let Some(resolved) = &resolved {
-        st.replace_attributes(id, &resolved.rows)?;
-        changed |= previous_attrs.as_ref() != Some(&st.attributes_of(id)?);
-    }
 
     // Echo-free: no view of the stored memory — summary/content/tag names were just stated by the
     // caller, and inspecting current state is a read's job (memory_get). Only the "did anything
@@ -878,7 +877,8 @@ pub fn memory_merge(
         .unwrap_or_else(|| format!("{}\n\n{}", target.content, source.content));
     validate_content(&merged_content)?;
     // Source tag ids join the target (INSERT OR IGNORE dedups the overlap); no auto-creation —
-    // both memories' tags already exist by definition
+    // both memories' tags already exist by definition. Attribute values are ordinary `key:value`
+    // tags, so the union covers them.
     let source_tag_ids = st.original_tag_ids(source_id)?;
     st.update_memory(
         target_id,
@@ -887,8 +887,6 @@ pub fn memory_merge(
         &source_tag_ids,
         &[],
     )?;
-    // Keyed values join the union like tags do (single-value conflicts are grandfathered)
-    st.merge_attributes(target_id, source_id)?;
     let (deleted, _) = st.delete_memories(&[source_id])?;
     if deleted.is_empty() {
         // Unreachable inside the transaction (the source was just read), but never lie about a
