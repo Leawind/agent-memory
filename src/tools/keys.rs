@@ -10,10 +10,7 @@ use serde_json::{json, Map, Value};
 pub fn key_set(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let key_type = opt_str(args, "key_type")?.unwrap_or_else(|| "enum".into());
     let multi = opt_bool(args, "multi")?.unwrap_or(false);
-    let description = match opt_str(args, "description")? {
-        Some(d) => d,
-        None => String::new(),
-    };
+    let description = opt_str(args, "description")?.unwrap_or_default();
     if description.chars().count() > MAX_TAG_DESC_CHARS {
         return Err(ToolError::invalid(format!(
             "description exceeds {MAX_TAG_DESC_CHARS} characters"

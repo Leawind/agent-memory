@@ -2197,7 +2197,6 @@ mod tests {
     #[test]
     fn tag_expr_filters_by_attribute_atoms() {
         let path = temp_db("attr-query");
-        let ctx = IdentityCtx::open_mode();
         for (summary, attrs) in [
             ("alpha", json!({"project": "one", "url": "https://a"})),
             ("beta", json!({"project": "two"})),
@@ -2222,14 +2221,13 @@ mod tests {
         assert_eq!(list("project=one&url=https://a"), 1);
         assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "project=three"})).is_err());
         assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "nokey=1"})).is_err());
-        drop(ctx);
         cleanup(&path);
     }
 
     #[test]
     fn attributes_flow_through_create_get_update_and_clear() {
         let path = temp_db("attributes-flow");
-        let ctx = IdentityCtx::open_mode();
+        let _ctx = IdentityCtx::open_mode();
         let created = call(
             &path,
             MEMORY_CREATE,

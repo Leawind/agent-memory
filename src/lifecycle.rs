@@ -113,7 +113,7 @@ impl Policy {
         let half_life = self
             .rules
             .iter()
-            .find(|r| keys.iter().any(|k| *k == r.key))
+            .find(|r| keys.contains(&r.key))
             .map_or(self.default_half_life_days, |r| r.half_life_days);
         half_life.map_or(1.0, |days| {
             (-std::f64::consts::LN_2 * now.saturating_sub(updated_at) as f64 / (days * 86400.0))
