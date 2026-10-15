@@ -35,13 +35,16 @@ pub struct Memory {
     pub summary: String,
     pub content: String,
     pub tags: Vec<String>,
+    /// Attribute rows for registered string/bool keys: (key, value). An empty value marks
+    /// bool presence. Enum-key values are NOT here, they are ordinary `key:value` tags.
+    pub attrs: Vec<(String, String)>,
     pub created_at: u64,
     pub updated_at: u64,
 }
 
 impl Memory {
-    /// Keys a memory carries: the prefix of every `key:value` tag. Bare tags carry no key.
-    /// (Attribute-keyed values join here once scalar attributes exist.)
+    /// Keys a memory carries: the prefix of every `key:value` tag plus every attribute key.
+    /// Bare tags carry no key.
     pub fn tag_keys(&self) -> Vec<&str> {
         let mut keys: Vec<&str> = Vec::new();
         for tag in &self.tags {
@@ -51,32 +54,77 @@ impl Memory {
                 }
             }
         }
+        for (key, _) in &self.attrs {
+            let key = key.as_str();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
         keys
+    }
+
+    /// Structured attribute view: empty value = bool presence (`true`), multiple rows for a
+    /// key = array, otherwise the scalar string. Enum-key values are not included (they show
+    /// up in `tags` as `key:value` names).
+    pub fn attributes_view(&self) -> Value {
+        let mut out = serde_json::Map::new();
+        let mut seen: Vec<&str> = Vec::new();
+        for (key, _) in &self.attrs {
+            if seen.contains(&key.as_str()) {
+                continue;
+            }
+            seen.push(key);
+            let rows: Vec<&String> = self
+                .attrs
+                .iter()
+                .filter(|(k, _)| k == key)
+                .map(|(_, v)| v)
+                .collect();
+            let rendered = if rows.iter().all(|v| v.is_empty()) {
+                json!(true)
+            } else if rows.len() == 1 {
+                json!(rows[0])
+            } else {
+                json!(rows)
+            };
+            out.insert(key.clone(), rendered);
+        }
+        Value::Object(out)
     }
 
     /// First layer of progressive disclosure: summary view (no content). One compact server-local
     /// `updated` time; creation time is not exposed at this level — browsing runs on recency, and
     /// the id already encodes creation order.
     pub fn summary_view(&self) -> Value {
-        json!({
+        let mut view = json!({
             "id": self.id,
             "tags": self.tags,
             "summary": self.summary,
             "updated": crate::util::format_local_compact(self.updated_at),
-        })
+        });
+        let attributes = self.attributes_view();
+        if !attributes.as_object().expect("object").is_empty() {
+            view["attributes"] = attributes;
+        }
+        view
     }
 
     /// Second layer of progressive disclosure: full view (with content), both timestamps as the
     /// compact server-local wall clock.
     pub fn full_view(&self) -> Value {
-        json!({
+        let mut view = json!({
             "id": self.id,
             "tags": self.tags,
             "summary": self.summary,
             "created": crate::util::format_local_compact(self.created_at),
             "updated": crate::util::format_local_compact(self.updated_at),
             "content": self.content,
-        })
+        });
+        let attributes = self.attributes_view();
+        if !attributes.as_object().expect("object").is_empty() {
+            view["attributes"] = attributes;
+        }
+        view
     }
 }
 
@@ -215,10 +263,47 @@ mod tests {
             summary: "s".into(),
             content: String::new(),
             tags: vec!["project:a".into(), "project:b".into(), "rust".into()],
+            attrs: Vec::new(),
             created_at: 1,
             updated_at: 2,
         };
         assert_eq!(m.tag_keys(), vec!["project"]);
+        let mut m = m;
+        m.attrs = vec![("status".into(), String::new())];
+        assert_eq!(m.tag_keys(), vec!["project", "status"]);
+    }
+
+    #[test]
+    fn attributes_render_bool_scalar_and_array() {
+        let m = Memory {
+            id: "m1".into(),
+            summary: "s".into(),
+            content: String::new(),
+            tags: vec![],
+            attrs: vec![
+                ("pinned".into(), String::new()),
+                ("project".into(), "alpha".into()),
+                ("url".into(), "https://a".into()),
+                ("url".into(), "https://b".into()),
+            ],
+            created_at: 1,
+            updated_at: 2,
+        };
+        let view = m.attributes_view();
+        assert_eq!(view["pinned"], json!(true));
+        assert_eq!(view["project"], json!("alpha"));
+        assert_eq!(view["url"], json!(["https://a", "https://b"]));
+        let empty = Memory {
+            id: "m2".into(),
+            summary: "s".into(),
+            content: String::new(),
+            tags: vec![],
+            attrs: Vec::new(),
+            created_at: 1,
+            updated_at: 2,
+        };
+        assert!(empty.summary_view().get("attributes").is_none());
+        assert!(empty.full_view().get("attributes").is_none());
     }
 
     #[test]
@@ -228,6 +313,7 @@ mod tests {
             summary: "s".into(),
             content: "secret body".into(),
             tags: vec!["t".into()],
+            attrs: Vec::new(),
             created_at: 1,
             updated_at: 2,
         };

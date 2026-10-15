@@ -67,6 +67,7 @@ impl Store {
                 summary: r.get(1)?,
                 content: r.get(2)?,
                 tags: Vec::new(),
+                attrs: Vec::new(),
                 created_at: created as u64,
                 updated_at: updated as u64,
             })
@@ -77,6 +78,7 @@ impl Store {
             Err(e) => return Err(e.to_string()),
         };
         m.tags = self.tags_of(id)?;
+        m.attrs = self.attributes_of(id)?;
         Ok(Some(m))
     }
 
@@ -107,6 +109,7 @@ impl Store {
                     summary: r.get(1)?,
                     content: r.get(2)?,
                     tags: Vec::new(),
+                    attrs: Vec::new(),
                     created_at: created as u64,
                     updated_at: updated as u64,
                 })
@@ -127,10 +130,32 @@ impl Store {
         for (mid, name) in pairs {
             by_memory.entry(mid).or_default().push(name);
         }
+        let mut attr_stmt = self
+            .conn
+            .prepare(sql::ATTRIBUTE_PAIRS_ALL)
+            .map_err(|e| e.to_string())?;
+        let attr_pairs = attr_stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut attrs_by_memory: HashMap<i64, Vec<(String, String)>> = HashMap::new();
+        for (mid, key, value) in attr_pairs {
+            attrs_by_memory.entry(mid).or_default().push((key, value));
+        }
         for m in &mut out {
             let id = Self::parse_id(&m.id).unwrap_or(0);
             if let Some(tags) = by_memory.get(&id) {
                 m.tags = tags.clone();
+            }
+            if let Some(attrs) = attrs_by_memory.get(&id) {
+                m.attrs = attrs.clone();
             }
         }
         Ok(out)
@@ -189,6 +214,7 @@ impl Store {
                         summary: r.get(1)?,
                         content: r.get(2)?,
                         tags: Vec::new(),
+                        attrs: Vec::new(),
                         created_at: created as u64,
                         updated_at: updated as u64,
                     })
@@ -201,6 +227,7 @@ impl Store {
         for m in &mut page {
             let id = Self::parse_id(&m.id).unwrap_or(0);
             m.tags = self.tags_of(id)?;
+        m.attrs = self.attributes_of(id)?;
         }
         Ok((total, page))
     }

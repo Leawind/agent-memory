@@ -186,4 +186,84 @@ impl Store {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+
+    /// One memory's attribute rows, ordered by (key, value).
+    pub fn attributes_of(&self, id: i64) -> Result<Vec<(String, String)>, String> {
+        let mut statement = self
+            .conn
+            .prepare(sql::ATTRIBUTE_ALL_FOR)
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Replace a memory's whole attribute set in one shot (clear + insert).
+    pub fn replace_attributes(&self, id: i64, rows: &[(String, String)]) -> Result<(), String> {
+        self.conn
+            .execute(sql::ATTRIBUTE_CLEAR_FOR_MEMORY, [id])
+            .map_err(|e| e.to_string())?;
+        for (key, value) in rows {
+            self.conn
+                .execute(sql::ATTRIBUTE_INSERT, params![id, key, value])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod attribute_tests {
+    use super::super::test_support::{cleanup, temp_db};
+    use super::*;
+
+    #[test]
+    fn attributes_replace_and_load_roundtrip() {
+        let path = temp_db("attributes");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let id = st
+            .insert_memory("s", "c", &[], crate::model::now(), crate::model::now())
+            .unwrap();
+        st.replace_attributes(
+            id,
+            &[
+                ("url".to_string(), "https://a".to_string()),
+                ("url".to_string(), "https://b".to_string()),
+                ("flag".to_string(), String::new()),
+            ],
+        )
+        .unwrap();
+        let memory = &st.get_memories(&[id]).unwrap().0[0];
+        assert_eq!(
+            memory.attrs,
+            vec![
+                ("flag".to_string(), String::new()),
+                ("url".to_string(), "https://a".to_string()),
+                ("url".to_string(), "https://b".to_string()),
+            ]
+        );
+        assert_eq!(memory.tag_keys(), vec!["flag", "url"]);
+        assert_eq!(memory.attributes_view()["url"], serde_json::json!(["https://a", "https://b"]));
+        assert_eq!(memory.attributes_view()["flag"], serde_json::json!(true));
+        // Full replacement drops the previous rows
+        st.replace_attributes(id, &[("url".to_string(), "https://c".to_string())])
+            .unwrap();
+        let memory = &st.get_memories(&[id]).unwrap().0[0];
+        assert_eq!(
+            memory.attrs,
+            vec![("url".to_string(), "https://c".to_string())]
+        );
+        // Deleting the key removes its rows everywhere
+        st.key_set("url", "string", true, "").unwrap();
+        st.key_set("flag", "bool", false, "").unwrap();
+        st.key_delete("url").unwrap();
+        assert!(st
+            .attributes_of(id)
+            .unwrap()
+            .into_iter()
+            .all(|(k, _)| k == "flag"));
+        cleanup(&path);
+    }
 }
