@@ -2160,4 +2160,62 @@ mod tests {
         assert_ne!(c2["id"].as_str().unwrap(), id);
         cleanup(&path);
     }
+    #[test]
+    fn attributes_flow_through_create_get_update_and_clear() {
+        let path = temp_db("attributes-flow");
+        let ctx = IdentityCtx::open_mode();
+        let created = call(
+            &path,
+            MEMORY_CREATE,
+            json!({
+                "summary": "kv memory",
+                "tags": ["rust"],
+                "attributes": {"project": "agent-memory", "url": "https://x", "pinned": true},
+                "create_missing_tags": true
+            }),
+        )
+        .unwrap();
+        assert_eq!(created["keys_autocreated"], json!(["pinned", "project", "url"]));
+        // enum value became a tag listed in tags_autocreated too
+        assert!(created["tags_autocreated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "project:agent-memory"));
+        let id = created["id"].as_str().unwrap().to_string();
+        // Enum values read back as 'key:value' tags; string/bool keys render in attributes
+        let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
+        assert!(got["tags"].as_array().unwrap().iter().any(|t| t == "project:agent-memory"));
+        assert_eq!(got["attributes"]["url"], "https://x");
+        assert_eq!(got["attributes"]["pinned"], true);
+        // Replacement unlinks the old enum value and swaps string/bool rows; bare tags survive
+        let updated = call(
+            &path,
+            MEMORY_UPDATE,
+            json!({"id": id, "attributes": {"project": "other"}, "create_missing_tags": true}),
+        )
+        .unwrap();
+        assert_eq!(updated["updated"], true);
+        let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
+        assert!(got["tags"].as_array().unwrap().iter().any(|t| t == "project:other"));
+        assert!(!got["tags"].as_array().unwrap().iter().any(|t| t == "project:agent-memory"));
+        assert!(got["attributes"].get("url").is_none());
+        assert!(got["attributes"].get("pinned").is_none());
+        assert_eq!(got["tags"].as_array().unwrap().len(), 2);
+        // {} clears every registered key
+        call(&path, MEMORY_UPDATE, json!({"id": id, "attributes": {}})).unwrap();
+        let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
+        assert!(got.get("attributes").is_none());
+        assert_eq!(got["tags"], json!(["rust"]));
+        // Validation errors surface as Invalid with the key spelled out
+        let err = call(
+            &path,
+            MEMORY_UPDATE,
+            json!({"id": id, "attributes": {"project": ["a", "b"]}}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("single-valued"), "{err}");
+        cleanup(&path);
+    }
+
 }

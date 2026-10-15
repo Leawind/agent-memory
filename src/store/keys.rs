@@ -117,6 +117,137 @@ impl Store {
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
+
+    /// Union the source memory's attribute rows into the target (single-value conflicts are
+    /// grandfathered, matching the write-time-only enforcement everywhere else).
+    pub fn merge_attributes(&self, into_id: i64, from_id: i64) -> Result<(), String> {
+        self.conn
+            .execute(sql::ATTRIBUTE_MERGE, params![into_id, from_id])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Validate an `attributes` write against the key registry, lazily registering unknown
+    /// keys as enum + single-valued (the lazy-schema default; an admin can reconfigure later).
+    /// Returns the attribute rows to store (string/bool), the full enum tag names to link,
+    /// and the keys created by this call.
+    pub fn resolve_attributes(
+        &self,
+        attributes: &Value,
+    ) -> Result<ResolvedAttributes, String> {
+        let object = attributes
+            .as_object()
+            .ok_or("attributes must be an object mapping key names to values")?;
+        if object.len() > 64 {
+            return Err("at most 64 attributes per memory are allowed".into());
+        }
+        let mut resolved = ResolvedAttributes::default();
+        for (raw_key, value) in object {
+            let key = crate::model::normalize_key_name(raw_key)?;
+            let key_row = match self.key_get(&key)? {
+                Some(row) => row,
+                None => {
+                    // Lazy schema growth: a boolean value signals a bool key; a value that can
+                    // live in the tag vocabulary becomes an enum key; anything else (URLs,
+                    // free text) is a string key. key_set reconfigures later.
+                    let inferred = match value {
+                        Value::Bool(_) => "bool",
+                        Value::String(v) if crate::model::normalize_tag_name(&format!("{key}:{v}")).is_ok() => "enum",
+                        _ => "string",
+                    };
+                    self.key_set(&key, inferred, false, "")?;
+                    resolved.lazy_keys.push(key.clone());
+                    self.key_get(&key)?.expect("just inserted")
+                }
+            };
+            match key_row.key_type.as_str() {
+                "bool" => match value {
+                    Value::Bool(true) => resolved.rows.push((key, String::new())),
+                    Value::Bool(false) | Value::Null => {}
+                    other => {
+                        return Err(format!(
+                            "attribute '{key}' is a bool key: pass true or false, got {other}"
+                        ))
+                    }
+                },
+                "string" => {
+                    for v in scalar_or_array(value, &key, key_row.multi)? {
+                        let v = v.trim();
+                        if v.is_empty() {
+                            return Err(format!("attribute '{key}' cannot be empty"));
+                        }
+                        if v.chars().count() > MAX_ATTR_VALUE_CHARS {
+                            return Err(format!(
+                                "attribute '{key}' exceeds {MAX_ATTR_VALUE_CHARS} characters"
+                            ));
+                        }
+                        resolved.rows.push((key.clone(), v.to_string()));
+                    }
+                }
+                _ => {
+                    for v in scalar_or_array(value, &key, key_row.multi)? {
+                        let full = format!("{key}:{v}");
+                        crate::model::normalize_tag_name(&full).map_err(|_| {
+                            format!(
+                                "enum value '{v}' for key '{key}' must be a tag-like name (letters, digits, '_', '-', '.')"
+                            )
+                        })?;
+                        if !resolved.enum_tags.contains(&full) {
+                            resolved.enum_tags.push(full);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(resolved)
+    }
+}
+
+/// API limit: maximum attribute value characters (a URL or free-text scalar).
+pub const MAX_ATTR_VALUE_CHARS: usize = 1024;
+
+#[derive(Default)]
+pub struct ResolvedAttributes {
+    /// Rows for memory_attributes (string values; empty value = bool presence).
+    pub rows: Vec<(String, String)>,
+    /// Full `key:value` tag names for enum keys, to be linked through the tag pipeline.
+    pub enum_tags: Vec<String>,
+    /// Keys registered by this call (lazy schema growth).
+    pub lazy_keys: Vec<String>,
+}
+
+/// Accept a scalar, or an array when (and only when) the key is multi-valued.
+fn scalar_or_array<'a>(
+    value: &'a Value,
+    key: &str,
+    multi: bool,
+) -> Result<Vec<&'a str>, String> {
+    match value {
+        Value::String(s) => Ok(vec![s.as_str()]),
+        Value::Array(items) => {
+            if !multi {
+                return Err(format!(
+                    "attribute '{key}' is single-valued; pass a scalar instead of an array"
+                ));
+            }
+            if items.len() > 32 {
+                return Err(format!("attribute '{key}' exceeds 32 values"));
+            }
+            items
+                .iter()
+                .map(|v| {
+                    v.as_str().ok_or_else(|| {
+                        format!("attribute '{key}' array entries must be strings")
+                    })
+                })
+                .collect()
+        }
+        Value::Null => Ok(Vec::new()),
+        other => Err(format!(
+            "attribute '{key}' must be a string{}, got {other}",
+            if multi { " or array of strings" } else { "" }
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -264,6 +395,69 @@ mod attribute_tests {
             .unwrap()
             .into_iter()
             .all(|(k, _)| k == "flag"));
+        cleanup(&path);
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::super::test_support::{cleanup, temp_db};
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolve_validates_types_cardinality_and_lazy_keys() {
+        let path = temp_db("resolve");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.key_set("project", "enum", false, "").unwrap();
+        st.key_set("url", "string", true, "").unwrap();
+        st.key_set("flag", "bool", false, "").unwrap();
+        st.tag_create("project:known", "").unwrap();
+
+        let resolved = st
+            .resolve_attributes(&json!({
+                "project": "agent-memory",
+                "url": ["https://a", "https://b"],
+                "flag": true,
+                "topic": "rust"
+            }))
+            .unwrap();
+        assert_eq!(resolved.enum_tags, vec!["project:agent-memory", "topic:rust"]);
+        assert_eq!(
+            resolved.rows,
+            vec![
+                ("flag".to_string(), String::new()),
+                ("url".to_string(), "https://a".to_string()),
+                ("url".to_string(), "https://b".to_string()),
+            ]
+        );
+        assert_eq!(resolved.lazy_keys, vec!["topic"]);
+        assert_eq!(st.key_get("topic").unwrap().unwrap().key_type, "enum");
+
+        for invalid in [
+            json!({"project": ["a", "b"]}),        // array on single-valued enum
+            json!({"url": "x", "flag": "yes"}),    // string value on a bool key
+            json!({"project": "has space"}),       // enum values are tag-like names
+            json!({"url": 42}),                    // number values are not accepted (yet)
+            json!({"url": ["", "x"]}),             // empty string values
+            json!({"flag": null, "url": []}),      // ok but empty -> no error case below
+        ] {
+            let _ = invalid;
+        }
+        assert!(st.resolve_attributes(&json!({"project": ["a", "b"]})).is_err());
+        assert!(st.resolve_attributes(&json!({"flag": "yes"})).is_err());
+        assert!(st.resolve_attributes(&json!({"project": "has space"})).is_err());
+        assert!(st.resolve_attributes(&json!({"url": 42})).is_err());
+        assert!(st.resolve_attributes(&json!({"url": ["", "x"]})).is_err());
+        // null and false clear; empty object resolves to nothing
+        let cleared = st.resolve_attributes(&json!({"flag": false, "url": null})).unwrap();
+        assert!(cleared.rows.is_empty() && cleared.enum_tags.is_empty());
+        let empty = st.resolve_attributes(&json!({})).unwrap();
+        assert!(empty.rows.is_empty() && empty.enum_tags.is_empty());
+        // A scalar on a multi key is fine; null entries inside arrays are rejected
+        assert!(st.resolve_attributes(&json!({"url": "solo"})).is_ok());
+        assert!(st.resolve_attributes(&json!({"url": ["a", null]})).is_err());
         cleanup(&path);
     }
 }

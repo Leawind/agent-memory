@@ -147,8 +147,9 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names for this memory; must exist unless create_missing_tags is true. Format: only letters, digits, '_', '-' and '.'."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates unknown tags with an empty description. These are original tags; positive rules may add derived tags before constraints are checked."}
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tag names for this memory (no 'key:' prefix - use attributes for keyed values); must exist unless create_missing_tags is true. Format: only letters, digits, '_', '-', '.' and ':'."},
+                    "attributes": {"type": "object", "additionalProperties": true, "description": "Structured key:value attributes validated against the key registry (see key_list). Enum-key values become 'key:value' tags and reuse the tag vocabulary (create_missing_tags applies); string keys take free text (never listed); bool keys take true/false where false or null means unset. Unknown keys are lazily registered as enum + single-valued and reported via keys_autocreated. Single-valued keys take one scalar; multi-valued keys accept an array of up to 32."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names and unknown enum attribute values are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -213,8 +214,9 @@ pub fn tool_definitions() -> Value {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
-                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Original tag sources to remove. Derived-only tags cannot be removed directly: remove their original premises or ask the administrator to change the rule. A removed original may remain derived while another premise supports it."},
+                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
+                    "attributes": {"type": "object", "additionalProperties": true, "description": "Replacement for the memory's whole keyed attribute set (omit to leave attributes unchanged; {} clears every registered key). Enum-key values are unlinked and relinked, string/bool rows are swapped wholesale. See memory_create for the value shapes."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],

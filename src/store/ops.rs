@@ -490,6 +490,7 @@ impl Store {
                     "summary": summary,
                     "content": content,
                     "tags": tags,
+                    "attributes": self.attributes_of(id)?,
                     "created_at": created_at,
                     "updated_at": updated_at,
                     "lifecycle": self.lifecycle_get(id)?,
@@ -632,6 +633,24 @@ impl Store {
                 tag_ids.push(*id);
             }
             let id = self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
+            if let Some(rows) = m.get("attributes").and_then(Value::as_array) {
+                let mut pairs = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let pair = row.as_array().ok_or(
+                        "invalid export: memory attributes must be [key, value] arrays",
+                    )?;
+                    let k = pair
+                        .first()
+                        .and_then(Value::as_str)
+                        .ok_or("invalid export: attribute key must be a string")?;
+                    let v = pair
+                        .get(1)
+                        .and_then(Value::as_str)
+                        .ok_or("invalid export: attribute value must be a string")?;
+                    pairs.push((k.to_string(), v.to_string()));
+                }
+                self.replace_attributes(id, &pairs)?;
+            }
             if let Some(value) = m.get("lifecycle") {
                 let meta = serde_json::from_value(value.clone())
                     .map_err(|error| format!("invalid exported lifecycle: {error}"))?;
