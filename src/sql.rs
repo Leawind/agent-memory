@@ -9,6 +9,11 @@ pub const TAG_EXISTS: &str = include_str!("../sql/tag_exists.sql");
 pub const PREDICATE_ALL: &str = include_str!("../sql/predicate_all.sql");
 pub const PREDICATE_PUT: &str = include_str!("../sql/predicate_put.sql");
 pub const PREDICATE_DELETE: &str = include_str!("../sql/predicate_delete.sql");
+pub const KEY_PUT: &str = include_str!("../sql/key_put.sql");
+pub const KEY_GET: &str = include_str!("../sql/key_get.sql");
+pub const KEY_ALL: &str = include_str!("../sql/key_all.sql");
+pub const KEY_DELETE: &str = include_str!("../sql/key_delete.sql");
+pub const ATTRIBUTE_CLEAR_FOR_KEY: &str = include_str!("../sql/attribute_clear_for_key.sql");
 pub const TAG_CREATE: &str = include_str!("../sql/tag_create.sql");
 pub const TAG_AUTOCREATE: &str = include_str!("../sql/tag_autocreate.sql");
 pub const TAG_SEED_RESERVED: &str = include_str!("../sql/tag_seed_reserved.sql");
@@ -129,6 +134,11 @@ mod tests {
             ("PREDICATE_ALL", PREDICATE_ALL),
             ("PREDICATE_PUT", PREDICATE_PUT),
             ("PREDICATE_DELETE", PREDICATE_DELETE),
+            ("KEY_PUT", KEY_PUT),
+            ("KEY_GET", KEY_GET),
+            ("KEY_ALL", KEY_ALL),
+            ("KEY_DELETE", KEY_DELETE),
+            ("ATTRIBUTE_CLEAR_FOR_KEY", ATTRIBUTE_CLEAR_FOR_KEY),
             ("TAG_CREATE", TAG_CREATE),
             ("TAG_AUTOCREATE", TAG_AUTOCREATE),
             ("TAG_SEED_RESERVED", TAG_SEED_RESERVED),
