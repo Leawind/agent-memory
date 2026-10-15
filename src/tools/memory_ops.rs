@@ -16,7 +16,11 @@ use serde_json::{json, Map, Value};
 /// unknown names get the same did-you-mean hint as tag linking on writes.
 fn resolve_tag_expr(st: &Store, ctx: &IdentityCtx, raw: &str) -> Result<TagExpr, ToolError> {
     let expr = st
-        .resolve_named_query(ctx, tag_expr::parse(raw)?)
+        .resolve_named_query(
+            ctx,
+            st.bind_query_atoms(tag_expr::parse(raw)?)
+                .map_err(ToolError::invalid)?,
+        )
         .map_err(ToolError::invalid)?;
     let mut unknown: Vec<String> = Vec::new();
     for name in expr.tag_names() {
@@ -223,7 +227,7 @@ pub fn memory_list(
             let memories = st.all_memories()?;
             let ids: Vec<i64> = memories
                 .iter()
-                .filter(|m| expr.eval(&m.tags))
+                .filter(|m| expr.eval(&m.tags, &m.attrs))
                 .filter_map(|m| Store::parse_id(&m.id))
                 .collect();
             Some(json!(ids).to_string())
@@ -308,7 +312,7 @@ pub fn memory_search(
                 .unwrap_or(&default_lifecycle)
                 .matches(&state, query_time)
         })
-        .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
+        .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags, &m.attrs)))
         .collect();
     let keyword_hits = search::literal_channels(&memories, &query);
     // Count literal candidates once even when both independent channels support them.

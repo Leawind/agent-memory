@@ -140,6 +140,9 @@ impl Registry {
             TagAtom::Regex(_) => {
                 Err("persisted predicates require literal tags; regex atoms are query-only".into())
             }
+            TagAtom::Attr { .. } => {
+                Err("attribute comparisons are query-only; named predicates accept literal tags only".into())
+            }
         })
     }
 

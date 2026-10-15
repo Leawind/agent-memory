@@ -6,7 +6,7 @@
 //! lazily created on first attribute write; this module holds the explicit management paths.
 
 use super::Store;
-use crate::sql;
+use crate::{sql, tag_expr::{TagAtom, TagExpr},};
 use rusqlite::params;
 use serde_json::{json, Value};
 
@@ -20,6 +20,23 @@ pub struct KeyRow {
 }
 
 pub const MAX_KEY_DESC_CHARS: usize = 512;
+
+/// The query atom meaning "memory carries this key": a prefix regex over tag names for enum
+/// keys, an attribute row match for string/bool keys.
+fn key_existence_atom(key: &str, key_type: &str) -> crate::tag_expr::TagAtom {
+    use crate::tag_expr::TagAtom;
+    if key_type == "enum" {
+        let pattern = format!("^{}:", regex::escape(key));
+        TagAtom::Regex(Box::new(
+            regex::Regex::new(&pattern).expect("escaped prefix regex"),
+        ))
+    } else {
+        TagAtom::Attr {
+            key: key.to_string(),
+            value: None,
+        }
+    }
+}
 
 fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<KeyRow> {
     Ok(KeyRow {
@@ -116,6 +133,32 @@ impl Store {
             .query_map([escaped], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Rewrite query attribute atoms by registered key type: `key=value` on an enum key
+    /// becomes the `key:value` tag (leaf validation then reports unknown values with the
+    /// usual did-you-mean), key existence on an enum key becomes a prefix regex, and
+    /// string/bool keys match attribute rows. Unregistered bare names stay literal tags.
+    pub fn bind_query_atoms(&self, expr: TagExpr) -> Result<TagExpr, String> {
+        let keys = self.key_rows()?;
+        expr.try_map(&mut |atom| match atom {
+            TagAtom::Tag(name) => match keys.iter().find(|k| k.name == name) {
+                None => Ok(TagAtom::Tag(name)),
+                Some(k) => Ok(key_existence_atom(&k.name, &k.key_type)),
+            },
+            TagAtom::Attr { key, value } => {
+                let row = keys
+                    .iter()
+                    .find(|k| k.name == key)
+                    .ok_or_else(|| format!("unknown attribute key '{key}' (see key_list)"))?;
+                match (row.key_type.as_str(), &value) {
+                    ("enum", Some(v)) => Ok(TagAtom::Tag(format!("{key}:{v}"))),
+                    ("enum", None) => Ok(key_existence_atom(&key, "enum")),
+                    _ => Ok(TagAtom::Attr { key, value }),
+                }
+            }
+            other => Ok(other),
+        })
     }
 
     /// Union the source memory's attribute rows into the target (single-value conflicts are
@@ -458,6 +501,44 @@ mod resolve_tests {
         // A scalar on a multi key is fine; null entries inside arrays are rejected
         assert!(st.resolve_attributes(&json!({"url": "solo"})).is_ok());
         assert!(st.resolve_attributes(&json!({"url": ["a", null]})).is_err());
+        cleanup(&path);
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::super::test_support::{cleanup, temp_db};
+    use super::*;
+    use crate::tag_expr;
+
+    #[test]
+    fn query_atoms_rewrite_by_key_type() {
+        let path = temp_db("query-atoms");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.key_set("project", "enum", false, "").unwrap();
+        st.key_set("url", "string", true, "").unwrap();
+        st.key_set("flag", "bool", false, "").unwrap();
+        st.tag_create("project:alpha", "").unwrap();
+
+        // enum equality rewrites to the tag leaf; enum existence to a prefix regex
+        let expr = st
+            .bind_query_atoms(tag_expr::parse("project=alpha").unwrap())
+            .unwrap();
+        let names = expr.tag_names();
+        assert_eq!(names, vec!["project:alpha"]);
+        let expr = st.bind_query_atoms(tag_expr::parse("project").unwrap()).unwrap();
+        assert!(expr
+            .eval_with(&|a| matches!(a, TagAtom::Regex(_))));
+        // string key existence and equality stay attribute atoms
+        let expr = st.bind_query_atoms(tag_expr::parse("url=https://a").unwrap()).unwrap();
+        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Attr { key, value: Some(_) } if key == "url")));
+        let expr = st.bind_query_atoms(tag_expr::parse("flag").unwrap()).unwrap();
+        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Attr { key, value: None } if key == "flag")));
+        // Unregistered bare names stay literal tags; unknown attr keys error out
+        let expr = st.bind_query_atoms(tag_expr::parse("rust").unwrap()).unwrap();
+        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Tag(n) if n == "rust")));
+        assert!(st.bind_query_atoms(tag_expr::parse("nokey=x").unwrap()).is_err());
         cleanup(&path);
     }
 }

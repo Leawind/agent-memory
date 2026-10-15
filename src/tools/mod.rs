@@ -2161,6 +2161,40 @@ mod tests {
         cleanup(&path);
     }
     #[test]
+    fn tag_expr_filters_by_attribute_atoms() {
+        let path = temp_db("attr-query");
+        let ctx = IdentityCtx::open_mode();
+        for (summary, attrs) in [
+            ("alpha", json!({"project": "one", "url": "https://a"})),
+            ("beta", json!({"project": "two"})),
+        ] {
+            call(
+                &path,
+                MEMORY_CREATE,
+                json!({"summary": summary, "attributes": attrs, "create_missing_tags": true}),
+            )
+            .unwrap();
+        }
+        let list = |expr: &str| {
+            call(&path, MEMORY_LIST, json!({"tag_expr": expr}))
+                .unwrap()["total"]
+                .clone()
+        };
+        // enum equality and existence
+        assert_eq!(list("project=one"), 1);
+        assert_eq!(list("project"), 2);
+        // string equality matches exact rows; bool/string key existence
+        assert_eq!(list("url=https://a"), 1);
+        assert_eq!(list("url"), 1);
+        // composes with the algebra; unknown values get the tag did-you-mean path
+        assert_eq!(list("project=one&url=https://a"), 1);
+        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "project=three"})).is_err());
+        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "nokey=1"})).is_err());
+        drop(ctx);
+        cleanup(&path);
+    }
+
+    #[test]
     fn attributes_flow_through_create_get_update_and_clear() {
         let path = temp_db("attributes-flow");
         let ctx = IdentityCtx::open_mode();
