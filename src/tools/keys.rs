@@ -19,11 +19,10 @@ pub fn key_set(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError
             "description exceeds {MAX_TAG_DESC_CHARS} characters"
         )));
     }
-    let key = st
-        .key_set(&req_str(args, "name")?, &key_type, multi, &description)
+    st.key_set(&req_str(args, "name")?, &key_type, multi, &description)
         .map_err(ToolError::from)?;
-    // Echo-free: the caller stated name/type/multi/description; the only news is whether an
-    // existing key changed type (which grandfathered data may not reflect).
+    // Echo-free: the caller just stated name/type/multi/description, so a clean set answers
+    // with an empty object.
     Ok(json!({}))
 }
 
