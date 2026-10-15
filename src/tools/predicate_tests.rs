@@ -159,7 +159,17 @@ fn decay_rules_match_keys_and_survive_export_import() {
         let memory = &st.get_memories(&[2])?.0[0];
         assert_eq!(memory.tag_keys(), vec!["temp"]);
         assert!(
-            (policy.freshness(&st.lifecycle_get(2)?, &memory.tag_keys().iter().map(|k| k.to_string()).collect::<Vec<_>>(), 100, 100 + 7 * 86400) - 0.5).abs()
+            (policy.freshness(
+                &st.lifecycle_get(2)?,
+                &memory
+                    .tag_keys()
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>(),
+                100,
+                100 + 7 * 86400
+            ) - 0.5)
+                .abs()
                 < 1e-12
         );
         Ok(())
@@ -168,21 +178,25 @@ fn decay_rules_match_keys_and_survive_export_import() {
     let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
     assert_eq!(dump["lifecycle_policy"]["rules"][0]["key"], "temp");
     let restored = path.with_extension("restored.db");
-    store::with_db_in(&restored, store::TxMode::Write, |st| -> Result<(), String> {
-        st.import_dump(&dump)?;
-        let policy = st.lifecycle_policy()?;
-        assert!(
-            (policy.freshness(
-                &crate::lifecycle::Metadata::default(),
-                &["temp".to_string()],
-                0,
-                7 * 86400
-            ) - 0.5)
-                .abs()
-                < 1e-12
-        );
-        Ok(())
-    })
+    store::with_db_in(
+        &restored,
+        store::TxMode::Write,
+        |st| -> Result<(), String> {
+            st.import_dump(&dump)?;
+            let policy = st.lifecycle_policy()?;
+            assert!(
+                (policy.freshness(
+                    &crate::lifecycle::Metadata::default(),
+                    &["temp".to_string()],
+                    0,
+                    7 * 86400
+                ) - 0.5)
+                    .abs()
+                    < 1e-12
+            );
+            Ok(())
+        },
+    )
     .unwrap();
 }
 

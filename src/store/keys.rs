@@ -6,7 +6,10 @@
 //! lazily created on first attribute write; this module holds the explicit management paths.
 
 use super::Store;
-use crate::{sql, tag_expr::{TagAtom, TagExpr},};
+use crate::{
+    sql,
+    tag_expr::{TagAtom, TagExpr},
+};
 use rusqlite::params;
 use serde_json::{json, Value};
 
@@ -51,9 +54,7 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<KeyRow> {
 impl Store {
     pub fn key_rows(&self) -> Result<Vec<KeyRow>, String> {
         let mut statement = self.conn.prepare(sql::KEY_ALL).map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([], decode)
-            .map_err(|e| e.to_string())?;
+        let rows = statement.query_map([], decode).map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
@@ -85,7 +86,9 @@ impl Store {
         }
         let multi = if key_type == "bool" { false } else { multi };
         let existing = self.key_get(&name)?;
-        let created_at = existing.as_ref().map_or_else(crate::model::now, |k| k.created_at);
+        let created_at = existing
+            .as_ref()
+            .map_or_else(crate::model::now, |k| k.created_at);
         self.conn
             .execute(
                 sql::KEY_PUT,
@@ -128,7 +131,12 @@ impl Store {
             .conn
             .prepare("SELECT name FROM tags WHERE name LIKE ?1 || ':%' ESCAPE '\\' ORDER BY name")
             .map_err(|e| e.to_string())?;
-        let escaped = format!("{}%", key.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let escaped = format!(
+            "{}%",
+            key.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
         let rows = statement
             .query_map([escaped], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
@@ -174,10 +182,7 @@ impl Store {
     /// keys as enum + single-valued (the lazy-schema default; an admin can reconfigure later).
     /// Returns the attribute rows to store (string/bool), the full enum tag names to link,
     /// and the keys created by this call.
-    pub fn resolve_attributes(
-        &self,
-        attributes: &Value,
-    ) -> Result<ResolvedAttributes, String> {
+    pub fn resolve_attributes(&self, attributes: &Value) -> Result<ResolvedAttributes, String> {
         let object = attributes
             .as_object()
             .ok_or("attributes must be an object mapping key names to values")?;
@@ -195,7 +200,11 @@ impl Store {
                     // free text) is a string key. key_set reconfigures later.
                     let inferred = match value {
                         Value::Bool(_) => "bool",
-                        Value::String(v) if crate::model::normalize_tag_name(&format!("{key}:{v}")).is_ok() => "enum",
+                        Value::String(v)
+                            if crate::model::normalize_tag_name(&format!("{key}:{v}")).is_ok() =>
+                        {
+                            "enum"
+                        }
                         _ => "string",
                     };
                     self.key_set(&key, inferred, false, "")?;
@@ -260,11 +269,7 @@ pub struct ResolvedAttributes {
 }
 
 /// Accept a scalar, or an array when (and only when) the key is multi-valued.
-fn scalar_or_array<'a>(
-    value: &'a Value,
-    key: &str,
-    multi: bool,
-) -> Result<Vec<&'a str>, String> {
+fn scalar_or_array<'a>(value: &'a Value, key: &str, multi: bool) -> Result<Vec<&'a str>, String> {
     match value {
         Value::String(s) => Ok(vec![s.as_str()]),
         Value::Array(items) => {
@@ -279,9 +284,8 @@ fn scalar_or_array<'a>(
             items
                 .iter()
                 .map(|v| {
-                    v.as_str().ok_or_else(|| {
-                        format!("attribute '{key}' array entries must be strings")
-                    })
+                    v.as_str()
+                        .ok_or_else(|| format!("attribute '{key}' array entries must be strings"))
                 })
                 .collect()
         }
@@ -368,7 +372,9 @@ impl Store {
             .prepare(sql::ATTRIBUTE_ALL_FOR)
             .map_err(|e| e.to_string())?;
         let rows = statement
-            .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .query_map([id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
@@ -419,7 +425,10 @@ mod attribute_tests {
             ]
         );
         assert_eq!(memory.tag_keys(), vec!["flag", "url"]);
-        assert_eq!(memory.attributes_view()["url"], serde_json::json!(["https://a", "https://b"]));
+        assert_eq!(
+            memory.attributes_view()["url"],
+            serde_json::json!(["https://a", "https://b"])
+        );
         assert_eq!(memory.attributes_view()["flag"], serde_json::json!(true));
         // Full replacement drops the previous rows
         st.replace_attributes(id, &[("url".to_string(), "https://c".to_string())])
@@ -466,7 +475,10 @@ mod resolve_tests {
                 "topic": "rust"
             }))
             .unwrap();
-        assert_eq!(resolved.enum_tags, vec!["project:agent-memory", "topic:rust"]);
+        assert_eq!(
+            resolved.enum_tags,
+            vec!["project:agent-memory", "topic:rust"]
+        );
         assert_eq!(
             resolved.rows,
             vec![
@@ -479,22 +491,28 @@ mod resolve_tests {
         assert_eq!(st.key_get("topic").unwrap().unwrap().key_type, "enum");
 
         for invalid in [
-            json!({"project": ["a", "b"]}),        // array on single-valued enum
-            json!({"url": "x", "flag": "yes"}),    // string value on a bool key
-            json!({"project": "has space"}),       // enum values are tag-like names
-            json!({"url": 42}),                    // number values are not accepted (yet)
-            json!({"url": ["", "x"]}),             // empty string values
-            json!({"flag": null, "url": []}),      // ok but empty -> no error case below
+            json!({"project": ["a", "b"]}),     // array on single-valued enum
+            json!({"url": "x", "flag": "yes"}), // string value on a bool key
+            json!({"project": "has space"}),    // enum values are tag-like names
+            json!({"url": 42}),                 // number values are not accepted (yet)
+            json!({"url": ["", "x"]}),          // empty string values
+            json!({"flag": null, "url": []}),   // ok but empty -> no error case below
         ] {
             let _ = invalid;
         }
-        assert!(st.resolve_attributes(&json!({"project": ["a", "b"]})).is_err());
+        assert!(st
+            .resolve_attributes(&json!({"project": ["a", "b"]}))
+            .is_err());
         assert!(st.resolve_attributes(&json!({"flag": "yes"})).is_err());
-        assert!(st.resolve_attributes(&json!({"project": "has space"})).is_err());
+        assert!(st
+            .resolve_attributes(&json!({"project": "has space"}))
+            .is_err());
         assert!(st.resolve_attributes(&json!({"url": 42})).is_err());
         assert!(st.resolve_attributes(&json!({"url": ["", "x"]})).is_err());
         // null and false clear; empty object resolves to nothing
-        let cleared = st.resolve_attributes(&json!({"flag": false, "url": null})).unwrap();
+        let cleared = st
+            .resolve_attributes(&json!({"flag": false, "url": null}))
+            .unwrap();
         assert!(cleared.rows.is_empty() && cleared.enum_tags.is_empty());
         let empty = st.resolve_attributes(&json!({})).unwrap();
         assert!(empty.rows.is_empty() && empty.enum_tags.is_empty());
@@ -527,18 +545,31 @@ mod query_tests {
             .unwrap();
         let names = expr.tag_names();
         assert_eq!(names, vec!["project:alpha"]);
-        let expr = st.bind_query_atoms(tag_expr::parse("project").unwrap()).unwrap();
-        assert!(expr
-            .eval_with(&|a| matches!(a, TagAtom::Regex(_))));
+        let expr = st
+            .bind_query_atoms(tag_expr::parse("project").unwrap())
+            .unwrap();
+        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Regex(_))));
         // string key existence and equality stay attribute atoms
-        let expr = st.bind_query_atoms(tag_expr::parse("url=https://a").unwrap()).unwrap();
-        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Attr { key, value: Some(_) } if key == "url")));
-        let expr = st.bind_query_atoms(tag_expr::parse("flag").unwrap()).unwrap();
-        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Attr { key, value: None } if key == "flag")));
+        let expr = st
+            .bind_query_atoms(tag_expr::parse("url=https://a").unwrap())
+            .unwrap();
+        assert!(
+            expr.eval_with(&|a| matches!(a, TagAtom::Attr { key, value: Some(_) } if key == "url"))
+        );
+        let expr = st
+            .bind_query_atoms(tag_expr::parse("flag").unwrap())
+            .unwrap();
+        assert!(
+            expr.eval_with(&|a| matches!(a, TagAtom::Attr { key, value: None } if key == "flag"))
+        );
         // Unregistered bare names stay literal tags; unknown attr keys error out
-        let expr = st.bind_query_atoms(tag_expr::parse("rust").unwrap()).unwrap();
+        let expr = st
+            .bind_query_atoms(tag_expr::parse("rust").unwrap())
+            .unwrap();
         assert!(expr.eval_with(&|a| matches!(a, TagAtom::Tag(n) if n == "rust")));
-        assert!(st.bind_query_atoms(tag_expr::parse("nokey=x").unwrap()).is_err());
+        assert!(st
+            .bind_query_atoms(tag_expr::parse("nokey=x").unwrap())
+            .is_err());
         cleanup(&path);
     }
 }

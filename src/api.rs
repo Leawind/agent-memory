@@ -18,9 +18,9 @@ use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
-    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST,
-    TAG_UPDATE, KEY_DELETE, KEY_LIST, KEY_SET,
+    self, ToolError, KEY_DELETE, KEY_LIST, KEY_SET, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET,
+    MEMORY_LIFECYCLE, MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE,
+    TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};

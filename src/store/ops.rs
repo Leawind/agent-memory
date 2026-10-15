@@ -636,9 +636,9 @@ impl Store {
             if let Some(rows) = m.get("attributes").and_then(Value::as_array) {
                 let mut pairs = Vec::with_capacity(rows.len());
                 for row in rows {
-                    let pair = row.as_array().ok_or(
-                        "invalid export: memory attributes must be [key, value] arrays",
-                    )?;
+                    let pair = row
+                        .as_array()
+                        .ok_or("invalid export: memory attributes must be [key, value] arrays")?;
                     let k = pair
                         .first()
                         .and_then(Value::as_str)

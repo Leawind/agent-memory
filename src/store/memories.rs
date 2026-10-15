@@ -227,7 +227,7 @@ impl Store {
         for m in &mut page {
             let id = Self::parse_id(&m.id).unwrap_or(0);
             m.tags = self.tags_of(id)?;
-        m.attrs = self.attributes_of(id)?;
+            m.attrs = self.attributes_of(id)?;
         }
         Ok((total, page))
     }

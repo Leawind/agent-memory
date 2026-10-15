@@ -458,8 +458,8 @@ mod tests {
             summary: summary.to_string(),
             content: content.to_string(),
             tags: tags.iter().map(|s| s.to_string()).collect(),
-                    attrs: Vec::new(),
-created_at: 0,
+            attrs: Vec::new(),
+            created_at: 0,
             updated_at,
         }
     }

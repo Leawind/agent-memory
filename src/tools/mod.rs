@@ -28,8 +28,8 @@ use std::path::Path;
 pub use defs::{
     tool_definitions, KEY_DELETE, KEY_LIST, KEY_SET, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT,
     MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE,
-    MEMORY_USE, PREDICATE_DELETE, PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE,
-    TAG_LIST, TAG_UPDATE, TOOL_NAMES,
+    MEMORY_USE, PREDICATE_DELETE, PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST,
+    TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -1365,7 +1365,6 @@ mod tests {
         cleanup(&path);
     }
 
-
     #[test]
     fn lifecycle_permissions_protect_the_resident_convention() {
         let path = temp_db("lifecycle-permissions");
@@ -2211,9 +2210,7 @@ mod tests {
             .unwrap();
         }
         let list = |expr: &str| {
-            call(&path, MEMORY_LIST, json!({"tag_expr": expr}))
-                .unwrap()["total"]
-                .clone()
+            call(&path, MEMORY_LIST, json!({"tag_expr": expr})).unwrap()["total"].clone()
         };
         // enum equality and existence
         assert_eq!(list("project=one"), 1);
@@ -2244,7 +2241,10 @@ mod tests {
             }),
         )
         .unwrap();
-        assert_eq!(created["keys_autocreated"], json!(["pinned", "project", "url"]));
+        assert_eq!(
+            created["keys_autocreated"],
+            json!(["pinned", "project", "url"])
+        );
         // enum value became a tag listed in tags_autocreated too
         assert!(created["tags_autocreated"]
             .as_array()
@@ -2254,7 +2254,11 @@ mod tests {
         let id = created["id"].as_str().unwrap().to_string();
         // Enum values read back as 'key:value' tags; string/bool keys render in attributes
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
-        assert!(got["tags"].as_array().unwrap().iter().any(|t| t == "project:agent-memory"));
+        assert!(got["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "project:agent-memory"));
         assert_eq!(got["attributes"]["url"], "https://x");
         assert_eq!(got["attributes"]["pinned"], true);
         // Replacement unlinks the old enum value and swaps string/bool rows; bare tags survive
@@ -2266,8 +2270,16 @@ mod tests {
         .unwrap();
         assert_eq!(updated["updated"], true);
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
-        assert!(got["tags"].as_array().unwrap().iter().any(|t| t == "project:other"));
-        assert!(!got["tags"].as_array().unwrap().iter().any(|t| t == "project:agent-memory"));
+        assert!(got["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "project:other"));
+        assert!(!got["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "project:agent-memory"));
         assert!(got["attributes"].get("url").is_none());
         assert!(got["attributes"].get("pinned").is_none());
         assert_eq!(got["tags"].as_array().unwrap().len(), 2);
@@ -2286,5 +2298,4 @@ mod tests {
         assert!(err.to_string().contains("single-valued"), "{err}");
         cleanup(&path);
     }
-
 }

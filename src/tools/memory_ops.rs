@@ -73,10 +73,7 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // lazily registered as enum + single-valued), enum values link through the tag pipeline.
     let resolved = match args.get("attributes") {
         None | Some(Value::Null) => None,
-        Some(value) => Some(
-            st.resolve_attributes(value)
-                .map_err(ToolError::invalid)?,
-        ),
+        Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
     };
     let mut all_tags = tags;
     if let Some(resolved) = &resolved {
@@ -312,7 +309,11 @@ pub fn memory_search(
                 .unwrap_or(&default_lifecycle)
                 .matches(&state, query_time)
         })
-        .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags, &m.attrs)))
+        .filter(|m| {
+            tag_expr
+                .as_ref()
+                .is_none_or(|expr| expr.eval(&m.tags, &m.attrs))
+        })
         .collect();
     let keyword_hits = search::literal_channels(&memories, &query);
     // Count literal candidates once even when both independent channels support them.
@@ -574,10 +575,7 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // unlinked first ({} clears every registered key), string/bool rows are swapped wholesale.
     let attributes = args.get("attributes").filter(|v| !v.is_null());
     let resolved = match attributes {
-        Some(value) => Some(
-            st.resolve_attributes(value)
-                .map_err(ToolError::invalid)?,
-        ),
+        Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
         None => None,
     };
     if summary.is_none()
@@ -603,9 +601,8 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     let enum_add_ids;
     if let Some(resolved) = &resolved {
         // Unlink the old enum values of every key the replacement touches ({} = all keys)
-        let empty_object = attributes.is_some_and(|v| {
-            v.as_object().is_some_and(|object| object.is_empty())
-        });
+        let empty_object =
+            attributes.is_some_and(|v| v.as_object().is_some_and(|object| object.is_empty()));
         let mut replaced_keys: Vec<String> = Vec::new();
         if empty_object {
             replaced_keys = st.key_rows()?.into_iter().map(|k| k.name).collect();

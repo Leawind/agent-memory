@@ -380,9 +380,7 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
         KEY_SET | KEY_DELETE => &[Cap::Admin],
         KEY_LIST => &[Cap::Read],
         MEMORY_CREATE => &[Cap::Create],
-        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => {
-            &[Cap::Read]
-        }
+        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => &[Cap::Read],
         MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],

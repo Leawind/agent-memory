@@ -41,7 +41,10 @@ pub enum TagAtom {
     Regex(Box<regex::Regex>),
     /// `key=value` from the query text; the store rewrites it by the key's registered type.
     /// A value-less rewrite (`key` on a registered string/bool key) means presence.
-    Attr { key: String, value: Option<String> },
+    Attr {
+        key: String,
+        value: Option<String>,
+    },
 }
 
 impl TagExpr {
@@ -52,9 +55,9 @@ impl TagExpr {
         self.eval_with(&|atom| match atom {
             TagAtom::Tag(name) => tags.iter().any(|t| t == name),
             TagAtom::Regex(re) => tags.iter().any(|t| re.is_match(t)),
-            TagAtom::Attr { key, value } => attrs.iter().any(|(k, v)| {
-                k == key && value.as_deref().is_none_or(|want| v == want)
-            }),
+            TagAtom::Attr { key, value } => attrs
+                .iter()
+                .any(|(k, v)| k == key && value.as_deref().is_none_or(|want| v == want)),
             TagAtom::Named(_) => {
                 unreachable!("named predicates must be resolved before evaluation")
             }
@@ -375,7 +378,10 @@ impl Parser {
                             ))
                         }
                         None => {
-                            return Err("unexpected end of expression: a value after '=' was expected".into())
+                            return Err(
+                                "unexpected end of expression: a value after '=' was expected"
+                                    .into(),
+                            )
                         }
                     };
                     return Ok(TagExpr::Atom(TagAtom::Attr {
@@ -537,11 +543,16 @@ mod tests {
         assert!(!eval_attrs("url='https a b'"));
         let parsed = parse("project=agent-memory&!hidden").unwrap();
         let mut keys = Vec::new();
-        parsed.visit_atoms(&mut |a| if let TagAtom::Attr { key, value } = a {
-            keys.push((key.clone(), value.clone()));
+        parsed.visit_atoms(&mut |a| {
+            if let TagAtom::Attr { key, value } = a {
+                keys.push((key.clone(), value.clone()));
+            }
         });
         assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0], ("project".to_string(), Some("agent-memory".to_string())));
+        assert_eq!(
+            keys[0],
+            ("project".to_string(), Some("agent-memory".to_string()))
+        );
         // Missing value and lone '=' are syntax errors
         assert!(parse("url=").is_err());
         assert!(parse("=x").is_err());
