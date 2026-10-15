@@ -353,7 +353,7 @@ pub fn memory_search(
 
     let mut eligible = keyword_idx.clone();
     eligible.extend(vector_hits.iter().map(|hit| hit.idx));
-    let policy = st.lifecycle_policy_compiled()?;
+    let policy = st.lifecycle_policy()?;
     let priors = crate::lifecycle::rank_channels(
         &memories,
         &eligible,
@@ -467,10 +467,6 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
         .iter()
         .map(|m| {
             let mut view = m.full_view();
-            let provenance = st
-                .memory_tag_provenance(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?;
-            view["original_tags"] = provenance["original_tags"].clone();
-            view["derived_tags"] = provenance["derived_tags"].clone();
             view["lifecycle"] = st
                 .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
                 .view(now());

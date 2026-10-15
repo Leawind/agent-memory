@@ -501,7 +501,6 @@ impl Store {
             "exported_at": crate::model::now(),
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
-            "tag_rules": self.tag_rules_view()?,
             "predicates": self.global_predicates_view()?,
             "lifecycle_policy": self.lifecycle_policy()?,
         }))
@@ -592,7 +591,6 @@ impl Store {
             tag_id_by_key.insert(key.as_str(), id);
         }
 
-        let empty_rules = json!({"constraints": []});
         self.import_global_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
         if let Some(value) = dump.get("lifecycle_policy") {
             let policy = crate::lifecycle::Policy::parse(value)?;
@@ -601,7 +599,6 @@ impl Store {
                 &serde_json::to_string(&policy).map_err(|e| e.to_string())?,
             )?;
         }
-        self.replace_tag_rules(dump.get("tag_rules").unwrap_or(&empty_rules), false)?;
         for (key, m) in memories {
             let summary = m
                 .get("summary")

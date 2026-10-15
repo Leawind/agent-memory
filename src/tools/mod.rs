@@ -28,7 +28,7 @@ use std::path::Path;
 pub use defs::{
     tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIFECYCLE,
     MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE,
-    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_RULE_LIST, TAG_UPDATE,
+    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
     TOOL_NAMES,
 };
 pub use render::tool_text;
@@ -176,7 +176,6 @@ pub fn execute(
     let out = match name {
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
-        defs::TAG_RULE_LIST => st.tag_rules_view().map_err(ToolError::from),
         PREDICATE_LIST => st.predicate_list(ctx).map_err(ToolError::from),
         PREDICATE_SET => predicate_ops::set(st, ctx, map),
         PREDICATE_DELETE => predicate_ops::delete(st, ctx, map),
@@ -1361,18 +1360,6 @@ mod tests {
         cleanup(&path);
     }
 
-    #[test]
-    fn tag_rule_listing_is_read_only_and_schema_validated() {
-        let path = temp_db("tag-rule-list");
-        let result = call_as(&path, &[Cap::Read], TAG_RULE_LIST, json!({})).unwrap();
-        assert_eq!(result, json!({"constraints": [], "derivations": []}));
-        assert!(call(&path, TAG_RULE_LIST, json!({"unexpected": true})).is_err());
-        assert!(matches!(
-            call_as(&path, &[], TAG_RULE_LIST, json!({})),
-            Err(ToolError::Forbidden(_))
-        ));
-        cleanup(&path);
-    }
 
     #[test]
     fn lifecycle_permissions_protect_the_resident_convention() {

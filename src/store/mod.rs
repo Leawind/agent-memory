@@ -27,7 +27,6 @@ mod migrate;
 mod ops;
 mod predicates;
 mod settings;
-mod tag_rules;
 mod tags;
 mod tx;
 

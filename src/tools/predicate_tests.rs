@@ -79,26 +79,21 @@ fn predicates_are_scoped_and_global_management_is_independent_of_admin() {
 }
 
 #[test]
-fn cycles_nonmonotone_dependencies_and_constraint_changes_roll_back_atomically() {
-    let path = setup("rollback");
+fn cycles_and_reference_protection_are_enforced_at_the_predicate_layer() {
+    let path = setup("references");
     let ctx = IdentityCtx::open_mode();
     set(&path, &ctx, "global", "root", "a").unwrap();
     set(&path, &ctx, "global", "alias", "@root").unwrap();
     assert!(set(&path, &ctx, "global", "root", "@alias").is_err());
     assert!(set(&path, &ctx, "global", "self", "@self").is_err());
-    let rules = json!({"constraints":[],"derivations":[{"name":"derive","predicate":"@alias","derived":["c"]}]});
-    store::with_db_in(&path, store::TxMode::Write, |st| {
-        st.replace_tag_rules(&rules, false)
-    })
-    .unwrap();
-    assert!(set(&path, &ctx, "global", "root", "!a").is_err());
     assert_eq!(
-        execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"c"})).unwrap()["total"],
+        execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@alias"})).unwrap()["total"],
         1
     );
-    set(&path, &ctx, "global", "root", "b").unwrap();
+    // Negation is fine now that predicates are query-only: no derivation consumer to protect
+    set(&path, &ctx, "global", "root", "!a").unwrap();
     assert_eq!(
-        execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"c"})).unwrap()["total"],
+        execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@alias"})).unwrap()["total"],
         0
     );
     assert!(execute_with_db(
@@ -108,7 +103,9 @@ fn cycles_nonmonotone_dependencies_and_constraint_changes_roll_back_atomically()
         &json!({"scope":"global","name":"root"})
     )
     .is_err());
-    assert!(execute_with_db(&path, &ctx, TAG_DELETE, &json!({"name":"b"})).is_err());
+    assert!(execute_with_db(&path, &ctx, TAG_DELETE, &json!({"name":"a"})).is_err());
+    // Renaming a referenced tag flows through to predicate display
+    set(&path, &ctx, "global", "root", "b").unwrap();
     execute_with_db(
         &path,
         &ctx,
@@ -118,26 +115,14 @@ fn cycles_nonmonotone_dependencies_and_constraint_changes_roll_back_atomically()
     .unwrap();
     let listing = execute_with_db(&path, &ctx, PREDICATE_LIST, &json!({})).unwrap();
     assert!(listing.to_string().contains("beta"));
-    let constraints = json!({"constraints":[{"name":"must","expression":"@alias"}]});
-    set(&path, &ctx, "global", "root", "a").unwrap();
-    store::with_db_in(&path, store::TxMode::Write, |st| {
-        st.replace_tag_rules(&constraints, false)
-    })
-    .unwrap();
-    assert!(set(&path, &ctx, "global", "root", "beta").is_err());
-    assert_eq!(
-        execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@alias"})).unwrap()["total"],
-        1
-    );
 }
 
 #[test]
-fn backup_restores_forward_references_rules_and_stable_tag_binding() {
+fn backup_restores_forward_references_with_stable_tag_binding() {
     let path = setup("backup");
     let ctx = IdentityCtx::open_mode();
     set(&path, &ctx, "global", "z-root", "a").unwrap();
     set(&path, &ctx, "global", "a-alias", "@z-root").unwrap();
-    store::with_db_in(&path,store::TxMode::Write,|st| st.replace_tag_rules(&json!({"constraints":[],"derivations":[{"name":"derive","expression":"@a-alias => c"}]}),false)).unwrap();
     let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
     let restored = path.with_extension("restored.db");
     store::with_db_in(&restored, store::TxMode::Write, |st| st.import_dump(&dump)).unwrap();
@@ -146,7 +131,7 @@ fn backup_restores_forward_references_rules_and_stable_tag_binding() {
             &restored,
             &ctx,
             MEMORY_LIST,
-            &json!({"tag_expr":"@a-alias&c"})
+            &json!({"tag_expr":"@a-alias&a"})
         )
         .unwrap()["total"],
         1
@@ -154,58 +139,50 @@ fn backup_restores_forward_references_rules_and_stable_tag_binding() {
 }
 
 #[test]
-fn decay_selectors_use_named_and_derived_tags_and_protect_references() {
+fn decay_rules_match_keys_and_survive_export_import() {
     let path = setup("decay");
     let ctx = IdentityCtx::open_mode();
-    set(&path, &ctx, "global", "category", "c").unwrap();
-    store::with_db_in(&path,store::TxMode::Write,|st| -> Result<(),String> {
-        st.replace_tag_rules(&json!({"constraints":[],"derivations":[{"name":"classify","expression":"a => c"}]}),false)?;
-        st.settings_put(Store::SETTING_LIFECYCLE_POLICY,&json!({"rules":[{"predicate":"@category&!b", "half_life_days":7}],"default_half_life_days":30}).to_string())?;
-        let policy = st.lifecycle_policy_compiled()?;
-        let memory = &st.get_memories(&[1])?.0[0];
-        assert!((policy.freshness(&st.lifecycle_get(1)?,&memory.tags,100,100+7*86400)-0.5).abs()<1e-12);
-        Ok(())
-    }).unwrap();
-    assert!(execute_with_db(
-        &path,
-        &ctx,
-        PREDICATE_DELETE,
-        &json!({"scope":"global","name":"category"})
-    )
-    .is_err());
-    assert!(execute_with_db(&path, &ctx, TAG_DELETE, &json!({"name":"b"})).is_err());
-    assert!(execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"!@missing"})).is_err());
     execute_with_db(
         &path,
         &ctx,
-        TAG_UPDATE,
-        &json!({"name":"b","new_name":"beta"}),
+        MEMORY_CREATE,
+        &json!({"summary":"temp note", "tags":["temp:x"],"create_missing_tags":true}),
     )
     .unwrap();
+    store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {
+        st.settings_put(
+            Store::SETTING_LIFECYCLE_POLICY,
+            &json!({"rules":[{"key":"temp","half_life_days":7}],"default_half_life_days":30})
+                .to_string(),
+        )?;
+        let policy = st.lifecycle_policy()?;
+        let memory = &st.get_memories(&[2])?.0[0];
+        assert_eq!(memory.tag_keys(), vec!["temp"]);
+        assert!(
+            (policy.freshness(&st.lifecycle_get(2)?, &memory.tag_keys().iter().map(|k| k.to_string()).collect::<Vec<_>>(), 100, 100 + 7 * 86400) - 0.5).abs()
+                < 1e-12
+        );
+        Ok(())
+    })
+    .unwrap();
     let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
-    assert!(dump["lifecycle_policy"]["rules"][0]["predicate"]
-        .as_str()
-        .unwrap()
-        .contains("beta"));
+    assert_eq!(dump["lifecycle_policy"]["rules"][0]["key"], "temp");
     let restored = path.with_extension("restored.db");
-    store::with_db_in(
-        &restored,
-        store::TxMode::Write,
-        |st| -> Result<(), String> {
-            st.import_dump(&dump)?;
-            assert!(
-                (st.lifecycle_policy_compiled()?.freshness(
-                    &crate::lifecycle::Metadata::default(),
-                    &["a".into(), "c".into()],
-                    0,
-                    7 * 86400
-                ) - 0.5)
-                    .abs()
-                    < 1e-12
-            );
-            Ok(())
-        },
-    )
+    store::with_db_in(&restored, store::TxMode::Write, |st| -> Result<(), String> {
+        st.import_dump(&dump)?;
+        let policy = st.lifecycle_policy()?;
+        assert!(
+            (policy.freshness(
+                &crate::lifecycle::Metadata::default(),
+                &["temp".to_string()],
+                0,
+                7 * 86400
+            ) - 0.5)
+                .abs()
+                < 1e-12
+        );
+        Ok(())
+    })
     .unwrap();
 }
 
@@ -226,17 +203,8 @@ fn maximum_flat_predicate_can_be_saved_and_reopened() {
         execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@flat"})).unwrap()["total"],
         1
     );
-    store::with_db_in(&path,store::TxMode::Write,|st| -> Result<(),String> {
-        st.replace_tag_rules(&json!({"constraints":[{"name":"flat-constraint","expression":expression}],"derivations":[]}),false)?;
-        st.settings_put(Store::SETTING_LIFECYCLE_POLICY,&json!({"rules":[{"predicate":expression,"half_life_days":7}]}).to_string())?;
-        Ok(())
-    }).unwrap();
     store::with_db_in(&path, store::TxMode::ReadOnly, |st| -> Result<(), String> {
-        assert_eq!(
-            st.tag_rules_view()?["constraints"][0]["expression"],
-            expression
-        );
-        assert_eq!(st.lifecycle_policy()?.rules[0].predicate, expression);
+        assert_eq!(st.global_predicates_view()?[0]["predicate"], expression);
         Ok(())
     })
     .unwrap();

@@ -48,27 +48,25 @@ impl Metadata {
     }
 }
 
+/// One decay override: memories carrying `key` decay with `half_life_days`. Rules apply in
+/// order and the first matching key wins, so listing order is part of the policy.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct DecayRule<P = String> {
-    pub predicate: P,
+pub struct DecayRule {
+    pub key: String,
     pub half_life_days: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(
-    default,
-    deny_unknown_fields,
-    bound(deserialize = "P: Deserialize<'de>")
-)]
-pub struct Policy<P = String> {
-    pub rules: Vec<DecayRule<P>>,
+#[serde(default, deny_unknown_fields)]
+pub struct Policy {
+    pub rules: Vec<DecayRule>,
     pub default_half_life_days: Option<f64>,
     pub freshness_weight: f64,
     pub reinforcement_weight: f64,
 }
 
-impl<P> Default for Policy<P> {
+impl Default for Policy {
     fn default() -> Self {
         Self {
             rules: Vec::new(),
@@ -103,44 +101,19 @@ impl Policy {
             return Err("lifecycle RRF weights must be between 0 and 5".into());
         }
         for rule in &policy.rules {
-            crate::tag_expr::parse_rule(&rule.predicate)?;
+            crate::model::normalize_key_name(&rule.key)?;
         }
         Ok(policy)
     }
-}
 
-impl<P> Policy<P> {
-    pub fn try_map<B>(
-        &self,
-        bind: &mut impl FnMut(&P) -> Result<B, String>,
-    ) -> Result<Policy<B>, String> {
-        Ok(Policy {
-            rules: self
-                .rules
-                .iter()
-                .map(|r| {
-                    Ok(DecayRule {
-                        predicate: bind(&r.predicate)?,
-                        half_life_days: r.half_life_days,
-                    })
-                })
-                .collect::<Result<_, String>>()?,
-            default_half_life_days: self.default_half_life_days,
-            freshness_weight: self.freshness_weight,
-            reinforcement_weight: self.reinforcement_weight,
-        })
-    }
-}
-
-impl Policy<crate::tag_expr::TagExpr> {
-    pub fn freshness(&self, meta: &Metadata, tags: &[String], updated_at: u64, now: u64) -> f64 {
+    pub fn freshness(&self, meta: &Metadata, keys: &[String], updated_at: u64, now: u64) -> f64 {
         if meta.pinned {
             return 1.0;
         }
         let half_life = self
             .rules
             .iter()
-            .find(|r| r.predicate.eval(tags))
+            .find(|r| keys.iter().any(|k| *k == r.key))
             .map_or(self.default_half_life_days, |r| r.half_life_days);
         half_life.map_or(1.0, |days| {
             (-std::f64::consts::LN_2 * now.saturating_sub(updated_at) as f64 / (days * 86400.0))
@@ -155,7 +128,7 @@ pub fn rank_channels(
     eligible: &std::collections::HashSet<usize>,
     lifecycle: &std::collections::HashMap<i64, Metadata>,
     usage: &std::collections::HashMap<i64, crate::access::Projection>,
-    policy: &Policy<crate::tag_expr::TagExpr>,
+    policy: &Policy,
     now: u64,
 ) -> [Vec<crate::search::Hit>; 2] {
     let default_meta = Metadata::default();
@@ -163,9 +136,14 @@ pub fn rank_channels(
     for idx in eligible {
         let memory = &memories[*idx];
         let id = crate::store::Store::parse_id(&memory.id).unwrap_or(0);
+        let keys = memory
+            .tag_keys()
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
         let freshness = policy.freshness(
             lifecycle.get(&id).unwrap_or(&default_meta),
-            &memory.tags,
+            &keys,
             memory.updated_at,
             now,
         );
@@ -212,31 +190,26 @@ mod tests {
     }
 
     #[test]
-    fn ordered_predicate_rules_support_overrides_fallback_and_pins() {
-        let policy = Policy::parse(&serde_json::json!({"rules":[{"predicate":"durable", "half_life_days":null},{"predicate":"temporary|event", "half_life_days":7}], "default_half_life_days":30})).unwrap();
-        let policy = policy
-            .try_map(&mut |raw| crate::tag_expr::parse_rule(raw))
-            .unwrap();
+    fn ordered_key_rules_support_overrides_fallback_and_pins() {
+        let policy = Policy::parse(&serde_json::json!({"rules":[{"key":"durable", "half_life_days":null},{"key":"temp", "half_life_days":7}], "default_half_life_days":30})).unwrap();
         let mut meta = Metadata::default();
-        assert_eq!(
-            policy.freshness(
-                &meta,
-                &["durable".into(), "temporary".into()],
-                0,
-                30 * 86400
-            ),
-            1.0
-        );
-        assert!((policy.freshness(&meta, &["temporary".into()], 0, 7 * 86400) - 0.5).abs() < 1e-12);
+        let durable = vec!["durable".to_string()];
+        let temp = vec!["temp".to_string()];
+        assert_eq!(policy.freshness(&meta, &durable, 0, 30 * 86400), 1.0);
+        assert!((policy.freshness(&meta, &temp, 0, 7 * 86400) - 0.5).abs() < 1e-12);
         assert!((policy.freshness(&meta, &[], 0, 30 * 86400) - 0.5).abs() < 1e-12);
+        // First matching rule wins regardless of its half-life value
+        let first_wins = Policy::parse(&serde_json::json!({"rules":[{"key":"temp","half_life_days":null},{"key":"temp","half_life_days":7}]})).unwrap();
+        assert_eq!(first_wins.freshness(&meta, &temp, 0, 7 * 86400), 1.0);
         meta.pinned = true;
         meta.expires_at = Some(100);
         assert_eq!(policy.freshness(&meta, &[], 0, 1000), 1.0);
         assert!(!meta.matches("active", 1000));
         for invalid in [
             serde_json::json!({"default_half_life_days":0}),
-            serde_json::json!({"rules":[{"predicate":"a","half_life_days":-1}]}),
+            serde_json::json!({"rules":[{"key":"temp","half_life_days":-1}]}),
             serde_json::json!({"freshness_weight":-1}),
+            serde_json::json!({"rules":[{"key":"a:b","half_life_days":7}]}),
             serde_json::json!({"typo":1}),
         ] {
             assert!(Policy::parse(&invalid).is_err());

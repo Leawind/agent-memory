@@ -40,6 +40,20 @@ pub struct Memory {
 }
 
 impl Memory {
+    /// Keys a memory carries: the prefix of every `key:value` tag. Bare tags carry no key.
+    /// (Attribute-keyed values join here once scalar attributes exist.)
+    pub fn tag_keys(&self) -> Vec<&str> {
+        let mut keys: Vec<&str> = Vec::new();
+        for tag in &self.tags {
+            if let Some((key, _)) = tag.split_once(':') {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        keys
+    }
+
     /// First layer of progressive disclosure: summary view (no content). One compact server-local
     /// `updated` time; creation time is not exposed at this level — browsing runs on recency, and
     /// the id already encodes creation order.
@@ -82,7 +96,8 @@ pub fn normalize_id(raw: &str) -> String {
 /// Tag name normalization: trim surrounding whitespace, cap length, and enforce the tag-name
 /// format. Names are tag_expr atoms — the format keeps expression parsing unambiguous (no
 /// quoting needed, no collisions with operators/quotes/regex delimiters): Unicode letters and
-/// numbers (CJK included) plus `_`, `-` and `.`, starting with a letter, number or `_`.
+/// numbers (CJK included) plus `_`, `-`, `.` and `:` (the key:value form stores an enum value
+/// under its key), starting with a letter, number or `_`.
 pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     let t = raw.trim();
     if t.is_empty() {
@@ -95,14 +110,24 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     }
     let valid = t.chars().enumerate().all(|(i, c)| match i {
         0 => c.is_alphanumeric() || c == '_',
-        _ => c.is_alphanumeric() || matches!(c, '_' | '-' | '.'),
+        _ => c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'),
     });
     if !valid {
         return Err(format!(
-            "invalid tag name '{t}': use letters, digits, '_', '-' and '.' only, starting with a letter or digit (no spaces, quotes or expression operators)"
+            "invalid tag name '{t}': use letters, digits, '_', '-', '.' and ':' only, starting with a letter or digit (no spaces, quotes or expression operators)"
         ));
     }
     Ok(t.to_string())
+}
+
+/// Key name normalization: the tag-name charset minus `:` — a key prefixes the stored
+/// `key:value` tag names, so a colon inside a key would make qualification ambiguous.
+pub fn normalize_key_name(raw: &str) -> Result<String, String> {
+    let key = normalize_tag_name(raw)?;
+    if key.contains(':') {
+        return Err("key name cannot contain ':'".into());
+    }
+    Ok(key)
 }
 
 /// Identity name normalization: trim surrounding whitespace and cap length (same rules as tag names).
@@ -143,14 +168,16 @@ mod tests {
 
     #[test]
     fn tag_name_format_is_enforced() {
-        // The tag_expr atom charset: letters/digits (Unicode included), '_' '-' '.', no spaces,
-        // quotes, operators or the regex delimiter; must start with a letter, digit or '_'
+        // The tag_expr atom charset: letters/digits (Unicode included), '_' '-' '.' and ':' (the
+        // key:value separator); no spaces, quotes or operators; must start with a letter, digit or '_'
         for ok in [
             "rust",
             "_private",
             "v1.2",
             "multi-hyphen_underscore.ok",
             "方案-A.1",
+            "project:agent-memory",
+            "项目:记忆库",
         ] {
             assert!(normalize_tag_name(ok).is_ok(), "{ok} should be valid");
         }
@@ -171,6 +198,27 @@ mod tests {
         ] {
             assert!(normalize_tag_name(bad).is_err(), "{bad} should be invalid");
         }
+    }
+
+    #[test]
+    fn key_names_reject_colons_but_use_the_tag_charset() {
+        assert_eq!(normalize_key_name(" project "), Ok("project".to_string()));
+        assert!(normalize_key_name("a:b").is_err());
+        assert!(normalize_key_name("").is_err());
+        assert!(normalize_key_name("has space").is_err());
+    }
+
+    #[test]
+    fn tag_keys_come_from_colon_tags() {
+        let m = Memory {
+            id: "m1".into(),
+            summary: "s".into(),
+            content: String::new(),
+            tags: vec!["project:a".into(), "project:b".into(), "rust".into()],
+            created_at: 1,
+            updated_at: 2,
+        };
+        assert_eq!(m.tag_keys(), vec!["project"]);
     }
 
     #[test]

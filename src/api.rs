@@ -20,7 +20,7 @@ use crate::store::{self, TxMode};
 use crate::tools::{
     self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
     MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST,
-    TAG_RULE_LIST, TAG_UPDATE,
+    TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -110,18 +110,6 @@ pub fn handle(
                         st.access_rebuild()?
                     };
                     Ok((200, json!({"processed": processed})))
-                })
-            }
-            ("GET", ["tag-rules"]) => store::with_db_in(db_path, tx_mode, |st| {
-                tools::execute(st, ctx, TAG_RULE_LIST, &json!({})).map(|v| (200, v))
-            }),
-            ("PUT", ["tag-rules"]) | ("POST", ["tag-rules", "preview"]) => {
-                ctx.require(Cap::Admin)?;
-                let args = args_from_body()?;
-                store::with_db_in(db_path, TxMode::Write, |st| {
-                    st.replace_tag_rules(&Value::Object(args), method == "POST")
-                        .map_err(ToolError::invalid)
-                        .map(|v| (200, v))
                 })
             }
             ("GET", ["whoami"]) => Ok((200, ctx.summary())),

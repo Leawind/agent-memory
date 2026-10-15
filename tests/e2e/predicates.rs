@@ -72,27 +72,7 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
     assert!(!listing.1.to_string().contains("private body"));
     let url = format!("/api/memories?tag_expr={}", encodeURIComponent("@topic"));
     assert_eq!(call("GET", &url, Value::Null, Some(&manager)).1["total"], 1);
-    assert_eq!(call("PUT","/api/tag-rules",json!({"constraints":[],"derivations":[{"name":"derive","predicate":"@topic","derived":["b"]}]}),Some(&admin)).0,200);
-    assert_eq!(
-        call(
-            "PUT",
-            "/api/settings",
-            json!({"lifecycle_policy":{"rules":[{"predicate":"@topic&b","half_life_days":7}]}}),
-            Some(&admin)
-        )
-        .0,
-        200
-    );
-    assert_eq!(
-        call(
-            "GET",
-            "/api/memories?tag_expr=b",
-            Value::Null,
-            Some(&manager)
-        )
-        .1["total"],
-        1
-    );
+    // Predicates are query-only now: negation is allowed and an unreferenced predicate deletes cleanly
     assert_eq!(
         call(
             "PUT",
@@ -101,8 +81,9 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
             Some(&manager)
         )
         .0,
-        400
+        200
     );
+    assert_eq!(call("GET", &url, Value::Null, Some(&manager)).1["total"], 0);
     assert_eq!(
         call(
             "DELETE",
@@ -111,9 +92,8 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
             Some(&manager)
         )
         .0,
-        400
+        200
     );
-    assert_eq!(call("GET", &url, Value::Null, Some(&manager)).1["total"], 1);
     drop(server);
     cleanup(&path);
 }

@@ -14,7 +14,6 @@ use std::sync::OnceLock;
 /// matched elsewhere fails to compile.
 pub const TAG_CREATE: &str = "tag_create";
 pub const TAG_LIST: &str = "tag_list";
-pub const TAG_RULE_LIST: &str = "tag_rule_list";
 pub const PREDICATE_LIST: &str = "predicate_list";
 pub const PREDICATE_SET: &str = "predicate_set";
 pub const PREDICATE_DELETE: &str = "predicate_delete";
@@ -34,7 +33,6 @@ pub const MEMORY_USE: &str = "memory_use";
 pub const TOOL_NAMES: &[&str] = &[
     TAG_CREATE,
     TAG_LIST,
-    TAG_RULE_LIST,
     PREDICATE_LIST,
     PREDICATE_SET,
     PREDICATE_DELETE,
@@ -77,7 +75,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_LIFECYCLE,
-            "Set a memory's expiry, pin or archive status. Content classification uses ordinary tags and predicate-selected decay rules. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
+            "Set a memory's expiry, pin or archive status. Freshness decay follows the lifecycle policy: ordered key rules plus a default half-life. Active memories are searched and browsed by default; archived and expired memories remain readable by id and can be included with state filters. Archiving is reversible and does not delete content. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
             json!({"type": "object", "properties": {
                 "id": {"type": "string", "pattern": "^m[0-9]+$"},
                 "expires_at": {"type": ["integer", "null"], "minimum": 0, "maximum": crate::lifecycle::MAX_TIMESTAMP, "description": "Unix epoch seconds; null clears expiry."},
@@ -109,12 +107,6 @@ pub fn tool_definitions() -> Value {
                 },
                 "additionalProperties": false
             }),
-            true, false,
-        ),
-        def(
-            TAG_RULE_LIST,
-            "List the administrator-defined tag rules. Each constraint expression must evaluate true for a memory's final tag set; mutex(a,b,...) means at most one operand is true (zero is allowed). General &, |, ! and grouping are supported. Rules follow tag renames. Positive derivations use => or <=>, with &/| predicates and comma-separated output tag sets; positive cycles use the least fixed point. Negation, mutex and deriving convention are forbidden in derivations. Constraints check the union of original and derived tags. Memory creation, updates, merges and imports enforce these rules atomically. This is a read-only taxonomy view; rule management belongs to the admin UI. Returns rule names and expressions only, never memory bodies.",
-            json!({"type": "object", "properties": {}, "additionalProperties": false}),
             true, false,
         ),
         def(
@@ -201,7 +193,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_GET,
-            "Reveal the full content and tag provenance of one or more memories by id (progressive disclosure level 2). tags contains the effective union; original_tags is the editable source set; derived_tags lists tags and supporting rule names, including tags that also have an original source. Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
+            "Reveal the full content and tags of one or more memories by id (progressive disclosure level 2). Prefer fetching only the ids you actually need after memory_search / memory_list. Malformed ids (missing the leading 'm') are reported in invalid_ids instead of being conflated with not-found ones.",
             json!({
                 "type": "object",
                 "properties": {
@@ -360,7 +352,7 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
         MEMORY_CREATE => &[Cap::Create],
-        TAG_LIST | TAG_RULE_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => {
+        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => {
             &[Cap::Read]
         }
         MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
@@ -390,8 +382,8 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(
-            read_only, 6,
-            "the contract should have exactly 6 read-only tools"
+            read_only, 5,
+            "the contract should have exactly 5 read-only tools"
         );
     }
 
