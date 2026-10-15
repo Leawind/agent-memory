@@ -8,17 +8,24 @@ const listPayload = {
   total: 1,
   offset: 0,
   limit: 20,
-  memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], updated: '2026-10-04 08:00' }],
+  memories: [
+    {
+      id: 'm1',
+      summary: '列表模式的记忆',
+      tags: ['t1', 'project:demo'],
+      attributes: { project: 'demo', score: 3 },
+      updated: '2026-10-04 08:00',
+    },
+  ],
 }
 // Full-memory shape returned by the detail endpoint the dialog fetches when a card is opened
 const detailPayload = {
   id: 'm1',
   summary: '列表模式的记忆',
   content: '正文内容',
-  tags: ['t1'],
+  tags: ['t1', 'project:demo'],
+  attributes: { project: 'demo', score: 3 },
   created: '2026-10-04 07:00',
-  original_tags: ['t1'],
-  derived_tags: [],
   lifecycle: { expires_at: null, archived_at: null, pinned: false, state: 'active' },
   updated: '2026-10-04 08:00',
 }
@@ -74,6 +81,9 @@ describe('MemoriesPanel', () => {
     // Card layout: the summary never shares a line with the tags
     expect(wrapper.find('.am-memory-card .card-summary').text()).toBe('列表模式的记忆')
     expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('t1')
+    // Structured attributes render as their own chip kind, separate from plain tag chips
+    expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('project: demo')
+    expect(wrapper.find('.am-memory-card .card-tags').text()).toContain('score: 3')
     wrapper.unmount()
   })
 
@@ -185,6 +195,28 @@ describe('MemoriesPanel', () => {
     expect(urls.some((u) => u.includes('tag_expr='))).toBe(false)
     expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
     expect(localStorage.getItem('agent-memory-tag-expr')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('toggleTagFilter treats a keyed tag as one exact-tag atom', async () => {
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+    const vm = wrapper.vm as unknown as { toggleTagFilter: (name: string) => void }
+
+    // The expression tokenizer keeps ':' inside bare words, so the composed name goes out
+    // verbatim and re-click clears it like any tag
+    vm.toggleTagFilter('project:demo')
+    await flushPromises()
+    await flushPromises()
+    const expr = encodeURIComponent('project:demo')
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(`tag_expr=${expr}`))).toBe(true)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('project:demo')
+
+    vm.toggleTagFilter('project:demo')
+    await flushPromises()
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
     wrapper.unmount()
   })
 })

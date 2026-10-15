@@ -32,10 +32,12 @@
             <el-tag size="small" type="warning" class="sb-reserved">{{ t('tags.reserved') }}</el-tag>
           </el-tooltip>
           <span class="sb-item-count" :title="t('tags.title')">{{ tag.count }}</span>
-          <!-- Edit lives on a hover-revealed affordance: the row's own click is the filter
-               toggle, so renaming/deleting gets a smaller, separate target (span + role so a
-               real button is never nested inside this row button) -->
-          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+          <!-- Keyed tags (name carries ':') are attribute values: the server owns their lifecycle
+               through the key registry, so the rename/delete affordance is hidden (the row click
+               still filters). Edit lives on a hover-revealed affordance for the rest: the row's
+               own click is the filter toggle, so renaming/deleting gets a smaller, separate
+               target (span + role so a real button is never nested inside this row button) -->
+          <el-tooltip v-if="!tag.name.includes(':')" :content="t('common.edit')" placement="top" :enterable="false">
             <span
               class="sb-edit"
               role="button"

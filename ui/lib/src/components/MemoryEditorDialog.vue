@@ -92,16 +92,55 @@
           :placeholder="t('editor.tagsPlaceholder')"
           class="tags-select"
         >
-          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
+          <!-- Keyed tags (name carries ':') are managed through the attributes editor below, never picked as plain tags -->
+          <el-option v-for="tag in plainTagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
       </el-form-item>
-      <div v-if="derivedTags.length && !derivationPending" class="derived-tags">
-        <span>{{ t('editor.derivedTags') }}</span>
-        <el-tooltip v-for="tag in derivedTags" :key="tag.tag" :content="tag.rules.join(', ')">
-          <el-tag type="info">{{ tag.tag }}</el-tag>
-        </el-tooltip>
-      </div>
-      <p v-if="derivationPending" class="derived-tags">{{ t('editor.derivationPending') }}</p>
+      <el-form-item>
+        <template #label>
+          <div class="content-label">
+            <span>{{ t('editor.attributesLabel') }}</span>
+          </div>
+        </template>
+        <div class="attr-rows">
+          <div v-for="(row, index) in attrRows" :key="index" class="attr-row">
+            <el-select
+              v-model="row.key"
+              filterable
+              allow-create
+              default-first-option
+              :placeholder="t('editor.attrKeyPlaceholder')"
+              class="attr-key"
+              :aria-label="t('editor.attrKeyPlaceholder')"
+            >
+              <el-option v-for="k in keyRows" :key="k.name" :label="k.name" :value="k.name">
+                <span>{{ k.name }}</span>
+                <span class="attr-option-type">{{ t(`editor.attrType.${k.type}`) }}</span>
+              </el-option>
+            </el-select>
+            <el-input
+              v-model="row.values"
+              :placeholder="attrValuePlaceholder(row)"
+              class="attr-value"
+              :aria-label="t('editor.attrValueLabel')"
+            />
+            <el-button
+              circle
+              :icon="Delete"
+              :aria-label="t('editor.attrRemove')"
+              :disabled="saving"
+              @click="attrRows.splice(index, 1)"
+            />
+            <div v-if="attrHint(row)" class="attr-hint" :class="{ 'is-error': attrErrorFor(row) }">
+              {{ attrHint(row) }}
+            </div>
+          </div>
+          <div class="attr-footer">
+            <el-button :disabled="saving" @click="addAttrRow">{{ t('editor.attrAdd') }}</el-button>
+            <span v-if="attrFormError" class="attr-hint is-error">{{ attrFormError }}</span>
+          </div>
+        </div>
+      </el-form-item>
       <el-form-item>
         <template #label>
           <div class="content-label">
@@ -139,7 +178,8 @@ import { Clock, Connection, Delete } from '@element-plus/icons-vue'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, deleteMemory, getMemory, mergeMemory, updateMemory } from '../api/memories'
-import type { LifecycleMetadata, MemoryCreateResp } from '../types'
+import { listKeys } from '../api/keys'
+import type { KeyView, LifecycleMetadata, MemoryAttributes, MemoryCreateResp } from '../types'
 import type { MemoryDraft } from '../composables/useMemories'
 import MarkdownView from './MarkdownView.vue'
 import MemoryLifecycleDialog from './MemoryLifecycleDialog.vue'
@@ -174,10 +214,28 @@ const summaryInput = ref<InputInstance | null>(null)
 // Fetching the full memory on open; while true the (still empty) form must not be savable
 const loading = ref(false)
 // Content editor view: edit the source or preview the rendered Markdown
-const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
+const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [], attributes: {} })
 // Snapshot of the loaded memory: the save button stays disabled until the form differs
-const original = ref({ summary: '', content: '', tags: [] as string[] })
-const derivedTags = ref<Array<{ tag: string; rules: string[] }>>([])
+const original = ref<{ summary: string; content: string; tags: string[]; attributes: MemoryAttributes }>({
+  summary: '',
+  content: '',
+  tags: [],
+  attributes: {},
+})
+// Attribute keys registered server-side (the schema contract); the fetch failing is non-fatal —
+// unregistered keys still work via allow-create and lazy registration
+const keyRows = ref<KeyView[]>([])
+// Editing shape of the attributes: one row per key, values as display text (multi keys are
+// comma-separated — the identifier/number charset contains no comma, so the split is unambiguous)
+interface AttrRow {
+  key: string
+  values: string
+}
+const attrRows = ref<AttrRow[]>([])
+
+// Keyed tags never belong in the plain-tag picker (the server rejects colon names there)
+const plainTagOptions = computed(() => props.tagOptions.filter((name) => !name.includes(':')))
+
 const lifecycle = ref<LifecycleMetadata | null>(null)
 const lifecycleVisible = ref(false)
 
@@ -190,9 +248,88 @@ async function onLifecycleSaved(): Promise<void> {
     toastError(error instanceof Error ? error.message : String(error))
   }
 }
-const derivationPending = computed(
-  () =>
-    !!form.value.id && JSON.stringify([...form.value.tags].sort()) !== JSON.stringify([...original.value.tags].sort()),
+
+function addAttrRow(): void {
+  attrRows.value.push({ key: '', values: '' })
+}
+
+function keyOf(name: string): KeyView | undefined {
+  return keyRows.value.find((k) => k.name === name)
+}
+
+function attrValuePlaceholder(row: AttrRow): string {
+  const k = keyOf(row.key)
+  if (k?.multi) return t('editor.attrMultiPlaceholder')
+  if (k?.type === 'number') return t('editor.attrNumberPlaceholder')
+  return t('editor.attrValuePlaceholder')
+}
+
+function attrErrorFor(row: AttrRow): string {
+  const k = keyOf(row.key)
+  const tokens = row.values
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+  if (k && !k.multi && tokens.length > 1) return t('editor.attrSingleError')
+  if (k?.type === 'number' && tokens.some((s) => !Number.isFinite(Number(s)))) return t('editor.attrNumberError')
+  return ''
+}
+
+function attrHint(row: AttrRow): string {
+  const error = attrErrorFor(row)
+  if (error) return error
+  const k = keyOf(row.key)
+  if (!k && row.key.trim()) return t('editor.attrLazyHint')
+  if (k?.multi && row.values.trim()) return t('editor.attrMultiHint')
+  return ''
+}
+
+// Cross-row problems (duplicate keys, a key missing on a filled row, a filled key without values)
+const attrFormError = computed(() => {
+  const keys = attrRows.value.map((r) => r.key.trim()).filter((k) => k !== '')
+  if (attrRows.value.some((r) => r.key.trim() === '' && r.values.trim() !== '')) return t('editor.attrKeyRequired')
+  if (attrRows.value.some((r) => r.key.trim() !== '' && r.values.trim() === '')) return t('editor.attrValueRequired')
+  const dup = keys.find((k, i) => keys.indexOf(k) !== i)
+  return dup ? t('editor.attrDuplicateFmt', { key: dup }) : ''
+})
+
+/** Rows → the wire shape: values parsed per the key's registered type (numbers as JSON numbers,
+ *  unknown keys inferred client-side from the token shape, mirroring the server's lazy inference).
+ *  Reachable only when the attrErrorFor / attrFormError gates pass (canSave enforces them). */
+function serializeAttributes(): MemoryAttributes {
+  const out: MemoryAttributes = {}
+  for (const row of attrRows.value) {
+    const key = row.key.trim()
+    const tokens = row.values
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '')
+    if (!key || tokens.length === 0) continue
+    const k = keyOf(key)
+    const values: Array<string | number> = tokens.map((s) => {
+      const numeric = s !== '' && Number.isFinite(Number(s))
+      if (k?.type === 'number' || (!k && numeric)) return Number(s)
+      return s
+    })
+    out[key] = k?.multi || (!k && values.length > 1) ? values : values[0]
+  }
+  return out
+}
+
+function rowsFromAttributes(attributes: MemoryAttributes): AttrRow[] {
+  return Object.entries(attributes).map(([key, value]) => ({
+    key,
+    values: Array.isArray(value) ? value.map(String).join(', ') : String(value),
+  }))
+}
+
+function stableStringify(attributes: MemoryAttributes): string {
+  const keys = Object.keys(attributes).sort()
+  return JSON.stringify(keys.map((k) => [k, attributes[k]]))
+}
+
+const attributesDirty = computed(
+  () => stableStringify(serializeAttributes() ?? {}) !== stableStringify(original.value.attributes),
 )
 
 const dirty = computed(() => {
@@ -202,11 +339,14 @@ const dirty = computed(() => {
   if (f.summary !== o.summary || f.content !== o.content) return true
   if (f.tags.length !== o.tags.length) return true
   const before = new Set(o.tags)
-  return f.tags.some((tag) => !before.has(tag))
+  if (f.tags.some((tag) => !before.has(tag))) return true
+  return attributesDirty.value
 })
 
 const canSave = computed(() => {
   if (loading.value) return false
+  if (attrFormError.value) return false
+  if (attrRows.value.some((row) => attrErrorFor(row))) return false
   // Creating needs a summary only: content is optional (summary-only memories are valid)
   if (!props.memoryId) return form.value.summary.trim() !== ''
   return dirty.value
@@ -219,18 +359,29 @@ watch(
     // Editing an existing memory opens rendered; creating starts in the source editor
     contentTab.value = props.memoryId ? 'preview' : 'edit'
     // Reset optimistically so a slow fetch never shows the previously edited memory's data
-    form.value = { id: null, summary: '', content: '', tags: [] }
-    original.value = { summary: '', content: '', tags: [] }
-    derivedTags.value = []
+    form.value = { id: null, summary: '', content: '', tags: [], attributes: {} }
+    original.value = { summary: '', content: '', tags: [], attributes: {} }
+    attrRows.value = []
+    keyRows.value = []
     lifecycle.value = null
     lifecycleVisible.value = false
+    // The key registry is the schema contract for the attributes editor (types + multi flags)
+    listKeys(client)
+      .then((resp) => {
+        keyRows.value = resp.keys ?? []
+      })
+      .catch(() => {})
     if (props.memoryId) {
       loading.value = true
       try {
         const full = await getMemory(client, props.memoryId)
-        form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.original_tags] }
-        original.value = { summary: full.summary, content: full.content, tags: [...full.original_tags] }
-        derivedTags.value = full.derived_tags
+        const attributes = full.attributes ?? {}
+        // Keyed tags (name carries ':') never enter the plain-tag form: they are owned by the
+        // attributes rows below, whose whole-set replacement is the only thing that may change them
+        const plainTags = full.tags.filter((tag) => !tag.includes(':'))
+        form.value = { id: full.id, summary: full.summary, content: full.content, tags: plainTags, attributes }
+        original.value = { summary: full.summary, content: full.content, tags: plainTags, attributes }
+        attrRows.value = rowsFromAttributes(attributes)
         lifecycle.value = full.lifecycle
       } catch (e: unknown) {
         toastError(e instanceof Error ? e.message : String(e))
@@ -248,6 +399,7 @@ watch(
 
 async function save() {
   if (!canSave.value) return
+  const attributes = serializeAttributes()
   saving.value = true
   try {
     if (form.value.id) {
@@ -259,6 +411,8 @@ async function save() {
         content: form.value.content,
         add_tags: [...after].filter((t) => !before.has(t)),
         remove_tags: [...before].filter((t) => !after.has(t)),
+        // The keyed set is replaced whole: omit when untouched, {} clears every key
+        ...(attributesDirty.value ? { attributes } : {}),
         create_missing_tags: true,
       })
       toastSuccess(t('editor.updated'))
@@ -267,6 +421,7 @@ async function save() {
         summary: form.value.summary,
         content: form.value.content,
         tags: form.value.tags,
+        ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
         create_missing_tags: true,
       })
       toastSuccess(t('editor.created'))
@@ -386,11 +541,36 @@ function blockWhileSaving(done: () => void): void {
 </script>
 
 <style scoped>
-.derived-tags {
+/* Attribute rows: key picker + value input + remove on one line, per-row hint below */
+.attr-rows {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
-  margin-bottom: 8px;
+  width: 100%;
+}
+.attr-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.attr-hint {
+  grid-column: 2 / 4;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+}
+.attr-hint.is-error {
+  color: var(--el-color-danger);
+}
+.attr-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.attr-option-type {
+  float: right;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 .content-label {

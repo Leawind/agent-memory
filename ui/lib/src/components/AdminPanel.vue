@@ -77,12 +77,7 @@
               @changed="load"
             />
 
-            <TagRulesCard
-              v-show="activeSection === 'tagRules'"
-              :rules="tagRules"
-              :derivations="tagDerivations"
-              @changed="load"
-            />
+            <KeysCard v-show="activeSection === 'keys'" :keys="keys" @changed="load" />
 
             <PromptSettingsCard
               v-show="activeSection === 'prompt'"
@@ -111,12 +106,12 @@
 import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
-import { ChatDotRound, FirstAidKit, FolderOpened, InfoFilled, Search, User } from '@element-plus/icons-vue'
+import { ChatDotRound, FirstAidKit, FolderOpened, InfoFilled, Key, Search, User } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { useApiClient } from '../api/client'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import { toastSuccess } from '../toast'
-import type { EmbedModelEntry, RerankModelEntry, SearchLimits, LifecyclePolicy, TagRule, WhoAmI } from '../types'
+import type { EmbedModelEntry, KeyView, RerankModelEntry, SearchLimits, LifecyclePolicy, WhoAmI } from '../types'
 import { run, type IdentityRow } from './admin/caps'
 import AuthCard from './admin/AuthCard.vue'
 import IdentityFormDialog from './admin/IdentityFormDialog.vue'
@@ -125,7 +120,7 @@ import EmbeddingSettingsCard from './admin/EmbeddingSettingsCard.vue'
 import RerankerSettingsCard from './admin/RerankerSettingsCard.vue'
 import SearchLimitsCard from './admin/SearchLimitsCard.vue'
 import LifecyclePolicyCard from './admin/LifecyclePolicyCard.vue'
-import TagRulesCard from './admin/TagRulesCard.vue'
+import KeysCard from './admin/KeysCard.vue'
 import PromptSettingsCard from './admin/PromptSettingsCard.vue'
 import BackupCard from './admin/BackupCard.vue'
 import DoctorCard from './admin/DoctorCard.vue'
@@ -165,7 +160,7 @@ const defaultSearchLimits: SearchLimits = {
   },
 }
 const searchLimits = ref<SearchLimits>(defaultSearchLimits)
-const tagRules = ref<TagRule[]>([])
+const keys = ref<KeyView[]>([])
 const defaultLifecyclePolicy: LifecyclePolicy = {
   rules: [],
   default_half_life_days: null,
@@ -173,7 +168,6 @@ const defaultLifecyclePolicy: LifecyclePolicy = {
   reinforcement_weight: 0.1,
 }
 const lifecyclePolicy = ref<LifecyclePolicy>(defaultLifecyclePolicy)
-const tagDerivations = ref<TagRule[]>([])
 
 const isAdmin = computed(() => !!props.who && props.who.permissions?.admin === true)
 
@@ -186,13 +180,13 @@ const rootRef = ref<HTMLElement | null>(null)
 const { compact } = useContainerWidth(rootRef)
 
 // ---- Category nav: one entry per settings card; the sections themselves stay mounted ----
-type SectionId = 'access' | 'embedding' | 'lifecycle' | 'tagRules' | 'prompt' | 'backup' | 'doctor'
+type SectionId = 'access' | 'embedding' | 'lifecycle' | 'keys' | 'prompt' | 'backup' | 'doctor'
 
 const categories: Array<{ id: SectionId; labelKey: string; icon: Component }> = [
   { id: 'access', labelKey: 'access.navAccess', icon: User },
   { id: 'embedding', labelKey: 'access.navEmbedding', icon: Search },
   { id: 'lifecycle', labelKey: 'lifecycle.nav', icon: FolderOpened },
-  { id: 'tagRules', labelKey: 'access.tagRulesTitle', icon: FolderOpened },
+  { id: 'keys', labelKey: 'keys.nav', icon: Key },
   { id: 'prompt', labelKey: 'access.navPrompt', icon: ChatDotRound },
   { id: 'backup', labelKey: 'access.navBackup', icon: FolderOpened },
   { id: 'doctor', labelKey: 'access.navDoctor', icon: FirstAidKit },
@@ -202,7 +196,7 @@ const activeSection = ref<SectionId>('access')
 
 async function load(): Promise<void> {
   await run(async () => {
-    const [list, settings, statsResp, rules] = await Promise.all([
+    const [list, settings, statsResp, keyList] = await Promise.all([
       api.get<{ identities?: IdentityRow[] }>('/api/identities'),
       api.get<{
         instructions?: string | null
@@ -215,7 +209,7 @@ async function load(): Promise<void> {
         default_instructions?: string | null
       }>('/api/settings'),
       api.get<import('../types').StatsInfo>('/api/stats'),
-      api.get<{ constraints?: TagRule[]; derivations?: TagRule[] }>('/api/tag-rules'),
+      api.get<{ keys?: KeyView[] }>('/api/keys'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
     // When unset, prefill the built-in default directly (what you see is what applies); the card derives its faded state from the content
@@ -228,8 +222,7 @@ async function load(): Promise<void> {
     searchLimits.value = settings?.search_limits ?? defaultSearchLimits
     lifecyclePolicy.value = settings?.lifecycle_policy ?? defaultLifecyclePolicy
     stats.value = statsResp ?? null
-    tagRules.value = Array.isArray(rules?.constraints) ? rules.constraints : []
-    tagDerivations.value = Array.isArray(rules?.derivations) ? rules.derivations : []
+    keys.value = Array.isArray(keyList?.keys) ? keyList.keys : []
   })
 }
 

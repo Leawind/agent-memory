@@ -87,6 +87,17 @@
               >
                 <el-tag size="small">{{ tag }}</el-tag>
               </el-tooltip>
+              <!-- Structured attributes render as their own chip kind (key: value), visually set
+                   apart from plain tags; multi values join on the card -->
+              <el-tag
+                v-for="(value, key) in card.attributes ?? {}"
+                :key="`attr:${key}`"
+                size="small"
+                type="warning"
+                effect="plain"
+              >
+                {{ key }}: {{ Array.isArray(value) ? value.join(', ') : value }}
+              </el-tag>
             </span>
           </span>
           <span class="card-meta">
@@ -151,6 +162,7 @@ import { useMemories } from '../composables/useMemories'
 import { useContainerWidth } from '../composables/useContainerWidth'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
 import TagExprInput from './TagExprInput.vue'
+import type { MemoryAttributes } from '../types'
 
 const props = withDefaults(
   defineProps<{
@@ -202,6 +214,7 @@ interface MemoryCard {
   id: string
   summary: string
   tags: string[]
+  attributes?: MemoryAttributes
   updated: string
   snippet?: string
   score?: number
@@ -222,6 +235,7 @@ const cards = computed<MemoryCard[]>(() =>
         id: r.id,
         summary: r.summary,
         tags: r.tags,
+        attributes: r.attributes,
         updated: r.updated,
         state: r.lifecycle?.state,
       })),
@@ -315,6 +329,8 @@ function onMutated() {
 // Sidebar tag click lands here (through the workspace): the tag becomes the whole expression —
 // a click is a deliberate single-tag view, not an edit of whatever expression was typed. Clicking
 // the already-active tag clears the filter. Applied immediately: the tag is known to exist.
+// Keyed tags (name carries ':') pass verbatim: the expression tokenizer keeps ':' inside bare
+// words, so the name is a valid exact-tag atom.
 function toggleTagFilter(name: string) {
   tagExpr.value = tagExpr.value.trim() === name ? '' : name
   run(onSearch)

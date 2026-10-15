@@ -13,11 +13,17 @@ const fullMemory = {
   summary: '已有记忆摘要',
   content: '正文内容',
   tags: ['t1'],
-  original_tags: ['t1'],
-  derived_tags: [],
+  attributes: { project: 'demo', score: 3 },
   lifecycle: { expires_at: null, archived_at: null, pinned: false, state: 'active' },
   created: '2026-10-04 08:00',
   updated: '2026-10-04 08:00',
+}
+
+const keysPayload = {
+  keys: [
+    { name: 'project', type: 'enum', multi: false, description: '所属项目' },
+    { name: 'score', type: 'number', multi: false, description: '重要度' },
+  ],
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -65,8 +71,68 @@ describe('MemoryEditorDialog', () => {
     document.body.innerHTML = ''
   })
 
-  it('edits only original sources and shows derived tags separately', async () => {
-    const writes: Array<{ remove_tags: string[]; add_tags: string[] }> = []
+  it('editing: tag diffs go out as add/remove; attributes go out only when changed', async () => {
+    const writes: Array<Record<string, unknown>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({ updated: true }))
+        }
+        if (String(url).includes('/api/keys')) return Promise.resolve(jsonResponse(keysPayload))
+        return Promise.resolve(jsonResponse(fullMemory))
+      }),
+    )
+    const wrapper = await openDialog('m7')
+    // The attributes editor loads one row per key of the sparse attributes view
+    const valueInputs = () =>
+      Array.from(dialogEl().querySelectorAll('.attr-row .attr-value input')) as HTMLInputElement[]
+    expect(valueInputs().length).toBe(2)
+    expect(valueInputs()[0].value).toBe('demo')
+    expect(valueInputs()[1].value).toBe('3')
+    // Removing one plain tag saves the tag diff, but the untouched attributes stay out of the body
+    const select = dialogEl().querySelector('.el-select')!
+    expect(select.textContent).toContain('t1')
+    await new DOMWrapper(select.querySelector('.el-tag__close')!).trigger('click')
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    expect(writes[0].remove_tags).toEqual(['t1'])
+    expect(writes[0].add_tags).toEqual([])
+    expect(writes[0].attributes).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('editing attributes: registered number keys serialize as JSON numbers, bad values block save', async () => {
+    const writes: Array<Record<string, unknown>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse({ updated: true }))
+        }
+        if (String(url).includes('/api/keys')) return Promise.resolve(jsonResponse(keysPayload))
+        return Promise.resolve(jsonResponse(fullMemory))
+      }),
+    )
+    const wrapper = await openDialog('m7')
+    const valueInputs = () =>
+      Array.from(dialogEl().querySelectorAll('.attr-row .attr-value input')) as HTMLInputElement[]
+    // score is a registered number key: a non-numeric value keeps save locked
+    await new DOMWrapper(valueInputs()[1]).setValue('abc')
+    expect(saveButton().disabled).toBe(true)
+    await new DOMWrapper(valueInputs()[1]).setValue('7')
+    expect(saveButton().disabled).toBe(false)
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    // The whole keyed set travels as the replacement payload; score arrives as a JSON number
+    expect(writes[0].attributes).toEqual({ project: 'demo', score: 7 })
+    wrapper.unmount()
+  })
+
+  it('editing attributes: removing every row clears the keyed set with attributes: {}', async () => {
+    const writes: Array<Record<string, unknown>> = []
     vi.stubGlobal(
       'fetch',
       vi.fn((_url: string | URL, init?: RequestInit) => {
@@ -74,26 +140,20 @@ describe('MemoryEditorDialog', () => {
           writes.push(JSON.parse(String(init.body)))
           return Promise.resolve(jsonResponse({ updated: true }))
         }
-        return Promise.resolve(
-          jsonResponse({
-            ...fullMemory,
-            tags: ['vue3', 'web'],
-            original_tags: ['vue3'],
-            derived_tags: [{ tag: 'web', rules: ['framework domain'] }],
-          }),
-        )
+        return Promise.resolve(jsonResponse(fullMemory))
       }),
     )
     const wrapper = await openDialog('m7')
-    const select = dialogEl().querySelector('.el-select')!
-    expect(select.textContent).toContain('vue3')
-    expect(select.textContent).not.toContain('web')
-    expect(dialogEl().querySelector('.derived-tags')?.textContent).toContain('web')
-    await new DOMWrapper(select.querySelector('.el-tag__close')!).trigger('click')
+    const removeButtons = () =>
+      Array.from(dialogEl().querySelectorAll('.attr-row button[aria-label="移除此属性"]')) as HTMLButtonElement[]
+    expect(removeButtons().length).toBe(2)
+    await new DOMWrapper(removeButtons()[0]).trigger('click')
+    await new DOMWrapper(removeButtons()[0]).trigger('click')
+    expect(saveButton().disabled).toBe(false)
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
-    expect(writes[0].remove_tags).toEqual(['vue3'])
-    expect(writes[0].add_tags).toEqual([])
+    // {} is the explicit clear-everything replacement on the server
+    expect(writes[0].attributes).toEqual({})
     wrapper.unmount()
   })
 
@@ -138,7 +198,12 @@ describe('MemoryEditorDialog', () => {
   })
 
   it('a failed fetch closes the dialog and never leaves a savable empty form', async () => {
-    vi.mocked(globalThis.fetch).mockImplementationOnce(() => Promise.resolve(jsonResponse({ error: 'not found' }, 404)))
+    // The memory detail is what fails here (the key-registry probe failing is non-fatal by design)
+    vi.mocked(globalThis.fetch).mockImplementation((input: RequestInfo | URL) => {
+      const u = String(input)
+      if (u.includes('/api/memories/')) return Promise.resolve(jsonResponse({ error: 'not found' }, 404))
+      return Promise.resolve(jsonResponse(fullMemory))
+    })
     const wrapper = mount(MemoryEditorDialog, {
       props: { visible: false, memoryId: 'm7', tagOptions: ['t1'] },
       attachTo: document.body,

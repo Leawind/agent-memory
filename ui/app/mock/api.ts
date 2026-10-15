@@ -25,7 +25,7 @@ const memories: MockMemory[] = [
     summary: '项目结构约定',
     content:
       '# 模块划分\n\n- `src/tools/defs.rs` 是对 agent 的**契约**，唯一权威来源\n- SQL 一律外置到 `sql/*.sql`，Rust 代码不出现 SQL 文本\n- 迁移脚本在 `migrations/`，build.rs 编译期登记\n\n> 改契约前先读 AGENTS.md 的架构不变量。',
-    tags: ['rust', '架构'],
+    tags: ['rust', '架构', 'project:agent-memory'],
     created_at: t - 30 * DAY,
     updated_at: t - 2 * DAY,
   },
@@ -34,7 +34,7 @@ const memories: MockMemory[] = [
     summary: 'MCP protocol versions',
     content:
       '## Protocol compatibility\n\nWe support `2024-11-05`, `2025-03-26` and `2025-06-18`.\n\n- id boundary format is strictly `"m{n}"`\n- notifications never get a response',
-    tags: ['mcp', 'rust'],
+    tags: ['mcp', 'rust', 'project:agent-memory', 'score:3'],
     created_at: t - 25 * DAY,
     updated_at: t - 3 * DAY,
   },
@@ -43,7 +43,7 @@ const memories: MockMemory[] = [
     summary: '组件库面板设计',
     content:
       '# 工作台组件\n\n1. `TagsSidebar`：左侧标签侧栏，点击弹 `TagDialog`\n2. `MemoriesPanel`：卡片列表，整卡点击弹记忆弹窗\n3. `AdminPanel`：身份、鉴权开关、提示词、备份（挂在管理弹窗里）\n\n概况是弹窗 `OpsDialog`：点击顶栏标题打开，每次打开重拉数据。样式全部引用 `--el-*` 变量，跟随宿主主题。',
-    tags: ['前端', '设计'],
+    tags: ['前端', '设计', 'project:ui', 'phase:design', 'phase:review'],
     created_at: t - 20 * DAY,
     updated_at: t - 1 * DAY,
   },
@@ -51,7 +51,7 @@ const memories: MockMemory[] = [
     id: 4,
     summary: 'SQLite WAL 事务纪律',
     content: '读写分离：读请求 `BEGIN DEFERRED`（一致性快照、不抢写锁），写请求 `BEGIN IMMEDIATE`（一开始就取写锁）。',
-    tags: ['rust', '架构'],
+    tags: ['rust', '架构', 'project:agent-memory'],
     created_at: t - 18 * DAY,
     updated_at: t - 4 * DAY,
   },
@@ -59,7 +59,7 @@ const memories: MockMemory[] = [
     id: 5,
     summary: '发布前检查清单',
     content: '1. `cargo test` 全绿\n2. `cargo clippy --all-targets` 零告警\n3. `npm run typecheck` 通过',
-    tags: ['流程', '测试'],
+    tags: ['流程', '测试', 'score:5'],
     created_at: t - 8 * DAY,
     updated_at: t - 10 * 3600,
   },
@@ -74,6 +74,12 @@ const tags = new Map(
     ['测试', '单元与端到端'],
   ].map(([name, description]) => [name, { description, created_at: t - 30 * DAY }]),
 )
+// 属性键注册表（/api/keys）：enum 值是标识词、number 值是数字，都以 `key:value` 标签存在记忆上
+const keys = new Map<string, { key_type: 'enum' | 'number'; multi: boolean; description: string }>([
+  ['project', { key_type: 'enum', multi: false, description: '所属项目' }],
+  ['score', { key_type: 'number', multi: false, description: '重要度评分' }],
+  ['phase', { key_type: 'enum', multi: true, description: '所处阶段（可多个）' }],
+])
 const predicates: Array<{ name: string; scope: 'user' | 'global'; predicate: string; description: string }> = []
 const settings = {
   auth_required: false,
@@ -99,20 +105,85 @@ const compactTime = (ts: number): string => {
   const p = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
-const fullView = (m: MockMemory) => ({
-  id: formatId(m.id),
-  tags: m.tags,
-  summary: m.summary,
-  created: compactTime(m.created_at),
-  updated: compactTime(m.updated_at),
-  content: m.content,
-})
-const summaryView = (m: MockMemory) => ({
-  id: formatId(m.id),
-  tags: m.tags,
-  summary: m.summary,
-  updated: compactTime(m.updated_at),
-})
+// 稀疏属性视图（与真实服务端的 attributes_view 一致）：键值来自 `key:value` 标签，
+// 数值键渲染成 JSON 数字，单值是标量、多值是数组；无属性则整个省略
+const attributesOf = (m: MockMemory): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  for (const tag of m.tags) {
+    const i = tag.indexOf(':')
+    if (i <= 0) continue
+    const key = tag.slice(0, i)
+    const raw = tag.slice(i + 1)
+    const numeric = keys.get(key)?.key_type === 'number' ? Number(raw) : raw
+    const current = out[key]
+    if (current === undefined) out[key] = numeric
+    else if (Array.isArray(current)) current.push(numeric)
+    else out[key] = [current, numeric]
+  }
+  return out
+}
+const withAttributes = (view: Record<string, unknown>, m: MockMemory): Record<string, unknown> => {
+  const attributes = attributesOf(m)
+  if (Object.keys(attributes).length > 0) view.attributes = attributes
+  return view
+}
+const fullView = (m: MockMemory) =>
+  withAttributes(
+    {
+      id: formatId(m.id),
+      tags: m.tags,
+      summary: m.summary,
+      created: compactTime(m.created_at),
+      updated: compactTime(m.updated_at),
+      content: m.content,
+    },
+    m,
+  )
+const summaryView = (m: MockMemory) =>
+  withAttributes(
+    {
+      id: formatId(m.id),
+      tags: m.tags,
+      summary: m.summary,
+      updated: compactTime(m.updated_at),
+    },
+    m,
+  )
+// 属性 → `key:value` 标签。PUT 的替换语义与真实服务端一致：`{}` 清空全部键，
+// 非空对象只替换出现的键（其余键原样保留）；键未注册时按值懒注册。
+function applyAttributes(m: MockMemory, attributes: Record<string, unknown>, clearAll: boolean): void {
+  if (clearAll && Object.keys(attributes).length === 0) {
+    m.tags = m.tags.filter((x) => !x.includes(':'))
+    return
+  }
+  for (const [rawKey, value] of Object.entries(attributes)) {
+    const key = rawKey.trim()
+    if (!key) continue
+    const values = Array.isArray(value) ? value : [value]
+    const numeric = values.every((v) => typeof v === 'number')
+    if (!keys.has(key))
+      keys.set(key, { key_type: numeric ? 'number' : 'enum', multi: values.length > 1, description: '' })
+    m.tags = m.tags.filter((x) => !x.startsWith(`${key}:`))
+    for (const v of values) {
+      const tag = `${key}:${String(v)}`
+      if (!m.tags.includes(tag)) m.tags.push(tag)
+      if (!tags.has(tag)) tags.set(tag, { description: '', created_at: now() })
+    }
+  }
+}
+const keyViews = () =>
+  [...keys.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, k]) => {
+      const values = [
+        ...new Set(
+          memories.flatMap((m) => m.tags.filter((x) => x.startsWith(`${name}:`)).map((x) => x.slice(name.length + 1))),
+        ),
+      ].sort()
+      const view: Record<string, unknown> = { name, type: k.key_type, multi: k.multi, description: k.description }
+      if (values.length) view.values = values
+      return view
+    })
 // 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、reserved 仅保留标签出现
 const tagViews = () =>
   [...tags.entries()]
@@ -257,6 +328,9 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
       updated_at: ts,
     }
     memories.push(memory)
+    if (body.attributes && typeof body.attributes === 'object') {
+      applyAttributes(memory, body.attributes as Record<string, unknown>, false)
+    }
     sendJson(res, 200, fullView(memory))
     return
   }
@@ -277,6 +351,9 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     if (typeof body.content === 'string') memory.content = body.content
     memory.tags.push(...add.filter((x) => !memory.tags.includes(x)))
     memory.tags = memory.tags.filter((x) => !remove.includes(x))
+    if (body.attributes && typeof body.attributes === 'object') {
+      applyAttributes(memory, body.attributes as Record<string, unknown>, true)
+    }
     memory.updated_at = now()
     sendJson(res, 200, fullView(memory))
     return
@@ -284,6 +361,41 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   if (segs[1] === 'memories' && segs.length === 3 && memory && method === 'DELETE') {
     memories.splice(memories.indexOf(memory), 1)
     sendJson(res, 200, null)
+    return
+  }
+
+  // 属性键注册表（/api/keys）
+  if (segs[1] === 'keys' && segs.length === 2 && method === 'GET') {
+    sendJson(res, 200, { keys: keyViews() })
+    return
+  }
+  if (segs[1] === 'keys' && segs.length === 2 && method === 'PUT') {
+    const body = await readBody(req)
+    const name = String(body.name ?? '').trim()
+    if (name) {
+      keys.set(name, {
+        key_type: body.key_type === 'number' ? 'number' : 'enum',
+        multi: body.multi === true,
+        description: String(body.description ?? ''),
+      })
+    }
+    sendJson(res, 200, {})
+    return
+  }
+  if (segs[1] === 'keys' && segs.length === 3 && method === 'DELETE') {
+    const name = decodeURIComponent(segs[2] ?? '')
+    const existed = keys.delete(name)
+    if (!existed) {
+      sendJson(res, 404, { error: `key '${name}' not found` })
+      return
+    }
+    let detached = 0
+    for (const m of memories) {
+      const before = m.tags.length
+      m.tags = m.tags.filter((x) => !x.startsWith(`${name}:`))
+      detached += before - m.tags.length
+    }
+    sendJson(res, 200, { memories_updated: detached })
     return
   }
 

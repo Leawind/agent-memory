@@ -7,7 +7,14 @@ import { buildMemoriesQuery, isSearchMode } from '../query'
 import { useMemoryConfig } from '../config'
 import { listTags } from '../api/tags'
 import { t } from '../i18n'
-import type { MemoryListResp, MemorySearchResp, MemorySummary, SearchResult, TagListResp } from '../types'
+import type {
+  MemoryAttributes,
+  MemoryListResp,
+  MemorySearchResp,
+  MemorySummary,
+  SearchResult,
+  TagListResp,
+} from '../types'
 
 /** Shape of the editor form: id of null means creating new */
 export interface MemoryDraft {
@@ -15,6 +22,7 @@ export interface MemoryDraft {
   summary: string
   content: string
   tags: string[]
+  attributes: MemoryAttributes
 }
 
 /** The tag expression survives reloads: it can be long enough that retyping is a real cost */

@@ -1,9 +1,14 @@
 // Type definitions for server responses and entities (fields map 1:1 to what /api actually returns)
 
+/** Structured attributes of one memory (sparse: omitted entirely when the memory carries none).
+ *  Enum values arrive as strings, number values as JSON numbers; a multi-valued key arrives as an array. */
+export type MemoryAttributes = Record<string, string | number | Array<string | number>>
+
 export interface MemorySummary {
   id: string
   tags: string[]
   summary: string
+  attributes?: MemoryAttributes
   /** Compact server-local wall clock "YYYY-MM-DD HH:MM"; summaries carry no creation time (the id encodes creation order) */
   updated: string
   lifecycle?: LifecycleMetadata
@@ -19,8 +24,6 @@ export interface LifecycleMetadata {
 export interface MemoryFull extends MemorySummary {
   created: string
   content: string
-  original_tags: string[]
-  derived_tags: Array<{ tag: string; rules: string[] }>
   lifecycle: LifecycleMetadata
 }
 
@@ -31,6 +34,8 @@ export interface MemoryCreateResp {
   updated: string
   tags_autocreated?: string[]
   tags_missing_description?: string[]
+  /** Keys registered on the fly by this write's attributes (lazy schema creation) */
+  keys_autocreated?: string[]
   duplicate_of?: string[]
   /** Semantic near-duplicates (advisory): cosine >= the server threshold, best first */
   similar_to?: Array<{ id: string; similarity: number }>
@@ -47,6 +52,7 @@ export interface MemoryUpdateResp {
   updated: boolean
   tags_autocreated?: string[]
   tags_missing_description?: string[]
+  keys_autocreated?: string[]
 }
 
 export interface TagView {
@@ -60,6 +66,20 @@ export interface TagView {
 
 export interface TagListResp {
   tags: TagView[]
+}
+
+/** One registered attribute key (GET /api/keys element): values are the known reusable
+ *  value halves of the store's `key:value` tags (omitted when there are none yet) */
+export interface KeyView {
+  name: string
+  type: 'enum' | 'number'
+  multi: boolean
+  description: string
+  values?: string[]
+}
+
+export interface KeyListResp {
+  keys: KeyView[]
 }
 
 export interface MemoryListResp {
@@ -270,23 +290,11 @@ export interface ImportResp {
   imported_tags: number
 }
 
-export interface TagRule {
-  name: string
-  expression: string
-}
-
 export interface NamedPredicate {
   name: string
   scope: 'user' | 'global'
   predicate: string
   description: string
-}
-
-export interface TagRulePreview {
-  valid: boolean
-  total_violations: number
-  violations: Array<{ id: string; summary: string; rules: string[] }>
-  positive_cycles: boolean
 }
 
 /** Caller identity summary returned by /api/whoami (mode=open means full capabilities in permissions; mode=anonymous means the configured capability set of the anonymous identity) */

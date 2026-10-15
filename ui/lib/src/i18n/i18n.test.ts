@@ -24,13 +24,12 @@ describe('i18n messages', () => {
     }
   })
 
-  it('renders all tag-rule operators and the full derivation restrictions', () => {
+  it('renders the attribute-key registry guidance in both languages', () => {
     for (const locale of ['zh', 'en'] as const) {
       setMemoryUILocale(locale)
-      expect(t('access.tagRulesHint')).toContain('!child|parent')
-      expect(t('access.tagRulesHint')).toContain('100')
-      expect(t('access.derivationsHint')).toContain('|')
-      expect(t('access.derivationsHint')).toContain('convention')
+      expect(t('keys.hint')).toContain('key:value')
+      expect(t('keys.typeNumberHint')).toContain('1')
+      expect(t('keys.multiHint')).toContain('32')
     }
     setMemoryUILocale('zh')
   })

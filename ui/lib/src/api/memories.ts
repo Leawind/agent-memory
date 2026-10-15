@@ -1,6 +1,7 @@
 // Memory endpoints (paths map 1:1 to the server's /api/memories)
 import type { ApiClient } from './client'
 import type {
+  MemoryAttributes,
   MemoryCreateResp,
   MemoryFull,
   MemoryListResp,
@@ -15,6 +16,8 @@ export interface MemoryCreateInput {
   /** Optional body: an empty string stores a summary-only memory */
   content: string
   tags: string[]
+  /** Structured key:value attributes (validated against the key registry; unknown keys are lazily registered) */
+  attributes?: MemoryAttributes
   /** The panel's tag select is allow-create: names the user typed are deliberate, so auto-create them */
   create_missing_tags?: boolean
 }
@@ -25,6 +28,8 @@ export interface MemoryUpdateInput {
   content?: string
   add_tags?: string[]
   remove_tags?: string[]
+  /** Replacement for the whole keyed attribute set: omit to leave attributes unchanged, {} clears every key the memory carries */
+  attributes?: MemoryAttributes
   /** Same semantics as in MemoryCreateInput */
   create_missing_tags?: boolean
 }
