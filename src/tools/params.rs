@@ -5,7 +5,7 @@
 //! and lenient about value forms (a single string is automatically treated as a one-element array; ids are the
 //! exception — the format is strictly "m{n}" and bare numbers without the m prefix are rejected).
 
-use crate::model::{normalize_tag_name, MAX_CONTENT_CHARS, MAX_SUMMARY_CHARS, MAX_TAG_DESC_CHARS};
+use crate::model::{MAX_CONTENT_CHARS, MAX_SUMMARY_CHARS, MAX_TAG_DESC_CHARS};
 use serde_json::{Map, Value};
 
 pub fn req_str(args: &Map<String, Value>, key: &str) -> Result<String, String> {

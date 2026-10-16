@@ -194,50 +194,52 @@ async function onLifecycleSaved(): Promise<void> {
 }
 
 // One tag vocabulary: a token with a colon is a value-bearing pair `key:value` (a key is unique
-// per memory — one value each), a plain token an ordinary tag. The save splits the two into the
-// wire's tags array and attributes object.
+// per memory — one value each), a plain token a bare tag. Chips are the editing form; the save
+// maps them onto the wire's tags object.
 function keyedToken(tag: string): Array<string> | null {
   const i = tag.indexOf(':')
   if (i <= 0) return null
   return [tag.slice(0, i), tag.slice(i + 1)]
 }
 
-function keyedPairs(tags: Iterable<string>): Array<[string, string]> {
-  const pairs: Array<[string, string]> = []
+/** Chip set → per-key value text (null for bare tags), the diff basis of an edit. */
+function tagMap(tags: Iterable<string>): Map<string, string | null> {
+  const map = new Map<string, string | null>()
   for (const tag of tags) {
     const pair = keyedToken(tag)
-    if (pair) pairs.push([pair[0], pair[1]])
+    if (pair) map.set(pair[0], pair[1])
+    else map.set(tag, null)
   }
-  return pairs
+  return map
 }
 
-/** Wire shape of the keyed set: numbers stay JSON numbers so the server stores their canonical form. */
-function attributesObject(pairs: Array<[string, string]>): Record<string, string | number> {
-  return Object.fromEntries(
-    pairs.map(([key, value]) => [key, value !== '' && Number.isFinite(Number(value)) ? Number(value) : value]),
-  )
+/** Wire shape of one value: numbers stay JSON numbers so the server stores their canonical form. */
+function tagWireValue(value: string | null): string | number | null {
+  if (value === null) return null
+  return value !== '' && Number.isFinite(Number(value)) ? Number(value) : value
 }
 
-const sortedPairs = (pairs: Array<[string, string]>) =>
-  JSON.stringify([...pairs].sort(([a], [b]) => a.localeCompare(b)))
+const stableTagMap = (tags: Iterable<string>) =>
+  JSON.stringify([...tagMap(tags).entries()].sort(([a], [b]) => a.localeCompare(b)))
 
 // Malformed keyed tokens: an empty key or value half (`:v` / `k:`), or one key carrying two values
 const tagsFormError = computed(() => {
   const tags = form.value.tags
   if (tags.some((tag) => tag.includes(':') && keyedToken(tag) === null)) return t('editor.tagTokenError')
-  const pairs = keyedPairs(tags)
-  const dup = pairs.find(([key], i) => pairs.some(([other], j) => j !== i && other === key))
-  return dup ? t('editor.tagDuplicateFmt', { key: dup[0] }) : ''
+  // Count keys over the raw chips: tagMap's Map collapses duplicates before they could be seen
+  const keys = tags.map((tag) => keyedToken(tag)?.[0] ?? tag)
+  const dup = keys.find((key, i) => keys.indexOf(key) !== i)
+  return dup ? t('editor.tagDuplicateFmt', { key: dup }) : ''
 })
+
+const tagsDirty = computed(() => stableTagMap(form.value.tags) !== stableTagMap(original.value.tags))
 
 const dirty = computed(() => {
   if (!props.memoryId) return false
   const f = form.value
   const o = original.value
   if (f.summary !== o.summary || f.content !== o.content) return true
-  if (f.tags.length !== o.tags.length) return true
-  const before = new Set(o.tags)
-  return f.tags.some((tag) => !before.has(tag))
+  return tagsDirty.value
 })
 
 const canSave = computed(() => {
@@ -283,32 +285,33 @@ watch(
 
 async function save() {
   if (!canSave.value) return
-  const after = new Set(form.value.tags)
-  const afterKeyed = keyedPairs(after)
   saving.value = true
   try {
     if (form.value.id) {
-      // Editing: bare names diff into add/remove; the keyed set travels whole — value-bearing
-      // pairs are replaced as a set, so removals are simply absent from the object
-      const before = new Set(original.value.tags)
-      const keyedChanged = sortedPairs(keyedPairs(before)) !== sortedPairs(afterKeyed)
+      // Editing: a per-key diff — added keys and value changes upsert through add_tags, missing
+      // keys drop through remove_tags by name. Untouched tags never travel.
+      const before = tagMap(original.value.tags)
+      const after = tagMap(form.value.tags)
+      const add: Record<string, string | number | null> = {}
+      for (const [key, value] of after) {
+        if (before.get(key) !== value) add[key] = tagWireValue(value)
+      }
+      const remove: string[] = [...before.keys()].filter((key) => !after.has(key))
       await updateMemory(client, form.value.id, {
         summary: form.value.summary,
         content: form.value.content,
-        add_tags: [...after].filter((t) => !before.has(t) && !keyedToken(t)),
-        remove_tags: [...before].filter((t) => !after.has(t) && !keyedToken(t)),
-        ...(keyedChanged ? { attributes: attributesObject(afterKeyed) } : {}),
+        ...(Object.keys(add).length > 0 ? { add_tags: add } : {}),
+        ...(remove.length > 0 ? { remove_tags: remove } : {}),
         create_missing_tags: true,
       })
       toastSuccess(t('editor.updated'))
     } else {
-      const bare = form.value.tags.filter((t) => !keyedToken(t))
-      const attributes = attributesObject(afterKeyed)
+      const tags: Record<string, string | number | null> = {}
+      for (const [key, value] of tagMap(form.value.tags)) tags[key] = tagWireValue(value)
       const resp = await createMemory(client, {
         summary: form.value.summary,
         content: form.value.content,
-        tags: bare,
-        ...(afterKeyed.length > 0 ? { attributes } : {}),
+        tags,
         create_missing_tags: true,
       })
       toastSuccess(t('editor.created'))

@@ -143,15 +143,18 @@ const summaryView = (m: MockMemory) =>
     },
     m,
   )
-// 属性 → `key:value` 标签。PUT 的语义与真实服务端一致：整组替换——记忆上所有带
-// 冒号的标签先摘除，再链接给定的键值对（{} 即清空全部键值标签）。
-function applyAttributes(m: MockMemory, attributes: Record<string, unknown>): void {
-  m.tags = m.tags.filter((x) => !x.includes(':'))
-  for (const [rawKey, value] of Object.entries(attributes)) {
+// 标签对象（{key: value|null}）→ 记忆的标签集：null 即裸标签，其余拼接 `key:value`。
+// 一个键在一条记忆里只有一个值：同键旧标签（裸的或带值的）先摘除，即 add_tags 的 upsert 语义。
+function applyTagsObject(m: MockMemory, object: Record<string, unknown>): void {
+  for (const [rawKey, value] of Object.entries(object)) {
     const key = rawKey.trim()
     if (!key) continue
-    const tag = `${key}:${String(value)}`
-    if (!m.tags.includes(tag)) m.tags.push(tag)
+    m.tags = m.tags.filter((x) => {
+      const i = x.indexOf(':')
+      return (i > 0 ? x.slice(0, i) : x) !== key
+    })
+    const tag = value === null ? key : `${key}:${String(value)}`
+    m.tags.push(tag)
     if (!tags.has(tag)) tags.set(tag, { description: '', created_at: now() })
   }
 }
@@ -294,13 +297,14 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
       id: nextId++,
       summary: String(body.summary ?? ''),
       content: String(body.content ?? ''),
-      tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+      tags: [],
       created_at: ts,
       updated_at: ts,
     }
     memories.push(memory)
-    if (body.attributes && typeof body.attributes === 'object') {
-      applyAttributes(memory, body.attributes as Record<string, unknown>)
+    // 标签对象 {key: value|null}：null 即裸标签，其余拼 `key:value`
+    if (body.tags && typeof body.tags === 'object') {
+      applyTagsObject(memory, body.tags as Record<string, unknown>)
     }
     sendJson(res, 200, fullView(memory))
     return
@@ -316,14 +320,21 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   }
   if (segs[1] === 'memories' && segs.length === 3 && memory && method === 'PUT') {
     const body = await readBody(req)
-    const add = Array.isArray(body.add_tags) ? body.add_tags.map(String) : []
-    const remove = Array.isArray(body.remove_tags) ? body.remove_tags.map(String) : []
     if (typeof body.summary === 'string') memory.summary = body.summary
     if (typeof body.content === 'string') memory.content = body.content
-    memory.tags.push(...add.filter((x) => !memory.tags.includes(x)))
-    memory.tags = memory.tags.filter((x) => !remove.includes(x))
-    if (body.attributes && typeof body.attributes === 'object') {
-      applyAttributes(memory, body.attributes as Record<string, unknown>)
+    // 增量语义与真实服务端一致（add 先插入、remove 后整行删除，同键双写时 remove 赢）：
+    // remove_tags 按键名删除，add_tags 逐键 upsert（同键旧值先摘除）
+    const add = body.add_tags as Record<string, unknown> | undefined
+    if (add && typeof add === 'object') {
+      applyTagsObject(memory, add)
+    }
+    const removes = Array.isArray(body.remove_tags) ? body.remove_tags.map(String) : []
+    if (removes.length > 0) {
+      memory.tags = memory.tags.filter((x) => {
+        const i = x.indexOf(':')
+        const key = i > 0 ? x.slice(0, i) : x
+        return !removes.includes(key)
+      })
     }
     memory.updated_at = now()
     sendJson(res, 200, fullView(memory))

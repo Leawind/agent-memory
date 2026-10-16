@@ -63,7 +63,7 @@ describe('MemoryEditorDialog', () => {
     document.body.innerHTML = ''
   })
 
-  it('editing: tag diffs go out as add/remove; attributes go out only when changed', async () => {
+  it('editing: removing a bare tag ships remove_tags by key name, nothing else travels', async () => {
     const writes: Array<Record<string, unknown>> = []
     vi.stubGlobal(
       'fetch',
@@ -84,12 +84,11 @@ describe('MemoryEditorDialog', () => {
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
     expect(writes[0].remove_tags).toEqual(['t1'])
-    expect(writes[0].add_tags).toEqual([])
-    expect(writes[0].attributes).toBeUndefined()
+    expect(writes[0].add_tags).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('editing keyed tags: the set travels whole, numbers stay JSON numbers, removals are absent', async () => {
+  it('editing keyed tags: value changes upsert through add_tags, numbers stay JSON numbers', async () => {
     const writes: Array<Record<string, unknown>> = []
     vi.stubGlobal(
       'fetch',
@@ -110,15 +109,14 @@ describe('MemoryEditorDialog', () => {
     expect(saveButton().disabled).toBe(false)
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
-    // The whole keyed set travels as the replacement payload; numbers stay JSON numbers and
-    // remove_tags never carries the keyed names (they ride the attributes object)
-    expect(writes[0].attributes).toEqual({ project: 'demo', score: 7 })
-    expect(writes[0].remove_tags).toEqual([])
-    expect(writes[0].add_tags).toEqual([])
+    // Only the changed key travels: the upsert carries the new value as a JSON number, and no
+    // remove is emitted (the key itself stays)
+    expect(writes[0].add_tags).toEqual({ score: 7 })
+    expect(writes[0].remove_tags).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('editing keyed tags: removing every keyed chip clears the set with attributes: {}', async () => {
+  it('editing keyed tags: removals travel by key name', async () => {
     const writes: Array<Record<string, unknown>> = []
     vi.stubGlobal(
       'fetch',
@@ -137,9 +135,9 @@ describe('MemoryEditorDialog', () => {
     expect(saveButton().disabled).toBe(false)
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
-    // {} is the explicit clear-everything replacement on the server
-    expect(writes[0].attributes).toEqual({})
-    expect(writes[0].remove_tags).toEqual([])
+    // Removed keys travel by name; untouched bare tags stay out of the body
+    expect(writes[0].remove_tags).toEqual(['project', 'score'])
+    expect(writes[0].add_tags).toBeUndefined()
     wrapper.unmount()
   })
 
