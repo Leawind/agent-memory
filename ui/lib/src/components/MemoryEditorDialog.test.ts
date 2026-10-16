@@ -155,6 +155,27 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
+  it('editing: an illegal tag name or value is flagged under the field and keeps save disabled', async () => {
+    const wrapper = await openDialog('m7')
+    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
+    vm.form.tags.push('am-debug)invalid')
+    await flushPromises()
+    expect(saveButton().disabled).toBe(true)
+    expect(dialogEl().textContent).toContain('am-debug)invalid')
+    // The value half must be an identifier word or a number — anything else is flagged too
+    vm.form.tags.pop()
+    vm.form.tags.push('score:1+2')
+    await flushPromises()
+    expect(saveButton().disabled).toBe(true)
+    // Replacing the existing score chip with a legal number clears the flag; the changed
+    // value leaves the form dirty (savable)
+    vm.form.tags.pop()
+    vm.form.tags.splice(vm.form.tags.indexOf('score:3'), 1, 'score:1.5')
+    await flushPromises()
+    expect(saveButton().disabled).toBe(false)
+    wrapper.unmount()
+  })
+
   it('editing: titled 记忆 #<id>, locked while fetching, save stays disabled until edited', async () => {
     const wrapper = mount(MemoryEditorDialog, {
       props: { visible: false, memoryId: 'm7', tagOptions: ['t1'] },

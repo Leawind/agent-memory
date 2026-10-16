@@ -62,6 +62,7 @@
           :disabled="reserved"
           :placeholder="t('tags.namePlaceholder')"
         />
+        <div v-if="nameError" class="form-hint is-error">{{ nameError }}</div>
       </el-form-item>
       <el-form-item :label="t('tags.descLabel')">
         <el-input
@@ -110,6 +111,7 @@ import { useApiClient } from '../api/client'
 import { createTag, deleteTag, updateTag } from '../api/tags'
 import type { TagDeleteMode } from '../api/tags'
 import FormDialog from './FormDialog.vue'
+import { validTagName } from '../tagNames'
 import { t } from '../i18n'
 import { useDialogEdgeResize } from '../composables/useDialogEdgeResize'
 import type { TagView } from '../types'
@@ -143,7 +145,11 @@ const form = reactive({ name: '', description: '' })
 const original = reactive({ name: '', description: '', count: 0 })
 
 const dirty = computed(() => form.name.trim() !== original.name || form.description !== original.description)
-const canSave = computed(() => !saving.value && form.name.trim() !== '' && dirty.value)
+// Illegal names are flagged as they are typed, not on the server round-trip
+const nameError = computed(() =>
+  form.name.trim() !== '' && !validTagName(form.name) ? t('tags.invalidNameFmt', { name: form.name.trim() }) : '',
+)
+const canSave = computed(() => !saving.value && !nameError.value && form.name.trim() !== '' && dirty.value)
 
 watch(
   () => props.visible,
@@ -222,6 +228,16 @@ function blockWhileSaving(done: () => void): void {
 </script>
 
 <style scoped>
+.form-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+  width: 100%;
+  margin-top: 4px;
+}
+.form-hint.is-error {
+  color: var(--el-color-danger);
+}
 .delete-body {
   display: flex;
   align-items: center;

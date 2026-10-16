@@ -90,6 +90,8 @@ export default {
     reservedHint: '保留标签：锚定常驻约定，不可改名或删除',
     nameLabel: '名称',
     namePlaceholder: '如 rust、项目、工作流',
+    invalidNameFmt:
+      '非法标签名「{name}」：名称是一个标识词（Unicode 字母、数字或 _，首字符后可含 - 或 .），不含空格、冒号、引号或表达式运算符',
     descLabel: '描述',
     descPlaceholder: '这个标签用来组织什么内容',
     deleteTitle: '删除标签',
@@ -127,6 +129,7 @@ export default {
     tagsPlaceholder: '选择或输入标签',
     tagsHint: '带值标签直接按 key:value 输入，键在一条记忆中唯一；数值会按规范形式存储（1 与 1.0 同值）',
     tagTokenError: '带值标签格式应为 key:value，键与值均不能为空',
+    tagValueErrorFmt: '非法标签值「{value}」：值是一个标识词或数字（如 1.5、1e3）',
     tagDuplicateFmt: '键「{key}」只能有一个值，请合并重复的标签',
     updated: '已更新',
     created: '已创建',

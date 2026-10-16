@@ -141,6 +141,7 @@ import { Clock, Connection, Delete } from '@element-plus/icons-vue'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, deleteMemory, getMemory, mergeMemory, updateMemory } from '../api/memories'
+import { validTagName, validTagValue } from '../tagNames'
 import type { LifecycleMetadata, MemoryCreateResp } from '../types'
 import type { MemoryDraft } from '../composables/useMemories'
 import MarkdownView from './MarkdownView.vue'
@@ -222,10 +223,26 @@ function tagWireValue(value: string | null): string | number | null {
 const stableTagMap = (tags: Iterable<string>) =>
   JSON.stringify([...tagMap(tags).entries()].sort(([a], [b]) => a.localeCompare(b)))
 
-// Malformed keyed tokens: an empty key or value half (`:v` / `k:`), or one key carrying two values
+// Malformed keyed tokens (`:v` / `k:`), illegal names or values, one key carrying two values —
+// surfaced as soon as the chip exists, never deferred to the server round-trip
 const tagsFormError = computed(() => {
   const tags = form.value.tags
-  if (tags.some((tag) => tag.includes(':') && keyedToken(tag) === null)) return t('editor.tagTokenError')
+  const malformed = tags.find((tag) => {
+    if (!tag.includes(':')) return false
+    const pair = keyedToken(tag)
+    return pair === null || pair[0].trim() === '' || pair[1].trim() === ''
+  })
+  if (malformed !== undefined) return t('editor.tagTokenError')
+  for (const tag of tags) {
+    const pair = keyedToken(tag)
+    if (!pair) {
+      if (!validTagName(tag)) return t('tags.invalidNameFmt', { name: tag.trim() })
+    } else if (!validTagName(pair[0])) {
+      return t('tags.invalidNameFmt', { name: pair[0].trim() })
+    } else if (!validTagValue(pair[1])) {
+      return t('editor.tagValueErrorFmt', { value: pair[1].trim() })
+    }
+  }
   // Count keys over the raw chips: tagMap's Map collapses duplicates before they could be seen
   const keys = tags.map((tag) => keyedToken(tag)?.[0] ?? tag)
   const dup = keys.find((key, i) => keys.indexOf(key) !== i)

@@ -92,6 +92,8 @@ export default {
     reservedHint: 'Reserved tag: anchors the resident convention; it can be neither renamed nor deleted',
     nameLabel: 'Name',
     namePlaceholder: 'e.g. rust, project, workflow',
+    invalidNameFmt:
+      'Invalid tag name "{name}": a name is one identifier word (Unicode letters, digits or _, with - or . allowed after the first character) — no spaces, colons, quotes or expression operators',
     descLabel: 'Description',
     descPlaceholder: 'What is this tag used to organize',
     deleteTitle: 'Delete Tag',
@@ -130,6 +132,7 @@ export default {
     tagsHint:
       'Value-bearing tags go in as key:value; a key is unique per memory. Numbers store in canonical form (1 and 1.0 are the same value)',
     tagTokenError: 'Value-bearing tags look like key:value with a non-empty key and value',
+    tagValueErrorFmt: 'Invalid tag value "{value}": a value is an identifier word or a number (e.g. 1.5, 1e3)',
     tagDuplicateFmt: 'Key "{key}" can hold one value only; merge the duplicate tags',
     updated: 'Updated',
     created: 'Created',

@@ -107,6 +107,18 @@ describe('TagDialog', () => {
     wrapper.unmount()
   })
 
+  it('creating: an illegal name is flagged under the field and keeps save disabled', async () => {
+    const wrapper = await openDialog(null)
+    await new DOMWrapper(nameInput()).setValue('am-debug)invalid')
+    expect(saveButton().disabled).toBe(true)
+    expect(dialogEl().textContent).toContain('am-debug)invalid')
+    // Fixing the name clears the flag and unlocks save again
+    await new DOMWrapper(nameInput()).setValue('am-debug-invalid')
+    expect(saveButton().disabled).toBe(false)
+    expect(dialogEl().textContent).not.toContain('am-debug)invalid')
+    wrapper.unmount()
+  })
+
   it('delete: opens the mode choice, detach deletes with mode=detach', async () => {
     const wrapper = await openDialog(tag)
     await deleteButton().click()
