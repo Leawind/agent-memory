@@ -102,7 +102,7 @@ describe('MemoryEditorDialog', () => {
     )
     const wrapper = await openDialog('m7')
     // Replacing a value: swap the score chip for a new token (driven through the form state;
-    // the select's allow-create typing is Element Plus's own concern)
+    // the select's typing UI is Element Plus's own concern)
     const vm = wrapper.vm as unknown as { form: { tags: string[] } }
     vm.form.tags.splice(vm.form.tags.indexOf('score:3'), 1, 'score:7')
     await flushPromises()
@@ -141,42 +141,39 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
-  it('editing keyed tags: one key cannot carry two values', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse(fullMemory))),
-    )
+  it('tag entry: the dropdown offers the add action for legal tokens, a red refusal for illegal ones', async () => {
     const wrapper = await openDialog('m7')
-    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
-    vm.form.tags.push('project:other')
+    const vm = wrapper.vm as unknown as {
+      onTagQuery: (q: string) => void
+      tagQueryEntry: { token: string; label: string; problem: string } | null
+    }
+    // A legal, unknown bare token offers the add action
+    vm.onTagQuery('fresh-tag')
     await flushPromises()
-    expect(saveButton().disabled).toBe(true)
-    expect(dialogEl().textContent).toContain('project')
-    wrapper.unmount()
-  })
-
-  it('editing: an illegal tag name or value is flagged at once and keeps save disabled', async () => {
-    const wrapper = await openDialog('m7')
-    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
-    vm.form.tags.push('am-debug)invalid')
+    expect(vm.tagQueryEntry?.problem).toBe('')
+    expect(vm.tagQueryEntry?.label).toContain('fresh-tag')
+    // An illegal name is refused outright — the chip can never land, so the explanation
+    // carries the offending token
+    vm.onTagQuery('am-debug)invalid')
     await flushPromises()
-    expect(saveButton().disabled).toBe(true)
-    expect(dialogEl().textContent).toContain('am-debug)invalid')
-    // The hint line sits above the select: the dropdown opens downward and would cover a
-    // hint below the input exactly while typing, when validity errors show
-    const hint = dialogEl().querySelector('.el-form-item__content .form-hint')!
-    expect(hint.parentElement!.firstElementChild).toBe(hint)
-    // The value half must be an identifier word or a number — anything else is flagged too
-    vm.form.tags.pop()
-    vm.form.tags.push('score:1+2')
+    expect(vm.tagQueryEntry?.problem).toBe('name')
+    expect(vm.tagQueryEntry?.label).toContain('am-debug)invalid')
+    // An illegal value half ditto
+    vm.onTagQuery('score:1+2')
     await flushPromises()
-    expect(saveButton().disabled).toBe(true)
-    // Replacing the existing score chip with a legal number clears the flag; the changed
-    // value leaves the form dirty (savable)
-    vm.form.tags.pop()
-    vm.form.tags.splice(vm.form.tags.indexOf('score:3'), 1, 'score:1.5')
+    expect(vm.tagQueryEntry?.problem).toBe('value')
+    // A key that is already valued refuses with the remove-first hint
+    vm.onTagQuery('score:9')
     await flushPromises()
-    expect(saveButton().disabled).toBe(false)
+    expect(vm.tagQueryEntry?.problem).toBe('keydup')
+    // So does an exact ad-hoc chip (re-adding would toggle it off, not duplicate it)
+    vm.onTagQuery('project:demo')
+    await flushPromises()
+    expect(vm.tagQueryEntry?.problem).toBe('keydup')
+    // A vocabulary token needs no add entry — the real option serves
+    vm.onTagQuery('t1')
+    await flushPromises()
+    expect(vm.tagQueryEntry).toBeNull()
     wrapper.unmount()
   })
 

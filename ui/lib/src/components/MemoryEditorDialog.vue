@@ -88,22 +88,38 @@
             <span>{{ t('editor.tagsLabel') }}</span>
           </div>
         </template>
-        <!-- The hint line lives between label and select: the dropdown opens downward and would
-             cover a hint below the input exactly while typing — when validity errors show -->
-        <div v-if="tagsFormError" class="form-hint is-error">{{ tagsFormError }}</div>
-        <div v-else class="form-hint">{{ t('editor.tagsHint') }}</div>
+        <!-- Format guidance above the input: the dropdown opens downward, so a hint below
+             would sit exactly under the open panel -->
+        <div class="form-hint">{{ t('editor.tagsHint') }}</div>
+        <!-- The create flow is taken over from allow-create (it has no pre-create hook): the
+             query tracked by filter-method drives a controlled first dropdown entry — the "add
+             token" action when the token can land, a disabled red refusal otherwise. Illegal
+             tokens never become chips, and the explanation sits in the open dropdown where the
+             user is already looking. -->
         <el-select
           v-model="form.tags"
           multiple
           filterable
-          allow-create
           default-first-option
+          :filter-method="onTagQuery"
           :placeholder="t('editor.tagsPlaceholder')"
           class="tags-select"
+          @visible-change="onTagsDropdown"
         >
+          <el-option
+            v-if="tagQueryEntry"
+            :key="`query:${tagQueryEntry.token}`"
+            :label="tagQueryEntry.token"
+            :value="tagQueryEntry.token"
+            :disabled="tagQueryEntry.problem !== ''"
+          >
+            <span :style="tagQueryEntry.problem !== '' ? { color: 'var(--el-color-danger)' } : undefined">
+              {{ tagQueryEntry.label }}
+            </span>
+          </el-option>
           <!-- One tag vocabulary: plain names and value-bearing key:value tokens live side by
                side; the save maps the chips onto the wire's tags object -->
-          <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
+          <el-option v-for="tag in filteredTagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
       </el-form-item>
       <el-form-item>
@@ -225,30 +241,64 @@ function tagWireValue(value: string | null): string | number | null {
 const stableTagMap = (tags: Iterable<string>) =>
   JSON.stringify([...tagMap(tags).entries()].sort(([a], [b]) => a.localeCompare(b)))
 
-// Malformed keyed tokens (`:v` / `k:`), illegal names or values, one key carrying two values —
-// surfaced as soon as the chip exists, never deferred to the server round-trip
-const tagsFormError = computed(() => {
-  const tags = form.value.tags
-  const malformed = tags.find((tag) => {
-    if (!tag.includes(':')) return false
-    const pair = keyedToken(tag)
-    return pair === null || pair[0].trim() === '' || pair[1].trim() === ''
-  })
-  if (malformed !== undefined) return t('editor.tagTokenError')
-  for (const tag of tags) {
-    const pair = keyedToken(tag)
-    if (!pair) {
-      if (!validTagName(tag)) return t('tags.invalidNameFmt', { name: tag.trim() })
-    } else if (!validTagName(pair[0])) {
-      return t('tags.invalidNameFmt', { name: pair[0].trim() })
-    } else if (!validTagValue(pair[1])) {
-      return t('editor.tagValueErrorFmt', { value: pair[1].trim() })
-    }
+// ---- Tag entry: the typed query drives a controlled dropdown entry ----
+const tagQuery = ref('')
+
+function onTagQuery(q: string): void {
+  tagQuery.value = q
+}
+
+function onTagsDropdown(open: boolean): void {
+  if (!open) tagQuery.value = ''
+}
+
+watch(
+  () => form.value.tags.length,
+  () => {
+    tagQuery.value = ''
+  },
+)
+
+const filteredTagOptions = computed(() => {
+  const q = tagQuery.value.trim().toLowerCase()
+  return q ? props.tagOptions.filter((tag) => tag.toLowerCase().includes(q)) : props.tagOptions
+})
+
+/** Why the typed token cannot land: malformed `key:value`, an illegal name or value half, or a
+ * duplicate (a key already valued, or a bare tag already present — re-adding would toggle it
+ * off). An empty problem means the token may be added. */
+function judgeTagToken(token: string): { problem: string; detail: string } {
+  if (token.includes(':')) {
+    const pair = keyedToken(token)
+    if (pair === null || pair[0].trim() === '' || pair[1].trim() === '') return { problem: 'token', detail: token }
+    if (!validTagName(pair[0])) return { problem: 'name', detail: pair[0].trim() }
+    if (!validTagValue(pair[1])) return { problem: 'value', detail: pair[1].trim() }
+    if (tagMap(form.value.tags).has(pair[0].trim())) return { problem: 'keydup', detail: pair[0].trim() }
+    return { problem: '', detail: '' }
   }
-  // Count keys over the raw chips: tagMap's Map collapses duplicates before they could be seen
-  const keys = tags.map((tag) => keyedToken(tag)?.[0] ?? tag)
-  const dup = keys.find((key, i) => keys.indexOf(key) !== i)
-  return dup ? t('editor.tagDuplicateFmt', { key: dup }) : ''
+  if (!validTagName(token)) return { problem: 'name', detail: token.trim() }
+  if (form.value.tags.includes(token)) return { problem: 'tagdup', detail: token.trim() }
+  return { problem: '', detail: '' }
+}
+
+const tagQueryEntry = computed(() => {
+  const token = tagQuery.value.trim()
+  // A token that already exists in the vocabulary needs no add entry — the real option serves
+  if (!token || props.tagOptions.includes(token)) return null
+  const { problem, detail } = judgeTagToken(token)
+  const label =
+    problem === 'token'
+      ? t('editor.tagTokenError')
+      : problem === 'name'
+        ? t('tags.invalidNameFmt', { name: detail })
+        : problem === 'value'
+          ? t('editor.tagValueErrorFmt', { value: detail })
+          : problem === 'keydup'
+            ? t('editor.tagKeyExistsFmt', { key: detail })
+            : problem === 'tagdup'
+              ? t('editor.tagExistsFmt', { name: detail })
+              : t('editor.tagAddFmt', { token })
+  return { token, label, problem }
 })
 
 const tagsDirty = computed(() => stableTagMap(form.value.tags) !== stableTagMap(original.value.tags))
@@ -263,7 +313,6 @@ const dirty = computed(() => {
 
 const canSave = computed(() => {
   if (loading.value) return false
-  if (tagsFormError.value) return false
   // Creating needs a summary only: content is optional (summary-only memories are valid)
   if (!props.memoryId) return form.value.summary.trim() !== ''
   return dirty.value
