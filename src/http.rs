@@ -71,7 +71,7 @@ pub fn serve_http(host: &str, port: u16, db_path: &Path, verbose: bool) -> i32 {
     eprintln!("  MCP 端点  http://{addr}{ENDPOINT_MCP}");
     if open_mode {
         eprintln!("  鉴权      开放模式（鉴权开关未开启，所有请求放行；请只暴露给可信网络）");
-        eprintln!("            启用 token 鉴权：在管理界面「管理」页创建管理员身份后打开开关");
+        eprintln!("            启用 token 鉴权：在管理界面“管理”页创建管理员身份后打开开关");
     } else {
         eprintln!("  鉴权      token 模式（/mcp 与 /api 须携带 Authorization: Bearer <token>）");
     }
