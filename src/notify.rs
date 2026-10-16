@@ -734,7 +734,7 @@ mod tests {
         let tags = ["convention".to_string(), "topic".to_string()];
         let events = events_for(
             MEMORY_LIFECYCLE,
-            json!({"id": "m1", "archived": true}),
+            json!({"id": "m1", "pinned": true}),
             json!({"updated": true}),
             &PreState::default(),
             &tags,

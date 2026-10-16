@@ -52,7 +52,7 @@
           @change="run(onSearch)"
         >
           <el-option
-            v-for="status in ['active', 'archived', 'expired', 'all']"
+            v-for="status in ['active', 'expired', 'all']"
             :key="status"
             :value="status"
             :label="t(`lifecycle.${status}`)"

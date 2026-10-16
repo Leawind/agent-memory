@@ -1,1 +1,1 @@
-SELECT memory_id, expires_at, archived_at, pinned FROM memory_lifecycle
+SELECT memory_id, expires_at, pinned FROM memory_lifecycle

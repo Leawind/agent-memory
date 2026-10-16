@@ -79,14 +79,6 @@
       "age_days": 365
     },
     {
-      "key": "release-archive",
-      "summary": "Archived release deployment plan",
-      "content": "Release deployment plan retained for historical inspection.",
-      "tags": ["release", "context"],
-      "age_days": 1,
-      "archived": true
-    },
-    {
       "key": "release-expired",
       "summary": "Expired release deployment token",
       "content": "Release deployment context expired after the maintenance window.",
@@ -238,14 +230,6 @@
         "vue": 2,
         "react": 2,
         "browser": 2
-      }
-    },
-    {
-      "name": "explicit-archive",
-      "query": "release deployment",
-      "state": "archived",
-      "relevance": {
-        "release-archive": 3
       }
     },
     {

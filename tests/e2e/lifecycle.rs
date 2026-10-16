@@ -8,7 +8,7 @@ fn api(port: u16, method: &str, path: &str, value: Option<Value>) -> (u16, Value
 }
 
 #[test]
-fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
+fn expiry_filters_and_backup_keep_content_and_timestamps() {
     let path = temp_db("lifecycle");
     cleanup(&path);
     let server = HttpProc::start(&path, "lifecycle");
@@ -45,27 +45,15 @@ fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
         api(port, "GET", "/api/memories?query=durable&state=all", None).1["total_matches"],
         1
     );
-    assert_eq!(set(json!({"archived": true})).0, 200);
-    assert_eq!(get()["lifecycle"]["state"], "archived");
-    assert_eq!(
-        api(port, "GET", "/api/memories?state=expired", None).1["total"],
-        0
-    );
     assert_eq!(
         api(
             port,
             "GET",
-            "/api/memories?state=archived&tag_expr=topic",
+            "/api/memories?state=expired&tag_expr=topic",
             None
         )
         .1["total"],
         1
-    );
-    assert_eq!(set(json!({"archived": false})).0, 200);
-    assert_eq!(
-        get()["lifecycle"]["state"],
-        "expired",
-        "restoring an archive does not erase expiry"
     );
     assert_eq!(set(json!({"expires_at": null})).0, 200);
     assert_eq!(get()["lifecycle"]["state"], "active");
@@ -78,7 +66,7 @@ fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
         json!({"kind": "unknown"}),
         json!({"expires_at": -1, "pinned": false}),
         json!({"expires_at": 253402300800u64}),
-        json!({"archived": "true"}),
+        json!({"pinned": "yes"}),
         json!({"typo": true}),
     ] {
         assert_eq!(set(bad).0, 400);
@@ -90,13 +78,13 @@ fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
             port,
             "PUT",
             "/api/memories/m999/lifecycle",
-            Some(json!({"archived": true}))
+            Some(json!({"pinned": true}))
         )
         .0,
         404
     );
-    assert_eq!(set(json!({"archived": true})).0, 200);
-    let archived = get()["lifecycle"].clone();
+    assert_eq!(set(json!({"pinned": true, "expires_at": 0})).0, 200);
+    let hidden = get()["lifecycle"].clone();
     assert_eq!(api(port, "PUT", "/api/settings", Some(json!({"lifecycle_policy":{"rules":[{"key":"topic","half_life_days":14}],"reinforcement_weight":0.3}}))).0, 200);
     let policy = api(port, "GET", "/api/settings", None).1["lifecycle_policy"].clone();
     assert_eq!(policy["rules"][0]["half_life_days"], 14.0);
@@ -136,7 +124,7 @@ fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
             None
         )
         .1["lifecycle"],
-        archived
+        hidden
     );
     drop(restore);
     cleanup(&restore_path);

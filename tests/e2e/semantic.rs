@@ -313,7 +313,7 @@ fn semantic_tag_filter_applies_before_recall_limit() {
             port,
             "PUT",
             &format!("/api/memories/m{id}/lifecycle"),
-            Some(r#"{"archived": true}"#),
+            Some(r#"{"expires_at": 1}"#),
         );
         assert_eq!(status, 200);
     }

@@ -1379,7 +1379,7 @@ mod tests {
                 &path,
                 &[Cap::Update],
                 MEMORY_LIFECYCLE,
-                json!({"id": id, "archived": true})
+                json!({"id": id, "expires_at": 1})
             ),
             Err(ToolError::Forbidden(_))
         ));
@@ -1388,14 +1388,14 @@ mod tests {
                 &path,
                 &[Cap::Read],
                 MEMORY_LIFECYCLE,
-                json!({"id": id, "archived": true})
+                json!({"id": id, "expires_at": 1})
             ),
             Err(ToolError::Forbidden(_))
         ));
-        assert!(call(&path, MEMORY_LIFECYCLE, json!({"id": id, "archived": true})).is_ok());
+        assert!(call(&path, MEMORY_LIFECYCLE, json!({"id": id, "expires_at": 1})).is_ok());
         let listing = call(&path, MEMORY_LIST, json!({"state": "all"})).unwrap();
         assert!(listing["memories"][0].get("content").is_none());
-        assert_eq!(listing["memories"][0]["lifecycle"]["state"], "archived");
+        assert_eq!(listing["memories"][0]["lifecycle"]["state"], "expired");
         cleanup(&path);
     }
 

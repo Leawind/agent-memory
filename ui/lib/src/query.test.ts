@@ -28,9 +28,9 @@ describe('buildMemoriesQuery', () => {
         order: 'asc',
         page: 1,
         pageSize: 20,
-        state: 'archived',
+        state: 'expired',
       })
-      expect(new URLSearchParams(qs).get('state')).toBe('archived')
+      expect(new URLSearchParams(qs).get('state')).toBe('expired')
     }
   })
   it('list mode: sort + pagination', () => {

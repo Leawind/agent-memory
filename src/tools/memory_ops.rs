@@ -148,10 +148,8 @@ fn normalize_tag_name_list(names: &[String]) -> Result<Vec<String>, ToolError> {
 
 fn state_filter(args: &Map<String, Value>) -> Result<String, ToolError> {
     let state = opt_str(args, "state")?.unwrap_or_else(|| "active".into());
-    if !["active", "archived", "expired", "all"].contains(&state.as_str()) {
-        return Err(ToolError::invalid(
-            "state must be active, archived, expired or all",
-        ));
+    if !["active", "expired", "all"].contains(&state.as_str()) {
+        return Err(ToolError::invalid("state must be active, expired or all"));
     }
     Ok(state)
 }
@@ -193,13 +191,6 @@ pub fn memory_lifecycle(st: &Store, args: &Map<String, Value>) -> Result<Value, 
     }
     if let Some(pinned) = opt_bool(args, "pinned")? {
         meta.pinned = pinned;
-    }
-    if let Some(archived) = opt_bool(args, "archived")? {
-        meta.archived_at = if archived {
-            Some(meta.archived_at.unwrap_or_else(now))
-        } else {
-            None
-        };
     }
     meta.validate()?;
     let changed = meta != before;

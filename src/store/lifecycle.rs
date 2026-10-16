@@ -6,8 +6,7 @@ use std::collections::HashMap;
 fn decode(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<Metadata> {
     Ok(Metadata {
         expires_at: row.get::<_, Option<i64>>(start)?.map(|t| t as u64),
-        archived_at: row.get::<_, Option<i64>>(start + 1)?.map(|t| t as u64),
-        pinned: row.get(start + 2)?,
+        pinned: row.get(start + 1)?,
     })
 }
 
@@ -39,12 +38,7 @@ impl Store {
         self.conn
             .execute(
                 sql::LIFECYCLE_PUT,
-                params![
-                    id,
-                    meta.expires_at.map(|t| t as i64),
-                    meta.archived_at.map(|t| t as i64),
-                    meta.pinned
-                ],
+                params![id, meta.expires_at.map(|t| t as i64), meta.pinned],
             )
             .map(|_| ())
             .map_err(|e| e.to_string())

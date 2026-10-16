@@ -158,10 +158,8 @@ fn push_memory_row(out: &mut String, m: &Value, score: Option<&Value>) -> Option
     }
     out.push(' ');
     out.push_str(&escape_text(summary));
-    if let Some(state @ ("archived" | "expired")) = m["lifecycle"]["state"].as_str() {
-        out.push_str(" [state:");
-        out.push_str(state);
-        out.push(']');
+    if m["lifecycle"]["state"].as_str() == Some("expired") {
+        out.push_str(" [state:expired]");
     }
     out.push('\n');
     Some(())

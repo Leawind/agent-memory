@@ -16,9 +16,8 @@ export interface MemorySummary {
 
 export interface LifecycleMetadata {
   expires_at: number | null
-  archived_at: number | null
   pinned: boolean
-  state: 'active' | 'archived' | 'expired'
+  state: 'active' | 'expired'
 }
 
 export interface MemoryFull extends MemorySummary {

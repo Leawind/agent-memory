@@ -25,7 +25,7 @@ export function useMemories() {
   const { defaultPageSize } = useMemoryConfig()
 
   const query = ref('')
-  const state = ref<'active' | 'archived' | 'expired' | 'all'>('active')
+  const state = ref<'active' | 'expired' | 'all'>('active')
   /** Tag set algebra filter, e.g. "(a&b)|c" — applies to list and search alike */
   const tagExpr = ref(localStorage.getItem(TAG_EXPR_KEY) ?? '')
   watch(tagExpr, (v) => {

@@ -14,9 +14,6 @@
       <el-form-item>
         <el-checkbox v-model="draft.pinned">{{ t('lifecycle.pinned') }}</el-checkbox>
       </el-form-item>
-      <el-form-item>
-        <el-checkbox v-model="draft.archived">{{ t('lifecycle.archived') }}</el-checkbox>
-      </el-form-item>
     </el-form>
     <p class="lifecycle-hint">{{ t('lifecycle.hint') }}</p>
     <template #footer>
@@ -40,7 +37,6 @@ const emit = defineEmits<{ 'update:visible': [value: boolean]; saved: [] }>()
 const api = useApiClient()
 const initial = () => ({
   pinned: props.metadata.pinned,
-  archived: props.metadata.archived_at !== null,
 })
 const draft = ref(initial())
 const expiry = ref<Date | null>(null)

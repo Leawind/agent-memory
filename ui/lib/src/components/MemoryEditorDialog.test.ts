@@ -13,7 +13,7 @@ const fullMemory = {
   summary: '已有记忆摘要',
   content: '正文内容',
   tags: ['t1', 'project:demo', 'score:3'],
-  lifecycle: { expires_at: null, archived_at: null, pinned: false, state: 'active' },
+  lifecycle: { expires_at: null, pinned: false, state: 'active' },
   created: '2026-10-04 08:00',
   updated: '2026-10-04 08:00',
 }

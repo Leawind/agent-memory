@@ -6,7 +6,6 @@ WHERE (?1 IS NULL OR EXISTS (SELECT 1 FROM memory_tags mt
 
   AND CASE ?3
     WHEN 'all' THEN 1
-    WHEN 'archived' THEN l.archived_at IS NOT NULL
-    WHEN 'expired' THEN l.archived_at IS NULL AND l.expires_at IS NOT NULL AND l.expires_at <= ?4
-    ELSE l.archived_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > ?4)
+    WHEN 'expired' THEN l.expires_at IS NOT NULL AND l.expires_at <= ?4
+    ELSE l.expires_at IS NULL OR l.expires_at > ?4
   END

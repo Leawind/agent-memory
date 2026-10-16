@@ -5,7 +5,7 @@ import { setMemoryUILocale } from '../index'
 import MemoryLifecycleDialog from './MemoryLifecycleDialog.vue'
 
 describe('MemoryLifecycleDialog', () => {
-  it('restores an archive while preserving its explicit expiry', async () => {
+  it('saves pin changes while preserving the explicit expiry', async () => {
     setMemoryUILocale('zh')
     document.body.innerHTML = ''
     const calls: unknown[] = []
@@ -20,13 +20,13 @@ describe('MemoryLifecycleDialog', () => {
       props: {
         visible: true,
         memoryId: 'm7',
-        metadata: { expires_at: 1700000000, archived_at: 1690000000, pinned: true, state: 'archived' },
+        metadata: { expires_at: 1700000000, pinned: true, state: 'active' },
       },
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
     const dialog = new DOMWrapper(document.querySelector('.el-dialog')!)
-    await dialog.findAll('input[type=checkbox]')[1].setValue(false)
+    await dialog.findAll('input[type=checkbox]')[0].setValue(false)
     await dialog
       .findAll('button')
       .find((button) => button.text() === '保存')!
@@ -36,7 +36,7 @@ describe('MemoryLifecycleDialog', () => {
       {
         path: '/api/memories/m7/lifecycle',
         method: 'PUT',
-        body: { pinned: true, archived: false, expires_at: 1700000000 },
+        body: { pinned: false, expires_at: 1700000000 },
       },
     ])
     expect(wrapper.emitted('saved')).toHaveLength(1)

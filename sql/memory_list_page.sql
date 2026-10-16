@@ -6,9 +6,8 @@ WHERE (?1 IS NULL OR EXISTS (SELECT 1 FROM memory_tags mt
   AND (?2 IS NULL OR m.id IN (SELECT value FROM json_each(?2)))
   AND CASE ?7
     WHEN 'all' THEN 1
-    WHEN 'archived' THEN l.archived_at IS NOT NULL
-    WHEN 'expired' THEN l.archived_at IS NULL AND l.expires_at IS NOT NULL AND l.expires_at <= ?8
-    ELSE l.archived_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > ?8)
+    WHEN 'expired' THEN l.expires_at IS NOT NULL AND l.expires_at <= ?8
+    ELSE l.expires_at IS NULL OR l.expires_at > ?8
   END
 ORDER BY CASE ?3 WHEN 'id' THEN m.id ELSE m.updated_at END * ?4,
          m.id * ?4

@@ -15,7 +15,6 @@ interface Memory {
   content: string
   tags: string[]
   age_days: number
-  archived?: boolean
   expired?: boolean
   uses?: number
 }
@@ -159,7 +158,6 @@ async function run() {
             updated_at: time,
             lifecycle: {
               pinned: false,
-              archived_at: memory.archived ? now : null,
               expires_at: memory.expired ? now - 1 : null,
             },
             access: { scoring_version: 1, events, buckets: [] },
