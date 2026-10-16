@@ -155,13 +155,17 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
-  it('editing: an illegal tag name or value is flagged under the field and keeps save disabled', async () => {
+  it('editing: an illegal tag name or value is flagged at once and keeps save disabled', async () => {
     const wrapper = await openDialog('m7')
     const vm = wrapper.vm as unknown as { form: { tags: string[] } }
     vm.form.tags.push('am-debug)invalid')
     await flushPromises()
     expect(saveButton().disabled).toBe(true)
     expect(dialogEl().textContent).toContain('am-debug)invalid')
+    // The hint line sits above the select: the dropdown opens downward and would cover a
+    // hint below the input exactly while typing, when validity errors show
+    const hint = dialogEl().querySelector('.el-form-item__content .form-hint')!
+    expect(hint.parentElement!.firstElementChild).toBe(hint)
     // The value half must be an identifier word or a number — anything else is flagged too
     vm.form.tags.pop()
     vm.form.tags.push('score:1+2')

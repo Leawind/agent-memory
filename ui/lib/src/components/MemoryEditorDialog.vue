@@ -88,6 +88,10 @@
             <span>{{ t('editor.tagsLabel') }}</span>
           </div>
         </template>
+        <!-- The hint line lives between label and select: the dropdown opens downward and would
+             cover a hint below the input exactly while typing — when validity errors show -->
+        <div v-if="tagsFormError" class="form-hint is-error">{{ tagsFormError }}</div>
+        <div v-else class="form-hint">{{ t('editor.tagsHint') }}</div>
         <el-select
           v-model="form.tags"
           multiple
@@ -98,11 +102,9 @@
           class="tags-select"
         >
           <!-- One tag vocabulary: plain names and value-bearing key:value tokens live side by
-               side; the save splits them into the wire's tags array and attributes object -->
+               side; the save maps the chips onto the wire's tags object -->
           <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
-        <div v-if="tagsFormError" class="form-hint is-error">{{ tagsFormError }}</div>
-        <div v-else class="form-hint">{{ t('editor.tagsHint') }}</div>
       </el-form-item>
       <el-form-item>
         <template #label>
@@ -453,7 +455,7 @@ function blockWhileSaving(done: () => void): void {
   line-height: 1.5;
   color: var(--el-text-color-secondary);
   width: 100%;
-  margin-top: 4px;
+  margin: 0 0 4px;
 }
 .form-hint.is-error {
   color: var(--el-color-danger);
