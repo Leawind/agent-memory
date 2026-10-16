@@ -147,9 +147,8 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tag names for this memory (no 'key:' prefix - use attributes for keyed values); must exist unless create_missing_tags is true. One identifier word: Unicode letters, digits, '_', '-', '.'; no spaces, colons, quotes or operators."},
-                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Structured key:value attributes. Keys are identifier names (no ':') and unique per memory - one value each; values are identifier words (reusable vocabulary; create_missing_tags applies) or numbers (stored in canonical decimal form), both becoming ordinary 'key:value' tags in the shared tag vocabulary. Booleans and arrays are not attribute values - presence flags are plain tags."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names and unknown enum attribute values are an error. True auto-creates them with an empty description."}
+                    "tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "The memory's tags as one object: each entry is a tag, a key-value pair whose key is unique per memory. A string value is an identifier word (reusable vocabulary; create_missing_tags applies), a number stores in canonical decimal form (1 and 1.0 are the same value), null is a bare tag. Keys follow the identifier rule (no ':'); booleans and arrays are not values - presence flags are bare tags."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag keys are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -214,10 +213,9 @@ pub fn tool_definitions() -> Value {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
-                    "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tags to append; must exist unless create_missing_tags is true. Applied before remove_tags, so a tag present in both lists ends up removed."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."},
-                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Replacement for the memory's whole keyed attribute set (omit to leave attributes unchanged; {} clears every key the memory carries). Every keyed value is unlinked and the given ones relinked as 'key:value' tags. See memory_create for the value shapes."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names in add_tags are an error. True auto-creates them with an empty description."}
+                    "add_tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "Tags to add, same shape as memory_create's tags. Applied before remove_tags, so a key present in both ends up removed. Adding a key the memory already carries replaces its value (a key holds one value per memory)."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tag keys to remove - the key name identifies the tag (one value per key); nonexistent keys are a silent no-op."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag keys in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
                 "additionalProperties": false

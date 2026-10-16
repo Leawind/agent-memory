@@ -63,7 +63,7 @@ fn two_server_processes_share_one_db() {
         "POST",
         "/api/memories",
         Some(
-            r#"{"summary": "written by A", "content": "a", "tags": ["share"], "create_missing_tags": true}"#,
+            r#"{"summary": "written by A", "content": "a", "tags": {"share": null}, "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200);

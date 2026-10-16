@@ -40,25 +40,10 @@ pub struct Memory {
 }
 
 impl Memory {
-    /// Keys a memory carries: the prefix of every `key:value` tag. Bare tags carry no key.
-    /// Enum and number attribute values are both stored as such tags, so this is the single
-    /// source of the memory's keyed dimension.
-    pub fn tag_keys(&self) -> Vec<&str> {
-        let mut keys: Vec<&str> = Vec::new();
-        for tag in &self.tags {
-            if let Some((key, _)) = tag.split_once(':') {
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
-        }
-        keys
-    }
-
     /// First layer of progressive disclosure: summary view (no content). One compact server-local
     /// `updated` time; creation time is not exposed at this level — browsing runs on recency, and
     /// the id already encodes creation order. The typed `attributes` view is attached by the
-    /// caller (it needs the key registry; see `store::Store::attach_attributes`).
+    /// caller (see `store::Store::attributes_view`).
     pub fn summary_view(&self) -> Value {
         json!({
             "id": self.id,
@@ -175,32 +160,59 @@ pub fn parse_number_text(text: &str) -> Option<String> {
     canonical_number(&n)
 }
 
-/// Compose the stored tag name for a validated (key, value) pair. Both parts are pre-validated
-/// (identifier rule, or canonical number on the value side), so the result carries exactly one
-/// colon. Internal: input paths qualify values via `attributes`, never by naming this directly.
+/// Compose the display form of a (key, value) pair: the bare key when the value is absent, the
+/// colon-joined `key:value` otherwise. Both parts are pre-validated, so the composed form carries
+/// exactly one colon. Internal: input paths qualify values via the tags object, never by naming
+/// this directly.
 pub fn compose_value_tag(key: &str, value: &str) -> String {
     format!("{key}:{value}")
 }
 
-/// Validate a stored tag name read back from a dump: a bare identifier, or the internally
-/// composed `key:value` form with an identifier key and an identifier or canonical-number
-/// value. Input paths reject colons; this is the import-side counterpart for names the store
-/// composes itself.
-pub fn validate_stored_tag_name(raw: &str) -> Result<String, String> {
-    let t = raw.trim();
-    match t.split_once(':') {
-        None => normalize_tag_name(t),
-        Some((key, value)) => {
-            normalize_tag_name(key)?;
-            if normalize_tag_name(value).is_ok() || parse_number_text(value).is_some() {
-                Ok(t.to_string())
-            } else {
-                Err(format!(
-                    "invalid stored tag name '{t}': the value part must be an identifier word or a number"
+/// A tag as the wire carries it: key name plus optional value (`None` = bare tag). One key holds
+/// one value per memory.
+pub type TagPair = (String, Option<String>);
+
+/// API limit: at most this many tags (keys) on one memory per write.
+pub const MAX_TAGS_PER_MEMORY: usize = 64;
+
+/// Normalize a tags object (`{key: value|null}`) into pairs: keys follow the identifier rule,
+/// values are identifier words, canonical numbers or null (a bare tag). A key is unique per
+/// memory, which the JSON object encodes structurally — duplicate keys cannot be expressed.
+pub fn normalize_tag_pairs(
+    object: &serde_json::Map<String, Value>,
+) -> Result<Vec<TagPair>, String> {
+    if object.len() > MAX_TAGS_PER_MEMORY {
+        return Err(format!(
+            "at most {MAX_TAGS_PER_MEMORY} tags per memory are allowed"
+        ));
+    }
+    let mut pairs = Vec::with_capacity(object.len());
+    for (raw_key, value) in object {
+        let key = normalize_key_name(raw_key)?;
+        let pair = match value {
+            Value::Null => (key, None),
+            Value::String(text) => {
+                normalize_tag_name(text).map_err(|_| {
+                    format!(
+                        "tag '{key}': string values must be identifier words (letters, digits, '_', '-', '.'), got '{text}'"
+                    )
+                })?;
+                (key, Some(text.clone()))
+            }
+            Value::Number(n) => {
+                let canonical = canonical_number(n)
+                    .ok_or_else(|| format!("tag '{key}': {n} is not a finite number"))?;
+                (key, Some(canonical))
+            }
+            other => {
+                return Err(format!(
+                    "tag '{key}' must map to a string, number or null (a bare tag), got {other} — bools are not values (presence flags are bare tags)"
                 ))
             }
-        }
+        };
+        pairs.push(pair);
     }
+    Ok(pairs)
 }
 
 /// Identity name normalization: trim surrounding whitespace and cap length (same rules as tag names).
@@ -304,31 +316,35 @@ mod tests {
         assert_eq!(parse_number_text("abc"), None);
         assert_eq!(parse_number_text(""), None);
         assert_eq!(parse_number_text("1_000"), None);
-        // Composed names carry exactly one colon; import accepts what the store composes
-        assert_eq!(
-            validate_stored_tag_name("count:42"),
-            Ok("count:42".to_string())
-        );
-        assert_eq!(
-            validate_stored_tag_name("count:-3"),
-            Ok("count:-3".to_string())
-        );
-        assert!(validate_stored_tag_name("count:abc:def").is_err());
-        assert!(validate_stored_tag_name("has space:1").is_err());
-        assert_eq!(validate_stored_tag_name(" plain "), Ok("plain".to_string()));
     }
 
     #[test]
-    fn tag_keys_come_from_colon_tags() {
-        let m = Memory {
-            id: "m1".into(),
-            summary: "s".into(),
-            content: String::new(),
-            tags: vec!["project:a".into(), "project:b".into(), "rust".into()],
-            created_at: 1,
-            updated_at: 2,
-        };
-        assert_eq!(m.tag_keys(), vec!["project"]);
+    fn tag_pairs_normalize_from_the_wire_object() {
+        let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+            r#"{"rust": null, "project": "agent-memory", "count": 2.5, "big": 1e300}"#,
+        )
+        .unwrap();
+        let mut pairs = normalize_tag_pairs(&object).unwrap();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("big".to_string(), Some("1e300".to_string())),
+                ("count".to_string(), Some("2.5".to_string())),
+                ("project".to_string(), Some("agent-memory".to_string())),
+                ("rust".to_string(), None),
+            ]
+        );
+        for (body, expected) in [
+            (r#"{"project": ["a"]}"#, "must map to"),
+            (r#"{"project": true}"#, "bools are not values"),
+            (r#"{"project": "has space"}"#, "identifier words"),
+        ] {
+            let object =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(body).unwrap();
+            let err = normalize_tag_pairs(&object).unwrap_err();
+            assert!(err.contains(expected), "{body}: got {err}");
+        }
     }
 
     #[test]

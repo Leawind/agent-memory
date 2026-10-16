@@ -111,8 +111,13 @@ mod tests {
         let path = temp_db("tx");
         cleanup(&path);
         let r: Result<(), String> = with_db_in(&path, TxMode::Write, |st| {
-            let ids = st.link_tags(&["t".into()], true)?.ids;
-            st.insert_memory("s", "c", &ids, 1, 1)?;
+            let links: Vec<(i64, Option<String>)> = st
+                .link_keys(&[("t".into(), None)], true)?
+                .ids
+                .into_iter()
+                .map(|i| (i, None))
+                .collect();
+            st.insert_memory("s", "c", &links, 1, 1)?;
             Err("boom".into())
         });
         assert!(r.is_err());

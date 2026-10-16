@@ -7,6 +7,15 @@ use std::collections::HashMap;
 
 use super::Store;
 
+/// An exact-tag list filter names one tag in display form: split into the key and the optional
+/// value half so the SQL can match the relation row (`IS` matches the bare NULL as well).
+fn split_tag_filter(tag: Option<&str>) -> (Option<&str>, Option<&str>) {
+    match tag.and_then(|t| t.split_once(':')) {
+        Some((key, value)) => (Some(key), Some(value)),
+        None => (tag, None),
+    }
+}
+
 /// The AND-composed optional filters of a list query: `tag` is one exact tag name (internal use:
 /// the memory:// resource face); `id_set` is a JSON array text of internal memory ids (the
 /// resolved tag expression, regex atoms included). `None` = no constraint.
@@ -38,12 +47,13 @@ impl Store {
         Ok(out)
     }
 
-    /// Insert a memory and link it by internal tag ids (the handler resolves ids via `link_tags` first).
+    /// Insert a memory and link the given (key id, value) relations (the handler resolves ids
+    /// via `link_keys` first).
     pub fn insert_memory(
         &self,
         summary: &str,
         content: &str,
-        tag_ids: &[i64],
+        links: &[(i64, Option<String>)],
         created_at: u64,
         updated_at: u64,
     ) -> Result<i64, String> {
@@ -54,7 +64,7 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
         let id = self.conn.last_insert_rowid();
-        self.set_memory_tags(id, tag_ids)?;
+        self.set_memory_keys(id, links)?;
         Ok(id)
     }
 
@@ -80,16 +90,27 @@ impl Store {
         Ok(Some(m))
     }
 
+    /// The memory's tags as display names: bare keys as-is, valued relations composed `key:value`.
     fn tags_of(&self, id: i64) -> Result<Vec<String>, String> {
         let mut st = self
             .conn
             .prepare(sql::MEMORY_TAGS_OF)
             .map_err(|e| e.to_string())?;
         let rows = st
-            .query_map([id], |r| r.get::<_, String>(0))
+            .query_map([id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|(key, value)| match value {
+                        Some(v) => crate::model::compose_value_tag(&key, &v),
+                        None => key,
+                    })
+                    .collect()
+            })
     }
 
     /// All memories (with tags, id ascending), for the in-memory searcher.
@@ -119,13 +140,23 @@ impl Store {
             .prepare(sql::MEMORY_TAG_PAIRS)
             .map_err(|e| e.to_string())?;
         let pairs = tag_stmt
-            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         let mut by_memory: HashMap<i64, Vec<String>> = HashMap::new();
-        for (mid, name) in pairs {
-            by_memory.entry(mid).or_default().push(name);
+        for (mid, name, value) in pairs {
+            let display = match value {
+                Some(v) => crate::model::compose_value_tag(&name, &v),
+                None => name,
+            };
+            by_memory.entry(mid).or_default().push(display);
         }
         for m in &mut out {
             let id = Self::parse_id(&m.id).unwrap_or(0);
@@ -156,11 +187,12 @@ impl Store {
         let state = state.unwrap_or("active");
         let query_time = crate::model::now() as i64;
         let dir: i64 = if asc { 1 } else { -1 };
+        let (tag_key, tag_value) = split_tag_filter(tag);
         let total: u64 = self
             .conn
             .query_row(
                 sql::MEMORY_LIST_COUNT,
-                params![tag, id_set, state, query_time],
+                params![tag_key, id_set, state, query_time, tag_value],
                 |r| r.get::<_, i64>(0),
             )
             .map(|n| n as u64)
@@ -172,14 +204,15 @@ impl Store {
         let rows = st
             .query_map(
                 params![
-                    tag,
+                    tag_key,
                     id_set,
                     sort,
                     dir,
                     limit as i64,
                     offset as i64,
                     state,
-                    query_time
+                    query_time,
+                    tag_value
                 ],
                 |r| {
                     let created: i64 = r.get(3)?;
@@ -222,15 +255,15 @@ impl Store {
     /// *content* timeline: it is written only when summary/content change (inside
     /// MEMORY_UPDATE_FIELDS), so curating tags never pushes an old memory back to the top of the
     /// default newest-first browse — the field values agents read did not move.
-    /// Tags are added/removed by internal id (add is resolved by the handler via `link_tags` first, remove via
-    /// `tag_ids_for_names` — nonexistent names are skipped silently).
+    /// Tags are added/removed by internal key id (add is resolved by the handler via `link_keys`
+    /// first, remove via `tag_ids_for_keys` — nonexistent keys are skipped silently).
     pub fn update_memory(
         &self,
         id: i64,
         summary: Option<&str>,
         content: Option<&str>,
-        add_tag_ids: &[i64],
-        remove_tag_ids: &[i64],
+        add_links: &[(i64, Option<String>)],
+        remove_key_ids: &[i64],
     ) -> Result<bool, String> {
         if !self.memory_exists(id)? {
             return Err(format!(
@@ -239,18 +272,23 @@ impl Store {
             ));
         }
         let mut changed = false;
-        let mut final_tags = self.original_tag_ids(id)?;
-        for tag_id in add_tag_ids {
-            if !final_tags.contains(tag_id) {
-                final_tags.push(*tag_id);
+        // Relations as a comparable row set: adds upsert the key's value, removals drop rows
+        // (contract: add_tags runs before remove_tags, so a key in both lists ends up removed).
+        let mut rows = self.tag_rows_for(id)?;
+        let mut before: Vec<(i64, Option<String>)> =
+            rows.iter().map(|(id, _, v)| (*id, v.clone())).collect();
+        before.sort();
+        for (key_id, value) in add_links {
+            match rows.iter_mut().find(|(rid, _, _)| rid == key_id) {
+                Some(row) => row.2 = value.clone(),
+                None => rows.push((*key_id, String::new(), value.clone())),
             }
         }
-        final_tags.retain(|id| !remove_tag_ids.contains(id));
-        let mut sorted_original = self.original_tag_ids(id)?;
-        sorted_original.sort_unstable();
-        final_tags.sort_unstable();
-        final_tags.dedup();
-        changed |= sorted_original != final_tags;
+        rows.retain(|(rid, _, _)| !remove_key_ids.contains(rid));
+        let mut after: Vec<(i64, Option<String>)> =
+            rows.iter().map(|(id, _, v)| (*id, v.clone())).collect();
+        after.sort();
+        changed |= before != after;
         if summary.is_some() || content.is_some() {
             self.conn
                 .execute(
@@ -263,10 +301,10 @@ impl Store {
             self.embedding_delete(id)?;
             changed = true;
         }
-        // Contract (defs.rs): add_tags runs before remove_tags; when both lists contain the same
-        // tag the final result is removal (the explicit remove intent wins). Tag-only changes do
-        // not touch updated_at — see the doc above.
-        self.set_memory_tags(id, &final_tags)?;
+        // Tag-only changes do not touch updated_at — see the doc above.
+        let links: Vec<(i64, Option<String>)> =
+            rows.into_iter().map(|(rid, _, v)| (rid, v)).collect();
+        self.set_memory_keys(id, &links)?;
         Ok(changed)
     }
 
@@ -303,11 +341,21 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Test helper: link tags by name and insert a memory (the production path resolves ids in the handler).
+    /// Test helper: link tag pairs by key and insert a memory (the production path resolves ids in the handler).
     fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
-        let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        let ids = st.link_tags(&names, true).unwrap().ids;
-        st.insert_memory(summary, content, &ids, at, at).unwrap()
+        let pairs: Vec<crate::model::TagPair> = tags
+            .iter()
+            .map(|t| match t.split_once(':') {
+                Some((k, v)) => (k.to_string(), Some(v.to_string())),
+                None => (t.to_string(), None),
+            })
+            .collect();
+        let ids = st.link_keys(&pairs, true).unwrap().ids;
+        let links: Vec<(i64, Option<String>)> = ids
+            .into_iter()
+            .zip(pairs.into_iter().map(|(_, v)| v))
+            .collect();
+        st.insert_memory(summary, content, &links, at, at).unwrap()
     }
 
     #[test]
@@ -330,11 +378,13 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].tags, vec!["notes".to_string(), "rust".to_string()]);
 
-        // Update: change fields + add/remove tags (name → id resolution goes through the same path as the handler)
-        let add = st.link_tags(&["study".into()], true).unwrap();
-        let remove = st.tag_ids_for_names(&["notes".into()]).unwrap();
+        // Update: change fields + add/remove tags (key → id resolution goes through the same path as the handler)
+        let add = st.link_keys(&[("study".into(), None)], true).unwrap();
+        let add_links: Vec<(i64, Option<String>)> =
+            add.ids.into_iter().map(|i| (i, None)).collect();
+        let remove = st.tag_ids_for_keys(&["notes".into()]).unwrap();
         let changed = st
-            .update_memory(id, Some("new summary"), None, &add.ids, &remove)
+            .update_memory(id, Some("new summary"), None, &add_links, &remove)
             .unwrap();
         assert!(changed);
         let (found, missing) = st.get_memories(&[id]).unwrap();
@@ -469,9 +519,14 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         let id = insert_with_tags(&st, "s", "c", &["a"], 1);
-        let add = st.link_tags(&["a".into(), "b".into()], true).unwrap();
-        let remove = st.tag_ids_for_names(&["a".into()]).unwrap();
-        st.update_memory(id, None, None, &add.ids, &remove).unwrap();
+        let add = st
+            .link_keys(&[("a".into(), None), ("b".into(), None)], true)
+            .unwrap();
+        let add_links: Vec<(i64, Option<String>)> =
+            add.ids.into_iter().map(|i| (i, None)).collect();
+        let remove = st.tag_ids_for_keys(&["a".into()]).unwrap();
+        st.update_memory(id, None, None, &add_links, &remove)
+            .unwrap();
         let (found, _) = st.get_memories(&[id]).unwrap();
         assert_eq!(found[0].tags, vec!["b".to_string()]);
         cleanup(&path);
@@ -490,8 +545,10 @@ mod tests {
 
         // Tag-only change on the older memory: changed, but its updated_at is untouched, so the
         // default updated_at-desc listing keeps the genuinely newer memory first
-        let add = st.link_tags(&["b".into()], true).unwrap();
-        let changed = st.update_memory(old, None, None, &add.ids, &[]).unwrap();
+        let add = st.link_keys(&[("b".into(), None)], true).unwrap();
+        let add_links: Vec<(i64, Option<String>)> =
+            add.ids.into_iter().map(|i| (i, None)).collect();
+        let changed = st.update_memory(old, None, None, &add_links, &[]).unwrap();
         assert!(changed);
         let (_, page) = st
             .list_memories(Default::default(), "updated_at", false, 0, 10)
@@ -508,9 +565,11 @@ mod tests {
 
         // ...and a no-op change (existing tag re-added) touches nothing at all
         let (before, _) = st.get_memories(&[fresh]).unwrap();
-        let existing = st.link_tags(&["a".into()], true).unwrap();
+        let existing = st.link_keys(&[("a".into(), None)], true).unwrap();
+        let existing_links: Vec<(i64, Option<String>)> =
+            existing.ids.into_iter().map(|i| (i, None)).collect();
         let changed = st
-            .update_memory(fresh, None, None, &existing.ids, &[])
+            .update_memory(fresh, None, None, &existing_links, &[])
             .unwrap();
         assert!(!changed);
         let (after, _) = st.get_memories(&[fresh]).unwrap();

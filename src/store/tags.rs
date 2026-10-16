@@ -7,15 +7,15 @@ use std::collections::HashMap;
 
 use super::{is_unique_violation, Store};
 
-/// Link result for a batch of tag names (see `link_tags`).
+/// Link result for a batch of tag keys (see `link_keys`).
 pub struct TagLinkage {
-    /// Internal tag ids aligned one-to-one with the input names (invisible externally).
+    /// Internal key ids aligned one-to-one with the input keys (invisible externally).
     pub ids: Vec<i64>,
-    /// Tag names created by this call.
+    /// Keys created by this call.
     pub autocreated: Vec<String>,
-    /// Tag names that already existed and were reused.
+    /// Keys that already existed and were reused.
     pub reused: Vec<String>,
-    /// Reused tags with an empty description (hinting to fill it in).
+    /// Reused keys with an empty description (hinting to fill it in).
     pub missing_description: Vec<String>,
 }
 
@@ -177,24 +177,31 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// Resolve tag names to linkable tags. With `create_missing` the missing names are auto-created
-    /// (empty description) and classified into `autocreated` / `reused` / `missing_description`;
-    /// without it, unknown names are an error that names each one and any case-variant already in
-    /// the store — the agent decides between reusing, an explicit tag_create, or opting into
+    /// Resolve tag pairs to linkable keys: the key half is the vocabulary entry, the value half
+    /// rides the relation row. With `create_missing` unknown keys are auto-created (empty
+    /// description) and classified into `autocreated` / `reused` / `missing_description`; without
+    /// it, unknown keys are an error that names each one and any case-variant already in the
+    /// store — the agent decides between reusing, an explicit tag_create, or opting into
     /// auto-creation, so the taxonomy cannot rot through casual tagging.
     ///
-    /// `ids` corresponds one-to-one with the input names; `autocreated` holds tags created this
-    /// time, `reused` the already-existing ones, and `missing_description` the reused tags with an
+    /// `ids` corresponds one-to-one with the input pairs; `autocreated` holds keys created this
+    /// time, `reused` the already-existing ones, and `missing_description` the reused keys with an
     /// empty description (usually left over from earlier auto-creation — left to the caller whether
     /// to remind about filling them in).
-    pub fn link_tags(&self, names: &[String], create_missing: bool) -> Result<TagLinkage, String> {
+    pub fn link_keys(
+        &self,
+        pairs: &[crate::model::TagPair],
+        create_missing: bool,
+    ) -> Result<TagLinkage, String> {
         if !create_missing {
             let mut unknown: Vec<String> = Vec::new();
-            for n in names {
-                if !self.tag_exists(n)? {
-                    match self.find_tag_case_insensitive(n)? {
-                        Some(similar) => unknown.push(format!("'{n}' (did you mean '{similar}'?)")),
-                        None => unknown.push(format!("'{n}'")),
+            for (key, _) in pairs {
+                if !self.tag_exists(key)? {
+                    match self.find_tag_case_insensitive(key)? {
+                        Some(similar) => {
+                            unknown.push(format!("'{key}' (did you mean '{similar}'?)"))
+                        }
+                        None => unknown.push(format!("'{key}'")),
                     }
                 }
             }
@@ -206,27 +213,30 @@ impl Store {
             }
         }
         let mut out = TagLinkage {
-            ids: Vec::with_capacity(names.len()),
+            ids: Vec::with_capacity(pairs.len()),
             autocreated: Vec::new(),
             reused: Vec::new(),
             missing_description: Vec::new(),
         };
-        for n in names {
+        for (key, _) in pairs {
             let inserted = self
                 .conn
-                .execute(sql::TAG_AUTOCREATE, params![n, crate::model::now() as i64])
+                .execute(
+                    sql::TAG_AUTOCREATE,
+                    params![key, crate::model::now() as i64],
+                )
                 .map_err(|e| e.to_string())?;
             let (id, description): (i64, String) = self
                 .conn
-                .query_row(sql::TAG_BY_NAME, [n], |r| Ok((r.get(0)?, r.get(1)?)))
+                .query_row(sql::TAG_BY_NAME, [key], |r| Ok((r.get(0)?, r.get(1)?)))
                 .map_err(|e| e.to_string())?;
             out.ids.push(id);
             if inserted > 0 {
-                out.autocreated.push(n.clone());
+                out.autocreated.push(key.clone());
             } else {
-                out.reused.push(n.clone());
+                out.reused.push(key.clone());
                 if description.is_empty() {
-                    out.missing_description.push(n.clone());
+                    out.missing_description.push(key.clone());
                 }
             }
         }
@@ -245,11 +255,11 @@ impl Store {
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
-    /// Resolve existing tag names to internal ids; nonexistent names are skipped outright (matching the old
+    /// Resolve existing key names to internal ids; nonexistent keys are skipped outright (matching the
     /// silent no-op semantics of unlink-by-name).
-    pub fn tag_ids_for_names(&self, names: &[String]) -> Result<Vec<i64>, String> {
-        let mut ids = Vec::with_capacity(names.len());
-        for n in names {
+    pub fn tag_ids_for_keys(&self, keys: &[String]) -> Result<Vec<i64>, String> {
+        let mut ids = Vec::with_capacity(keys.len());
+        for n in keys {
             let id = match self
                 .conn
                 .query_row(sql::TAG_BY_NAME, [n], |r| r.get::<_, i64>(0))
@@ -278,38 +288,27 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    fn origin_rows(&self, id: i64) -> Result<Vec<(i64, String, bool, bool)>, String> {
+    /// The memory's tag relations as (key id, key name, value) rows — one row per key, the
+    /// value `None` for bare tags.
+    pub fn tag_rows_for(&self, id: i64) -> Result<Vec<(i64, String, Option<String>)>, String> {
         let mut statement = self
             .conn
             .prepare(sql::MEMORY_TAG_ORIGINS)
             .map_err(|e| e.to_string())?;
         let rows = statement
-            .query_map([id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
+            .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
-    /// Tags the memory itself carries (every tag is original since derivations were removed;
-    /// the flag column remains for schema stability).
-    pub fn original_tag_ids(&self, id: i64) -> Result<Vec<i64>, String> {
-        Ok(self
-            .origin_rows(id)?
-            .into_iter()
-            .filter(|(_, _, original, _)| *original)
-            .map(|(id, _, _, _)| id)
-            .collect())
-    }
-
-    /// Replace a memory's tag links wholesale (all marked original).
-    pub fn set_memory_tags(&self, id: i64, tag_ids: &[i64]) -> Result<(), String> {
+    /// Replace a memory's tag relations wholesale.
+    pub fn set_memory_keys(&self, id: i64, links: &[(i64, Option<String>)]) -> Result<(), String> {
         self.conn
             .execute(sql::MEMORY_CLEAR_TAGS, [id])
             .map_err(|e| e.to_string())?;
-        for tag_id in tag_ids {
+        for (key_id, value) in links {
             self.conn
-                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id, true, false])
+                .execute(sql::MEMORY_LINK_TAG, params![id, key_id, value])
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
@@ -318,7 +317,7 @@ impl Store {
     /// A tag can be deleted only when no named predicate binds its id (decay rules reference
     /// keys, not individual tags, so they no longer block tag deletion).
     pub fn assert_tag_deletable(&self, name: &str) -> Result<(), String> {
-        let ids = self.tag_ids_for_names(&[name.to_string()])?;
+        let ids = self.tag_ids_for_keys(&[name.to_string()])?;
         if let Some(id) = ids.first() {
             if self
                 .predicate_rows(None)?
@@ -360,23 +359,33 @@ mod tests {
     use super::super::test_support::{cleanup, temp_db};
     use super::*;
 
-    /// Test helper: link tags by name and insert a memory (the production path resolves ids in the handler).
+    /// Test helper: link tag pairs by key and insert a memory (the production path resolves ids in the handler).
     fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
-        let names: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        let ids = st.link_tags(&names, true).unwrap().ids;
-        st.insert_memory(summary, content, &ids, at, at).unwrap()
+        let pairs: Vec<crate::model::TagPair> = tags
+            .iter()
+            .map(|t| match t.split_once(':') {
+                Some((k, v)) => (k.to_string(), Some(v.to_string())),
+                None => (t.to_string(), None),
+            })
+            .collect();
+        let ids = st.link_keys(&pairs, true).unwrap().ids;
+        let links: Vec<(i64, Option<String>)> = ids
+            .into_iter()
+            .zip(pairs.into_iter().map(|(_, v)| v))
+            .collect();
+        st.insert_memory(summary, content, &links, at, at).unwrap()
     }
 
-    /// link_tags' three-way classification: created / reused / reused-missing-description; ids align with the input name by name.
+    /// link_keys' three-way classification: created / reused / reused-missing-description; ids align with the input pairs one-to-one.
     #[test]
-    fn link_tags_classifies_autocreated_reused_and_missing_description() {
+    fn link_keys_classifies_autocreated_reused_and_missing_description() {
         let path = temp_db("link-tags");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         st.tag_create("described", "has description").unwrap();
 
         let first = st
-            .link_tags(&["described".into(), "fresh".into()], true)
+            .link_keys(&[("described".into(), None), ("fresh".into(), None)], true)
             .unwrap();
         assert_eq!(first.autocreated, vec!["fresh".to_string()]);
         assert_eq!(first.reused, vec!["described".to_string()]);
@@ -385,7 +394,7 @@ mod tests {
 
         // Second call reuses everything; fresh, auto-created earlier with an empty description → lands in missing_description
         let second = st
-            .link_tags(&["described".into(), "fresh".into()], true)
+            .link_keys(&[("described".into(), None), ("fresh".into(), None)], true)
             .unwrap();
         assert!(second.autocreated.is_empty());
         assert_eq!(
@@ -463,8 +472,9 @@ mod tests {
         st.tag_create("x", "").unwrap();
         let all = st.all_memories().unwrap();
         let b_id = Store::parse_id(&all[1].id).unwrap();
-        let x_id = st.tag_ids_for_names(&["x".into()]).unwrap();
-        st.update_memory(b_id, None, None, &x_id, &[]).unwrap();
+        let x_id = st.tag_ids_for_keys(&["x".into()]).unwrap();
+        st.update_memory(b_id, None, None, &[(x_id[0], None)], &[])
+            .unwrap();
         let deleted = st.tag_delete_purge("x").unwrap();
         assert_eq!(deleted.len(), 1);
         assert_eq!(st.all_memories().unwrap().len(), 2);

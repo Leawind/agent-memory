@@ -18,7 +18,7 @@ fn cli_subcommands_work() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "cli test memory", "content": "body", "tags": ["cli"], "create_missing_tags": true}"#,
+                r#"{"summary": "cli test memory", "content": "body", "tags": {"cli": null}, "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);
@@ -76,7 +76,7 @@ fn export_import_roundtrip_via_cli() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "roundtrip 记忆甲", "content": "内容甲", "tags": ["tag甲"], "create_missing_tags": true}"#,
+                r#"{"summary": "roundtrip 记忆甲", "content": "内容甲", "tags": {"tag甲": null}, "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);
@@ -85,7 +85,7 @@ fn export_import_roundtrip_via_cli() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "roundtrip 记忆乙", "content": "内容乙", "tags": ["tag乙"], "create_missing_tags": true}"#,
+                r#"{"summary": "roundtrip 记忆乙", "content": "内容乙", "tags": {"tag乙": null}, "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);

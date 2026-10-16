@@ -5,9 +5,9 @@
 -- 等新迁移文件，绝不改写已发布的迁移——迁移运行器按 `PRAGMA user_version`
 -- 记录已应用数量，逐个事务执行，保证每个迁移恰好应用一次。
 
--- tags：标签自带代理主键 id（系统内部属性，对 MCP 使用者不可见）。
--- 标签名唯一非空，是对外的唯一标识；改名只动 name，id 恒定，
--- 记忆与标签的关联因此不受改名影响。
+-- tags：键词汇表。标签统一为"可以有值的键值对"：tags 行是键（裸标签名或
+-- key:value 的键半段），值不进词汇表、存于关系行。标签名唯一非空，是对外的
+-- 唯一标识；改名只动 name，id 恒定，记忆与标签的关联因此不受改名影响。
 
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,14 +24,13 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at INTEGER NOT NULL
 );
 
--- memory_tags 只存 tag id，不冗余标签名（改名零成本、不留陈旧名）。
+-- memory_tags 只存键引用与可空值（NULL 即裸标签）；一键一值由主键兜底，
+-- 不冗余键名（改名零成本、不留陈旧名）。
 
 CREATE TABLE IF NOT EXISTS memory_tags (
     memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    original INTEGER NOT NULL DEFAULT 1 CHECK (original IN (0, 1)),
-    derived INTEGER NOT NULL DEFAULT 0 CHECK (derived IN (0, 1)),
-    CHECK (original = 1 OR derived = 1),
+    value TEXT,
     PRIMARY KEY (memory_id, tag_id)
 );
 

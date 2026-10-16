@@ -1,13 +1,15 @@
 //! Memory management: CRUD, browsing and search (the carrier of progressive disclosure).
 
 use crate::auth::IdentityCtx;
-use crate::model::{normalize_id, now, RESERVED_TAG};
+use crate::model::{
+    normalize_id, normalize_tag_name, normalize_tag_pairs, now, TagPair, RESERVED_TAG,
+};
 use crate::search;
 use crate::store::{ListFilter, Store};
 use crate::tag_expr::{self, TagExpr};
 use crate::tools::params::{
-    normalize_tag_list, opt_bool, opt_str, opt_str_list, opt_u64, req_id_list, req_str,
-    validate_content, validate_summary,
+    opt_bool, opt_str, opt_str_list, opt_u64, req_id_list, req_str, validate_content,
+    validate_summary,
 };
 use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
@@ -23,14 +25,20 @@ fn resolve_tag_expr(st: &Store, ctx: &IdentityCtx, raw: &str) -> Result<TagExpr,
         )
         .map_err(ToolError::invalid)?;
     let mut unknown: Vec<String> = Vec::new();
+    // Leaf names are display forms: a valued `key:value` leaf validates its KEY against the
+    // vocabulary (values are per-memory data, not vocabulary), a bare leaf validates itself.
     for name in expr.tag_names() {
-        if !st.tag_exists(name).map_err(ToolError::invalid)? {
+        let key = match name.split_once(':') {
+            Some((key, _)) => key,
+            None => name,
+        };
+        if !st.tag_exists(key).map_err(ToolError::invalid)? {
             match st
-                .find_tag_case_insensitive(name)
+                .find_tag_case_insensitive(key)
                 .map_err(ToolError::invalid)?
             {
-                Some(similar) => unknown.push(format!("'{name}' (did you mean '{similar}'?)")),
-                None => unknown.push(format!("'{name}'")),
+                Some(similar) => unknown.push(format!("'{key}' (did you mean '{similar}'?)")),
+                None => unknown.push(format!("'{key}'")),
             }
         }
     }
@@ -74,30 +82,35 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(c) if !c.trim().is_empty() => validate_content(&c)?,
         _ => String::new(),
     };
-    let raw_tags = opt_str_list(args, "tags")?.unwrap_or_default();
-    let tags = normalize_tag_list(&raw_tags)?;
+    // One tags object: keys map to a value (string or number) or null for a bare tag. A key is
+    // unique per memory, which the object encodes structurally.
+    let tags: Vec<TagPair> = match args.get("tags") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(object)) => normalize_tag_pairs(object).map_err(ToolError::invalid)?,
+        Some(other) => {
+            return Err(ToolError::invalid(format!(
+                "tags must be an object mapping key names to values (string, number or null), got {other}"
+            )))
+        }
+    };
     // Default off: unknown tags are an error listing similar existing ones, keeping the taxonomy
     // from rotting through casual tagging; the agent opts into auto-creation explicitly.
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    // Structured key:value attributes: keys are identifier names unique per memory, values are
-    // identifier words or numbers — they link through the tag pipeline like any other tag.
-    let resolved = match args.get("attributes") {
-        None | Some(Value::Null) => None,
-        Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
-    };
-    let mut all_tags = tags;
-    if let Some(resolved) = &resolved {
-        all_tags.extend(resolved.iter().cloned());
-    }
 
-    let linkage = st.link_tags(&all_tags, create_missing)?;
+    let linkage = st.link_keys(&tags, create_missing)?;
+    let links: Vec<(i64, Option<String>)> = linkage
+        .ids
+        .iter()
+        .copied()
+        .zip(tags.iter().map(|(_, v)| v.clone()))
+        .collect();
 
     // Duplicate detection (deterministic rule: titles exactly equal after normalization). Computed before insertion so the memory cannot match itself.
     // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
     let duplicate_of = st.find_duplicates_by_summary(&summary)?;
 
     let ts = now();
-    let id = st.insert_memory(&summary, &content, &linkage.ids, ts, ts)?;
+    let id = st.insert_memory(&summary, &content, &links, ts, ts)?;
     // Echo-free response: the caller just stated summary/content/tags, so none of them come back —
     // only the facts it cannot derive (id, server timestamp) plus the sparse write companions
     // (three-way tag-link classification minus the derivable reused set, duplicate hints), each
@@ -122,6 +135,15 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         append_note(&mut out, id_reference_note(&refs));
     }
     Ok(out)
+}
+
+/// remove_tags carries key names: the same identifier rule as tag names (a colon inside a name
+/// would make the keyed qualification ambiguous).
+fn normalize_tag_name_list(names: &[String]) -> Result<Vec<String>, ToolError> {
+    names
+        .iter()
+        .map(|n| normalize_tag_name(n).map_err(ToolError::invalid))
+        .collect()
 }
 
 fn state_filter(args: &Map<String, Value>) -> Result<String, ToolError> {
@@ -561,62 +583,47 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(_) => Some(String::new()),
         None => None,
     };
-    let add_tags = match opt_str_list(args, "add_tags")? {
-        Some(l) => Some(normalize_tag_list(&l)?),
-        None => None,
+    // Incremental tag edits: `add_tags` maps keys to values (upserting the key's value on the
+    // memory), `remove_tags` lists key names whose relation rows are dropped — one key holds one
+    // value, so the key name identifies at most one tag. Restating untouched tags is never needed.
+    let add_tags: Option<Vec<TagPair>> = match args.get("add_tags") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(object)) => {
+            Some(normalize_tag_pairs(object).map_err(ToolError::invalid)?)
+        }
+        Some(other) => {
+            return Err(ToolError::invalid(format!(
+                "add_tags must be an object mapping key names to values (string, number or null), got {other}"
+            )))
+        }
     };
     let remove_tags = match opt_str_list(args, "remove_tags")? {
-        Some(l) => Some(normalize_tag_list(&l)?),
+        Some(l) => Some(normalize_tag_name_list(&l)?),
         None => None,
     };
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    // `attributes` is the replacement for the memory's whole keyed set: every `key:value` tag
-    // on the memory is unlinked first ({} clears all keyed values), then the given values link
-    // as ordinary `key:value` tags. Input tag arrays cannot carry colons, so this is the only
-    // write path for keyed values — and a key is unique per memory by construction.
-    let resolved = match args.get("attributes").filter(|v| !v.is_null()) {
-        Some(value) => Some(st.resolve_attributes(value).map_err(ToolError::invalid)?),
-        None => None,
-    };
-    if summary.is_none()
-        && content.is_none()
-        && add_tags.is_none()
-        && remove_tags.is_none()
-        && resolved.is_none()
-    {
+    if summary.is_none() && content.is_none() && add_tags.is_none() && remove_tags.is_none() {
         return Err(ToolError::invalid(
-            "nothing to update: provide summary, content, add_tags, remove_tags and/or attributes",
+            "nothing to update: provide summary, content, add_tags and/or remove_tags",
         ));
     }
 
     // Resolve tags first (the tags table is what changes), then update the memory — the order matches the error messages.
     let mut linkage_opt = None;
-    let mut remove_ids: Vec<i64> = Vec::new();
+    let mut add_links: Vec<(i64, Option<String>)> = Vec::new();
     if let Some(add) = &add_tags {
-        linkage_opt = Some(st.link_tags(add, create_missing)?);
+        let linkage = st.link_keys(add, create_missing)?;
+        add_links = linkage
+            .ids
+            .iter()
+            .copied()
+            .zip(add.iter().map(|(_, v)| v.clone()))
+            .collect();
+        linkage_opt = Some(linkage);
     }
+    let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(remove) = &remove_tags {
-        remove_ids = st.tag_ids_for_names(remove)?;
-    }
-    let value_add_ids;
-    if let Some(resolved) = &resolved {
-        // Whole-set replacement: every keyed tag the memory carries is unlinked, then the
-        // replacement links ({} = the empty set, clearing all keyed values)
-        let current = st
-            .get_memories(&[id])?
-            .0
-            .first()
-            .map(|m| m.tags.clone())
-            .unwrap_or_default();
-        let keyed: Vec<String> = current.into_iter().filter(|t| t.contains(':')).collect();
-        remove_ids.extend(st.tag_ids_for_names(&keyed)?);
-        if !resolved.is_empty() {
-            value_add_ids = st.link_tags(resolved, create_missing)?.ids;
-        } else {
-            value_add_ids = Vec::new();
-        }
-    } else {
-        value_add_ids = Vec::new();
+        remove_ids = st.tag_ids_for_keys(remove)?;
     }
 
     if !st.memory_exists(id)? {
@@ -625,17 +632,11 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         )));
     }
 
-    let add_ids = linkage_opt
-        .as_ref()
-        .map(|l| l.ids.clone())
-        .unwrap_or_default();
-    let mut add_ids = add_ids;
-    add_ids.extend(value_add_ids);
     let changed = st.update_memory(
         id,
         summary.as_deref(),
         content.as_deref(),
-        &add_ids,
+        &add_links,
         &remove_ids,
     )?;
 
@@ -849,15 +850,29 @@ pub fn memory_merge(
         .clone()
         .unwrap_or_else(|| format!("{}\n\n{}", target.content, source.content));
     validate_content(&merged_content)?;
-    // Source tag ids join the target (INSERT OR IGNORE dedups the overlap); no auto-creation —
-    // both memories' tags already exist by definition. Attribute values are ordinary `key:value`
-    // tags, so the union covers them.
-    let source_tag_ids = st.original_tag_ids(source_id)?;
+    // Source tags join the target; a key the target already carries stays as it is (the target
+    // is the surviving identity) and lands in keys_conflicted. No auto-creation — both memories'
+    // keys already exist by definition.
+    let source_rows = st.tag_rows_for(source_id)?;
+    let target_keys: Vec<i64> = st
+        .tag_rows_for(target_id)?
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+    let mut add_links: Vec<(i64, Option<String>)> = Vec::new();
+    let mut conflicted: Vec<String> = Vec::new();
+    for (id, name, value) in source_rows {
+        if target_keys.contains(&id) {
+            conflicted.push(name);
+        } else {
+            add_links.push((id, value));
+        }
+    }
     st.update_memory(
         target_id,
         summary.as_deref(),
         Some(&merged_content),
-        &source_tag_ids,
+        &add_links,
         &[],
     )?;
     let (deleted, _) = st.delete_memories(&[source_id])?;
@@ -877,6 +892,13 @@ pub fn memory_merge(
     let memories = st.all_memories()?;
     let inbound = inbound_references(&memories, &raw_source, "");
     let mut out = json!({});
+    if !conflicted.is_empty() {
+        out["keys_conflicted"] = json!(conflicted);
+        append_note(
+            &mut out,
+            "these keys exist on both memories; the target's values were kept".to_string(),
+        );
+    }
     if !inbound.is_empty() {
         out["referenced_by"] = json!(inbound
             .iter()

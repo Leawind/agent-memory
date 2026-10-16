@@ -451,18 +451,27 @@ impl Store {
             );
         }
 
-        // Memory ↔ tag links are taken as id pairs (memory_id ascending, tag_id ascending).
-        let mut refs: HashMap<i64, Vec<String>> = HashMap::new();
+        // Memory ↔ tag relations are taken as (tag id, value) pairs — the value half rides the
+        // relation row (null for bare tags), memory_id then tag_id ascending.
+        let mut refs: HashMap<i64, Vec<Value>> = HashMap::new();
         let mut pairs = self
             .conn
             .prepare(sql::MEMORY_TAG_ID_PAIRS)
             .map_err(|e| e.to_string())?;
         let pair_rows = pairs
-            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            })
             .map_err(|e| e.to_string())?;
         for pair in pair_rows {
-            let (memory_id, tag_id) = pair.map_err(|e| e.to_string())?;
-            refs.entry(memory_id).or_default().push(tag_id.to_string());
+            let (memory_id, tag_id, value) = pair.map_err(|e| e.to_string())?;
+            refs.entry(memory_id)
+                .or_default()
+                .push(json!([tag_id.to_string(), value]));
         }
 
         let mut memories = Map::new();
@@ -565,7 +574,7 @@ impl Store {
                 .and_then(Value::as_str)
                 .ok_or("invalid export: tag without name")?;
             let description = t.get("description").and_then(Value::as_str).unwrap_or("");
-            let name = crate::model::validate_stored_tag_name(name)?;
+            let name = crate::model::normalize_tag_name(name)?;
             if !seen_names.insert(name.clone()) {
                 return Err(format!("invalid export: duplicate tag name '{name}'"));
             }
@@ -578,14 +587,14 @@ impl Store {
             // collides: reuse the seeded row as-is (its builtin description cannot be
             // customized) and keep only genuinely created rows in the import count.
             let id = if name == crate::model::RESERVED_TAG {
-                self.tag_ids_for_names(std::slice::from_ref(&name))?
+                self.tag_ids_for_keys(std::slice::from_ref(&name))?
                     .into_iter()
                     .next()
                     .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
             } else {
                 self.tag_create(&name, &description)?;
                 created_tags += 1;
-                self.tag_ids_for_names(std::slice::from_ref(&name))?
+                self.tag_ids_for_keys(std::slice::from_ref(&name))?
                     .into_iter()
                     .next()
                     .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
@@ -623,17 +632,30 @@ impl Store {
                 .get("tags")
                 .and_then(Value::as_array)
                 .unwrap_or(&empty_tags);
-            let mut tag_ids = Vec::with_capacity(tag_refs.len());
+            let mut links: Vec<(i64, Option<String>)> = Vec::with_capacity(tag_refs.len());
             for r in tag_refs {
-                let s = r
-                    .as_str()
-                    .ok_or("invalid export: memory tags must be tag id strings")?;
+                let pair = r
+                    .as_array()
+                    .ok_or("invalid export: memory tags must be [tag id, value] pairs")?;
+                let s = pair
+                    .first()
+                    .and_then(Value::as_str)
+                    .ok_or("invalid export: memory tag pairs start with the tag id string")?;
+                let value = match pair.get(1) {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(text)) => Some(text.clone()),
+                    Some(other) => {
+                        return Err(format!(
+                            "invalid export: memory {key} has a non-string tag value: {other}"
+                        ))
+                    }
+                };
                 let id = tag_id_by_key.get(s).ok_or_else(|| {
                     format!("invalid export: memory {key} references unknown tag id '{s}'")
                 })?;
-                tag_ids.push(*id);
+                links.push((*id, value));
             }
-            let id = self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
+            let id = self.insert_memory(&summary, &content, &links, created_at, updated_at)?;
             if let Some(value) = m.get("lifecycle") {
                 let meta = serde_json::from_value(value.clone())
                     .map_err(|error| format!("invalid exported lifecycle: {error}"))?;
@@ -724,7 +746,7 @@ mod tests {
 
         // With foreign keys off, inject orphan references, reverse orphans, case conflicts and an empty title
         st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
-        let rust_id = st.link_tags(&["rust".into()], true).unwrap().ids[0];
+        let rust_id = st.link_keys(&[("rust".into(), None)], true).unwrap().ids[0];
         // Orphan reference: a link row pointing at nonexistent tag id 999
         st.conn
             .execute(
@@ -891,8 +913,9 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         st.tag_create("t", "desc").unwrap();
-        let ids = st.link_tags(&["t".into()], true).unwrap().ids;
-        st.insert_memory("s", "body", &ids, 1, 1).unwrap();
+        let ids = st.link_keys(&[("t".into(), None)], true).unwrap().ids;
+        let links: Vec<(i64, Option<String>)> = ids.iter().map(|i| (*i, None)).collect();
+        st.insert_memory("s", "body", &links, 1, 1).unwrap();
         let dump = st.export_dump().unwrap();
 
         // Derived info never enters the export (all of it is derivable from the export file itself)
@@ -905,11 +928,11 @@ mod tests {
         assert_eq!(tag["description"], "desc");
         assert!(tag.get("memory_count").is_none());
         assert!(tag.get("last_used_at").is_none());
-        // memories keyed by "m<N>", tag references by tag id string
+        // memories keyed by "m<N>", tag references as [tag id string, value] pairs
         let memory = &dump["memories"]["m1"];
         assert_eq!(memory["summary"], "s");
         assert_eq!(memory["content"], "body");
-        assert_eq!(memory["tags"], json!([tag_key]));
+        assert_eq!(memory["tags"], json!([[tag_key, null]]));
         assert_eq!(memory["created_at"], 1);
         assert_eq!(memory["updated_at"], 1);
         assert!(dump["exported_at"].as_u64().is_some());
@@ -930,16 +953,22 @@ mod tests {
         cleanup(&dst);
         let dump = {
             let st = Store::open(&src).unwrap();
-            let resolved = st
-                .resolve_attributes(&serde_json::json!({"project": "apollo", "count": 3}))
-                .unwrap();
-            let ids = st.link_tags(&resolved, true).unwrap().ids;
-            st.insert_memory("s", "body", &ids, 1, 1).unwrap();
+            let pairs: Vec<crate::model::TagPair> = vec![
+                ("project".to_string(), Some("apollo".to_string())),
+                ("count".to_string(), Some("3".to_string())),
+            ];
+            let ids = st.link_keys(&pairs, true).unwrap().ids;
+            let links: Vec<(i64, Option<String>)> = ids
+                .into_iter()
+                .zip(pairs.into_iter().map(|(_, v)| v))
+                .collect();
+            st.insert_memory("s", "body", &links, 1, 1).unwrap();
             st.export_dump().unwrap()
         };
-        assert!(
-            dump.to_string().contains("project:apollo") && dump.to_string().contains("count:3"),
-            "value tags ride the tags section"
+        // The dump carries the raw pairs; display composition happens on read
+        assert_eq!(
+            dump["memories"]["m1"]["tags"],
+            json!([["2", "apollo"], ["3", "3"]])
         );
         assert!(
             dump.get("keys").is_none(),
@@ -949,6 +978,10 @@ mod tests {
         Store::open(&dst).unwrap().import_dump(&dump).unwrap();
         let st = Store::open(&dst).unwrap();
         let memory = &st.get_memories(&[1]).unwrap().0[0];
+        assert_eq!(
+            memory.tags,
+            vec!["count:3".to_string(), "project:apollo".to_string()]
+        );
         assert_eq!(st.attributes_view(memory).unwrap()["count"], 3);
         // The restored store resolves keyed queries
         let expr = st
@@ -968,8 +1001,14 @@ mod tests {
         let dump = {
             let st = Store::open(&src).unwrap();
             st.tag_create("t", "带描述的标签").unwrap();
-            let ids = st.link_tags(&["t".into()], true).unwrap().ids;
-            st.insert_memory("s1", "body1", &ids, 100, 200).unwrap();
+            let links: Vec<(i64, Option<String>)> = st
+                .link_keys(&[("t".into(), None)], true)
+                .unwrap()
+                .ids
+                .into_iter()
+                .map(|i| (i, None))
+                .collect();
+            st.insert_memory("s1", "body1", &links, 100, 200).unwrap();
             st.insert_memory("s2", "body2", &[], 300, 400).unwrap();
             st.export_dump().unwrap()
         };
@@ -1045,16 +1084,22 @@ mod tests {
                 json!({"tags": {"1": {"name": "x".repeat(101)}}, "memories": {}}),
                 "too long",
             ),
-            // A memory's tag reference is not a string (tag ids are string tokens)
+            // A memory's tag reference is not a [tag id, value] pair
             (
-                "non-string-ref",
+                "non-pair-ref",
                 json!({"tags": {}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [42]}}}),
-                "must be tag id strings",
+                "must be [tag id, value] pairs",
+            ),
+            // The value half of a pair is a string or null
+            (
+                "non-string-value",
+                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [["1", 3]]}}}),
+                "non-string tag value",
             ),
             // References a tag id absent from the export → error (strict about values)
             (
                 "unknown-ref",
-                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": ["2"]}}}),
+                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [["2", null]]}}}),
                 "unknown tag id '2'",
             ),
             // Invalid id keys: a tag key that is not a positive integer, a memory key missing the m prefix
@@ -1098,7 +1143,7 @@ mod tests {
                 "1": {"name": "kept", "description": ""},
                 "2": {"name": "other", "description": ""},
             },
-            "memories": {"m1": {"summary": "s", "content": "c", "tags": ["3"]}},
+            "memories": {"m1": {"summary": "s", "content": "c", "tags": [["3", null]]}},
         });
         let err = crate::store::with_db_in(&path, crate::store::TxMode::Write, |st: &Store| {
             st.import_dump(&dump).map(|_| ())

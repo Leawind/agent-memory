@@ -13,7 +13,7 @@ fn archive_expiry_filters_and_backup_keep_content_and_timestamps() {
     cleanup(&path);
     let server = HttpProc::start(&path, "lifecycle");
     let port = server.port;
-    let created = api(port, "POST", "/api/memories", Some(json!({"summary": "durable fact", "content": "private full body", "tags": ["topic"], "create_missing_tags": true}))).1;
+    let created = api(port, "POST", "/api/memories", Some(json!({"summary": "durable fact", "content": "private full body", "tags": {"topic": null}, "create_missing_tags": true}))).1;
     let id = created["id"].as_str().unwrap();
     let get = || api(port, "GET", &format!("/api/memories/{id}"), None).1;
     let before = get();

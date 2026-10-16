@@ -143,23 +143,25 @@ fn is_unique_violation(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(ee, _) if ee.code == rusqlite::ErrorCode::ConstraintViolation)
 }
 
-/// Expected schema: parsed from the embedded migration texts (lowercased table name → list of lowercased column names),
-/// cached for the process lifetime — the migration texts are fixed at compile time, so the parse result never changes.
+/// Expected schema: replayed from the embedded migration texts (lowercased table name → list of
+/// lowercased column names), cached for the process lifetime — the migration texts are fixed at
+/// compile time, so the replay result never changes.
 fn expected_schema() -> &'static HashMap<String, Vec<String>> {
     static EXPECTED: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
     EXPECTED.get_or_init(|| {
         let mut tables = HashMap::new();
         for source in MIGRATIONS {
-            parse_create_tables(source, &mut tables);
+            apply_migration_to_schema(source, &mut tables);
         }
         tables
     })
 }
 
-/// Parse the table and column names of a CREATE TABLE (including the IF NOT EXISTS form) from a SQL snippet.
-/// Only needs to cover the style used by this project's migrations: strip `--` line comments first; take the table name up to `(`;
-/// take the first identifier of each top-level comma segment as a column definition, skipping constraint sections (PRIMARY KEY etc.).
-fn parse_create_tables(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
+/// Replay one migration's DDL onto the expected-schema map. Migrations may rebuild tables —
+/// migration 2/3 style `DROP TABLE` + `CREATE TABLE`, or a `CREATE TABLE temp` + `ALTER TABLE
+/// temp RENAME TO real` swap — so statements apply in order: CREATE replaces the recorded shape
+/// (a rewrite is the declaration of the final shape), RENAME moves it, DROP removes it.
+fn apply_migration_to_schema(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
     let mut cleaned = String::with_capacity(sql_text.len());
     for line in sql_text.lines() {
         match line.find("--") {
@@ -168,53 +170,80 @@ fn parse_create_tables(sql_text: &str, out: &mut HashMap<String, Vec<String>>) {
         }
         cleaned.push('\n');
     }
-    let upper = cleaned.to_ascii_uppercase();
-    let mut cursor = 0usize;
-    while let Some(found) = upper[cursor..].find("CREATE TABLE") {
-        let start = cursor + found;
-        let mut name_start = start + "CREATE TABLE".len();
-        if upper[name_start..].starts_with(" IF NOT EXISTS") {
-            name_start += " IF NOT EXISTS".len();
-        }
-        let Some(paren) = cleaned[name_start..].find('(') else {
-            break;
-        };
-        let paren = name_start + paren;
-        let table_name = cleaned[name_start..paren]
-            .trim()
-            .trim_matches('"')
-            .to_ascii_lowercase();
-        // Column definition body: match parentheses until the closing ')'
-        let bytes = cleaned.as_bytes();
-        let mut depth = 1usize;
-        let mut end = paren + 1;
-        while end < bytes.len() && depth > 0 {
-            match bytes[end] {
-                b'(' => depth += 1,
-                b')' => depth -= 1,
-                _ => {}
+    for statement in cleaned.split(';') {
+        let statement = statement.trim();
+        let upper = statement.to_ascii_uppercase();
+        if upper.starts_with("CREATE TABLE") {
+            if let Some((name, columns)) = parse_create_table(statement) {
+                out.insert(name, columns);
             }
-            end += 1;
-        }
-        let body = &cleaned[paren + 1..end.saturating_sub(1)];
-        let mut columns = Vec::new();
-        for part in split_top_level(body) {
-            let part = part.trim();
-            if part.is_empty() {
-                continue;
+        } else if let Some(rest) = upper.strip_prefix("ALTER TABLE") {
+            // ALTER TABLE <name> RENAME TO <new>
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            if words.len() == 4 && words[1] == "RENAME" {
+                let from = words[0].trim_matches('"').to_ascii_lowercase();
+                let to = words[3].trim_matches('"').to_ascii_lowercase();
+                if let Some(columns) = out.remove(&from) {
+                    out.insert(to, columns);
+                }
             }
-            let first = part.split_whitespace().next().unwrap_or_default();
-            if matches!(
-                first.to_ascii_uppercase().as_str(),
-                "CONSTRAINT" | "PRIMARY" | "UNIQUE" | "CHECK" | "FOREIGN"
-            ) {
-                continue;
+        } else if let Some(rest) = upper.strip_prefix("DROP TABLE") {
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            // DROP TABLE [IF EXISTS] <name>
+            let name = words
+                .iter()
+                .last()
+                .map(|w| w.trim_matches('"').to_ascii_lowercase());
+            if let Some(name) = name {
+                out.remove(&name);
             }
-            columns.push(first.trim_matches('"').to_ascii_lowercase());
         }
-        out.insert(table_name, columns);
-        cursor = end;
     }
+}
+
+/// Parse one `CREATE TABLE [IF NOT EXISTS] <name> (...)` statement: the table name up to `(`;
+/// the first identifier of each top-level comma segment as a column definition, skipping
+/// constraint sections (PRIMARY KEY etc.).
+fn parse_create_table(statement: &str) -> Option<(String, Vec<String>)> {
+    let upper = statement.to_ascii_uppercase();
+    let mut name_start = "CREATE TABLE".len();
+    if upper[name_start..].starts_with(" IF NOT EXISTS") {
+        name_start += " IF NOT EXISTS".len();
+    }
+    let paren = statement[name_start..].find('(')? + name_start;
+    let table_name = statement[name_start..paren]
+        .trim()
+        .trim_matches('"')
+        .to_ascii_lowercase();
+    // Column definition body: match parentheses until the closing ')'
+    let bytes = statement.as_bytes();
+    let mut depth = 1usize;
+    let mut end = paren + 1;
+    while end < bytes.len() && depth > 0 {
+        match bytes[end] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        end += 1;
+    }
+    let body = &statement[paren + 1..end.saturating_sub(1)];
+    let mut columns = Vec::new();
+    for part in split_top_level(body) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let first = part.split_whitespace().next().unwrap_or_default();
+        if matches!(
+            first.to_ascii_uppercase().as_str(),
+            "CONSTRAINT" | "PRIMARY" | "UNIQUE" | "CHECK" | "FOREIGN"
+        ) {
+            continue;
+        }
+        columns.push(first.trim_matches('"').to_ascii_lowercase());
+    }
+    Some((table_name, columns))
 }
 
 /// Split on commas at bracket depth 0 (degenerates to plain splitting when column definitions contain no nested brackets).

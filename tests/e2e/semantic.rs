@@ -237,7 +237,11 @@ fn semantic_tag_filter_applies_before_recall_limit() {
                 &json!({
                     "summary": summary,
                     "content": content,
-                    "tags": if selected { vec!["selected"] } else { Vec::new() },
+                    "tags": if selected {
+                        serde_json::json!({"selected": null})
+                    } else {
+                        serde_json::json!({})
+                    },
                     "create_missing_tags": true
                 })
                 .to_string(),

@@ -8,7 +8,7 @@ fn setup(label: &str) -> std::path::PathBuf {
         std::process::id(),
         crate::model::now()
     ));
-    execute_with_db(&path,&IdentityCtx::open_mode(),MEMORY_CREATE,&json!({"summary":"private body sentinel", "content":"DO NOT DISCLOSE", "tags":["a"],"create_missing_tags":true})).unwrap();
+    execute_with_db(&path,&IdentityCtx::open_mode(),MEMORY_CREATE,&json!({"summary":"private body sentinel", "content":"DO NOT DISCLOSE", "tags":{"a":null},"create_missing_tags":true})).unwrap();
     for name in ["b", "c"] {
         execute_with_db(
             &path,
@@ -146,7 +146,7 @@ fn decay_rules_match_keys_and_survive_export_import() {
         &path,
         &ctx,
         MEMORY_CREATE,
-        &json!({"summary":"temp note", "attributes":{"temp":"x"},"create_missing_tags":true}),
+        &json!({"summary":"temp note", "tags":{"temp":"x"},"create_missing_tags":true}),
     )
     .unwrap();
     store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {
@@ -157,19 +157,14 @@ fn decay_rules_match_keys_and_survive_export_import() {
         )?;
         let policy = st.lifecycle_policy()?;
         let memory = &st.get_memories(&[2])?.0[0];
-        assert_eq!(memory.tag_keys(), vec!["temp"]);
+        let keys: Vec<String> = memory
+            .tags
+            .iter()
+            .filter_map(|t| t.split_once(':').map(|(k, _)| k.to_string()))
+            .collect();
+        assert_eq!(keys, vec!["temp".to_string()]);
         assert!(
-            (policy.freshness(
-                &st.lifecycle_get(2)?,
-                &memory
-                    .tag_keys()
-                    .iter()
-                    .map(|k| k.to_string())
-                    .collect::<Vec<_>>(),
-                100,
-                100 + 7 * 86400
-            ) - 0.5)
-                .abs()
+            (policy.freshness(&st.lifecycle_get(2)?, &keys, 100, 100 + 7 * 86400) - 0.5).abs()
                 < 1e-12
         );
         Ok(())

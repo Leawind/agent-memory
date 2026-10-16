@@ -21,7 +21,7 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
             try_request(server.port, method, url, body.as_deref(), &headers).unwrap();
         (code, json_body(&bytes))
     };
-    assert_eq!(call("POST","/api/memories",json!({"summary":"topic", "content":"private body", "tags":["a"],"create_missing_tags":true}),None).0,200);
+    assert_eq!(call("POST","/api/memories",json!({"summary":"topic", "content":"private body", "tags": {"a": null},"create_missing_tags":true}),None).0,200);
     call("POST", "/api/tags", json!({"name":"b"}), None);
     let admin = call(
         "POST",

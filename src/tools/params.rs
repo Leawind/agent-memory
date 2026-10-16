@@ -119,15 +119,3 @@ pub fn validate_description(s: &str) -> Result<String, String> {
     }
     Ok(s.to_string())
 }
-
-/// Normalize a set of tag names: trim, cap length, deduplicate (preserving first-occurrence order).
-pub fn normalize_tag_list(raw: &[String]) -> Result<Vec<String>, String> {
-    let mut out: Vec<String> = Vec::with_capacity(raw.len());
-    for t in raw {
-        let n = normalize_tag_name(t)?;
-        if !out.contains(&n) {
-            out.push(n);
-        }
-    }
-    Ok(out)
-}

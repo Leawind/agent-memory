@@ -429,19 +429,23 @@ mod tests {
         store::with_db_in(path, TxMode::Write, |st| -> Result<(), String> {
             st.tag_create("rust", "Rust language")?;
             st.tag_create("项目", "")?;
-            let rust_ids = st.link_tags(&["rust".into()], true)?.ids;
+            let rust_ids = st.link_keys(&[("rust".into(), None)], true)?.ids;
+            let rust_links: Vec<(i64, Option<String>)> =
+                rust_ids.into_iter().map(|i| (i, None)).collect();
             st.insert_memory(
                 "Borrow checker",
                 "The borrow checker forbids aliasing + mutation.",
-                &rust_ids,
+                &rust_links,
                 10,
                 20,
             )?;
-            let conv_ids = st.link_tags(&[RESERVED_TAG.into()], true)?.ids;
+            let conv_ids = st.link_keys(&[(RESERVED_TAG.into(), None)], true)?.ids;
+            let conv_links: Vec<(i64, Option<String>)> =
+                conv_ids.into_iter().map(|i| (i, None)).collect();
             st.insert_memory(
                 "Commit rules",
                 "Summary in one line; tags lowercase.",
-                &conv_ids,
+                &conv_links,
                 30,
                 40,
             )?;
@@ -591,9 +595,10 @@ mod tests {
 
         // Page size honored: seed more convention memories than one page holds
         store::with_db_in(&path, TxMode::Write, |st| -> Result<(), String> {
-            let ids = st.link_tags(&[RESERVED_TAG.into()], true)?.ids;
+            let ids = st.link_keys(&[(RESERVED_TAG.into(), None)], true)?.ids;
+            let links: Vec<(i64, Option<String>)> = ids.into_iter().map(|i| (i, None)).collect();
             for i in 0..60 {
-                st.insert_memory(&format!("conv {i}"), "body", &ids, i as u64, i as u64)?;
+                st.insert_memory(&format!("conv {i}"), "body", &links, i as u64, i as u64)?;
             }
             Ok(())
         })

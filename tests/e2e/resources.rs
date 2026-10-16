@@ -7,6 +7,10 @@ use crate::common::{cleanup, mcp_post, temp_db, tool_data, HttpProc};
 
 /// Create a memory through the tool surface and return its id.
 fn create_memory(port: u16, summary: &str, content: &str, tags: &[&str]) -> String {
+    let tags = serde_json::Map::from_iter(
+        tags.iter()
+            .map(|t| ((*t).to_string(), serde_json::Value::Null)),
+    );
     let (_, resp) = mcp_post(
         port,
         json!(1),
@@ -236,6 +240,10 @@ fn resources_masked_without_read_capability() {
 }
 
 fn create_memory_with(port: u16, summary: &str, content: &str, tags: &[&str], auth: &str) {
+    let tags = serde_json::Map::from_iter(
+        tags.iter()
+            .map(|t| ((*t).to_string(), serde_json::Value::Null)),
+    );
     let (status, resp) = mcp_post(
         port,
         json!(1),

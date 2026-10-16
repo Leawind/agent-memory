@@ -136,11 +136,12 @@ pub fn rank_channels(
     for idx in eligible {
         let memory = &memories[*idx];
         let id = crate::store::Store::parse_id(&memory.id).unwrap_or(0);
-        let keys = memory
-            .tag_keys()
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<_>>();
+        // Decay rules match the key half of valued tags (bare tags carry no key)
+        let keys: Vec<String> = memory
+            .tags
+            .iter()
+            .filter_map(|t| t.split_once(':').map(|(k, _)| k.to_string()))
+            .collect();
         let freshness = policy.freshness(
             lifecycle.get(&id).unwrap_or(&default_meta),
             &keys,
