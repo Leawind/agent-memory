@@ -98,6 +98,18 @@
   padding: 0 10px;
 }
 
+/*
+ * Switches: Element Plus paints the off track with --el-border-color, which a host theme may
+ * set to the same surface as the row it sits on (the standalone dark theme does exactly that),
+ * making the capsule outline disappear. Placeholder gray stays visibly lighter than any of the
+ * app's surface fills, in both themes and on dimmed rows.
+ */
+.memory-ui .el-switch,
+.am-panel .el-switch,
+.am-form-dialog .el-switch {
+  --el-switch-off-color: var(--el-text-color-placeholder);
+}
+
 /* Tables: rounded card look, no zebra stripes, row highlight on hover */
 .memory-ui .el-table {
   --el-table-border-color: var(--el-border-color-lighter);
