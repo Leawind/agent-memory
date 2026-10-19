@@ -124,7 +124,7 @@ describe('AdminPanel', () => {
     expect(items.map((i) => i.text())).toEqual([
       '身份与访问',
       '搜索模型',
-      '生命周期',
+      '时效与强化',
       '自定义提示词',
       '备份导入导出',
       '数据体检',
@@ -142,7 +142,7 @@ describe('AdminPanel', () => {
     expect(visible()[0].text()).toContain('数据体检')
     await items[1].trigger('click')
     expect(visible()).toHaveLength(3)
-    await items.find((item) => item.text() === '生命周期')!.trigger('click')
+    await items.find((item) => item.text() === '时效与强化')!.trigger('click')
     await flushPromises()
     expect(visible()).toHaveLength(2)
     expect(cards()).toHaveLength(9)
