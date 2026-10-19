@@ -24,7 +24,6 @@ const detailPayload = {
   content: '正文内容',
   tags: ['t1', 'project:demo'],
   created: '2026-10-04 07:00',
-  lifecycle: { expires_at: null, pinned: false, state: 'active' },
   updated: '2026-10-04 08:00',
 }
 const searchPayload = {

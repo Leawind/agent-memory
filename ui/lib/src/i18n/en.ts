@@ -15,7 +15,7 @@ export default {
   },
   lifecycle: {
     orderHint:
-      'Match original and derived tags in order; the first matching rule wins. Selectors can reference global named predicates.',
+      'Rules match memory tags in order; the first match wins. Conditions accept bare tags, /regex/ and global named predicates.',
     defaultDecay: 'Fallback when no rule matches',
     addRule: 'Add decay rule',
     moveUp: 'Move up',
@@ -28,7 +28,7 @@ export default {
     freshnessWeight: 'Freshness rank weight',
     reinforcementWeight: 'Access reinforcement rank weight',
     policyHint:
-      'A weight of zero disables that signal. These ranks only reorder relevant candidates. Pins bypass soft decay; expiry still excludes them.',
+      'A weight of zero disables that signal. These ranks only reorder relevant candidates; they never recall more.',
     accessTitle: 'Access events and projections',
     rawEvents: 'Raw events',
     buckets: 'Hourly buckets',
@@ -39,15 +39,6 @@ export default {
     refresh: 'Refresh statistics',
     compact: 'Compact one old-event batch',
     rebuild: 'Rebuild score projections',
-    title: 'Expiry & pinning',
-    state: 'Memory state',
-    active: 'Active',
-    expired: 'Expired',
-    all: 'All states',
-    expires: 'Expiry time',
-    noExpiry: 'No expiry',
-    pinned: 'Pinned (exempt from freshness decay)',
-    hint: 'Pins do not override explicit expiry; an expired memory needs its expiry cleared or extended to become active again.',
   },
   common: {
     edit: 'Edit',

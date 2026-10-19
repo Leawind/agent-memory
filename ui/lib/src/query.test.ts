@@ -18,21 +18,6 @@ describe('buildMemoriesQuery', () => {
       expect(new URLSearchParams(qs).get('cursor')).toBe(query ? 'snapshot' : null)
     }
   })
-  it('carries lifecycle filters through both list and search requests', () => {
-    for (const query of ['', 'rust']) {
-      const qs = buildMemoriesQuery({
-        query,
-        tagExpr: '',
-        mode: 'auto',
-        sort: 'id',
-        order: 'asc',
-        page: 1,
-        pageSize: 20,
-        state: 'expired',
-      })
-      expect(new URLSearchParams(qs).get('state')).toBe('expired')
-    }
-  })
   it('list mode: sort + pagination', () => {
     const qs = buildMemoriesQuery({
       query: '',

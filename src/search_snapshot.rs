@@ -147,10 +147,9 @@ pub fn create(
     mut payload: Value,
     offset: u64,
     limit: u64,
-    next_expiry: Option<u64>,
 ) -> Result<Value, ToolError> {
     let now = crate::model::now();
-    let expires_at = next_expiry.unwrap_or(u64::MAX).min(now + TTL_SECONDS);
+    let expires_at = now + TTL_SECONDS;
     let token = st.new_search_cursor()?;
     payload["cursor"] = json!(token);
     payload["cursor_expires_at"] = json!(expires_at);

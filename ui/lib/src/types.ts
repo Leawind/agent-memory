@@ -11,19 +11,11 @@ export interface MemorySummary {
   attributes?: MemoryAttributes
   /** Compact server-local wall clock "YYYY-MM-DD HH:MM"; summaries carry no creation time (the id encodes creation order) */
   updated: string
-  lifecycle?: LifecycleMetadata
-}
-
-export interface LifecycleMetadata {
-  expires_at: number | null
-  pinned: boolean
-  state: 'active' | 'expired'
 }
 
 export interface MemoryFull extends MemorySummary {
   created: string
   content: string
-  lifecycle: LifecycleMetadata
 }
 
 /** Write responses are echo-free: only facts the client cannot derive from its own request */
@@ -79,7 +71,6 @@ export interface SearchResult {
   score: number
   snippet: string
   updated: string
-  lifecycle?: LifecycleMetadata
 }
 
 export interface MemorySearchResp {

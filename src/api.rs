@@ -18,9 +18,8 @@ use crate::auth::{Cap, IdentityCtx, Permissions};
 use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
-    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIFECYCLE, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST,
-    TAG_UPDATE,
+    self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_MERGE,
+    MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -727,11 +726,6 @@ pub fn handle(
                     Err(e) => return Ok(bad_request(e)),
                 };
                 tool_write(db_path, ctx, MEMORY_MERGE, &Value::Object(args))
-            }
-            ("PUT", ["memories", mem_id, "lifecycle"]) => {
-                let mut args = args_from_body()?;
-                args.insert("id".into(), json!(mem_id));
-                tool_write(db_path, ctx, MEMORY_LIFECYCLE, &Value::Object(args))
             }
             ("GET", ["memories", mem_id, "usage"]) => {
                 ctx.require(Cap::Read)?;

@@ -1,45 +1,10 @@
-//! Content lifecycle is independent of relevance and access reinforcement.
+//! Freshness decay is a ranking-only prior over memories; it never hides or recalls content.
 
 use crate::tag_expr::{TagAtom, TagExpr};
 use serde::{Deserialize, Serialize};
 
+/// Upper bound for stored epoch-second timestamps (access events and aggregates).
 pub const MAX_TIMESTAMP: u64 = 253_402_300_799;
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-pub struct Metadata {
-    pub expires_at: Option<u64>,
-    pub pinned: bool,
-}
-
-impl Metadata {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.expires_at.is_some_and(|t| t > MAX_TIMESTAMP) {
-            return Err(format!(
-                "lifecycle timestamps must be epoch seconds <= {MAX_TIMESTAMP}"
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn state(&self, now: u64) -> &'static str {
-        if self.expires_at.is_some_and(|deadline| deadline <= now) {
-            "expired"
-        } else {
-            "active"
-        }
-    }
-
-    pub fn matches(&self, state: &str, now: u64) -> bool {
-        state == "all" || self.state(now) == state
-    }
-
-    pub fn view(&self, now: u64) -> serde_json::Value {
-        let mut value = serde_json::to_value(self).expect("lifecycle serializes");
-        value["state"] = serde_json::json!(self.state(now));
-        value
-    }
-}
 
 /// One decay override: memories whose tags satisfy `predicate` decay with `half_life_days`. A
 /// predicate is a tag-set boolean expression — bare tag names, `/regex/` and `@named` references
@@ -116,17 +81,7 @@ impl Policy {
         Ok(policy)
     }
 
-    pub fn freshness(
-        &self,
-        plan: &DecayPlan,
-        meta: &Metadata,
-        tags: &[String],
-        updated_at: u64,
-        now: u64,
-    ) -> f64 {
-        if meta.pinned {
-            return 1.0;
-        }
+    pub fn freshness(&self, plan: &DecayPlan, tags: &[String], updated_at: u64, now: u64) -> f64 {
         let half_life = plan
             .iter()
             .find_map(|(expr, days)| expr.as_ref().filter(|e| e.eval(tags)).map(|_| *days))
@@ -142,13 +97,11 @@ impl Policy {
 pub fn rank_channels(
     memories: &[crate::model::Memory],
     eligible: &std::collections::HashSet<usize>,
-    lifecycle: &std::collections::HashMap<i64, Metadata>,
     usage: &std::collections::HashMap<i64, crate::access::Projection>,
     policy: &Policy,
     plan: &DecayPlan,
     now: u64,
 ) -> [Vec<crate::search::Hit>; 2] {
-    let default_meta = Metadata::default();
     let mut channels = [Vec::new(), Vec::new()];
     for idx in eligible {
         let memory = &memories[*idx];
@@ -160,13 +113,7 @@ pub fn rank_channels(
                 names.push(key.to_string());
             }
         }
-        let freshness = policy.freshness(
-            plan,
-            lifecycle.get(&id).unwrap_or(&default_meta),
-            &names,
-            memory.updated_at,
-            now,
-        );
+        let freshness = policy.freshness(plan, &names, memory.updated_at, now);
         for (channel, score) in [
             freshness,
             usage.get(&id).map_or(0.0, |state| state.value(now)),
@@ -193,36 +140,19 @@ pub fn rank_channels(
 mod tests {
     use super::*;
     #[test]
-    fn expiry_is_hard_even_for_pins() {
-        let mut data = Metadata {
-            expires_at: Some(100),
-            pinned: true,
-        };
-        assert_eq!(data.state(99), "active");
-        assert_eq!(data.state(100), "expired");
-        data.expires_at = None;
-        assert_eq!(data.state(100), "active");
-    }
-
-    #[test]
-    fn ordered_predicate_rules_support_overrides_fallback_and_pins() {
+    fn ordered_predicate_rules_support_overrides_fallback_and_dead_rules() {
         let policy = Policy::parse(&serde_json::json!({"rules":[{"predicate":"durable", "half_life_days":null},{"predicate":"temp", "half_life_days":7}], "default_half_life_days":30})).unwrap();
         let rule = |raw: &str| Some(crate::tag_expr::parse(raw).unwrap());
         let plan: DecayPlan = vec![(rule("durable"), None), (rule("temp"), Some(7.0))];
-        let mut meta = Metadata::default();
         // A leaf matches bare tags and the key halves of valued tags alike
         let durable = vec!["durable".to_string()];
         let keyed = vec!["temp:new".to_string(), "temp".to_string()];
-        assert_eq!(policy.freshness(&plan, &meta, &durable, 0, 30 * 86400), 1.0);
-        assert!((policy.freshness(&plan, &meta, &keyed, 0, 7 * 86400) - 0.5).abs() < 1e-12);
-        assert!((policy.freshness(&plan, &meta, &[], 0, 30 * 86400) - 0.5).abs() < 1e-12);
+        assert_eq!(policy.freshness(&plan, &durable, 0, 30 * 86400), 1.0);
+        assert!((policy.freshness(&plan, &keyed, 0, 7 * 86400) - 0.5).abs() < 1e-12);
+        assert!((policy.freshness(&plan, &[], 0, 30 * 86400) - 0.5).abs() < 1e-12);
         // Dead rules (unresolvable references) never match; first live match wins
         let dead_first: DecayPlan = vec![(None, Some(3.0)), (rule("temp"), Some(7.0))];
-        assert!((policy.freshness(&dead_first, &meta, &keyed, 0, 7 * 86400) - 0.5).abs() < 1e-12);
-        meta.pinned = true;
-        meta.expires_at = Some(100);
-        assert_eq!(policy.freshness(&plan, &meta, &[], 0, 1000), 1.0);
-        assert!(!meta.matches("active", 1000));
+        assert!((policy.freshness(&dead_first, &keyed, 0, 7 * 86400) - 0.5).abs() < 1e-12);
         for invalid in [
             serde_json::json!({"default_half_life_days":0}),
             serde_json::json!({"rules":[{"predicate":"temp","half_life_days":-1}]}),

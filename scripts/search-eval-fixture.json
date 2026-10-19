@@ -79,14 +79,6 @@
       "age_days": 365
     },
     {
-      "key": "release-expired",
-      "summary": "Expired release deployment token",
-      "content": "Release deployment context expired after the maintenance window.",
-      "tags": ["release", "context"],
-      "age_days": 0,
-      "expired": true
-    },
-    {
       "key": "checksum",
       "summary": "Checksum algorithm reference",
       "content": "Checksum algorithm invariants remain useful even for old durable facts.",
@@ -230,14 +222,6 @@
         "vue": 2,
         "react": 2,
         "browser": 2
-      }
-    },
-    {
-      "name": "explicit-expiry",
-      "query": "release deployment",
-      "state": "expired",
-      "relevance": {
-        "release-expired": 3
       }
     },
     {

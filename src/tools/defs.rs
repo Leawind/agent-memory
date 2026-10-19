@@ -27,7 +27,6 @@ pub const MEMORY_UPDATE: &str = "memory_update";
 pub const MEMORY_EDIT: &str = "memory_edit";
 pub const MEMORY_MERGE: &str = "memory_merge";
 pub const MEMORY_DELETE: &str = "memory_delete";
-pub const MEMORY_LIFECYCLE: &str = "memory_lifecycle";
 pub const MEMORY_USE: &str = "memory_use";
 
 pub const TOOL_NAMES: &[&str] = &[
@@ -46,7 +45,6 @@ pub const TOOL_NAMES: &[&str] = &[
     MEMORY_EDIT,
     MEMORY_MERGE,
     MEMORY_DELETE,
-    MEMORY_LIFECYCLE,
     MEMORY_USE,
 ];
 
@@ -67,20 +65,11 @@ pub fn tool_definitions() -> Value {
             json!({"type":"object","properties":{"name":{"type":"string"},"scope":{"type":"string","enum":["user","global"],"default":"user"}},"required":["name"],"additionalProperties":false}), false, true),
         def(
             MEMORY_USE,
-            "Record that a memory was actually used in a decision or action. Search/list exposure does not reinforce memory; successful full reads are recorded automatically with weaker weight. Use this only for actual use, not for merely seeing a result. event_key is a caller-generated idempotency key (1-100 chars, retained for 30 days); retries with the same key and identity do not count twice. Repeated uses by the same identity within 60 seconds are logged but receive zero extra reinforcement. Access never overrides expiry. Returns recorded and reinforced flags, never memory content.",
+            "Record that a memory was actually used in a decision or action. Search/list exposure does not reinforce memory; successful full reads are recorded automatically with weaker weight. Use this only for actual use, not for merely seeing a result. event_key is a caller-generated idempotency key (1-100 chars, retained for 30 days); retries with the same key and identity do not count twice. Repeated uses by the same identity within 60 seconds are logged but receive zero extra reinforcement. Returns recorded and reinforced flags, never memory content.",
             json!({"type": "object", "properties": {
                 "id": {"type": "string", "pattern": "^m[0-9]+$"},
                 "event_key": {"type": "string", "minLength": 1, "maxLength": 100}
             }, "required": ["id", "event_key"], "additionalProperties": false}), false, false,
-        ),
-        def(
-            MEMORY_LIFECYCLE,
-            "Set a memory's expiry or pin status. Freshness decay follows the lifecycle policy: ordered key rules plus a default half-life. Active memories are searched and browsed by default; expired memories remain readable by id and can be included with state filters. pinned exempts freshness decay but does not override an explicit expiry. Omitting a field preserves it; expires_at:null clears expiry. Changes do not refresh content timestamps. Requires update; changing the resident convention's lifecycle additionally requires admin. Returns only an updated flag.",
-            json!({"type": "object", "properties": {
-                "id": {"type": "string", "pattern": "^m[0-9]+$"},
-                "expires_at": {"type": ["integer", "null"], "minimum": 0, "maximum": crate::lifecycle::MAX_TIMESTAMP, "description": "Unix epoch seconds; null clears expiry."},
-                "pinned": {"type": "boolean"}
-            }, "required": ["id"], "additionalProperties": false}), false, false,
         ),
         def(
             TAG_CREATE,
@@ -98,7 +87,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_LIST,
-            "List tags with descriptions and memory counts across all lifecycle states. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
+            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
@@ -156,12 +145,11 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_LIST,
-            "Browse memories, optionally filtered by a tag expression. Token-frugal line format: a `total: N | offset: N` header, then one memory per line `<id> [<tags>] <updated> <summary>` ('updated' is the server's local wall clock, 'YYYY-MM-DD HH:MM'; newlines inside text render as literal \\n, one line is always one record). Expired rows include a trailing [state:expired] marker. Returns summaries only - never full content; call memory_get for entries worth reading. Newest first by default; paginated (page with offset/limit, the header's total tells when to stop).",
+            "Browse memories, optionally filtered by a tag expression. Token-frugal line format: a `total: N | offset: N` header, then one memory per line `<id> [<tags>] <updated> <summary>` ('updated' is the server's local wall clock, 'YYYY-MM-DD HH:MM'; newlines inside text render as literal \\n, one line is always one record). Returns summaries only - never full content; call memory_get for entries worth reading. Newest first by default; paginated (page with offset/limit, the header's total tells when to stop).",
             json!({
                 "type": "object",
                 "properties": {
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
-                    "state": {"type": "string", "enum": ["active", "expired", "all"], "description": "Default active: expired memories are excluded before candidate selection. Explicit filters can inspect them."},
                     "sort": {"type": "string", "enum": ["updated_at", "id"], "description": "Default: updated_at. 'id' equals creation order."},
                     "order": {"type": "string", "enum": ["asc", "desc"], "description": "Default: desc (newest first)."},
                     "offset": {"type": "integer", "minimum": 0},
@@ -178,9 +166,8 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Whitespace-separated keywords; wrap words in quotes to require verbatim adjacency."},
-                    "cursor": {"type": "string", "description": "Reuse the response cursor with the same query, mode, state and tag expression to page a stable ranking. Valid for at most 120 seconds, bound to the caller and process; repeat without cursor if stale. Content, tag, lifecycle or search-setting writes invalidate it; access feedback does not."},
+                    "cursor": {"type": "string", "description": "Reuse the response cursor with the same query, mode and tag expression to page a stable ranking. Valid for at most 120 seconds, bound to the caller and process; repeat without cursor if stale. Content, tag or search-setting writes invalidate it; access feedback does not."},
                     "tag_expr": {"type": "string", "description": TAG_EXPR_DESCRIPTION},
-                    "state": {"type": "string", "enum": ["active", "expired", "all"], "description": "Default active: expired memories are excluded before candidate selection. Explicit filters can inspect them."},
                     "mode": {"type": "string", "enum": ["auto", "keyword", "hybrid"], "description": "Default: auto - hybrid (content + tags + semantic) when the server has semantic search configured, otherwise plain keyword (flagged semantic: \"disabled\" in the response). 'keyword' forces keyword-only; 'hybrid' requires semantic search to be configured (error if not). Hybrid falls back to keyword automatically when the embedding service is unavailable."},
                     "offset": {"type": "integer", "minimum": 0, "description": "Skip the first N ranked matches (for paging through many results)."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}
@@ -339,7 +326,6 @@ pub fn affects_search(tool: &str) -> bool {
             | MEMORY_EDIT
             | MEMORY_MERGE
             | MEMORY_DELETE
-            | MEMORY_LIFECYCLE
     )
 }
 
@@ -352,7 +338,7 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
         MEMORY_CREATE => &[Cap::Create],
         TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => &[Cap::Read],
-        MEMORY_UPDATE | MEMORY_EDIT | MEMORY_LIFECYCLE => &[Cap::Update],
+        MEMORY_UPDATE | MEMORY_EDIT => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],
         _ => &[Cap::Read],

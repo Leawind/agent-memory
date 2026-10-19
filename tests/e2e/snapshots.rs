@@ -1,6 +1,5 @@
 use crate::common::{cleanup, json_body, mcp_post, request, temp_db, HttpProc};
 use serde_json::{json, Value};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn api(port: u16, method: &str, path: &str, value: Option<Value>) -> (u16, Value) {
     let body = value.map(|value| value.to_string());
@@ -98,34 +97,6 @@ fn pagination_is_stable_across_feedback_and_invalidated_by_other_process_writes(
     assert_eq!(stale.1["code"], "stale_search_cursor");
     assert_eq!(api(port, "GET", search_path, None).0, 200);
     drop(writer);
-    drop(server);
-    cleanup(&path);
-}
-
-#[test]
-fn hard_expiry_bounds_the_snapshot_lifetime() {
-    let path = temp_db("snapshot-expiry");
-    cleanup(&path);
-    let server = HttpProc::start(&path, "snapshot-expiry");
-    let port = server.port;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let expires_at = now + 3;
-    let dump = json!({"tags":{},"memories":{"m1":{"summary":"alpha", "content":"body", "created_at":100,"updated_at":100,"lifecycle":{"expires_at":expires_at}}}});
-    assert_eq!(api(port, "POST", "/api/import", Some(dump)).0, 200);
-    let search_path = "/api/memories?query=alpha&mode=keyword";
-    let first = api(port, "GET", search_path, None).1;
-    assert_eq!(first["total_matches"], 1);
-    assert_eq!(first["cursor_expires_at"], expires_at);
-    let cursor = first["cursor"].as_str().unwrap();
-    std::thread::sleep(Duration::from_secs(3));
-    assert_eq!(
-        api(port, "GET", &format!("{search_path}&cursor={cursor}"), None).1["code"],
-        "stale_search_cursor"
-    );
-    assert_eq!(api(port, "GET", search_path, None).1["total_matches"], 0);
     drop(server);
     cleanup(&path);
 }

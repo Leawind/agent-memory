@@ -22,7 +22,6 @@ mod access;
 mod embeddings;
 mod identities;
 mod keys;
-mod lifecycle;
 mod memories;
 mod migrate;
 mod ops;

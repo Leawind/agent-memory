@@ -15,14 +15,12 @@ interface Memory {
   content: string
   tags: string[]
   age_days: number
-  expired?: boolean
   uses?: number
 }
 interface Case {
   name: string
   query: string
   tag_expr?: string
-  state?: string
   relevance: Record<string, number>
 }
 interface Fixture {
@@ -156,10 +154,6 @@ async function run() {
             tags: memory.tags.map((name) => tagIds[name]),
             created_at: time,
             updated_at: time,
-            lifecycle: {
-              pinned: false,
-              expires_at: memory.expired ? now - 1 : null,
-            },
             access: { scoring_version: 1, events, buckets: [] },
           },
         ]
@@ -170,10 +164,7 @@ async function run() {
       memories,
       tag_rules: { constraints: [], derivations: fixture.derivations },
     })
-    const listing = await api<{ memories: { id: string; summary: string }[] }>(
-      'GET',
-      '/api/memories?state=all&limit=50',
-    )
+    const listing = await api<{ memories: { id: string; summary: string }[] }>('GET', '/api/memories?limit=50')
     const bySummary = new Map(fixture.memories.map((memory) => [memory.summary, memory.key]))
     const byId = new Map(listing.memories.map((memory) => [memory.id, bySummary.get(memory.summary)!]))
     const variants = [
@@ -196,7 +187,6 @@ async function run() {
           query: entry.query,
           mode: 'keyword',
           limit: '50',
-          state: entry.state ?? 'active',
         })
         if (entry.tag_expr) params.set('tag_expr', entry.tag_expr)
         // This server parses URL values without form-style '+' decoding.
@@ -209,8 +199,8 @@ async function run() {
           timings.push(performance.now() - start)
         }
         for (const hit of result.results) {
-          if (hit.content !== undefined || hit.lifecycle.state !== (entry.state ?? 'active'))
-            throw new Error(`${entry.name}: disclosure/state boundary violated`)
+          // Progressive disclosure: list/search hits never carry full content
+          if (hit.content !== undefined) throw new Error(`${entry.name}: disclosure boundary violated`)
         }
         const keys = result.results.map((memory) => byId.get(memory.id)!)
         if (keys.includes('popular-unrelated') || (Object.keys(entry.relevance).length === 0 && keys.length))

@@ -21,15 +21,6 @@
           {{ memoryId ? t('editor.titleFmt', { id: memoryId }) : t('editor.createTitle') }}
         </h3>
         <div class="am-dialog-actions">
-          <el-tooltip v-if="memoryId && lifecycle" :content="t('lifecycle.title')" placement="top" :enterable="false">
-            <el-button
-              circle
-              :icon="Clock"
-              :disabled="saving"
-              :aria-label="t('lifecycle.title')"
-              @click="lifecycleVisible = true"
-            />
-          </el-tooltip>
           <el-tooltip v-if="memoryId" :content="t('common.delete')" placement="top" :enterable="false">
             <el-button
               type="danger"
@@ -141,13 +132,6 @@
         <MarkdownView v-else class="content-preview" :source="form.content" />
       </el-form-item>
     </el-form>
-    <MemoryLifecycleDialog
-      v-if="memoryId && lifecycle"
-      v-model:visible="lifecycleVisible"
-      :memory-id="memoryId"
-      :metadata="lifecycle"
-      @saved="onLifecycleSaved"
-    />
   </el-dialog>
 </template>
 
@@ -155,15 +139,14 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import type { InputInstance } from 'element-plus'
 import { ElMessageBox } from 'element-plus'
-import { Clock, Connection, Delete } from '@element-plus/icons-vue'
+import { Connection, Delete } from '@element-plus/icons-vue'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, deleteMemory, getMemory, mergeMemory, updateMemory } from '../api/memories'
 import { validTagName, validTagValue } from '../tagNames'
-import type { LifecycleMetadata, MemoryCreateResp } from '../types'
+import type { MemoryCreateResp } from '../types'
 import type { MemoryDraft } from '../composables/useMemories'
 import MarkdownView from './MarkdownView.vue'
-import MemoryLifecycleDialog from './MemoryLifecycleDialog.vue'
 import MarkdownModeToggle from './MarkdownModeToggle.vue'
 import { useDialogEdgeResize } from '../composables/useDialogEdgeResize'
 import { t } from '../i18n'
@@ -198,19 +181,6 @@ const loading = ref(false)
 const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
 // Snapshot of the loaded memory: the save button stays disabled until the form differs
 const original = ref({ summary: '', content: '', tags: [] as string[] })
-
-const lifecycle = ref<LifecycleMetadata | null>(null)
-const lifecycleVisible = ref(false)
-
-async function onLifecycleSaved(): Promise<void> {
-  if (!props.memoryId) return
-  try {
-    lifecycle.value = (await getMemory(client, props.memoryId)).lifecycle
-    emit('saved')
-  } catch (error) {
-    toastError(error instanceof Error ? error.message : String(error))
-  }
-}
 
 // One tag vocabulary: a token with a colon is a value-bearing pair `key:value` (a key is unique
 // per memory — one value each), a plain token a bare tag. Chips are the editing form; the save
@@ -327,8 +297,6 @@ watch(
     // Reset optimistically so a slow fetch never shows the previously edited memory's data
     form.value = { id: null, summary: '', content: '', tags: [] }
     original.value = { summary: '', content: '', tags: [] }
-    lifecycle.value = null
-    lifecycleVisible.value = false
     if (props.memoryId) {
       loading.value = true
       try {
@@ -336,7 +304,6 @@ watch(
         // All tags live in one vocabulary: plain names and key:value pairs are chips alike
         form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
         original.value = { summary: full.summary, content: full.content, tags: [...full.tags] }
-        lifecycle.value = full.lifecycle
       } catch (e: unknown) {
         toastError(e instanceof Error ? e.message : String(e))
         emit('update:visible', false)

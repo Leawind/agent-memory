@@ -16,7 +16,6 @@ export interface MemoriesQueryState {
   order: string
   page: number
   pageSize: number
-  state?: string
   cursor?: string
 }
 
@@ -37,7 +36,6 @@ export function buildMemoriesQuery(s: MemoriesQueryState): string {
   }
   const expr = s.tagExpr.trim()
   if (expr) p.push(pair('tag_expr', expr))
-  if (s.state && s.state !== 'active') p.push(pair('state', s.state))
   p.push(pair('offset', String((s.page - 1) * s.pageSize)))
   p.push(pair('limit', String(s.pageSize)))
   return p.join('&')

@@ -7,124 +7,101 @@ fn api(port: u16, method: &str, path: &str, value: Option<Value>) -> (u16, Value
     (status, json_body(&bytes))
 }
 
+// Freshness decay is the only lifecycle mechanism left: an admin-configured ranking prior.
+// The HTTP face must validate policies on save (bad syntax and unresolved @named references
+// are rejected, not silently dead), keep them in settings, and carry them through backups.
 #[test]
-fn expiry_filters_and_backup_keep_content_and_timestamps() {
-    let path = temp_db("lifecycle");
+fn decay_policy_validation_and_backup() {
+    let path = temp_db("decay-policy");
     cleanup(&path);
-    let server = HttpProc::start(&path, "lifecycle");
+    let server = HttpProc::start(&path, "decay-policy");
     let port = server.port;
-    let created = api(port, "POST", "/api/memories", Some(json!({"summary": "durable fact", "content": "private full body", "tags": {"topic": null}, "create_missing_tags": true}))).1;
-    let id = created["id"].as_str().unwrap();
-    let get = || api(port, "GET", &format!("/api/memories/{id}"), None).1;
-    let before = get();
-    let set = |value| {
-        api(
-            port,
-            "PUT",
-            &format!("/api/memories/{id}/lifecycle"),
-            Some(value),
-        )
-    };
-    assert_eq!(set(json!({"pinned": true, "expires_at": 0})).0, 200);
-    assert_eq!(get()["lifecycle"]["state"], "expired");
-    assert_eq!(api(port, "GET", "/api/memories", None).1["total"], 0);
+    // A decay rule may reference a global named predicate: it binds literal tags, so seed them
     assert_eq!(
         api(
             port,
-            "GET",
-            "/api/memories?query=durable&mode=keyword",
-            None
-        )
-        .1["total_matches"],
-        0
-    );
-    let expired = api(port, "GET", "/api/memories?state=expired", None).1;
-    assert_eq!(expired["total"], 1);
-    assert!(expired["memories"][0].get("content").is_none());
-    assert_eq!(
-        api(port, "GET", "/api/memories?query=durable&state=all", None).1["total_matches"],
-        1
-    );
-    assert_eq!(
-        api(
-            port,
-            "GET",
-            "/api/memories?state=expired&tag_expr=topic",
-            None
-        )
-        .1["total"],
-        1
-    );
-    assert_eq!(set(json!({"expires_at": null})).0, 200);
-    assert_eq!(get()["lifecycle"]["state"], "active");
-    let active = get();
-    assert_eq!(active["updated"], before["updated"]);
-    assert_eq!(active["created"], before["created"]);
-    assert_eq!(active["content"], "private full body");
-    for bad in [
-        json!({}),
-        json!({"kind": "unknown"}),
-        json!({"expires_at": -1, "pinned": false}),
-        json!({"expires_at": 253402300800u64}),
-        json!({"pinned": "yes"}),
-        json!({"typo": true}),
-    ] {
-        assert_eq!(set(bad).0, 400);
-        assert_eq!(get()["lifecycle"], active["lifecycle"]);
-    }
-    assert_eq!(api(port, "GET", "/api/memories?state=invalid", None).0, 400);
-    assert_eq!(
-        api(
-            port,
-            "PUT",
-            "/api/memories/m999/lifecycle",
-            Some(json!({"pinned": true}))
+            "POST",
+            "/api/memories",
+            Some(json!({
+                "summary": "scratch note",
+                "content": "body",
+                "tags": {"draft": null, "scratch": null},
+                "create_missing_tags": true
+            }))
         )
         .0,
-        404
+        200
     );
-    assert_eq!(set(json!({"pinned": true, "expires_at": 0})).0, 200);
-    let hidden = get()["lifecycle"].clone();
-    assert_eq!(api(port, "PUT", "/api/settings", Some(json!({"lifecycle_policy":{"rules":[{"predicate":"topic","half_life_days":14}],"reinforcement_weight":0.3}}))).0, 200);
-    let policy = api(port, "GET", "/api/settings", None).1["lifecycle_policy"].clone();
-    assert_eq!(policy["rules"][0]["half_life_days"], 14.0);
+    assert_eq!(
+        api(
+            port,
+            "PUT",
+            "/api/predicates",
+            Some(json!({"name": "temporary", "predicate": "draft | scratch", "description": "", "scope": "global"}))
+        )
+        .0,
+        200
+    );
+    let policy = json!({
+        "rules": [
+            {"predicate": "convention", "half_life_days": null},
+            {"predicate": "/^draft/ | @temporary", "half_life_days": 7}
+        ],
+        "default_half_life_days": 30,
+        "freshness_weight": 0.3,
+        "reinforcement_weight": 0.2
+    });
     assert_eq!(
         api(
             port,
             "PUT",
             "/api/settings",
-            Some(
-                json!({"instructions":"invalid batch", "lifecycle_policy":{"freshness_weight":-1}})
-            )
+            Some(json!({"lifecycle_policy": policy}))
         )
         .0,
-        400
+        200
     );
-    assert!(api(port, "GET", "/api/settings", None).1["instructions"].is_null());
+    let stored = api(port, "GET", "/api/settings", None).1["lifecycle_policy"].clone();
+    assert_eq!(stored["rules"][0]["predicate"], "convention");
+    assert_eq!(stored["rules"][0]["half_life_days"], Value::Null);
+    assert_eq!(stored["rules"][1]["half_life_days"], 7.0);
+    assert_eq!(stored["default_half_life_days"], 30.0);
+
+    // key=value comparisons are query-only; unknown @references would leave dead rules
+    for bad in [
+        json!({"rules": [{"predicate": "a=b", "half_life_days": 7}]}),
+        json!({"rules": [{"predicate": "", "half_life_days": 7}]}),
+        json!({"rules": [{"predicate": "@missing", "half_life_days": 7}]}),
+        json!({"rules": [{"predicate": "ok", "half_life_days": 0}]}),
+        json!({"rules": [{"half_life_days": 7}]}),
+    ] {
+        assert_eq!(
+            api(
+                port,
+                "PUT",
+                "/api/settings",
+                Some(json!({"lifecycle_policy": bad}))
+            )
+            .0,
+            400,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        api(port, "GET", "/api/settings", None).1["lifecycle_policy"],
+        stored,
+        "rejected writes leave the policy untouched"
+    );
+
+    // The policy is part of the dump and survives a backup restore
     let dump = api(port, "GET", "/api/export", None).1;
-    let restore_path = temp_db("lifecycle-restore");
+    let restore_path = temp_db("decay-policy-restore");
     cleanup(&restore_path);
-    let restore = HttpProc::start(&restore_path, "lifecycle-restore");
+    let restore = HttpProc::start(&restore_path, "decay-policy-restore");
     assert_eq!(api(restore.port, "POST", "/api/import", Some(dump)).0, 200);
     assert_eq!(
         api(restore.port, "GET", "/api/settings", None).1["lifecycle_policy"],
-        policy
-    );
-    assert_eq!(
-        api(restore.port, "GET", "/api/memories", None).1["total"],
-        0
-    );
-    let listing = api(restore.port, "GET", "/api/memories?state=all", None).1;
-    let restored_id = listing["memories"][0]["id"].as_str().unwrap();
-    assert_eq!(
-        api(
-            restore.port,
-            "GET",
-            &format!("/api/memories/{restored_id}"),
-            None
-        )
-        .1["lifecycle"],
-        hidden
+        stored
     );
     drop(restore);
     cleanup(&restore_path);

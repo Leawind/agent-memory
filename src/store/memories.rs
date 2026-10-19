@@ -23,7 +23,6 @@ fn split_tag_filter(tag: Option<&str>) -> (Option<&str>, Option<&str>) {
 pub struct ListFilter<'a> {
     pub tag: Option<&'a str>,
     pub id_set: Option<&'a str>,
-    pub state: Option<&'a str>,
 }
 
 impl Store {
@@ -183,16 +182,14 @@ impl Store {
         offset: u64,
         limit: u64,
     ) -> Result<(u64, Vec<Memory>), String> {
-        let ListFilter { tag, id_set, state } = filter;
-        let state = state.unwrap_or("active");
-        let query_time = crate::model::now() as i64;
+        let ListFilter { tag, id_set } = filter;
         let dir: i64 = if asc { 1 } else { -1 };
         let (tag_key, tag_value) = split_tag_filter(tag);
         let total: u64 = self
             .conn
             .query_row(
                 sql::MEMORY_LIST_COUNT,
-                params![tag_key, id_set, state, query_time, tag_value],
+                params![tag_key, id_set, tag_value],
                 |r| r.get::<_, i64>(0),
             )
             .map(|n| n as u64)
@@ -210,8 +207,6 @@ impl Store {
                     dir,
                     limit as i64,
                     offset as i64,
-                    state,
-                    query_time,
                     tag_value
                 ],
                 |r| {
@@ -359,8 +354,8 @@ mod tests {
     }
 
     #[test]
-    fn memory_lifecycle_with_tags() {
-        let path = temp_db("lifecycle");
+    fn memory_roundtrip_with_tags() {
+        let path = temp_db("roundtrip");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
 
@@ -499,7 +494,6 @@ mod tests {
                 ListFilter {
                     tag: Some("t2"),
                     id_set: Some(&id_set_raw(&[6])),
-                    state: None,
                 },
                 "updated_at",
                 false,

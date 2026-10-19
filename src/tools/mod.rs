@@ -26,9 +26,9 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 pub use defs::{
-    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIFECYCLE,
-    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE,
-    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE, TOOL_NAMES,
+    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIST,
+    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE, PREDICATE_LIST,
+    PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -190,7 +190,6 @@ pub fn execute(
         // name no tags; only the loaded memories reveal whether the convention is involved)
         defs::MEMORY_MERGE => memory_ops::memory_merge(st, ctx, map),
         defs::MEMORY_DELETE => memory_ops::memory_delete(st, map),
-        defs::MEMORY_LIFECYCLE => memory_ops::memory_lifecycle(st, map),
         defs::MEMORY_USE => memory_ops::memory_use(st, ctx, map),
         _ => Err(ToolError::invalid(format!("unknown tool '{name}'"))),
     }?;
@@ -207,7 +206,7 @@ pub fn execute(
 /// - creating it and attaching it to / detaching it from memories requires the admin capability,
 ///   keeping the operator-curated convention out of agents' reach.
 fn reserved_tag_guard(
-    st: &Store,
+    _st: &Store,
     ctx: &IdentityCtx,
     name: &str,
     args: &Map<String, Value>,
@@ -230,24 +229,6 @@ fn reserved_tag_guard(
         })
     }
     match name {
-        defs::MEMORY_LIFECYCLE if !ctx.can(Cap::Admin) => {
-            if let Some(id) = args
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(Store::parse_id)
-            {
-                if st
-                    .get_memories(&[id])?
-                    .0
-                    .iter()
-                    .any(|memory| memory.tags.iter().any(|tag| tag == RESERVED_TAG))
-                {
-                    return Err(ToolError::forbidden(
-                        "changing the resident convention's lifecycle requires admin",
-                    ));
-                }
-            }
-        }
         defs::TAG_CREATE => {
             if raw_tag(args, "name").as_deref() == Some(RESERVED_TAG) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
@@ -348,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn full_memory_lifecycle() {
+    fn full_memory_workflow() {
         let path = temp_db("lifecycle");
         let created = call(
             &path,
@@ -501,14 +482,8 @@ mod tests {
                 ("topic old", now - 60 * 86400),
                 ("topic new", now),
                 ("unrelated", now),
-                ("topic expired", now),
             ] {
-                let id = st.insert_memory(summary, "body", &[], time, time)?;
-                let mut meta = crate::lifecycle::Metadata::default();
-                if id == 4 {
-                    meta.expires_at = Some(0);
-                }
-                st.lifecycle_put(id, &meta)?;
+                st.insert_memory(summary, "body", &[], time, time)?;
             }
             st.access_append(
                 3,
@@ -517,7 +492,6 @@ mod tests {
                 Some("irrelevant"),
                 now,
             )?;
-            st.access_append(4, "actor", crate::access::Kind::Use, Some("expired"), now)?;
             Ok(())
         })
         .unwrap();
@@ -540,12 +514,6 @@ mod tests {
         .unwrap();
         assert_eq!(search()["results"][0]["id"], "m1");
         assert_eq!(search()["total_matches"], 2);
-        let original_time = Store::open(&path).unwrap().get_memories(&[1]).unwrap().0[0].updated_at;
-        call(&path, MEMORY_LIFECYCLE, json!({"id":"m1", "pinned":true})).unwrap();
-        assert_eq!(
-            Store::open(&path).unwrap().get_memories(&[1]).unwrap().0[0].updated_at,
-            original_time
-        );
         store::with_db_in(&path, store::TxMode::Write, |st| {
             st.settings_put(
                 Store::SETTING_LIFECYCLE_POLICY,
@@ -1361,41 +1329,6 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("unknown tool"));
-        cleanup(&path);
-    }
-
-    #[test]
-    fn lifecycle_permissions_protect_the_resident_convention() {
-        let path = temp_db("lifecycle-permissions");
-        let id = call(
-            &path,
-            MEMORY_CREATE,
-            json!({"summary": "resident rule", "tags": {"convention": null}}),
-        )
-        .unwrap()["id"]
-            .clone();
-        assert!(matches!(
-            call_as(
-                &path,
-                &[Cap::Update],
-                MEMORY_LIFECYCLE,
-                json!({"id": id, "expires_at": 1})
-            ),
-            Err(ToolError::Forbidden(_))
-        ));
-        assert!(matches!(
-            call_as(
-                &path,
-                &[Cap::Read],
-                MEMORY_LIFECYCLE,
-                json!({"id": id, "expires_at": 1})
-            ),
-            Err(ToolError::Forbidden(_))
-        ));
-        assert!(call(&path, MEMORY_LIFECYCLE, json!({"id": id, "expires_at": 1})).is_ok());
-        let listing = call(&path, MEMORY_LIST, json!({"state": "all"})).unwrap();
-        assert!(listing["memories"][0].get("content").is_none());
-        assert_eq!(listing["memories"][0]["lifecycle"]["state"], "expired");
         cleanup(&path);
     }
 

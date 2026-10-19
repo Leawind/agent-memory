@@ -146,14 +146,6 @@ fn normalize_tag_name_list(names: &[String]) -> Result<Vec<String>, ToolError> {
         .collect()
 }
 
-fn state_filter(args: &Map<String, Value>) -> Result<String, ToolError> {
-    let state = opt_str(args, "state")?.unwrap_or_else(|| "active".into());
-    if !["active", "expired", "all"].contains(&state.as_str()) {
-        return Err(ToolError::invalid("state must be active, expired or all"));
-    }
-    Ok(state)
-}
-
 pub fn memory_use(
     st: &Store,
     ctx: &IdentityCtx,
@@ -175,37 +167,11 @@ pub fn memory_use(
     Ok(json!({"recorded": recorded, "reinforced": reinforced}))
 }
 
-pub fn memory_lifecycle(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
-    let raw_id = req_str(args, "id")?;
-    let id = Store::parse_id(&raw_id).ok_or_else(|| ToolError::invalid("id must follow m<N>"))?;
-    if !st.memory_exists(id)? {
-        return Err(ToolError::not_found(format!("memory '{raw_id}' not found")));
-    }
-    if args.len() == 1 {
-        return Err(ToolError::invalid("provide at least one lifecycle field"));
-    }
-    let before = st.lifecycle_get(id)?;
-    let mut meta = before.clone();
-    if args.contains_key("expires_at") {
-        meta.expires_at = opt_u64(args, "expires_at")?;
-    }
-    if let Some(pinned) = opt_bool(args, "pinned")? {
-        meta.pinned = pinned;
-    }
-    meta.validate()?;
-    let changed = meta != before;
-    if changed {
-        st.lifecycle_put(id, &meta)?;
-    }
-    Ok(json!({"updated": changed}))
-}
-
 pub fn memory_list(
     st: &Store,
     ctx: &IdentityCtx,
     args: &Map<String, Value>,
 ) -> Result<Value, ToolError> {
-    let state = state_filter(args)?;
     let sort_opt = opt_str(args, "sort")?;
     // 'id' is the creation order (ids are monotonic at insert), so there is no separate
     // created_at sort key — and the summary rows do not carry a creation timestamp at all
@@ -250,7 +216,6 @@ pub fn memory_list(
         ListFilter {
             tag: None,
             id_set: id_set.as_deref(),
-            state: Some(&state),
         },
         sort,
         asc,
@@ -260,10 +225,8 @@ pub fn memory_list(
     let memories: Vec<Value> = page
         .iter()
         .map(|m| {
-            let id = Store::parse_id(&m.id).ok_or("invalid stored memory id")?;
             let mut view = m.summary_view();
             attach_attributes(st, m, &mut view)?;
-            view["lifecycle"] = st.lifecycle_get(id)?.view(now());
             Ok(view)
         })
         .collect::<Result<_, String>>()?;
@@ -276,7 +239,6 @@ pub fn memory_search(
     ctx: &IdentityCtx,
     args: &Map<String, Value>,
 ) -> Result<Value, ToolError> {
-    let state = state_filter(args)?;
     let query = req_str(args, "query")?;
     if query.trim().is_empty() {
         return Err(ToolError::invalid("query must not be empty"));
@@ -303,7 +265,7 @@ pub fn memory_search(
     let scope = crate::search_snapshot::scope(
         st,
         ctx,
-        &json!({"query":query,"tag_expr":opt_str(args,"tag_expr")?.unwrap_or_default().trim(),"state":state,"mode":opt_str(args,"mode")?.unwrap_or_else(|| "auto".into())}),
+        &json!({"query":query,"tag_expr":opt_str(args,"tag_expr")?.unwrap_or_default().trim(),"mode":opt_str(args,"mode")?.unwrap_or_else(|| "auto".into())}),
     );
     let revision = st.search_revision()?;
     if let Some(cursor) = opt_str(args, "cursor")? {
@@ -312,18 +274,10 @@ pub fn memory_search(
 
     // Eligibility must precede every channel's top-k selection: filtering after
     // vector truncation can discard its entire head and hide eligible memories.
-    let lifecycle = st.lifecycle_all()?;
-    let default_lifecycle = crate::lifecycle::Metadata::default();
     let query_time = now();
     let memories: Vec<_> = st
         .all_memories()?
         .into_iter()
-        .filter(|m| {
-            lifecycle
-                .get(&Store::parse_id(&m.id).unwrap_or(0))
-                .unwrap_or(&default_lifecycle)
-                .matches(&state, query_time)
-        })
         .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
         .collect();
     let keyword_hits = search::literal_channels(&memories, &query);
@@ -394,7 +348,6 @@ pub fn memory_search(
     let priors = crate::lifecycle::rank_channels(
         &memories,
         &eligible,
-        &lifecycle,
         &st.access_projection_all()?,
         &policy,
         &st.decay_plan(),
@@ -422,17 +375,6 @@ pub fn memory_search(
         (hits, None)
     };
 
-    // A model call may cross an expiry deadline. Recheck before returning the page.
-    let response_time = now();
-    let hits: Vec<_> = hits
-        .into_iter()
-        .filter(|hit| {
-            lifecycle
-                .get(&Store::parse_id(&memories[hit.idx].id).unwrap_or(0))
-                .unwrap_or(&default_lifecycle)
-                .matches(&state, response_time)
-        })
-        .collect();
     let total = hits.len() as u64;
     let keyword_matches = hits.iter().filter(|h| keyword_idx.contains(&h.idx)).count() as u64;
     let results: Vec<Value> = hits
@@ -446,7 +388,6 @@ pub fn memory_search(
                 "score": h.score,
                 "snippet": h.snippet,
                 "updated": crate::util::format_local_compact(m.updated_at),
-                "lifecycle": lifecycle.get(&Store::parse_id(&m.id).unwrap_or(0)).unwrap_or(&default_lifecycle).view(response_time),
             })
         })
         .collect();
@@ -485,16 +426,7 @@ pub fn memory_search(
             "no memory matched every term; drop some terms or try broader ones (matching is case-insensitive substring)"
         );
     }
-    let next_expiry = hits
-        .iter()
-        .filter_map(|hit| {
-            lifecycle
-                .get(&Store::parse_id(&memories[hit.idx].id).unwrap_or(0))
-                .and_then(|meta| meta.expires_at)
-        })
-        .filter(|deadline| *deadline > response_time)
-        .min();
-    crate::search_snapshot::create(st, scope, revision, out, offset, limit, next_expiry)
+    crate::search_snapshot::create(st, scope, revision, out, offset, limit)
 }
 
 pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -506,9 +438,6 @@ pub fn memory_get(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
         .map(|m| {
             let mut view = m.full_view();
             attach_attributes(st, m, &mut view)?;
-            view["lifecycle"] = st
-                .lifecycle_get(Store::parse_id(&m.id).ok_or("invalid stored memory id")?)?
-                .view(now());
             Ok(view)
         })
         .collect::<Result<_, String>>()?;

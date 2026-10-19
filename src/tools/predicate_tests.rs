@@ -161,11 +161,7 @@ fn decay_rules_match_tags_and_survive_export_import() {
         assert!(plan[0].0.is_some());
         // The rule matches through the valued tag's key half
         let names = vec!["temp:new".to_string(), "temp".to_string()];
-        assert!(
-            (policy.freshness(&plan, &st.lifecycle_get(2)?, &names, 100, 100 + 7 * 86400) - 0.5)
-                .abs()
-                < 1e-12
-        );
+        assert!((policy.freshness(&plan, &names, 100, 100 + 7 * 86400) - 0.5).abs() < 1e-12);
         Ok(())
     })
     .unwrap();
@@ -180,15 +176,7 @@ fn decay_rules_match_tags_and_survive_export_import() {
             let policy = st.lifecycle_policy()?;
             let plan = st.decay_plan();
             assert!(
-                (policy.freshness(
-                    &plan,
-                    &crate::lifecycle::Metadata::default(),
-                    &["temp".to_string()],
-                    0,
-                    7 * 86400
-                ) - 0.5)
-                    .abs()
-                    < 1e-12
+                (policy.freshness(&plan, &["temp".to_string()], 0, 7 * 86400) - 0.5).abs() < 1e-12
             );
             Ok(())
         },

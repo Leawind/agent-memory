@@ -33,7 +33,6 @@ const EXPECTED_TOOLS = [
   'memory_edit',
   'memory_merge',
   'memory_delete',
-  'memory_lifecycle',
   'memory_use',
 ].sort()
 
@@ -315,22 +314,6 @@ try {
   check(
     'tag rules expose both constraints and derivations',
     Array.isArray(payloadOf(rules)?.constraints) && Array.isArray(payloadOf(rules)?.derivations),
-  )
-  const expired = await rpc('expire', 'tools/call', {
-    name: 'memory_lifecycle',
-    arguments: { id: createdId, expires_at: 1 },
-  })
-  check('memory_lifecycle accepts a reversible expiry', expired.result?.isError !== true)
-  const hidden = await rpc('expired-search', 'tools/call', { name: 'memory_search', arguments: { query: '联调' } })
-  check('default search hides expired memories', lineHeader(textOf(hidden) ?? '').total_matches === '0')
-  await rpc('clear-expiry', 'tools/call', {
-    name: 'memory_lifecycle',
-    arguments: { id: createdId, expires_at: null },
-  })
-  const visible = await rpc('restored-search', 'tools/call', { name: 'memory_search', arguments: { query: '联调' } })
-  check(
-    'clearing an expiry returns the memory to default search',
-    lineHeader(textOf(visible) ?? '').total_matches === '1',
   )
 
   const updated = await rpc(6, 'tools/call', {

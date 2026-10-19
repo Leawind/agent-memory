@@ -158,9 +158,6 @@ fn push_memory_row(out: &mut String, m: &Value, score: Option<&Value>) -> Option
     }
     out.push(' ');
     out.push_str(&escape_text(summary));
-    if m["lifecycle"]["state"].as_str() == Some("expired") {
-        out.push_str(" [state:expired]");
-    }
     out.push('\n');
     Some(())
 }
