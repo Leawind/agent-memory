@@ -1,6 +1,7 @@
 -- 归档机制移除：生命周期只剩到期时间与置顶，记忆状态只有 active / expired 两种。
 -- archived_at 列挂着 CHECK 约束，SQLite 拒绝直接 DROP COLUMN，按重建表方式删除；
 -- 已归档记忆随之恢复为 active（另有到期时间的照常按到期判定）。
+-- 基线（迁移 1）已直接写为新形状，本迁移对全新数据库是等价重建。
 
 CREATE TABLE memory_lifecycle_new (
     memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,

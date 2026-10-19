@@ -40,7 +40,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
 CREATE TABLE IF NOT EXISTS memory_lifecycle (
     memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
     expires_at INTEGER CHECK (expires_at >= 0),
-    archived_at INTEGER CHECK (archived_at >= 0),
     pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))
 );
 
