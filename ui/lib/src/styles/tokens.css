@@ -198,6 +198,12 @@
   flex-shrink: 0;
 }
 
+/* Title strip: a hairline separates the dialog's actions from the form below */
+.am-form-dialog--floating .el-dialog__header {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
 .am-form-dialog--floating .el-dialog__body {
   /* Content-sized while the dialog is below its 90vh cap; when the cap bites, the body is
      the only shrinkable child (header/footer are shrink-exempt) and scrolls internally.

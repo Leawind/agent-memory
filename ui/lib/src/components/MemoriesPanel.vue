@@ -1,12 +1,15 @@
 <template>
-  <div ref="rootRef" class="am-panel">
+  <div ref="rootRef" class="am-panel" :class="{ 'is-tight': width > 0 && width < 880, 'is-narrow': narrow }">
     <el-config-provider :locale="elementPlusLocale">
       <div v-if="showHeader" class="am-panel-header">
         <div class="am-heading">
-          <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
-          <el-tooltip :content="props.subtitle ?? t('memories.subtitle')" placement="top">
-            <el-icon class="am-info"><InfoFilled /></el-icon>
-          </el-tooltip>
+          <div class="am-heading-text">
+            <div class="am-title-line">
+              <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
+              <span v-if="!loading" class="am-total">{{ total }}</span>
+            </div>
+            <p class="am-panel-subtitle">{{ props.subtitle ?? t('memories.subtitle') }}</p>
+          </div>
         </div>
         <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
       </div>
@@ -21,8 +24,8 @@
           @keyup.enter="applySearchNow"
           @clear="applySearchNow"
         >
-          <template #append>
-            <el-button :icon="Search" @click="applySearchNow" />
+          <template #prefix>
+            <el-icon class="search-icon"><Search /></el-icon>
           </template>
         </el-input>
         <TagExprInput
@@ -53,7 +56,27 @@
            search snippet live on their own lines below it. The whole card opens the memory
            dialog; delete/edit live inside that dialog. -->
       <div v-loading="loading" class="am-list">
-        <el-alert v-if="emptyNote" :title="emptyNote" type="info" show-icon :closable="false" />
+        <div v-if="emptyKind" class="am-empty" role="status">
+          <div class="am-empty-icon">
+            <el-icon :size="26"><Collection /></el-icon>
+          </div>
+          <h3 class="am-empty-title">
+            {{ emptyKind === 'none' ? t('memories.emptyTitle') : t('memories.noMatchTitle') }}
+          </h3>
+          <p class="am-empty-hint">
+            {{
+              emptyKind === 'search'
+                ? t('memories.searchEmpty')
+                : emptyKind === 'filter'
+                  ? t('memories.exprEmpty')
+                  : t('memories.emptyHint')
+            }}
+          </p>
+          <el-button v-if="emptyKind === 'none'" type="primary" :icon="Plus" @click="openCreate">
+            {{ t('memories.emptyCreate') }}
+          </el-button>
+          <el-button v-else @click="clearFilters">{{ t('memories.clearFilters') }}</el-button>
+        </div>
         <button v-for="card in cards" :key="card.id" type="button" class="am-memory-card" @click="openEdit(card.id)">
           <span class="card-main">
             <span class="card-summary">{{ card.summary }}</span>
@@ -83,28 +106,17 @@
         </button>
       </div>
 
-      <div class="am-pager" v-if="!showSearchResults">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :total="total"
-          :page-sizes="[20, 50, 100, 200]"
-          layout="total, sizes, prev, pager, next"
-          @current-change="run(reloadPage)"
-          @size-change="run(reloadPage)"
-        />
-      </div>
-      <div class="am-pager" v-else>
+      <div v-if="total > 0" class="am-pager">
         <!-- Hybrid searches report how many hits are literal keyword matches: the rest entered
              via the semantic channel and are looser hits worth eyeing with suspicion -->
-        <span v-if="keywordMatches !== undefined" class="search-km">
+        <span v-if="showSearchResults && keywordMatches !== undefined" class="search-km">
           {{ t('memories.keywordHitsFmt', { k: keywordMatches, n: total }) }}
         </span>
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
           :total="total"
-          :page-sizes="[10, 20, 50]"
+          :page-sizes="showSearchResults ? [10, 20, 50] : [20, 50, 100, 200]"
           layout="total, sizes, prev, pager, next"
           @current-change="run(reloadPage)"
           @size-change="run(reloadPage)"
@@ -127,7 +139,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { elementPlusLocale } from '../i18n/elementPlus'
-import { InfoFilled, Plus, Search } from '@element-plus/icons-vue'
+import { Collection, Plus, Search } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { toastError } from '../toast'
 import { tagExprReady } from '../tagExprGuard'
@@ -207,16 +219,14 @@ const cards = computed<MemoryCard[]>(() =>
       })),
 )
 
-// The empty-result notice is generated locally (the server's note targets agents and is English
-// contract text, not passed through to the UI):
-// list mode = nothing satisfies the expression; search mode = no hits (only once the search has
-// actually settled — before that the previous view is still on screen, so saying "no hits" would
-// describe a query that has not run)
-const emptyNote = computed(() => {
-  if (loading.value || total.value !== 0) return ''
-  if (searching.value) return showSearchResults.value ? t('memories.searchEmpty') : ''
-  if (tagExpr.value.trim()) return t('memories.exprEmpty')
-  return ''
+// Which empty state to show (null while loading or when there is something to list).
+// list mode with no filter = the store is empty; a filter or search explains the mismatch and
+// offers a way back.
+const emptyKind = computed<'none' | 'filter' | 'search' | null>(() => {
+  if (loading.value || cards.value.length > 0 || total.value > 0) return null
+  if (searching.value && showSearchResults.value) return 'search'
+  if (tagExpr.value.trim()) return 'filter'
+  return 'none'
 })
 
 // Typing applies through a debounce (a search term is composed over several keystrokes), the
@@ -265,8 +275,10 @@ const sortChoice = computed({
 })
 
 const rootRef = ref<HTMLElement | null>(null)
-// <720px switches to narrow mode (dialogs narrow); the card list is flexible-width by nature
-const { narrow } = useContainerWidth(rootRef)
+// <880px: the search field gets its own row; <720px: each text field gets a row and the
+// selects split the last one. Kept separate from `compact` (960) because the four toolbar
+// controls happen to fit side by side down to roughly 880px.
+const { narrow, width } = useContainerWidth(rootRef)
 
 const editorVisible = ref(false)
 const editingId = ref<string | null>(null)
@@ -302,6 +314,23 @@ function toggleTagFilter(name: string) {
   run(onSearch)
 }
 
+// Empty-state action: drop both the keyword and tag filters, then reload the whole list
+function clearFilters() {
+  clearTimeout(searchTimer)
+  clearTimeout(exprTimer)
+  query.value = ''
+  tagExpr.value = ''
+  void run(onSearch)
+}
+
+// Sidebar "all memories" row: drop just the tag expression (a keyword search stays as typed)
+function clearTagFilter() {
+  if (!tagExpr.value) return
+  clearTimeout(exprTimer)
+  tagExpr.value = ''
+  void run(onSearch)
+}
+
 // A permanently mounted panel cannot sense visibility itself: the host calls refresh when
 // switching back to this view to pull the latest data (tag options too: renames elsewhere
 // must reach the expression suggestions)
@@ -311,25 +340,82 @@ defineExpose({
     loadTagOptions()
   },
   toggleTagFilter,
+  clearTagFilter,
   // Read by the workspace so the sidebar can highlight the row matching the expression
   tagExpr,
 })
 </script>
 
 <style scoped>
-/* Search box takes a full row (flex-basis 100%), the selects wrap to the next line */
+/* Header: title + count badge on one line, the explanation visible underneath (it used to be
+   hidden behind an info tooltip) */
+.am-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.am-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.am-total {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.am-panel-subtitle {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Toolbar: search and the tag expression share the free space; the selects stay compact */
 .search {
-  flex: 1 1 100%;
+  flex: 2 1 260px;
 }
 .tag-filter {
-  flex: 1 1 240px;
-  max-width: 460px;
+  flex: 2 1 240px;
 }
 .sort-select {
-  width: 140px;
+  flex: 0 0 auto;
+  width: 132px;
 }
 .mode-select {
-  width: 150px;
+  flex: 0 0 auto;
+  width: 142px;
+}
+.search-icon {
+  color: var(--el-text-color-placeholder);
+}
+/* Tight panel: the search field takes a full row; the tag expression and the two selects
+   share the next one (the tag expression grows into the leftover space). */
+.am-panel.is-tight .search {
+  flex-basis: 100%;
+}
+/* Narrow panel: each text field gets its own row, the selects split the last row */
+.am-panel.is-narrow .search,
+.am-panel.is-narrow .tag-filter {
+  flex-basis: 100%;
+}
+.am-panel.is-narrow .sort-select,
+.am-panel.is-narrow .mode-select {
+  flex: 1 1 0;
+  width: auto;
 }
 
 /* Scrollable card area between toolbar and pager */
@@ -344,12 +430,45 @@ defineExpose({
   padding: 2px;
 }
 
+/* Empty state: centered in the remaining list height, with the one action that makes sense */
+.am-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: auto;
+  padding: 40px 24px;
+  max-width: 420px;
+  text-align: center;
+}
+.am-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.am-empty-title {
+  margin: 16px 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.am-empty-hint {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
 /* Memory card: quiet bordered row, surface fill on hover — reads as one clickable entry */
 .am-memory-card {
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  padding: 12px 14px;
+  padding: 13px 15px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: var(--am-radius-lg);
   background: var(--el-bg-color);
@@ -357,10 +476,19 @@ defineExpose({
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .am-memory-card:hover {
   border-color: var(--el-border-color);
   background: var(--el-fill-color-lighter);
+  box-shadow: var(--el-box-shadow-light);
+}
+.am-memory-card:focus-visible {
+  outline: 2px solid var(--el-color-primary-light-5);
+  outline-offset: 2px;
 }
 .card-main {
   display: flex;
@@ -371,7 +499,7 @@ defineExpose({
 }
 /* Summary first, alone on its line — never sharing a row with the tags */
 .card-summary {
-  font-weight: 500;
+  font-weight: 600;
   font-size: 15px;
   color: var(--el-text-color-primary);
   overflow: hidden;
@@ -417,9 +545,12 @@ defineExpose({
 .am-pager {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
+  min-height: 32px;
 }
 .search-km {
+  margin-right: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
   font-variant-numeric: tabular-nums;

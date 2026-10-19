@@ -25,6 +25,7 @@
             <el-button
               type="danger"
               circle
+              plain
               :icon="Delete"
               :disabled="saving"
               :aria-label="t('common.delete')"

@@ -8,6 +8,7 @@
         @edit="openTag"
         @create="createTag"
         @predicates="predicateVisible = true"
+        @clear="clearFilter"
       />
     </aside>
 
@@ -132,6 +133,11 @@ function toggleFilter(tag: TagView): void {
   panel.value?.toggleTagFilter(tag.name)
 }
 
+// Sidebar "all memories" row: drop the tag expression, keep any keyword search
+function clearFilter(): void {
+  panel.value?.clearTagFilter()
+}
+
 const panelExpr = computed(() => panel.value?.tagExpr ?? '')
 
 // ---- Cross-side refresh: panel and sidebar stay in sync through each other's changes ----
@@ -177,7 +183,8 @@ defineExpose({
   min-height: 0;
 }
 
-/* The drag strip: nearly invisible until hovered, then a rounded handle line */
+/* The drag strip: a hairline that thickens into a handle on hover. The always-on line gives the
+   sidebar a visible edge without the weight of a real border. */
 .amws-resizer {
   flex-shrink: 0;
   width: 8px;
@@ -192,7 +199,8 @@ defineExpose({
   position: absolute;
   inset: 12px 3px;
   border-radius: 999px;
-  background: transparent;
+  background: var(--el-border-color-light);
+  transition: background 0.15s ease;
 }
 .amws-resizer:hover::after,
 .is-dragging .amws-resizer::after {
@@ -210,17 +218,63 @@ defineExpose({
   min-height: 0;
 }
 
-/* Narrow containers: stack — the sidebar becomes a capped block above the list */
+/* Narrow containers: the sidebar turns into a compact horizontal filter strip above the list.
+   A full vertical tag column would eat most of a phone screen before the memories start. */
 .am-workspace.is-stacked {
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .is-stacked .amws-aside {
   flex: 0 0 auto;
-  max-height: 240px;
-  overflow-y: auto;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
 }
 .is-stacked .amws-main {
   min-height: 0;
+}
+.is-stacked :deep(.am-tags-sidebar) {
+  height: auto;
+  gap: 6px;
+}
+.is-stacked :deep(.sb-head) {
+  padding: 0;
+}
+.is-stacked :deep(.sb-list) {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+}
+.is-stacked :deep(.sb-all),
+.is-stacked :deep(.sb-item) {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+}
+.is-stacked :deep(.sb-all.is-active),
+.is-stacked :deep(.sb-item.is-active) {
+  background: var(--el-color-primary-light-9);
+}
+.is-stacked :deep(.sb-item-top) {
+  gap: 6px;
+}
+.is-stacked :deep(.sb-name),
+.is-stacked :deep(.sb-all-name) {
+  max-width: 160px;
+}
+.is-stacked :deep(.sb-desc) {
+  display: none;
+}
+/* No hover on touch: keep the edit affordance visible in the strip */
+.is-stacked :deep(.sb-edit) {
+  opacity: 0.65;
 }
 </style>

@@ -59,6 +59,14 @@ function jsonResponse(body: unknown) {
   }
 }
 
+// Empty store: no memories at all, so the empty-state coverage doesn't depend on the list fixture
+function emptyFetch(url: string | URL) {
+  const u = String(url)
+  if (u.startsWith('/api/tags')) return Promise.resolve(jsonResponse(tagsPayload))
+  if (u.includes('/api/stats')) return Promise.resolve(jsonResponse({ embedding: { enabled: false } }))
+  return Promise.resolve(jsonResponse({ total: 0, offset: 0, limit: 20, memories: [] }))
+}
+
 describe('MemoriesPanel', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -213,6 +221,39 @@ describe('MemoriesPanel', () => {
     vm.toggleTagFilter('project:demo')
     await flushPromises()
     expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('shows a filter-aware empty state and clears the filters in one click', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(emptyFetch as unknown as typeof fetch)
+    localStorage.setItem('agent-memory-tag-expr', 'rust')
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('.am-empty-title').text()).toBe('没有匹配的记忆')
+    expect(wrapper.find('.am-empty').text()).toContain('没有记忆满足该标签表达式')
+
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+    await wrapper.find('.am-empty button').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.startsWith('/api/memories') && !u.includes('tag_expr='))).toBe(true)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('.am-empty-title').text()).toBe('还没有任何记忆')
+    wrapper.unmount()
+  })
+
+  it('offers creating the first memory when the store is empty', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(emptyFetch as unknown as typeof fetch)
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('.am-empty-title').text()).toBe('还没有任何记忆')
+    expect(wrapper.find('.am-empty button').text()).toContain('新建第一条记忆')
+    // No rows to page through: the pager disappears
+    expect(wrapper.find('.am-pager').exists()).toBe(false)
     wrapper.unmount()
   })
 })

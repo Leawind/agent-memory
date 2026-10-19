@@ -88,6 +88,30 @@ describe('TagsSidebar', () => {
     wrapper.unmount()
   })
 
+  it('has an all-memories reset row and quiet header tools', async () => {
+    const wrapper = mount(TagsSidebar)
+    await flushPromises()
+    await flushPromises()
+    const all = wrapper.find('.sb-all')
+    expect(all.text()).toContain('全部记忆')
+    // No expression applied yet: the reset row is the active entry
+    expect(all.classes()).toContain('is-active')
+    await all.trigger('click')
+    expect(wrapper.emitted('clear')).toHaveLength(1)
+
+    // An active tag turns the highlight over to that row
+    await wrapper.setProps({ active: ' rust ' })
+    expect(wrapper.find('.sb-all').classes()).not.toContain('is-active')
+    expect(wrapper.find('.sb-item.is-active').exists()).toBe(true)
+
+    // Two quiet tools: tag predicates, then create
+    const tools = wrapper.findAll('.sb-tool')
+    expect(tools).toHaveLength(2)
+    await tools[0].trigger('click')
+    expect(wrapper.emitted('predicates')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   it('refresh() refetches the tag list', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()

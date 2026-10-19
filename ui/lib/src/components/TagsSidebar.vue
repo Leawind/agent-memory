@@ -1,22 +1,29 @@
 <template>
   <div class="am-tags-sidebar">
-    <!-- Header: label + count + the create entry (the tag dialog handles the actual form) -->
+    <!-- Header: label + count + quiet icon tools (tag predicates, create). The advanced
+         predicate editor used to be a full-width button that read like a page tab. -->
     <div class="sb-head">
       <span class="sb-title">{{ t('tags.title') }}</span>
       <span class="sb-count">{{ rows.length }}</span>
-      <el-tooltip :content="t('tags.create')" placement="top" :enterable="false">
-        <el-button
-          class="sb-add"
-          :icon="Plus"
-          circle
-          size="small"
-          :aria-label="t('tags.create')"
-          @click="emit('create')"
-        />
-      </el-tooltip>
+      <div class="sb-tools">
+        <el-tooltip :content="t('predicates.title')" placement="bottom" :enterable="false">
+          <button type="button" class="sb-tool" :aria-label="t('predicates.title')" @click="emit('predicates')">
+            <el-icon :size="14"><Operation /></el-icon>
+          </button>
+        </el-tooltip>
+        <el-tooltip :content="t('tags.create')" placement="bottom" :enterable="false">
+          <button type="button" class="sb-tool sb-add" :aria-label="t('tags.create')" @click="emit('create')">
+            <el-icon :size="14"><Plus /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
     </div>
-    <el-button @click="emit('predicates')">{{ t('predicates.title') }}</el-button>
     <div v-loading="loading" class="sb-list">
+      <!-- Always-visible reset: clears the tag expression and returns to the full list -->
+      <button type="button" class="sb-all" :class="{ 'is-active': !isFiltering }" @click="emit('clear')">
+        <el-icon class="sb-all-icon" :size="14"><Collection /></el-icon>
+        <span class="sb-all-name">{{ t('tags.all') }}</span>
+      </button>
       <p v-if="!loading && rows.length === 0" class="sb-none">{{ t('tags.none') }}</p>
       <button
         v-for="tag in sorted"
@@ -57,7 +64,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Edit, Plus } from '@element-plus/icons-vue'
+import { Collection, Edit, Operation, Plus } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { toastError } from '../toast'
 import { useTags } from '../composables/useTags'
@@ -77,12 +84,16 @@ const emit = defineEmits<{
   edit: [tag: TagView]
   create: []
   predicates: []
+  /** The "all memories" row: clear the tag expression */
+  clear: []
 }>()
 
 const { rows, loading, reload } = useTags()
 
 // Most-used first, ties broken by name — a stable order independent of server-side ordering
 const sorted = computed(() => [...rows.value].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)))
+
+const isFiltering = computed(() => (props.active ?? '').trim() !== '')
 
 function isActive(tag: TagView): boolean {
   return (props.active ?? '').trim() === tag.name
@@ -97,7 +108,7 @@ defineExpose({
 .am-tags-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   height: 100%;
   min-height: 0;
 }
@@ -105,7 +116,8 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 4px;
+  padding: 0 2px;
+  min-height: 28px;
 }
 .sb-title {
   font-size: 13px;
@@ -114,11 +126,46 @@ defineExpose({
   letter-spacing: 0.02em;
 }
 .sb-count {
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
-.sb-add {
+.sb-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
+}
+.sb-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+}
+.sb-tool:hover {
+  background: var(--el-fill-color);
+  color: var(--el-text-color-primary);
+}
+.sb-tool:focus-visible,
+.sb-all:focus-visible,
+.sb-item:focus-visible {
+  outline: 2px solid var(--el-color-primary-light-5);
+  outline-offset: 1px;
 }
 
 .sb-list {
@@ -137,6 +184,38 @@ defineExpose({
   color: var(--el-text-color-placeholder);
 }
 
+/* Reset row: the whole list, highlighted whenever no tag expression is applied */
+.sb-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sb-all:hover {
+  background: var(--el-fill-color);
+}
+.sb-all.is-active {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.sb-all-icon {
+  flex-shrink: 0;
+  color: var(--el-text-color-placeholder);
+}
+.sb-all.is-active .sb-all-icon {
+  color: var(--el-color-primary);
+}
+.sb-all-name {
+  font-weight: 500;
+}
+
 /* Tag entry: name + reserved badge + count on the first line, description below.
    A plain button styled as a quiet list row (Modrinth filter-entry look). */
 .sb-item {
@@ -145,7 +224,7 @@ defineExpose({
   gap: 2px;
   padding: 7px 10px;
   border: none;
-  border-radius: var(--el-border-radius-base);
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -190,6 +269,8 @@ defineExpose({
 .sb-edit {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 14px;
   flex-shrink: 0;
   font-size: 13px;
   color: var(--el-text-color-placeholder);

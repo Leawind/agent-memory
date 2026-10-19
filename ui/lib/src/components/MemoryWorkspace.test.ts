@@ -90,6 +90,29 @@ describe('MemoryWorkspace', () => {
     wrapper.unmount()
   })
 
+  it('the all-memories row clears an active tag filter', async () => {
+    const wrapper = mount(MemoryWorkspace)
+    await flushPromises()
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+
+    await wrapper.find('.sb-item').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('rust')
+    expect(wrapper.find('.sb-all').classes()).not.toContain('is-active')
+
+    fetchMock.mockClear()
+    await wrapper.find('.sb-all').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.startsWith('/api/memories') && !u.includes('tag_expr='))).toBe(true)
+    expect((wrapper.find('.tag-filter input').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('.sb-all').classes()).toContain('is-active')
+    wrapper.unmount()
+  })
+
   it('tag changes refresh the sidebar and the memory list', async () => {
     const wrapper = mount(MemoryWorkspace)
     await flushPromises()

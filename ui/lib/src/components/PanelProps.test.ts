@@ -32,6 +32,7 @@ describe('MemoriesPanel reusable props', () => {
     await flushPromises()
     expect(wrapper.find('.am-panel-header').exists()).toBe(true)
     expect(wrapper.find('.am-panel-title').text()).toBe('记忆')
+    expect(wrapper.find('.am-panel-subtitle').text()).toBe('多 agent 共享的记忆库')
     wrapper.unmount()
   })
 
@@ -45,17 +46,15 @@ describe('MemoriesPanel reusable props', () => {
     wrapper.unmount()
   })
 
-  it('overrides title text and subtitle tooltip content', async () => {
+  it('overrides title and subtitle text', async () => {
     const wrapper = mount(MemoriesPanel, {
       props: { title: '自定义标题', subtitle: '自定义副标题' },
     })
     await flushPromises()
     expect(wrapper.find('.am-panel-title').text()).toBe('自定义标题')
-    // The subtitle is no longer rendered flat; it is the hover tooltip of the info icon next to the title
-    const tooltip = wrapper.findComponent({ name: 'ElTooltip' })
-    expect(tooltip.exists()).toBe(true)
-    expect(tooltip.props('content')).toBe('自定义副标题')
-    expect(wrapper.find('.am-info').exists()).toBe(true)
+    // The subtitle is visible copy under the title, not a hidden tooltip
+    expect(wrapper.find('.am-panel-subtitle').text()).toBe('自定义副标题')
+    expect(wrapper.find('.am-info').exists()).toBe(false)
     wrapper.unmount()
   })
 })
