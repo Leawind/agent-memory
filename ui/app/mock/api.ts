@@ -386,6 +386,51 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     return
   }
 
+  // 管理界面的运行时面板：真实服务端按进程状态返回，mock 给出可观测的样例值
+  if (segs[1] === 'search' && segs[2] === 'runtime' && method === 'GET') {
+    const limits = (settings as unknown as Record<string, unknown>).search_limits as
+      | {
+          semantic_candidates?: number
+          adaptive?: { enabled?: boolean; min_candidates?: number }
+        }
+      | undefined
+    const adaptive = limits?.adaptive?.enabled === true
+    const selected = adaptive ? (limits?.adaptive?.min_candidates ?? 20) : (limits?.semantic_candidates ?? 100)
+    sendJson(res, 200, {
+      process_local: true,
+      adaptive_enabled: adaptive,
+      models: [
+        {
+          id: 'local-model',
+          selected_candidates: selected,
+          last_candidates: Math.min(1000, selected + 4),
+          last_latency_ms: adaptive ? 640 : 912,
+          samples: 24,
+          failures: 0,
+        },
+      ],
+    })
+    return
+  }
+  if (segs[1] === 'access' && segs[2] === 'stats' && method === 'GET') {
+    sendJson(res, 200, {
+      raw_events: 128,
+      hourly_buckets: 42,
+      tracked_memories: Math.max(1, memories.length - 1),
+      dropped_read_events: 0,
+    })
+    return
+  }
+  if (segs[1] === 'access' && (segs[2] === 'compact' || segs[2] === 'rebuild') && method === 'POST') {
+    sendJson(res, 200, {})
+    return
+  }
+  // 没有任何向量缓存（未配置 embedding 时的真实形态就是一个空列表）
+  if (segs[1] === 'embeddings' && segs[2] === 'caches' && method === 'GET') {
+    sendJson(res, 200, { caches: [] })
+    return
+  }
+
   // 运维：统计从内存推导，其余固定应答
   if (segs[1] === 'stats' && method === 'GET') {
     const newest = memories.reduce<MockMemory | null>((a, m) => (!a || m.updated_at > a.updated_at ? m : a), null)
