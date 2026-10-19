@@ -2,62 +2,68 @@
   <div class="lifecycle-cards">
     <el-card shadow="never">
       <template #header>{{ t('lifecycle.policyTitle') }}</template>
-      <el-form label-position="top" @submit.prevent>
-        <p class="hint">{{ t('lifecycle.orderHint') }}</p>
-        <div v-for="(rule, index) in draft.rules" :key="index" class="decay-rule">
-          <el-form-item :label="t('predicates.expression')"
-            ><el-input v-model="rule.predicate" :maxlength="32768" placeholder="@temporary &amp; !durable"
-          /></el-form-item>
-          <div class="half-life-row">
-            <el-checkbox
-              :model-value="rule.half_life_days !== null"
-              @change="rule.half_life_days = $event ? 30 : null"
-              >{{ t('lifecycle.enableDecay') }}</el-checkbox
-            >
-            <el-input-number
-              v-if="rule.half_life_days !== null"
-              v-model="rule.half_life_days"
-              :min="1"
-              :max="36500"
-              :precision="1"
-            />
-            <span>{{ rule.half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
+      <p class="hint">{{ t('lifecycle.orderHint') }}</p>
+      <div v-for="(rule, index) in draft.rules" :key="index" class="decay-rule">
+        <label class="field">
+          <ModelFieldLabel :label="t('predicates.expression')" />
+          <el-input v-model="rule.predicate" :maxlength="32768" placeholder="@temporary &amp; !durable" />
+        </label>
+        <div class="half-life-row">
+          <el-checkbox :model-value="rule.half_life_days !== null" @change="rule.half_life_days = $event ? 30 : null">{{
+            t('lifecycle.enableDecay')
+          }}</el-checkbox>
+          <el-input-number
+            v-if="rule.half_life_days !== null"
+            v-model="rule.half_life_days"
+            :min="1"
+            :max="36500"
+            :precision="1"
+          />
+          <span>{{ rule.half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
+          <span class="rule-actions">
             <el-button :disabled="index === 0" @click="move(index, -1)">{{ t('lifecycle.moveUp') }}</el-button>
             <el-button :disabled="index === draft.rules.length - 1" @click="move(index, 1)">{{
               t('lifecycle.moveDown')
             }}</el-button>
             <el-button @click="draft.rules.splice(index, 1)">{{ t('common.delete') }}</el-button>
-          </div>
+          </span>
         </div>
-        <el-button
-          :disabled="draft.rules.length >= 128"
-          @click="draft.rules.push({ predicate: '', half_life_days: 30 })"
-          >{{ t('lifecycle.addRule') }}</el-button
-        >
-        <el-form-item :label="t('lifecycle.defaultDecay')">
-          <div class="half-life-row">
-            <el-checkbox
-              :model-value="draft.default_half_life_days !== null"
-              @change="draft.default_half_life_days = $event ? 30 : null"
-              >{{ t('lifecycle.enableDecay') }}</el-checkbox
-            >
-            <el-input-number
-              v-if="draft.default_half_life_days !== null"
-              v-model="draft.default_half_life_days"
-              :min="1"
-              :max="36500"
-              :precision="1"
-            />
-            <span>{{ draft.default_half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
-          </div>
-        </el-form-item>
-        <el-form-item :label="t('lifecycle.freshnessWeight')">
+      </div>
+      <el-button class="add-rule" :disabled="draft.rules.length >= 128" @click="addRule">{{
+        t('lifecycle.addRule')
+      }}</el-button>
+
+      <div class="field default-decay">
+        <ModelFieldLabel :label="t('lifecycle.defaultDecay')" />
+        <div class="half-life-row">
+          <el-checkbox
+            :model-value="draft.default_half_life_days !== null"
+            @change="draft.default_half_life_days = $event ? 30 : null"
+            >{{ t('lifecycle.enableDecay') }}</el-checkbox
+          >
+          <el-input-number
+            v-if="draft.default_half_life_days !== null"
+            v-model="draft.default_half_life_days"
+            :min="1"
+            :max="36500"
+            :precision="1"
+          />
+          <span>{{ draft.default_half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
+        </div>
+      </div>
+
+      <!-- Two narrow weights share one row instead of each claiming a full-width form line -->
+      <div class="weight-grid">
+        <label class="field">
+          <ModelFieldLabel :label="t('lifecycle.freshnessWeight')" />
           <el-input-number v-model="draft.freshness_weight" :min="0" :max="5" :step="0.1" :precision="2" />
-        </el-form-item>
-        <el-form-item :label="t('lifecycle.reinforcementWeight')">
+        </label>
+        <label class="field">
+          <ModelFieldLabel :label="t('lifecycle.reinforcementWeight')" />
           <el-input-number v-model="draft.reinforcement_weight" :min="0" :max="5" :step="0.1" :precision="2" />
-        </el-form-item>
-      </el-form>
+        </label>
+      </div>
+
       <p class="hint">{{ t('lifecycle.policyHint') }}</p>
       <el-button type="primary" :disabled="!dirty || !valid" :loading="saving" @click="save">{{
         t('common.save')
@@ -65,12 +71,24 @@
     </el-card>
     <el-card shadow="never">
       <template #header>{{ t('lifecycle.accessTitle') }}</template>
-      <el-descriptions v-if="stats" :column="1" size="small">
-        <el-descriptions-item :label="t('lifecycle.rawEvents')">{{ stats.raw_events }}</el-descriptions-item>
-        <el-descriptions-item :label="t('lifecycle.buckets')">{{ stats.hourly_buckets }}</el-descriptions-item>
-        <el-descriptions-item :label="t('lifecycle.tracked')">{{ stats.tracked_memories }}</el-descriptions-item>
-        <el-descriptions-item :label="t('lifecycle.dropped')">{{ stats.dropped_read_events }}</el-descriptions-item>
-      </el-descriptions>
+      <div v-if="stats" class="stat-grid">
+        <div class="stat">
+          <span class="stat-label">{{ t('lifecycle.rawEvents') }}</span>
+          <span class="stat-value">{{ stats.raw_events }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">{{ t('lifecycle.buckets') }}</span>
+          <span class="stat-value">{{ stats.hourly_buckets }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">{{ t('lifecycle.tracked') }}</span>
+          <span class="stat-value">{{ stats.tracked_memories }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">{{ t('lifecycle.dropped') }}</span>
+          <span class="stat-value">{{ stats.dropped_read_events }}</span>
+        </div>
+      </div>
       <p class="hint">{{ t('lifecycle.accessHint') }}</p>
       <div class="actions">
         <el-button :loading="busy === 'refresh'" :disabled="!!busy" @click="refresh">{{
@@ -94,6 +112,7 @@ import { t } from '../../i18n'
 import { toastSuccess } from '../../toast'
 import type { AccessStats, LifecyclePolicy } from '../../types'
 import { run } from './caps'
+import ModelFieldLabel from './ModelFieldLabel.vue'
 
 const props = defineProps<{ policy: LifecyclePolicy; active: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -130,6 +149,10 @@ const valid = computed(
       (weight) => Number.isFinite(weight) && weight >= 0 && weight <= 5,
     ),
 )
+
+function addRule(): void {
+  draft.value.rules.push({ predicate: '', half_life_days: 30 })
+}
 
 function move(index: number, direction: number): void {
   const next = index + direction
@@ -183,6 +206,41 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
   display: grid;
   gap: 16px;
 }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.field :deep(.el-input-number) {
+  width: 100%;
+}
+.decay-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.add-rule {
+  margin: 10px 0 4px;
+}
+.default-decay {
+  margin-top: 14px;
+}
+/* The two ranking weights are short values: side by side, with a capped track width */
+.weight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 220px));
+  gap: 12px 16px;
+  margin-top: 14px;
+}
 .half-life-row,
 .actions {
   display: flex;
@@ -191,7 +249,33 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
   flex-wrap: wrap;
 }
 .hint {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+/* Event counters: compact tiles instead of four full-width label/value lines */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.stat-label {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 </style>

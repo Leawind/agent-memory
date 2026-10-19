@@ -46,7 +46,10 @@ describe('SearchLimitsCard', () => {
     const wrapper = mount(SearchLimitsCard, { props: { limits, active: false }, global: { plugins: [ElementPlus] } })
     await flushPromises()
     expect(calls).toEqual([])
+    // Compact layout: the narrow budget fields share one grid row instead of one full-width form line each
+    expect(wrapper.findAll('.search-limits-card > .el-card__body > .field-grid > .field')).toHaveLength(3)
     await wrapper.find('.el-switch').trigger('click')
+    expect(wrapper.findAll('.adaptive-block .field')).toHaveLength(4)
     const save = wrapper.findAll('button').find((button) => button.text() === '保存')!
     expect(save.attributes('disabled')).toBeDefined()
     await wrapper.findAll('input')[0].setValue('120')
