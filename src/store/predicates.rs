@@ -249,7 +249,18 @@ impl Store {
             return Ok(expr);
         }
         let namespace = ctx.predicate_namespace()?;
-        let registry = self.predicate_registry(&namespace)?;
+        self.expand_named_refs(&namespace, expr)
+    }
+
+    /// Expand `@named` references into literal tag leaves within one namespace. An expression
+    /// without named references passes through untouched.
+    pub fn expand_named_refs(&self, namespace: &str, expr: TagExpr) -> Result<TagExpr, String> {
+        let mut named = false;
+        expr.visit_atoms(&mut |a| named |= matches!(a, TagAtom::Named(_)));
+        if !named {
+            return Ok(expr);
+        }
+        let registry = self.predicate_registry(namespace)?;
         let tags = self.tag_id_names()?;
         let mut atoms = 0usize;
         let expanded = expr.try_expand(&mut |atom| match atom {

@@ -32,6 +32,38 @@ impl Store {
         self.stored_lifecycle_policy()
     }
 
+    /// Decay rules compiled for ranking: predicates parsed and `@named` references expanded
+    /// against the global namespace. An unresolvable rule (unknown predicate, deleted tag) never
+    /// matches instead of failing the search — freshness is a soft prior, not a gate.
+    pub fn decay_plan(&self) -> crate::lifecycle::DecayPlan {
+        let Ok(policy) = self.lifecycle_policy() else {
+            return Vec::new();
+        };
+        policy
+            .rules
+            .iter()
+            .map(|rule| {
+                let expr = crate::tag_expr::parse_rule(&rule.predicate)
+                    .ok()
+                    .and_then(|expr| self.expand_named_refs("global", expr).ok());
+                (expr, rule.half_life_days)
+            })
+            .collect()
+    }
+
+    /// Save-time check for a decay policy: every predicate must parse and every `@named`
+    /// reference must resolve globally, so admin typos surface on write instead of leaving
+    /// silently dead rules.
+    pub fn validate_decay_policy(&self, policy: &crate::lifecycle::Policy) -> Result<(), String> {
+        for rule in &policy.rules {
+            let expr = crate::tag_expr::parse_rule(&rule.predicate)
+                .map_err(|e| format!("invalid decay rule {:?}: {e}", rule.predicate))?;
+            self.expand_named_refs("global", expr)
+                .map_err(|e| format!("invalid decay rule {:?}: {e}", rule.predicate))?;
+        }
+        Ok(())
+    }
+
     pub fn stored_lifecycle_policy(&self) -> Result<crate::lifecycle::Policy, String> {
         match self.settings_get(Self::SETTING_LIFECYCLE_POLICY)? {
             Some(raw) => serde_json::from_str(&raw)
@@ -69,6 +101,7 @@ impl Store {
             let parsed = serde_json::from_str(value)
                 .map_err(|e| format!("invalid lifecycle_policy JSON: {e}"))?;
             let policy = crate::lifecycle::Policy::parse(&parsed)?;
+            self.validate_decay_policy(&policy)?;
             policy_raw = serde_json::to_string(&policy).map_err(|e| e.to_string())?;
             policy_raw.as_str()
         } else {

@@ -85,7 +85,7 @@ fn expiry_filters_and_backup_keep_content_and_timestamps() {
     );
     assert_eq!(set(json!({"pinned": true, "expires_at": 0})).0, 200);
     let hidden = get()["lifecycle"].clone();
-    assert_eq!(api(port, "PUT", "/api/settings", Some(json!({"lifecycle_policy":{"rules":[{"key":"topic","half_life_days":14}],"reinforcement_weight":0.3}}))).0, 200);
+    assert_eq!(api(port, "PUT", "/api/settings", Some(json!({"lifecycle_policy":{"rules":[{"predicate":"topic","half_life_days":14}],"reinforcement_weight":0.3}}))).0, 200);
     let policy = api(port, "GET", "/api/settings", None).1["lifecycle_policy"].clone();
     assert_eq!(policy["rules"][0]["half_life_days"], 14.0);
     assert_eq!(

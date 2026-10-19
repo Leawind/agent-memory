@@ -139,7 +139,7 @@ fn backup_restores_forward_references_with_stable_tag_binding() {
 }
 
 #[test]
-fn decay_rules_match_keys_and_survive_export_import() {
+fn decay_rules_match_tags_and_survive_export_import() {
     let path = setup("decay");
     let ctx = IdentityCtx::open_mode();
     execute_with_db(
@@ -152,26 +152,25 @@ fn decay_rules_match_keys_and_survive_export_import() {
     store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {
         st.settings_put(
             Store::SETTING_LIFECYCLE_POLICY,
-            &json!({"rules":[{"key":"temp","half_life_days":7}],"default_half_life_days":30})
+            &json!({"rules":[{"predicate":"temp","half_life_days":7}],"default_half_life_days":30})
                 .to_string(),
         )?;
         let policy = st.lifecycle_policy()?;
-        let memory = &st.get_memories(&[2])?.0[0];
-        let keys: Vec<String> = memory
-            .tags
-            .iter()
-            .filter_map(|t| t.split_once(':').map(|(k, _)| k.to_string()))
-            .collect();
-        assert_eq!(keys, vec!["temp".to_string()]);
+        let plan = st.decay_plan();
+        assert_eq!(plan.len(), 1);
+        assert!(plan[0].0.is_some());
+        // The rule matches through the valued tag's key half
+        let names = vec!["temp:new".to_string(), "temp".to_string()];
         assert!(
-            (policy.freshness(&st.lifecycle_get(2)?, &keys, 100, 100 + 7 * 86400) - 0.5).abs()
+            (policy.freshness(&plan, &st.lifecycle_get(2)?, &names, 100, 100 + 7 * 86400) - 0.5)
+                .abs()
                 < 1e-12
         );
         Ok(())
     })
     .unwrap();
     let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
-    assert_eq!(dump["lifecycle_policy"]["rules"][0]["key"], "temp");
+    assert_eq!(dump["lifecycle_policy"]["rules"][0]["predicate"], "temp");
     let restored = path.with_extension("restored.db");
     store::with_db_in(
         &restored,
@@ -179,8 +178,10 @@ fn decay_rules_match_keys_and_survive_export_import() {
         |st| -> Result<(), String> {
             st.import_dump(&dump)?;
             let policy = st.lifecycle_policy()?;
+            let plan = st.decay_plan();
             assert!(
                 (policy.freshness(
+                    &plan,
                     &crate::lifecycle::Metadata::default(),
                     &["temp".to_string()],
                     0,

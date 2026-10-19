@@ -1,5 +1,6 @@
 //! Content lifecycle is independent of relevance and access reinforcement.
 
+use crate::tag_expr::{TagAtom, TagExpr};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_TIMESTAMP: u64 = 253_402_300_799;
@@ -40,14 +41,22 @@ impl Metadata {
     }
 }
 
-/// One decay override: memories carrying `key` decay with `half_life_days`. Rules apply in
-/// order and the first matching key wins, so listing order is part of the policy.
+/// One decay override: memories whose tags satisfy `predicate` decay with `half_life_days`. A
+/// predicate is a tag-set boolean expression — bare tag names, `/regex/` and `@named` references
+/// (expanded against the global namespace); a leaf matches a memory's full tag names and the key
+/// halves of valued tags. Rules apply in order and the first match wins, so listing order is
+/// part of the policy.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecayRule {
-    pub key: String,
+    pub predicate: String,
     pub half_life_days: Option<f64>,
 }
+
+/// Policy rules compiled for evaluation: each rule's predicate parsed with named references
+/// expanded; None = the rule cannot resolve (deleted tag/predicate) and never matches — decay
+/// is a soft ranking signal, so it degrades instead of failing the search.
+pub type DecayPlan = Vec<(Option<TagExpr>, Option<f64>)>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -93,20 +102,35 @@ impl Policy {
             return Err("lifecycle RRF weights must be between 0 and 5".into());
         }
         for rule in &policy.rules {
-            crate::model::normalize_key_name(&rule.key)?;
+            let expr = crate::tag_expr::parse_rule(&rule.predicate)
+                .map_err(|e| format!("invalid decay rule {:?}: {e}", rule.predicate))?;
+            let mut keyed = false;
+            expr.visit_atoms(&mut |atom| keyed |= matches!(atom, TagAtom::KeyEq { .. }));
+            if keyed {
+                return Err(format!(
+                    "invalid decay rule {:?}: key=value comparisons are query-only; use tag names, /regex/ or @named references",
+                    rule.predicate
+                ));
+            }
         }
         Ok(policy)
     }
 
-    pub fn freshness(&self, meta: &Metadata, keys: &[String], updated_at: u64, now: u64) -> f64 {
+    pub fn freshness(
+        &self,
+        plan: &DecayPlan,
+        meta: &Metadata,
+        tags: &[String],
+        updated_at: u64,
+        now: u64,
+    ) -> f64 {
         if meta.pinned {
             return 1.0;
         }
-        let half_life = self
-            .rules
+        let half_life = plan
             .iter()
-            .find(|r| keys.contains(&r.key))
-            .map_or(self.default_half_life_days, |r| r.half_life_days);
+            .find_map(|(expr, days)| expr.as_ref().filter(|e| e.eval(tags)).map(|_| *days))
+            .unwrap_or(self.default_half_life_days);
         half_life.map_or(1.0, |days| {
             (-std::f64::consts::LN_2 * now.saturating_sub(updated_at) as f64 / (days * 86400.0))
                 .exp()
@@ -121,6 +145,7 @@ pub fn rank_channels(
     lifecycle: &std::collections::HashMap<i64, Metadata>,
     usage: &std::collections::HashMap<i64, crate::access::Projection>,
     policy: &Policy,
+    plan: &DecayPlan,
     now: u64,
 ) -> [Vec<crate::search::Hit>; 2] {
     let default_meta = Metadata::default();
@@ -128,15 +153,17 @@ pub fn rank_channels(
     for idx in eligible {
         let memory = &memories[*idx];
         let id = crate::store::Store::parse_id(&memory.id).unwrap_or(0);
-        // Decay rules match the key half of valued tags (bare tags carry no key)
-        let keys: Vec<String> = memory
-            .tags
-            .iter()
-            .filter_map(|t| t.split_once(':').map(|(k, _)| k.to_string()))
-            .collect();
+        // Rule leaves match full tag names and the key halves of valued tags alike
+        let mut names: Vec<String> = memory.tags.clone();
+        for tag in &memory.tags {
+            if let Some((key, _)) = tag.split_once(':') {
+                names.push(key.to_string());
+            }
+        }
         let freshness = policy.freshness(
+            plan,
             lifecycle.get(&id).unwrap_or(&default_meta),
-            &keys,
+            &names,
             memory.updated_at,
             now,
         );
@@ -178,26 +205,30 @@ mod tests {
     }
 
     #[test]
-    fn ordered_key_rules_support_overrides_fallback_and_pins() {
-        let policy = Policy::parse(&serde_json::json!({"rules":[{"key":"durable", "half_life_days":null},{"key":"temp", "half_life_days":7}], "default_half_life_days":30})).unwrap();
+    fn ordered_predicate_rules_support_overrides_fallback_and_pins() {
+        let policy = Policy::parse(&serde_json::json!({"rules":[{"predicate":"durable", "half_life_days":null},{"predicate":"temp", "half_life_days":7}], "default_half_life_days":30})).unwrap();
+        let rule = |raw: &str| Some(crate::tag_expr::parse(raw).unwrap());
+        let plan: DecayPlan = vec![(rule("durable"), None), (rule("temp"), Some(7.0))];
         let mut meta = Metadata::default();
+        // A leaf matches bare tags and the key halves of valued tags alike
         let durable = vec!["durable".to_string()];
-        let temp = vec!["temp".to_string()];
-        assert_eq!(policy.freshness(&meta, &durable, 0, 30 * 86400), 1.0);
-        assert!((policy.freshness(&meta, &temp, 0, 7 * 86400) - 0.5).abs() < 1e-12);
-        assert!((policy.freshness(&meta, &[], 0, 30 * 86400) - 0.5).abs() < 1e-12);
-        // First matching rule wins regardless of its half-life value
-        let first_wins = Policy::parse(&serde_json::json!({"rules":[{"key":"temp","half_life_days":null},{"key":"temp","half_life_days":7}]})).unwrap();
-        assert_eq!(first_wins.freshness(&meta, &temp, 0, 7 * 86400), 1.0);
+        let keyed = vec!["temp:new".to_string(), "temp".to_string()];
+        assert_eq!(policy.freshness(&plan, &meta, &durable, 0, 30 * 86400), 1.0);
+        assert!((policy.freshness(&plan, &meta, &keyed, 0, 7 * 86400) - 0.5).abs() < 1e-12);
+        assert!((policy.freshness(&plan, &meta, &[], 0, 30 * 86400) - 0.5).abs() < 1e-12);
+        // Dead rules (unresolvable references) never match; first live match wins
+        let dead_first: DecayPlan = vec![(None, Some(3.0)), (rule("temp"), Some(7.0))];
+        assert!((policy.freshness(&dead_first, &meta, &keyed, 0, 7 * 86400) - 0.5).abs() < 1e-12);
         meta.pinned = true;
         meta.expires_at = Some(100);
-        assert_eq!(policy.freshness(&meta, &[], 0, 1000), 1.0);
+        assert_eq!(policy.freshness(&plan, &meta, &[], 0, 1000), 1.0);
         assert!(!meta.matches("active", 1000));
         for invalid in [
             serde_json::json!({"default_half_life_days":0}),
-            serde_json::json!({"rules":[{"key":"temp","half_life_days":-1}]}),
+            serde_json::json!({"rules":[{"predicate":"temp","half_life_days":-1}]}),
             serde_json::json!({"freshness_weight":-1}),
-            serde_json::json!({"rules":[{"key":"a:b","half_life_days":7}]}),
+            serde_json::json!({"rules":[{"predicate":"","half_life_days":7}]}),
+            serde_json::json!({"rules":[{"predicate":"a=b","half_life_days":7}]}),
             serde_json::json!({"typo":1}),
         ] {
             assert!(Policy::parse(&invalid).is_err());

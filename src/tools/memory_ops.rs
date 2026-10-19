@@ -397,6 +397,7 @@ pub fn memory_search(
         &lifecycle,
         &st.access_projection_all()?,
         &policy,
+        &st.decay_plan(),
         query_time,
     );
     let hits = search::fuse(
