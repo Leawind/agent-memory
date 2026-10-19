@@ -30,8 +30,8 @@ describe('LifecyclePolicyCard', () => {
     const wrapper = mount(LifecyclePolicyCard, { props: { policy, active: false }, global: { plugins: [ElementPlus] } })
     await flushPromises()
     expect(calls).toEqual([])
-    // The two short ranking weights share one row instead of each claiming a full-width form line
-    expect(wrapper.findAll('.weight-grid .field')).toHaveLength(2)
+    // The two short ranking weights are label-left/control-right rows, not full-width form lines
+    expect(wrapper.findAll('.weight-row')).toHaveLength(2)
     await wrapper.findAll('input[type=checkbox]')[0].setValue(true)
     await wrapper
       .findAll('button')

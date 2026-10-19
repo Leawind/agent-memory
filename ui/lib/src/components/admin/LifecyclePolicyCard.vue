@@ -4,17 +4,23 @@
       <template #header>{{ t('lifecycle.policyTitle') }}</template>
       <p class="hint">{{ t('lifecycle.orderHint') }}</p>
       <div v-for="(rule, index) in draft.rules" :key="index" class="decay-rule">
-        <label class="field">
-          <ModelFieldLabel :label="t('predicates.expression')" />
-          <el-input v-model="rule.predicate" :maxlength="32768" placeholder="@temporary &amp; !durable" />
-        </label>
-        <div class="half-life-row">
+        <div class="setting-row expression-row">
+          <span class="setting-label">{{ t('predicates.expression') }}</span>
+          <el-input
+            v-model="rule.predicate"
+            class="expression-input"
+            :maxlength="32768"
+            placeholder="@temporary &amp; !durable"
+          />
+        </div>
+        <div class="rule-controls">
           <el-checkbox :model-value="rule.half_life_days !== null" @change="rule.half_life_days = $event ? 30 : null">{{
             t('lifecycle.enableDecay')
           }}</el-checkbox>
           <el-input-number
             v-if="rule.half_life_days !== null"
             v-model="rule.half_life_days"
+            class="number-control"
             :min="1"
             :max="36500"
             :precision="1"
@@ -33,9 +39,10 @@
         t('lifecycle.addRule')
       }}</el-button>
 
-      <div class="field default-decay">
-        <ModelFieldLabel :label="t('lifecycle.defaultDecay')" />
-        <div class="half-life-row">
+      <!-- One setting per line: label left, controls right, matching the rest of the admin cards -->
+      <div class="setting-row default-decay">
+        <span class="setting-label">{{ t('lifecycle.defaultDecay') }}</span>
+        <div class="setting-controls">
           <el-checkbox
             :model-value="draft.default_half_life_days !== null"
             @change="draft.default_half_life_days = $event ? 30 : null"
@@ -44,6 +51,7 @@
           <el-input-number
             v-if="draft.default_half_life_days !== null"
             v-model="draft.default_half_life_days"
+            class="number-control"
             :min="1"
             :max="36500"
             :precision="1"
@@ -51,17 +59,29 @@
           <span>{{ draft.default_half_life_days === null ? t('lifecycle.noDecay') : t('lifecycle.days') }}</span>
         </div>
       </div>
-
-      <!-- Two narrow weights share one row instead of each claiming a full-width form line -->
-      <div class="weight-grid">
-        <label class="field">
-          <ModelFieldLabel :label="t('lifecycle.freshnessWeight')" />
-          <el-input-number v-model="draft.freshness_weight" :min="0" :max="5" :step="0.1" :precision="2" />
-        </label>
-        <label class="field">
-          <ModelFieldLabel :label="t('lifecycle.reinforcementWeight')" />
-          <el-input-number v-model="draft.reinforcement_weight" :min="0" :max="5" :step="0.1" :precision="2" />
-        </label>
+      <div class="setting-row weight-row">
+        <span class="setting-label">{{ t('lifecycle.freshnessWeight') }}</span>
+        <el-input-number
+          v-model="draft.freshness_weight"
+          class="setting-control"
+          :aria-label="t('lifecycle.freshnessWeight')"
+          :min="0"
+          :max="5"
+          :step="0.1"
+          :precision="2"
+        />
+      </div>
+      <div class="setting-row weight-row">
+        <span class="setting-label">{{ t('lifecycle.reinforcementWeight') }}</span>
+        <el-input-number
+          v-model="draft.reinforcement_weight"
+          class="setting-control"
+          :aria-label="t('lifecycle.reinforcementWeight')"
+          :min="0"
+          :max="5"
+          :step="0.1"
+          :precision="2"
+        />
       </div>
 
       <p class="hint">{{ t('lifecycle.policyHint') }}</p>
@@ -112,7 +132,6 @@ import { t } from '../../i18n'
 import { toastSuccess } from '../../toast'
 import type { AccessStats, LifecyclePolicy } from '../../types'
 import { run } from './caps'
-import ModelFieldLabel from './ModelFieldLabel.vue'
 
 const props = defineProps<{ policy: LifecyclePolicy; active: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -206,21 +225,60 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
   display: grid;
   gap: 16px;
 }
-.field {
+/* One setting per line: label left, compact controls right */
+.setting-row {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+}
+/* Hairline between rows: keeps each label and its far-right control reading as one setting */
+.setting-row + .setting-row {
+  border-top: 1px solid var(--el-border-color-extra-light);
+}
+.setting-label {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+.setting-control {
+  flex: 0 0 auto;
+  width: 160px;
+}
+.number-control {
+  flex: 0 0 auto;
+  width: 150px;
+}
+.setting-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* Predicate expressions are the one wide input: label left, field takes the rest of the row */
+.expression-row {
+  align-items: center;
+}
+.expression-row .setting-label {
+  flex: 0 0 84px;
+}
+.expression-input {
+  flex: 1;
   min-width: 0;
 }
-.field :deep(.el-input-number) {
-  width: 100%;
-}
 .decay-rule {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   padding: 10px 0;
   border-bottom: 1px solid var(--el-border-color-lighter);
+}
+/* Rule controls sit under the expression field, aligned with it */
+.rule-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 6px 84px;
 }
 .rule-actions {
   display: flex;
@@ -234,25 +292,26 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
 .default-decay {
   margin-top: 14px;
 }
-/* The two ranking weights are short values: side by side, with a capped track width */
-.weight-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 220px));
-  gap: 12px 16px;
-  margin-top: 14px;
-}
-.half-life-row,
-.actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
+.weight-row + .weight-row {
+  margin-top: 2px;
 }
 .hint {
   margin: 6px 0 10px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
+}
+/* Narrow dialog: drop the expression indent so the rule controls keep the full width */
+@media (max-width: 600px) {
+  .expression-row {
+    flex-wrap: wrap;
+  }
+  .expression-row .setting-label {
+    flex-basis: 100%;
+  }
+  .rule-controls {
+    padding-left: 0;
+  }
 }
 /* Event counters: compact tiles instead of four full-width label/value lines */
 .stat-grid {
@@ -277,5 +336,11 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
   font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
 }
 </style>

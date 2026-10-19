@@ -2,55 +2,89 @@
   <el-card shadow="never" class="search-limits-card">
     <template #header>{{ t('access.searchLimitsTitle') }}</template>
 
-    <!-- Compact field grid: narrow numeric controls share rows instead of each claiming a
-         full-width line (the old label-position="top" form turned 7 small fields into 7 rows). -->
-    <div class="field-grid">
-      <label class="field">
-        <ModelFieldLabel :label="t('access.semanticCandidates')" />
-        <el-input-number v-model="draft.semantic_candidates" :min="1" :max="1000" :step="10" :precision="0" />
-      </label>
-      <label class="field">
-        <ModelFieldLabel :label="t('access.rerankCandidates')" />
-        <el-input-number v-model="draft.rerank_candidates" :min="1" :max="1000" :step="10" :precision="0" />
-      </label>
-      <div class="field">
-        <ModelFieldLabel :label="t('access.adaptiveRerank')" />
-        <div class="switch-line"><el-switch v-model="draft.adaptive.enabled" /></div>
+    <!-- Settings list: one setting per line, label on the left and a compact control on the
+         right. (The earlier top-label form made every narrow number input own a full row.) -->
+    <div class="setting-list">
+      <div class="setting-row">
+        <span class="setting-label">{{ t('access.semanticCandidates') }}</span>
+        <el-input-number
+          v-model="draft.semantic_candidates"
+          class="setting-control"
+          :aria-label="t('access.semanticCandidates')"
+          :min="1"
+          :max="1000"
+          :step="10"
+          :precision="0"
+        />
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">{{ t('access.rerankCandidates') }}</span>
+        <el-input-number
+          v-model="draft.rerank_candidates"
+          class="setting-control"
+          :aria-label="t('access.rerankCandidates')"
+          :min="1"
+          :max="1000"
+          :step="10"
+          :precision="0"
+        />
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">{{ t('access.adaptiveRerank') }}</span>
+        <el-switch v-model="draft.adaptive.enabled" :aria-label="t('access.adaptiveRerank')" />
       </div>
     </div>
 
-    <!-- Adaptive bounds are a separate concern and only exist while the switch is on: grouping
-         them keeps the base budget readable and the extra controls from mixing into its row. -->
+    <!-- Adaptive bounds only exist while the switch is on; the inset panel keeps them a
+         clearly separate group without breaking the one-setting-per-line rhythm. -->
     <div v-if="draft.adaptive.enabled" class="adaptive-block">
-      <div class="field-grid">
-        <label class="field">
-          <ModelFieldLabel :label="t('access.minCandidates')" />
-          <el-input-number v-model="draft.adaptive.min_candidates" :min="1" :max="1000" :precision="0" />
-        </label>
-        <label class="field">
-          <ModelFieldLabel :label="t('access.maxCandidates')" />
-          <el-input-number v-model="draft.adaptive.max_candidates" :min="1" :max="1000" :precision="0" />
-        </label>
-        <label class="field">
-          <ModelFieldLabel :label="t('access.targetLatency')" />
+      <div class="setting-list">
+        <div class="setting-row">
+          <span class="setting-label">{{ t('access.minCandidates') }}</span>
+          <el-input-number
+            v-model="draft.adaptive.min_candidates"
+            class="setting-control"
+            :aria-label="t('access.minCandidates')"
+            :min="1"
+            :max="1000"
+            :precision="0"
+          />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">{{ t('access.maxCandidates') }}</span>
+          <el-input-number
+            v-model="draft.adaptive.max_candidates"
+            class="setting-control"
+            :aria-label="t('access.maxCandidates')"
+            :min="1"
+            :max="1000"
+            :precision="0"
+          />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">{{ t('access.targetLatency') }}</span>
           <el-input-number
             v-model="draft.adaptive.target_latency_ms"
+            class="setting-control"
+            :aria-label="t('access.targetLatency')"
             :min="50"
             :max="15000"
             :step="100"
             :precision="0"
           />
-        </label>
-        <label class="field">
-          <ModelFieldLabel :label="t('access.maxInputChars')" />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">{{ t('access.maxInputChars') }}</span>
           <el-input-number
             v-model="draft.adaptive.max_input_chars"
+            class="setting-control"
+            :aria-label="t('access.maxInputChars')"
             :min="draft.adaptive.min_candidates * 8000"
             :max="8000000"
             :step="8000"
             :precision="0"
           />
-        </label>
+        </div>
       </div>
     </div>
 
@@ -82,7 +116,6 @@ import { t } from '../../i18n'
 import { toastSuccess } from '../../toast'
 import type { SearchLimits, SearchRuntime } from '../../types'
 import { run } from './caps'
-import ModelFieldLabel from './ModelFieldLabel.vue'
 
 const props = defineProps<{ limits: SearchLimits; active: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -155,30 +188,35 @@ async function refresh(): Promise<void> {
 </script>
 
 <style scoped>
-/* Narrow numeric controls share rows; the track size keeps the +/- steppers usable */
-.field-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 12px 16px;
-}
-.field {
+/* One setting per line: label left, compact control right (same rhythm as the auth toggles) */
+.setting-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
 }
-.field :deep(.el-input-number) {
-  width: 100%;
-}
-.switch-line {
+.setting-row {
   display: flex;
   align-items: center;
-  min-height: 32px;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+}
+/* Hairline between rows: keeps the label and its far-right control reading as one setting */
+.setting-row + .setting-row {
+  border-top: 1px solid var(--el-border-color-extra-light);
+}
+.setting-label {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+.setting-control {
+  flex: 0 0 auto;
+  width: 160px;
 }
 /* Adaptive bounds: an inset panel, so enabling the switch grows a clearly separate group */
 .adaptive-block {
-  margin-top: 12px;
-  padding: 12px 14px;
+  margin-top: 8px;
+  padding: 2px 14px;
   border-radius: 10px;
   background: var(--el-fill-color-lighter);
 }
