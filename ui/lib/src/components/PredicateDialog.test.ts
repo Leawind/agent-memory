@@ -5,7 +5,7 @@ import { setMemoryUILocale } from '../i18n'
 import PredicateDialog from './PredicateDialog.vue'
 
 describe('PredicateDialog', () => {
-  it('uses the dedicated capability and searches with an explicit scope', async () => {
+  it('hides delete without the dedicated capability and searches by name', async () => {
     setMemoryUILocale('zh')
     document.body.innerHTML = ''
     vi.stubGlobal(
@@ -18,8 +18,8 @@ describe('PredicateDialog', () => {
             Promise.resolve(
               JSON.stringify(
                 String(url).includes('whoami')
-                  ? { permissions: { read: true, admin: true, predicate_manage_global: false } }
-                  : { predicates: [{ name: 'topic', scope: 'global', predicate: 'a', description: 'selector' }] },
+                  ? { permissions: { read: true, admin: true, predicate_manage: false } }
+                  : { predicates: [{ name: 'topic', predicate: 'a', description: 'selector' }] },
               ),
             ),
         }),
@@ -35,10 +35,10 @@ describe('PredicateDialog', () => {
       .findAll('button')
       .find((b) => b.text() === '搜索')!
       .trigger('click')
-    expect(wrapper.emitted('apply')).toEqual([['@global::topic']])
+    expect(wrapper.emitted('apply')).toEqual([['@topic']])
     wrapper.unmount()
   })
-  it('creates a user predicate with all required fields', async () => {
+  it('creates a predicate with all required fields', async () => {
     setMemoryUILocale('zh')
     document.body.innerHTML = ''
     const writes: unknown[] = []
@@ -53,7 +53,7 @@ describe('PredicateDialog', () => {
             Promise.resolve(
               JSON.stringify(
                 String(url).includes('whoami')
-                  ? { permissions: { read: true, predicate_manage_global: true } }
+                  ? { permissions: { read: true, predicate_manage: true } }
                   : { predicates: [] },
               ),
             ),
@@ -72,7 +72,7 @@ describe('PredicateDialog', () => {
       .find((b) => b.text() === '保存')!
       .trigger('click')
     await flushPromises()
-    expect(writes).toEqual([{ scope: 'user', name: 'my_predicate', predicate: 'a&!b', description: 'description' }])
+    expect(writes).toEqual([{ name: 'my_predicate', predicate: 'a&!b', description: 'description' }])
     expect(wrapper.emitted('changed')).toHaveLength(1)
     wrapper.unmount()
   })

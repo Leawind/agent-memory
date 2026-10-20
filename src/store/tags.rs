@@ -320,7 +320,7 @@ impl Store {
         let ids = self.tag_ids_for_keys(&[name.to_string()])?;
         if let Some(id) = ids.first() {
             if self
-                .predicate_rows(None)?
+                .predicate_rows()?
                 .iter()
                 .any(|d| d.predicate.references_tag(*id))
             {

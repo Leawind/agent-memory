@@ -509,7 +509,7 @@ impl Store {
             "exported_at": crate::model::now(),
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
-            "predicates": self.global_predicates_view()?,
+            "predicates": self.predicates_view()?,
             "lifecycle_policy": self.lifecycle_policy()?,
         }))
     }
@@ -527,7 +527,7 @@ impl Store {
         let unreserved_tags = self.tag_count_unreserved()?;
         if empty["memories"].as_u64().unwrap_or(0) != 0
             || unreserved_tags != 0
-            || !self.predicate_rows(None)?.is_empty()
+            || !self.predicate_rows()?.is_empty()
         {
             return Err(
                 "target database is not empty; import refuses to merge -- point --db at a fresh database".into(),
@@ -601,7 +601,7 @@ impl Store {
             tag_id_by_key.insert(key.as_str(), id);
         }
 
-        self.import_global_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
+        self.import_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
         if let Some(value) = dump.get("lifecycle_policy") {
             let policy = crate::lifecycle::Policy::parse(value)?;
             self.settings_put(

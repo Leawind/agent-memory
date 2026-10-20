@@ -36,7 +36,7 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
     let manager = call(
         "POST",
         "/api/identities",
-        json!({"name":"manager","permissions":{"read":true,"predicate_manage_global":true}}),
+        json!({"name":"manager","permissions":{"read":true,"predicate_manage":true}}),
         None,
     )
     .1["token"]
@@ -47,8 +47,7 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
         call("PUT", "/api/settings", json!({"auth_required":true}), None).0,
         200
     );
-    let predicate =
-        json!({"scope":"global","name":"topic","predicate":"a","description":"topic selector"});
+    let predicate = json!({"name":"topic","predicate":"a","description":"topic selector"});
     assert_eq!(
         call("PUT", "/api/predicates", predicate.clone(), Some(&admin)).0,
         403
@@ -77,7 +76,7 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
         call(
             "PUT",
             "/api/predicates",
-            json!({"scope":"global","name":"topic","predicate":"!a","description":""}),
+            json!({"name":"topic","predicate":"!a","description":""}),
             Some(&manager)
         )
         .0,
@@ -88,7 +87,7 @@ fn rest_predicates_enforce_independent_permissions_and_feed_queries_rules_and_po
         call(
             "DELETE",
             "/api/predicates",
-            json!({"scope":"global","name":"topic"}),
+            json!({"name":"topic"}),
             Some(&manager)
         )
         .0,

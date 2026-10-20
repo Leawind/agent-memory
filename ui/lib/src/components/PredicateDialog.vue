@@ -9,29 +9,19 @@
     <p>{{ t('predicates.hint') }}</p>
     <el-table :data="rows" size="small" @row-click="edit">
       <el-table-column prop="name" :label="t('predicates.name')" />
-      <el-table-column :label="t('predicates.scope')"
-        ><template #default="{ row }">{{ t(`predicates.${row.scope}`) }}</template></el-table-column
-      >
       <el-table-column prop="predicate" :label="t('predicates.expression')" />
       <el-table-column prop="description" :label="t('tags.descLabel')" />
       <el-table-column width="180"
         ><template #default="{ row }"
           ><el-button size="small" @click.stop="apply(row)">{{ t('predicates.search') }}</el-button
-          ><el-button v-if="editable(row)" size="small" @click.stop="remove(row)">{{
+          ><el-button v-if="canManage" size="small" @click.stop="remove(row)">{{
             t('common.delete')
           }}</el-button></template
         ></el-table-column
       >
     </el-table>
     <el-button class="new-predicate" @click="reset">{{ t('predicates.create') }}</el-button>
-    <el-form label-position="top" :disabled="busy || !editable(draft)" @submit.prevent>
-      <el-form-item :label="t('predicates.scope')"
-        ><el-select v-model="draft.scope" :disabled="editing"
-          ><el-option value="user" :label="t('predicates.user')" /><el-option
-            value="global"
-            :label="t('predicates.global')"
-            :disabled="!canGlobal" /></el-select
-      ></el-form-item>
+    <el-form label-position="top" :disabled="busy || !canManage" @submit.prevent>
       <el-form-item :label="t('predicates.name')"
         ><el-input v-model="draft.name" :disabled="editing" :maxlength="100"
       /></el-form-item>
@@ -45,7 +35,7 @@
     <p>{{ t('predicates.namesHint') }}</p>
     <template #footer
       ><el-button @click="emit('update:visible', false)">{{ t('access.close') }}</el-button
-      ><el-button type="primary" :loading="busy" :disabled="!valid || !editable(draft)" @click="save">{{
+      ><el-button type="primary" :loading="busy" :disabled="!valid || !canManage" @click="save">{{
         t('common.save')
       }}</el-button></template
     >
@@ -62,15 +52,14 @@ const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ 'update:visible': [boolean]; changed: []; apply: [expression: string] }>()
 const api = useApiClient()
 const rows = ref<NamedPredicate[]>([])
-const canGlobal = ref(false)
+const canManage = ref(false)
 const busy = ref(false)
 const editing = ref(false)
-const empty = (): NamedPredicate => ({ name: '', scope: 'user', predicate: '', description: '' })
+const empty = (): NamedPredicate => ({ name: '', predicate: '', description: '' })
 const draft = ref(empty())
 const valid = computed(
   () => /^[\p{L}\p{N}_][\p{L}\p{N}_.-]{0,99}$/u.test(draft.value.name.trim()) && !!draft.value.predicate.trim(),
 )
-const editable = (row: NamedPredicate) => row.scope === 'user' || canGlobal.value
 let generation = 0
 function reset(): void {
   draft.value = empty()
@@ -82,7 +71,7 @@ function edit(row: NamedPredicate): void {
   editing.value = true
 }
 function apply(row: NamedPredicate): void {
-  emit('apply', `@${row.scope}::${row.name}`)
+  emit('apply', `@${row.name}`)
   emit('update:visible', false)
 }
 async function load(): Promise<void> {
@@ -94,7 +83,7 @@ async function load(): Promise<void> {
     ])
     if (!props.visible || current !== generation) return
     rows.value = listing.predicates
-    canGlobal.value = who.permissions.predicate_manage_global === true
+    canManage.value = who.permissions.predicate_manage === true
   })
 }
 watch(
@@ -104,14 +93,14 @@ watch(
     if (visible) {
       reset()
       rows.value = []
-      canGlobal.value = false
+      canManage.value = false
       void load()
     }
   },
   { immediate: true },
 )
 async function save(): Promise<void> {
-  if (busy.value || !valid.value || !editable(draft.value)) return
+  if (busy.value || !valid.value || !canManage.value) return
   busy.value = true
   try {
     await run(async () => {
@@ -125,11 +114,11 @@ async function save(): Promise<void> {
   }
 }
 async function remove(row: NamedPredicate): Promise<void> {
-  if (busy.value || !editable(row)) return
+  if (busy.value || !canManage.value) return
   busy.value = true
   try {
     await run(async () => {
-      await api.del('/api/predicates', { name: row.name, scope: row.scope })
+      await api.del('/api/predicates', { name: row.name })
       reset()
       emit('changed')
       await load()

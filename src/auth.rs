@@ -22,7 +22,7 @@ pub enum Cap {
     Update,
     Delete,
     TagManage,
-    PredicateManageGlobal,
+    PredicateManage,
     Admin,
 }
 
@@ -33,7 +33,7 @@ impl Cap {
         Cap::Update,
         Cap::Delete,
         Cap::TagManage,
-        Cap::PredicateManageGlobal,
+        Cap::PredicateManage,
         Cap::Admin,
     ];
 
@@ -44,7 +44,7 @@ impl Cap {
             Cap::Update => "update",
             Cap::Delete => "delete",
             Cap::TagManage => "tag_manage",
-            Cap::PredicateManageGlobal => "predicate_manage_global",
+            Cap::PredicateManage => "predicate_manage",
             Cap::Admin => "admin",
         }
     }
@@ -179,17 +179,6 @@ impl IdentityCtx {
 
     pub fn can(&self, cap: Cap) -> bool {
         self.permissions.has(cap)
-    }
-
-    pub fn predicate_namespace(&self) -> Result<String, String> {
-        match self.mode {
-            Mode::Open => Ok("local".into()),
-            Mode::Anonymous => Ok("anonymous".into()),
-            Mode::Token => self
-                .identity_id
-                .map(|id| format!("identity:{id}"))
-                .ok_or_else(|| "token identity has no stable id".into()),
-        }
     }
 
     pub fn require(&self, cap: Cap) -> Result<(), ToolError> {

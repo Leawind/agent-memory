@@ -355,13 +355,7 @@ impl Parser {
             }
             Tok::Tag(name) if name.starts_with('@') => {
                 let reference = &name[1..];
-                let (scope, raw) = reference
-                    .split_once("::")
-                    .map_or((None, reference), |(scope, name)| (Some(scope), name));
-                if scope.is_some_and(|scope| scope != "global" && scope != "user") {
-                    return Err("predicate scope must be global or user".into());
-                }
-                crate::model::normalize_tag_name(raw)?;
+                crate::model::normalize_tag_name(reference)?;
                 Ok(TagExpr::Atom(TagAtom::Named(reference.to_string())))
             }
             Tok::Tag(name) => {

@@ -164,24 +164,19 @@ pub fn execute(
     check_known_args(name, map)?;
     if TOOL_NAMES.contains(&name) {
         ctx.require_all(defs::required_caps(name))?;
-        if matches!(name, PREDICATE_SET | PREDICATE_DELETE)
-            && predicate_ops::scope(map)? == "global"
-        {
-            ctx.require(Cap::PredicateManageGlobal)?;
-        }
         reserved_tag_guard(st, ctx, name, map)?;
     }
 
     let out = match name {
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
-        PREDICATE_LIST => st.predicate_list(ctx).map_err(ToolError::from),
-        PREDICATE_SET => predicate_ops::set(st, ctx, map),
-        PREDICATE_DELETE => predicate_ops::delete(st, ctx, map),
+        PREDICATE_LIST => st.predicate_list().map_err(ToolError::from),
+        PREDICATE_SET => predicate_ops::set(st, map),
+        PREDICATE_DELETE => predicate_ops::delete(st, map),
         defs::TAG_UPDATE => tag_ops::tag_update(st, map),
         defs::TAG_DELETE => tag_ops::tag_delete(st, map),
         defs::MEMORY_CREATE => memory_ops::memory_create(st, map),
-        defs::MEMORY_LIST => memory_ops::memory_list(st, ctx, map),
+        defs::MEMORY_LIST => memory_ops::memory_list(st, map),
         defs::MEMORY_SEARCH => memory_ops::memory_search(st, ctx, map),
         defs::MEMORY_GET => memory_ops::memory_get(st, map),
         defs::MEMORY_UPDATE => memory_ops::memory_update(st, map),

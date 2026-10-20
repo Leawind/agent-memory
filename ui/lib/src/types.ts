@@ -265,7 +265,6 @@ export interface ImportResp {
 
 export interface NamedPredicate {
   name: string
-  scope: 'user' | 'global'
   predicate: string
   description: string
 }

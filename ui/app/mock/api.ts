@@ -74,7 +74,7 @@ const tags = new Map(
     ['测试', '单元与端到端'],
   ].map(([name, description]) => [name, { description, created_at: t - 30 * DAY }]),
 )
-const predicates: Array<{ name: string; scope: 'user' | 'global'; predicate: string; description: string }> = []
+const predicates: Array<{ name: string; predicate: string; description: string }> = []
 const settings = {
   auth_required: false,
   // 匿名身份能力集：真实服务端为全键布尔对象或 null（未设置 = 匿名被拒绝）
@@ -224,7 +224,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
         update: true,
         delete: true,
         tag_manage: true,
-        predicate_manage_global: true,
+        predicate_manage: true,
         admin: true,
       },
     })
@@ -246,13 +246,11 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   }
   if (segs[1] === 'predicates' && (method === 'PUT' || method === 'DELETE')) {
     const body = await readBody(req)
-    const scope = body.scope === 'global' ? 'global' : 'user'
-    const index = predicates.findIndex((p) => p.name === body.name && p.scope === scope)
+    const index = predicates.findIndex((p) => p.name === body.name)
     if (index >= 0) predicates.splice(index, 1)
     if (method === 'PUT')
       predicates.push({
         name: String(body.name),
-        scope,
         predicate: String(body.predicate),
         description: String(body.description ?? ''),
       })
@@ -486,7 +484,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
             update: true,
             delete: true,
             tag_manage: true,
-            predicate_manage_global: true,
+            predicate_manage: true,
             admin: true,
           },
           created_at: t - 30 * DAY,

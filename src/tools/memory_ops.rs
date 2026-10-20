@@ -16,10 +16,9 @@ use serde_json::{json, Map, Value};
 
 /// Parse and store-validate a tag expression: syntax errors and unknown leaf tags are Invalid,
 /// unknown names get the same did-you-mean hint as tag linking on writes.
-fn resolve_tag_expr(st: &Store, ctx: &IdentityCtx, raw: &str) -> Result<TagExpr, ToolError> {
+fn resolve_tag_expr(st: &Store, raw: &str) -> Result<TagExpr, ToolError> {
     let expr = st
         .resolve_named_query(
-            ctx,
             st.bind_query_atoms(tag_expr::parse(raw)?)
                 .map_err(ToolError::invalid)?,
         )
@@ -53,13 +52,9 @@ fn resolve_tag_expr(st: &Store, ctx: &IdentityCtx, raw: &str) -> Result<TagExpr,
 
 /// Read the optional tag_expr argument: absent, empty or whitespace-only counts as no expression
 /// (the common clearing case stays lenient; a non-empty malformed expression is an error).
-fn opt_tag_expr(
-    st: &Store,
-    ctx: &IdentityCtx,
-    args: &Map<String, Value>,
-) -> Result<Option<TagExpr>, ToolError> {
+fn opt_tag_expr(st: &Store, args: &Map<String, Value>) -> Result<Option<TagExpr>, ToolError> {
     let expr = match opt_str(args, "tag_expr")? {
-        Some(raw) if !raw.trim().is_empty() => Some(resolve_tag_expr(st, ctx, &raw)?),
+        Some(raw) if !raw.trim().is_empty() => Some(resolve_tag_expr(st, &raw)?),
         _ => None,
     };
     Ok(expr)
@@ -167,11 +162,7 @@ pub fn memory_use(
     Ok(json!({"recorded": recorded, "reinforced": reinforced}))
 }
 
-pub fn memory_list(
-    st: &Store,
-    ctx: &IdentityCtx,
-    args: &Map<String, Value>,
-) -> Result<Value, ToolError> {
+pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let sort_opt = opt_str(args, "sort")?;
     // 'id' is the creation order (ids are monotonic at insert), so there is no separate
     // created_at sort key — and the summary rows do not carry a creation timestamp at all
@@ -199,7 +190,7 @@ pub fn memory_list(
     // Tag expression: resolved against the full store into a memory-id set (JSON array text),
     // handed to the same static SQL as the exact-tag filter — both AND together. Regex atoms
     // evaluate per memory tag set right here (SQL has no regex capability).
-    let tag_expr = opt_tag_expr(st, ctx, args)?;
+    let tag_expr = opt_tag_expr(st, args)?;
     let id_set = match &tag_expr {
         Some(expr) => {
             let memories = st.all_memories()?;
@@ -243,7 +234,7 @@ pub fn memory_search(
     if query.trim().is_empty() {
         return Err(ToolError::invalid("query must not be empty"));
     }
-    let tag_expr = opt_tag_expr(st, ctx, args)?;
+    let tag_expr = opt_tag_expr(st, args)?;
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     enum SearchMode {

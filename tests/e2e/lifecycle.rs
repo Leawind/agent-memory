@@ -16,7 +16,7 @@ fn decay_policy_validation_and_backup() {
     cleanup(&path);
     let server = HttpProc::start(&path, "decay-policy");
     let port = server.port;
-    // A decay rule may reference a global named predicate: it binds literal tags, so seed them
+    // A decay rule may reference a named predicate: it binds literal tags, so seed them
     assert_eq!(
         api(
             port,
@@ -37,7 +37,7 @@ fn decay_policy_validation_and_backup() {
             port,
             "PUT",
             "/api/predicates",
-            Some(json!({"name": "temporary", "predicate": "draft | scratch", "description": "", "scope": "global"}))
+            Some(json!({"name": "temporary", "predicate": "draft | scratch", "description": ""}))
         )
         .0,
         200

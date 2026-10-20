@@ -27,7 +27,6 @@ pub type BoundExpr = Predicate<Atom>;
 #[derive(Clone, Debug)]
 pub struct Definition {
     pub id: i64,
-    pub namespace: String,
     pub name: String,
     pub predicate: BoundExpr,
     pub description: String,
@@ -37,15 +36,13 @@ pub struct Definition {
 pub struct Registry {
     pub definitions: HashMap<i64, Definition>,
     pub expanded: HashMap<i64, Expr>,
-    namespace: String,
     heights: HashMap<i64, usize>,
 }
 
 impl Registry {
-    pub fn new(rows: Vec<Definition>, namespace: String) -> Result<Self, String> {
+    pub fn new(rows: Vec<Definition>) -> Result<Self, String> {
         let mut registry = Self {
             definitions: rows.into_iter().map(|d| (d.id, d)).collect(),
-            namespace,
             ..Self::default()
         };
         let ids = registry.definitions.keys().copied().collect::<Vec<_>>();
@@ -86,13 +83,9 @@ impl Registry {
         });
         let mut height = 0;
         for reference in refs {
-            let target = self
-                .definitions
+            self.definitions
                 .get(&reference)
                 .ok_or("missing named predicate reference")?;
-            if target.namespace != "global" && target.namespace != definition.namespace {
-                return Err("predicates cannot reference another user's scope".into());
-            }
             self.expand_definition(reference, path, depth + 1)?;
             height = height.max(self.heights[&reference] + 1);
         }
@@ -104,27 +97,12 @@ impl Registry {
     }
 
     pub fn lookup(&self, raw: &str) -> Result<i64, String> {
-        let (scope, name) = match raw.split_once("::") {
-            Some((scope, name)) => (Some(scope), name),
-            None => (None, raw),
-        };
-        let name = crate::model::normalize_tag_name(name)?;
-        let scopes = match scope {
-            None => vec![self.namespace.as_str(), "global"],
-            Some("global") => vec!["global"],
-            Some("user") if self.namespace != "global" => vec![self.namespace.as_str()],
-            _ => return Err("predicate reference scope must be global or user; global rules cannot reference user predicates".into()),
-        };
-        for namespace in scopes {
-            if let Some(d) = self
-                .definitions
-                .values()
-                .find(|d| d.namespace == namespace && d.name == name)
-            {
-                return Ok(d.id);
-            }
-        }
-        Err(format!("unknown named predicate '@{raw}'"))
+        let name = crate::model::normalize_tag_name(raw)?;
+        self.definitions
+            .values()
+            .find(|d| d.name == name)
+            .map(|d| d.id)
+            .ok_or_else(|| format!("unknown named predicate '@{raw}'"))
     }
 
     pub fn bind(&self, expr: TagExpr, tags: &HashMap<String, i64>) -> Result<BoundExpr, String> {
@@ -176,15 +154,7 @@ impl Registry {
                 .ok_or_else(|| format!("missing tag id {id}")),
             Atom::Named(id) => {
                 let d = self.definitions.get(id).ok_or("missing named predicate")?;
-                Ok(format!(
-                    "@{}::{}",
-                    if d.namespace == "global" {
-                        "global"
-                    } else {
-                        "user"
-                    },
-                    d.name
-                ))
+                Ok(format!("@{}", d.name))
             }
         })
     }
@@ -230,7 +200,6 @@ mod tests {
     fn row(id: i64, predicate: BoundExpr) -> Definition {
         Definition {
             id,
-            namespace: "global".into(),
             name: format!("p{id}"),
             predicate,
             description: String::new(),
@@ -250,7 +219,7 @@ mod tests {
                 )
             })
             .collect();
-        assert!(Registry::new(rows, "global".into()).is_err());
+        assert!(Registry::new(rows).is_err());
         let rows = (0..15)
             .map(|id| {
                 row(
@@ -266,14 +235,11 @@ mod tests {
                 )
             })
             .collect();
-        assert!(Registry::new(rows, "global".into()).is_err());
-        let registry = Registry::new(
-            vec![
-                row(0, BoundExpr::Atom(Atom::Tag(1))),
-                row(1, BoundExpr::Not(Box::new(BoundExpr::Atom(Atom::Named(0))))),
-            ],
-            "global".into(),
-        )
+        assert!(Registry::new(rows).is_err());
+        let registry = Registry::new(vec![
+            row(0, BoundExpr::Atom(Atom::Tag(1))),
+            row(1, BoundExpr::Not(Box::new(BoundExpr::Atom(Atom::Named(0))))),
+        ])
         .unwrap();
         assert!(registry.expanded[&1].eval(&[]));
         assert!(!registry.expanded[&1].eval(&[1]));

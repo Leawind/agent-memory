@@ -21,24 +21,18 @@ fn setup(label: &str) -> std::path::PathBuf {
     path
 }
 
-fn set(
-    path: &Path,
-    ctx: &IdentityCtx,
-    scope: &str,
-    name: &str,
-    predicate: &str,
-) -> Result<Value, ToolError> {
+fn set(path: &Path, ctx: &IdentityCtx, name: &str, predicate: &str) -> Result<Value, ToolError> {
     execute_with_db(
         path,
         ctx,
         PREDICATE_SET,
-        &json!({"scope":scope,"name":name,"predicate":predicate,"description":"description"}),
+        &json!({"name":name,"predicate":predicate,"description":"description"}),
     )
 }
 
 #[test]
-fn predicates_are_scoped_and_global_management_is_independent_of_admin() {
-    let path = setup("scope");
+fn predicate_management_is_independent_of_admin() {
+    let path = setup("capability");
     let (alice, bob) = store::with_db_in(&path, store::TxMode::Write, |st| -> Result<_, String> {
         let (a, _) = st.identity_create(
             "alice",
@@ -46,7 +40,7 @@ fn predicates_are_scoped_and_global_management_is_independent_of_admin() {
         )?;
         let (b, _) = st.identity_create(
             "bob",
-            &Permissions::from_json(&json!({"read":true,"predicate_manage_global":true}))?,
+            &Permissions::from_json(&json!({"read":true,"predicate_manage":true}))?,
         )?;
         Ok((
             st.identity_ctx_by_token(&a)?.unwrap(),
@@ -55,57 +49,46 @@ fn predicates_are_scoped_and_global_management_is_independent_of_admin() {
     })
     .unwrap();
     assert!(matches!(
-        set(&path, &alice, "global", "choice", "a"),
+        set(&path, &alice, "choice", "a"),
         Err(ToolError::Forbidden(_))
     ));
-    assert!(set(&path, &bob, "global", "choice", "a").is_ok());
-    assert!(set(&path, &alice, "user", "choice", "b").is_ok());
-    for (ctx, expr, total) in [
-        (&alice, "@choice", 0),
-        (&alice, "@global::choice", 1),
-        (&bob, "@choice", 1),
-    ] {
+    assert!(set(&path, &bob, "choice", "a").is_ok());
+    for ctx in [&alice, &bob] {
         assert_eq!(
-            execute_with_db(&path, ctx, MEMORY_LIST, &json!({"tag_expr":expr})).unwrap()["total"],
-            total
+            execute_with_db(&path, ctx, MEMORY_LIST, &json!({"tag_expr":"@choice"})).unwrap()
+                ["total"],
+            1
         );
     }
     let listing = execute_with_db(&path, &bob, PREDICATE_LIST, &json!({})).unwrap();
     assert_eq!(listing["predicates"].as_array().unwrap().len(), 1);
     assert!(!listing.to_string().contains("DO NOT DISCLOSE"));
     assert!(execute_with_db(&path, &bob, PREDICATE_LIST, &json!({"unexpected":true})).is_err());
-    assert!(set(&path, &bob, "global", "bad name", "a").is_err());
-    assert!(set(&path, &bob, "global", "private", "@user::choice").is_err());
+    assert!(set(&path, &bob, "bad name", "a").is_err());
 }
 
 #[test]
 fn cycles_and_reference_protection_are_enforced_at_the_predicate_layer() {
     let path = setup("references");
     let ctx = IdentityCtx::open_mode();
-    set(&path, &ctx, "global", "root", "a").unwrap();
-    set(&path, &ctx, "global", "alias", "@root").unwrap();
-    assert!(set(&path, &ctx, "global", "root", "@alias").is_err());
-    assert!(set(&path, &ctx, "global", "self", "@self").is_err());
+    set(&path, &ctx, "root", "a").unwrap();
+    set(&path, &ctx, "alias", "@root").unwrap();
+    assert!(set(&path, &ctx, "root", "@alias").is_err());
+    assert!(set(&path, &ctx, "self", "@self").is_err());
     assert_eq!(
         execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@alias"})).unwrap()["total"],
         1
     );
     // Negation is fine now that predicates are query-only: no derivation consumer to protect
-    set(&path, &ctx, "global", "root", "!a").unwrap();
+    set(&path, &ctx, "root", "!a").unwrap();
     assert_eq!(
         execute_with_db(&path, &ctx, MEMORY_LIST, &json!({"tag_expr":"@alias"})).unwrap()["total"],
         0
     );
-    assert!(execute_with_db(
-        &path,
-        &ctx,
-        PREDICATE_DELETE,
-        &json!({"scope":"global","name":"root"})
-    )
-    .is_err());
+    assert!(execute_with_db(&path, &ctx, PREDICATE_DELETE, &json!({"name":"root"})).is_err());
     assert!(execute_with_db(&path, &ctx, TAG_DELETE, &json!({"name":"a"})).is_err());
     // Renaming a referenced tag flows through to predicate display
-    set(&path, &ctx, "global", "root", "b").unwrap();
+    set(&path, &ctx, "root", "b").unwrap();
     execute_with_db(
         &path,
         &ctx,
@@ -121,8 +104,8 @@ fn cycles_and_reference_protection_are_enforced_at_the_predicate_layer() {
 fn backup_restores_forward_references_with_stable_tag_binding() {
     let path = setup("backup");
     let ctx = IdentityCtx::open_mode();
-    set(&path, &ctx, "global", "z-root", "a").unwrap();
-    set(&path, &ctx, "global", "a-alias", "@z-root").unwrap();
+    set(&path, &ctx, "z-root", "a").unwrap();
+    set(&path, &ctx, "a-alias", "@z-root").unwrap();
     let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
     let restored = path.with_extension("restored.db");
     store::with_db_in(&restored, store::TxMode::Write, |st| st.import_dump(&dump)).unwrap();
@@ -189,7 +172,7 @@ fn maximum_flat_predicate_can_be_saved_and_reopened() {
     let path = setup("maximum-flat");
     let ctx = IdentityCtx::open_mode();
     let expression = vec!["a"; 128].join("&");
-    set(&path, &ctx, "global", "flat", &expression).unwrap();
+    set(&path, &ctx, "flat", &expression).unwrap();
     assert!(execute_with_db(
         &path,
         &ctx,
@@ -202,7 +185,7 @@ fn maximum_flat_predicate_can_be_saved_and_reopened() {
         1
     );
     store::with_db_in(&path, store::TxMode::ReadOnly, |st| -> Result<(), String> {
-        assert_eq!(st.global_predicates_view()?[0]["predicate"], expression);
+        assert_eq!(st.predicates_view()?[0]["predicate"], expression);
         Ok(())
     })
     .unwrap();

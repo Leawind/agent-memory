@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 pub const MAX_TIMESTAMP: u64 = 253_402_300_799;
 
 /// One decay override: memories whose tags satisfy `predicate` decay with `half_life_days`. A
-/// predicate is a tag-set boolean expression — bare tag names, `/regex/` and `@named` references
-/// (expanded against the global namespace); a leaf matches a memory's full tag names and the key
+/// predicate is a tag-set boolean expression — bare tag names, `/regex/` and `@named` references;
+/// a leaf matches a memory's full tag names and the key
 /// halves of valued tags. Rules apply in order and the first match wins, so listing order is
 /// part of the policy.
 #[derive(Clone, Debug, Deserialize, Serialize)]

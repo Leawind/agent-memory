@@ -10,7 +10,7 @@ export const CAPS = [
   { key: 'update', labelKey: 'capUpdate' },
   { key: 'delete', labelKey: 'capDelete' },
   { key: 'tag_manage', labelKey: 'capTagManage' },
-  { key: 'predicate_manage_global', labelKey: 'capPredicateManageGlobal' },
+  { key: 'predicate_manage', labelKey: 'capPredicateManage' },
   { key: 'admin', labelKey: 'capAdmin' },
 ] as const
 
