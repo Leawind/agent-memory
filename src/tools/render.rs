@@ -17,7 +17,7 @@
 
 use serde_json::Value;
 
-use super::{MEMORY_LIST, MEMORY_SEARCH, TAG_LIST};
+use super::{GET_STARTED, MEMORY_LIST, MEMORY_SEARCH, TAG_LIST};
 
 /// The text-channel payload of a successful tool call: the line format for the three list tools,
 /// compact JSON for everything else (writes, memory_get, ...). A value whose shape does not match
@@ -27,6 +27,8 @@ pub fn tool_text(tool: &str, v: &Value) -> String {
         TAG_LIST => render_tag_list(v),
         MEMORY_LIST => render_memory_list(v),
         MEMORY_SEARCH => render_memory_search(v),
+        // get_started's payload is documentation: the guide text passes through verbatim
+        GET_STARTED => v.get("guide").and_then(Value::as_str).map(str::to_string),
         _ => None,
     };
     rendered.unwrap_or_else(|| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()))
@@ -222,6 +224,17 @@ mod tests {
             tool_text("memory_update", &json!({"replaced": 1})),
             r#"{"replaced":1}"#
         );
+    }
+
+    #[test]
+    fn get_started_renders_the_guide_verbatim() {
+        assert_eq!(
+            tool_text(GET_STARTED, &json!({"guide": "line1\nline2"})),
+            "line1\nline2"
+        );
+        // An unexpected shape falls back to compact JSON like any other non-list tool
+        let text = tool_text(GET_STARTED, &json!({}));
+        assert!(serde_json::from_str::<Value>(&text).is_ok(), "{text}");
     }
 
     #[test]

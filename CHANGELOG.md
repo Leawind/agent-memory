@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **工具**：新增 `get_started`——无参数、零副作用的入门引导工具，返回一页使用指南（推荐调用顺序 tag_list → memory_search → memory_get、memory_list 只用于小集合或按标签扫描，以及常见错误清单），结尾附完整握手说明；工具描述自身浓缩关键引导，让不调用它的 agent 在工具列表里也能看到。仅 MCP 面暴露，无 REST 路由；`memory_list` 描述补充“浏览而非检索”的护栏说明
+
 - **生命周期（破坏性）**：置顶与到期机制整体移除，归档此前已移除——记忆不再有任何隐藏状态，删除是唯一移除手段，时效衰减降级为纯排序信号（不改变召回范围）。`memory_lifecycle` 工具与 `PUT /api/memories/:id/lifecycle` 路由删除，`memory_list` / `memory_search` 的 `state` 参数删除，`memory_lifecycle` 表整体删除（迁移 4 改写为 DROP，基线同步；旧库原地升级，已在旧迁移 4 上的库由无操作 DROP 兜底）；管理界面状态页签、生命周期对话框与编辑器入口删除，旧导出 JSON 携带的 `lifecycle` 字段导入时忽略。衰减规则同时修复为真正的谓词：`DecayRule.predicate` 取代 `key`（标签布尔表达式，裸标签/正则/命名谓词，叶子同时匹配完整标签名与带值标签的键半段），保存时校验语法与 `@引用`，解析失败的规则在排序时跳过而非报错——管理界面与 search-eval 原本就发送 `predicate` 字段、一直被 deny_unknown_fields 拒绝的问题就此修复
 - **工具/schema（破坏性，补记）**：标签统一为"可以没有值的键值对"——键在一条记忆中唯一、值是标识词或规范十进制数，复用标签管道的全部机制（`memory_attributes` 表、`tag_keys` 键注册表、string/bool/enum/number 键类型、多值键全部删除；key_set / key_list / key_delete 工具与 /api/keys 路由移除，添加标签只有显式创建与写记忆时顺带创建两种方式）。存储随之规范化：记忆-标签关系表直接携带可空的标签值列（`memory_tags(memory_id, tag_id, value)`），`original/derived` 列删除，迁移 3 原地升级旧库，读取时组装 `key:value` 展示名。MCP 写入统一为一个 tags JSON 对象 `{键: 值|null}`（null 即裸标签），`attributes` 参数移除；`memory_update` 改增量维护——`add_tags` 对象逐键 upsert、`remove_tags` 按键名删除，不再整组替换；`key=value` 查询与数值规范化（1 与 1.0 同值）改为无注册表实现；派生的类型化 attributes 视图直接从存储的 (键, 值) 关系推导
 - **前端**：界面统一到同一套标签词汇——记忆编辑器一个标签选择器同时收裸标签与 `key:value`（网页端直接写 key:value，保存映射为 tags 对象；编辑按键做增量：值变化走 add_tags、删掉的键走 remove_tags；输入在下拉框源头拦截——合法 token 才出现“添加”项，非法 token（格式错误、同键已有值、重复标签）以红色原因说明替代、无法上屏），记忆卡片上带值标签与普通标签同为徽章；属性行编辑器与"属性键"管理页（上一版引入）连同其 API 封装一并移除；侧栏对组合标签隐藏改名/删除入口（服务端标签改名/删除不接受冒号名）；早已失效的"标签规则"管理卡（后端无对应路由）与编辑器读取已删除字段 original_tags / derived_tags 导致的打开报错一并修复；mock API 同步为对象/增量语义

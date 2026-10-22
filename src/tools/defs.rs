@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 /// dispatcher, capability registry, reserved-tag guards, notification hooks and both server faces
 /// (MCP / REST) all key on these — a rename is a one-line edit here, and any stale literal still
 /// matched elsewhere fails to compile.
+pub const GET_STARTED: &str = "get_started";
 pub const TAG_CREATE: &str = "tag_create";
 pub const TAG_LIST: &str = "tag_list";
 pub const PREDICATE_LIST: &str = "predicate_list";
@@ -30,6 +31,7 @@ pub const MEMORY_DELETE: &str = "memory_delete";
 pub const MEMORY_USE: &str = "memory_use";
 
 pub const TOOL_NAMES: &[&str] = &[
+    GET_STARTED,
     TAG_CREATE,
     TAG_LIST,
     PREDICATE_LIST,
@@ -52,8 +54,33 @@ pub const TOOL_NAMES: &[&str] = &[
 /// descriptions must not drift apart.
 const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Attribute predicates: key=value matches the stored 'key:value' tag exactly (an enum value verbatim; a number in canonical form, so key=1.0 finds key:1); a bare word that is not an existing tag but prefixes stored 'key:value' tags tests existence with any value. Named predicates use @name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule: 1-100 characters of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_' - no spaces, colons, quotes or expression operators. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
+/// The workflow chapter of get_started's guide: the call order and the mistakes the always-visible
+/// description compresses into one line. The full returned text appends the handshake INSTRUCTIONS
+/// (see tools::INSTRUCTIONS), so this const stays the single place where the workflow lives.
+pub const GET_STARTED_GUIDE: &str = "Start here. This page is the operating guide for this memory server - the only tool whose result is documentation rather than data.
+
+Recommended call order:
+1. tag_list - see the taxonomy first: one line per tag with a memory count, filterable by regex. Tag names are the map of this store.
+2. memory_search - the default way to recall: every whitespace-separated term must match, quoted phrases match verbatim, mode auto adds semantic recall when configured. Results are ranked summaries with snippets - never full content.
+3. memory_get - reveal full content only for the ids worth reading (the second level of progressive disclosure).
+4. memory_list - for small, tag-filtered or chronological scans only (newest first, paginated). It is browsing, not ranked recall: do not enumerate the whole store to see what is in here - tag_list + memory_search answer that better and cheaper.
+5. memory_create / memory_update / memory_edit / memory_merge - save durable knowledge; update in place instead of re-storing near-duplicates.
+6. memory_use - record when a memory actually informed a decision or action (search or list exposure does not count).
+
+Common mistakes:
+- Enumerating the store with memory_list instead of searching.
+- Inventing tag spellings or case variants: unknown tags are rejected with the closest existing names - reuse them, and keep names singular.
+- Pasting full memory content into your answer when the summary already carries it.
+- Referencing memories by id inside content: ids are unstable (delete/merge removes them, export/import renumbers them) - link by tag or keyword.
+- Retrying after a permission error: access is per-identity; report it to the user instead.
+
+The server's standing instructions follow:";
+
 pub fn tool_definitions() -> Value {
     Value::Array(vec![
+        def(GET_STARTED,
+            "Call this before any other tool of this server: it returns the one-page operating guide (recommended call order, the role of each tool, common mistakes). The essentials: explore the taxonomy with tag_list, recall with memory_search (ranked summaries only), reveal full text selectively with memory_get; memory_list is for small or tag-filtered scans, not for enumerating the whole store. No arguments, no side effects, and the text never changes - call it once per session.",
+            json!({"type":"object", "properties":{}, "additionalProperties":false}), true, false),
         def(PREDICATE_LIST,
             "List named tag predicates, including name, predicate and description. @name references a definition. Predicate names follow tag naming rules. Returns predicate definitions only, never memory content.",
             json!({"type":"object", "properties":{}, "additionalProperties":false}), true, false),
@@ -145,7 +172,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_LIST,
-            "Browse memories, optionally filtered by a tag expression. Token-frugal line format: a `total: N | offset: N` header, then one memory per line `<id> [<tags>] <updated> <summary>` ('updated' is the server's local wall clock, 'YYYY-MM-DD HH:MM'; newlines inside text render as literal \\n, one line is always one record). Returns summaries only - never full content; call memory_get for entries worth reading. Newest first by default; paginated (page with offset/limit, the header's total tells when to stop).",
+            "Browse memories, optionally filtered by a tag expression. Token-frugal line format: a `total: N | offset: N` header, then one memory per line `<id> [<tags>] <updated> <summary>` ('updated' is the server's local wall clock, 'YYYY-MM-DD HH:MM'; newlines inside text render as literal \\n, one line is always one record). Returns summaries only - never full content; call memory_get for entries worth reading. Newest first by default; paginated (page with offset/limit, the header's total tells when to stop). This is browsing, not ranked recall: use it for small, tag-filtered or chronological scans, not to explore what the store contains - prefer tag_list + memory_search there.",
             json!({
                 "type": "object",
                 "properties": {
@@ -337,7 +364,9 @@ pub fn required_caps(tool: &str) -> &'static [Cap] {
     match tool {
         TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
         MEMORY_CREATE => &[Cap::Create],
-        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE => &[Cap::Read],
+        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE | GET_STARTED => {
+            &[Cap::Read]
+        }
         MEMORY_UPDATE | MEMORY_EDIT => &[Cap::Update],
         MEMORY_MERGE => &[Cap::Update, Cap::Delete],
         MEMORY_DELETE => &[Cap::Delete],
@@ -366,8 +395,8 @@ mod tests {
 
         let read_only = TOOL_NAMES.iter().filter(|t| is_read_only(t)).count();
         assert_eq!(
-            read_only, 5,
-            "the contract should have exactly 5 read-only tools"
+            read_only, 6,
+            "the contract should have exactly 6 read-only tools"
         );
     }
 

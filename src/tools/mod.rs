@@ -26,9 +26,9 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 pub use defs::{
-    tool_definitions, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET, MEMORY_LIST,
-    MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE, PREDICATE_LIST,
-    PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE, TOOL_NAMES,
+    tool_definitions, GET_STARTED, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET,
+    MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE,
+    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE, TOOL_NAMES,
 };
 pub use render::tool_text;
 
@@ -168,6 +168,12 @@ pub fn execute(
     }
 
     let out = match name {
+        // Static onboarding text: documentation, not data - no store access and no REST route.
+        // The guide appends the handshake INSTRUCTIONS so the workflow and the standing rules
+        // stay one read apart.
+        defs::GET_STARTED => Ok(serde_json::json!({
+            "guide": format!("{}\n\n{}", defs::GET_STARTED_GUIDE, INSTRUCTIONS)
+        })),
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
         PREDICATE_LIST => st.predicate_list().map_err(ToolError::from),
@@ -321,6 +327,35 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(PathBuf::from(format!("{}{}", path.display(), suffix)));
         }
+    }
+
+    /// get_started: the static onboarding tool. Normal flow returns the composed guide
+    /// (workflow chapter first, handshake INSTRUCTIONS appended), unknown arguments are rejected
+    /// like any other tool, and zero permissions are forbidden - the text is documentation,
+    /// not a read bypass.
+    #[test]
+    fn get_started_returns_the_composed_guide() {
+        let path = temp_db("get-started");
+        let out = call(&path, GET_STARTED, json!({})).unwrap();
+        let guide = out["guide"].as_str().unwrap();
+        assert!(guide.starts_with("Start here"), "workflow chapter first");
+        assert!(guide.contains("memory_search"), "workflow names the tools");
+        assert!(
+            guide.contains("Progressive disclosure"),
+            "the INSTRUCTIONS chapter follows"
+        );
+        // The text channel renders the guide verbatim (plain text, not JSON-escaped)
+        assert_eq!(tool_text(GET_STARTED, &out), guide);
+
+        let err = call(&path, GET_STARTED, json!({"topic": "x"})).unwrap_err();
+        assert!(err.to_string().contains("'topic'"), "got: {err}");
+
+        assert!(matches!(
+            call_as(&path, &[], GET_STARTED, json!({})),
+            Err(ToolError::Forbidden(_))
+        ));
+
+        cleanup(&path);
     }
 
     #[test]
