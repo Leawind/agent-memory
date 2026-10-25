@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **标签模型（破坏性，概念级重构）**：键值对概念退役，标签统一为单一命名空间的词汇表——一条记忆携带的标签处于裸 / 边源端 / 边目标端三态之一，`project:nmmt` 即一条从 project 指向 nmmt 的边；一条记忆内至多一条出边且源端与目标端互斥（嵌套禁止，名字层与存储行双重校验，合并按迁移同款确定性规则消解跨角色冲突）；值升格为词条（`memory_tags.value` 改为 `target_tag_id` 引用，迁移 5 原地升级：跨键同名强制合一、嵌套删入边、裸+目标删裸行、自环消除），由此改名与描述对所有角色立即生效、目标名可携带描述并进入纠错提示、跨键同值查询成为一次标签查询。`tag_list` 默认只列组织性标签（作过源端或裸用过），仅目标端标签在显式过滤时出现，计数覆盖任意角色；`tag_expr` 裸词改为 presence 匹配（任意状态在场），`key=value` 匹配边展示名（源半段校验、目标半段不校验，拼错静默返回空）；`remove_tags` 按名在所有角色删除；`tag_delete` detach/purge 与资源目录同步覆盖任意角色；导出格式改为 `[源词条 id, 目标词条 id|null]` 对；wire 输入形状不变（`{源: 目标|null}` 对象），`tags_autocreated` 与合并冲突报告键随语义更名（`keys_conflicted` → `tags_conflicted`）；展示仍为 `source:target`、裸名直书
+
 - **工具**：新增 `get_started`——无参数、零副作用的入门引导工具，返回一页使用指南（推荐调用顺序 tag_list → memory_search → memory_get、memory_list 只用于小集合或按标签扫描，以及常见错误清单），结尾附完整握手说明；工具描述自身浓缩关键引导，让不调用它的 agent 在工具列表里也能看到。仅 MCP 面暴露，无 REST 路由；`memory_list` 描述补充“浏览而非检索”的护栏说明
 
 - **生命周期（破坏性）**：置顶与到期机制整体移除，归档此前已移除——记忆不再有任何隐藏状态，删除是唯一移除手段，时效衰减降级为纯排序信号（不改变召回范围）。`memory_lifecycle` 工具与 `PUT /api/memories/:id/lifecycle` 路由删除，`memory_list` / `memory_search` 的 `state` 参数删除，`memory_lifecycle` 表整体删除（迁移 4 改写为 DROP，基线同步；旧库原地升级，已在旧迁移 4 上的库由无操作 DROP 兜底）；管理界面状态页签、生命周期对话框与编辑器入口删除，旧导出 JSON 携带的 `lifecycle` 字段导入时忽略。衰减规则同时修复为真正的谓词：`DecayRule.predicate` 取代 `key`（标签布尔表达式，裸标签/正则/命名谓词，叶子同时匹配完整标签名与带值标签的键半段），保存时校验语法与 `@引用`，解析失败的规则在排序时跳过而非报错——管理界面与 search-eval 原本就发送 `predicate` 字段、一直被 deny_unknown_fields 拒绝的问题就此修复
