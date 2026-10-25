@@ -87,12 +87,15 @@
              query tracked by filter-method drives a controlled first dropdown entry — the "add
              token" action when the token can land, a disabled red refusal otherwise. Illegal
              tokens never become chips, and the explanation sits in the open dropdown where the
-             user is already looking. -->
+             user is already looking. reserve-keyword=false: the add entry is a regular option,
+             not an allow-create one, so the default keyword reservation would leave the landed
+             token in the input where the next keystroke concatenates onto it. -->
         <el-select
           v-model="form.tags"
           multiple
           filterable
           default-first-option
+          :reserve-keyword="false"
           :filter-method="onTagQuery"
           :placeholder="t('editor.tagsPlaceholder')"
           class="tags-select"
@@ -109,7 +112,7 @@
               {{ tagQueryEntry.label }}
             </span>
           </el-option>
-          <!-- One tag vocabulary: plain names and value-bearing key:value tokens live side by
+          <!-- One tag vocabulary: plain names and edge tokens (source:target) live side by
                side; the save maps the chips onto the wire's tags object -->
           <el-option v-for="tag in filteredTagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
@@ -183,20 +186,20 @@ const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
 // Snapshot of the loaded memory: the save button stays disabled until the form differs
 const original = ref({ summary: '', content: '', tags: [] as string[] })
 
-// One tag vocabulary: a token with a colon is a value-bearing pair `key:value` (a key is unique
-// per memory — one value each), a plain token a bare tag. Chips are the editing form; the save
-// maps them onto the wire's tags object.
-function keyedToken(tag: string): Array<string> | null {
+// One tag vocabulary: a token with a colon is an edge `source:target` (a source carries one
+// edge per memory), a plain token a bare tag. Chips are the editing form; the save maps them
+// onto the wire's tags object.
+function edgeToken(tag: string): Array<string> | null {
   const i = tag.indexOf(':')
   if (i <= 0) return null
   return [tag.slice(0, i), tag.slice(i + 1)]
 }
 
-/** Chip set → per-key value text (null for bare tags), the diff basis of an edit. */
+/** Chip set → per-source target text (null for bare tags), the diff basis of an edit. */
 function tagMap(tags: Iterable<string>): Map<string, string | null> {
   const map = new Map<string, string | null>()
   for (const tag of tags) {
-    const pair = keyedToken(tag)
+    const pair = edgeToken(tag)
     if (pair) map.set(pair[0], pair[1])
     else map.set(tag, null)
   }
@@ -235,12 +238,12 @@ const filteredTagOptions = computed(() => {
   return q ? props.tagOptions.filter((tag) => tag.toLowerCase().includes(q)) : props.tagOptions
 })
 
-/** Why the typed token cannot land: malformed `key:value`, an illegal name or value half, or a
- * duplicate (a key already valued, or a bare tag already present — re-adding would toggle it
- * off). An empty problem means the token may be added. */
+/** Why the typed token cannot land: malformed `source:target`, an illegal source or target, or
+ * a duplicate (a source already carrying an edge, or a bare tag already present — re-adding
+ * would toggle it off). An empty problem means the token may be added. */
 function judgeTagToken(token: string): { problem: string; detail: string } {
   if (token.includes(':')) {
-    const pair = keyedToken(token)
+    const pair = edgeToken(token)
     if (pair === null || pair[0].trim() === '' || pair[1].trim() === '') return { problem: 'token', detail: token }
     if (!validTagName(pair[0])) return { problem: 'name', detail: pair[0].trim() }
     if (!validTagValue(pair[1])) return { problem: 'value', detail: pair[1].trim() }
@@ -302,7 +305,7 @@ watch(
       loading.value = true
       try {
         const full = await getMemory(client, props.memoryId)
-        // All tags live in one vocabulary: plain names and key:value pairs are chips alike
+        // All tags live in one vocabulary: plain names and edges are chips alike
         form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
         original.value = { summary: full.summary, content: full.content, tags: [...full.tags] }
       } catch (e: unknown) {

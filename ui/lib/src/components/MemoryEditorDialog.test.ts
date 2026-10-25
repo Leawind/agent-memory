@@ -75,7 +75,7 @@ describe('MemoryEditorDialog', () => {
       }),
     )
     const wrapper = await openDialog('m7')
-    // The picker shows the one vocabulary: plain names and key:value pairs as chips alike
+    // The picker shows the one vocabulary: plain names and edge tokens (source:target) as chips alike
     const select = dialogEl().querySelector('.el-select')!
     expect(select.textContent).toContain('t1')
     expect(select.textContent).toContain('project:demo')
@@ -112,6 +112,25 @@ describe('MemoryEditorDialog', () => {
     // remove is emitted (the key itself stays)
     expect(writes[0].add_tags).toEqual({ score: 7 })
     expect(writes[0].remove_tags).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('adding a typed token clears the select input, so the next keystroke starts fresh', async () => {
+    // Regression: the add-token entry is a regular option (not allow-create), so element-plus's
+    // default reserve-keyword left the landed token in the input where the next keystroke
+    // concatenated onto it. reserve-keyword=false makes every selection clear the query.
+    const wrapper = await openDialog(null)
+    const input = () => dialogEl().querySelector('.el-select__input') as HTMLInputElement
+    await new DOMWrapper(input()).setValue('t2')
+    await flushPromises()
+    const option = [...document.querySelectorAll('.el-select-dropdown__item')].find((o) =>
+      o.textContent?.includes('t2'),
+    )
+    expect(option, 'the add-token entry should be offered for a new token').toBeTruthy()
+    await new DOMWrapper(option!).trigger('click')
+    await flushPromises()
+    expect(input().value).toBe('')
+    expect(dialogEl().querySelector('.el-select')!.textContent).toContain('t2')
     wrapper.unmount()
   })
 
