@@ -1,5 +1,7 @@
-SELECT t.name, t.description, COUNT(mt.memory_id)
+SELECT t.name, t.description,
+       (SELECT COUNT(DISTINCT memory_id) FROM memory_tags
+        WHERE tag_id = t.id OR target_tag_id = t.id),
+       (EXISTS (SELECT 1 FROM memory_tags WHERE target_tag_id = t.id)
+        AND NOT EXISTS (SELECT 1 FROM memory_tags WHERE tag_id = t.id))
 FROM tags t
-LEFT JOIN memory_tags mt ON mt.tag_id = t.id
-GROUP BY t.id
-ORDER BY COUNT(mt.memory_id) DESC, t.name ASC
+ORDER BY 3 DESC, t.name ASC

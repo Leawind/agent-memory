@@ -119,7 +119,7 @@ impl Registry {
                 Err("persisted predicates require literal tags; regex atoms are query-only".into())
             }
             TagAtom::KeyEq { .. } => Err(
-                "key=value comparisons are query-only; named predicates accept literal tags only"
+                "edge comparisons (key=value) are query-only; named predicates accept literal tags only"
                     .into(),
             ),
         })

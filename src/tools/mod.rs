@@ -32,7 +32,7 @@ pub use defs::{
 };
 pub use render::tool_text;
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name is one identifier word: letters, digits, '_', '-' or '.' (Unicode), no spaces, colons, quotes or expression operators. A tag is a key:value pair whose key may carry no value: memory_create's tags object maps each key to a value (identifier word or number; 'key=value' filters searches; numbers canonicalize, so 1 and 1.0 are the same value) or to null for a bare tag, and a key holds one value per memory. memory_update adds tags through the same object shape (add_tags, upserting a key's value) and removes them by key name (remove_tags) — never restate untouched tags. Booleans are not values — presence flags are bare tags, and free text belongs in content, not tags; reuse keys and values instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name is one identifier word: letters, digits, '_', '-' or '.' (Unicode), no spaces, colons, quotes or expression operators. Tags form one unified vocabulary you curate; a memory carries tags either bare ('rust') or as an edge written 'source:target' ('project:nmmt' is an edge from tag project to tag nmmt — any tag can be an edge target, and the same tag can sit under several sources). memory_create's tags object maps each source tag to its target (an identifier word or a number; numbers canonicalize, so 1 and 1.0 are the same name) or to null for a bare tag; a source has exactly one edge per memory, and a tag cannot be both an edge source and an edge target on one memory (no nesting). In tag_expr a bare word matches presence in any state and 'key=value' matches an edge exactly. memory_update adds tags through the same object shape (add_tags, upserting a source's edge) and removes them by name in every role (remove_tags) — never restate untouched tags. Booleans are not targets — presence flags are bare tags, and free text belongs in content, not tags; reuse tags instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -217,11 +217,16 @@ fn reserved_tag_guard(
             .and_then(Value::as_str)
             .map(|s| s.trim().to_string())
     }
-    // Tag arguments are objects (key → value|null) or key-name arrays; the reserved tag is
-    // named by the key in either shape
+    // Tag arguments are objects (source → target|null) or tag-name arrays; the reserved tag is
+    // named by the object key (edge source) or by a string value (edge target) in either shape
     fn involves_reserved(args: &Map<String, Value>, keys: &[&str]) -> bool {
         keys.iter().any(|k| match args.get(*k) {
-            Some(Value::Object(object)) => object.keys().any(|key| key.trim() == RESERVED_TAG),
+            Some(Value::Object(object)) => {
+                object.keys().any(|key| key.trim() == RESERVED_TAG)
+                    || object
+                        .values()
+                        .any(|value| value.as_str().is_some_and(|t| t.trim() == RESERVED_TAG))
+            }
             Some(Value::Array(names)) => names
                 .iter()
                 .filter_map(Value::as_str)
@@ -1695,12 +1700,12 @@ mod tests {
         )
         .unwrap();
         // Echo-free beyond the facts the caller cannot derive: `ops` existed on both sides, so
-        // the target's value was kept and the conflict is reported
+        // the target's edge was kept and the conflict is reported
         assert_eq!(
             merged,
             json!({
-                "keys_conflicted": ["ops"],
-                "note": "these keys exist on both memories; the target's values were kept",
+                "tags_conflicted": ["ops"],
+                "note": "these tags are carried on both memories as sources; the target's edges were kept",
             })
         );
         let after = call(&path, "memory_get", json!({"ids": [target]})).unwrap();
@@ -2146,13 +2151,22 @@ mod tests {
             }),
         )
         .unwrap();
-        // tags_autocreated lists the keys created this write, bare and valued alike
+        // tags_autocreated lists the tags created this write — sources and edge targets alike
+        // (targets are vocabulary entries now); compared as a set, the object's iteration
+        // order decides first-appearance order
+        let mut autocreated: Vec<String> = created["tags_autocreated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        autocreated.sort();
         assert_eq!(
-            created["tags_autocreated"],
-            json!(["count", "project", "rust"])
+            autocreated,
+            vec!["2", "agent-memory", "count", "project", "rust"]
         );
         let id = created["id"].as_str().unwrap().to_string();
-        // Values read back as 'key:value' tags; the typed attributes view renders numbers
+        // Edges read back as 'source:target' display forms; the typed attributes view renders numbers
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
         for value in ["project:agent-memory", "count:2"] {
             assert!(
@@ -2207,8 +2221,8 @@ mod tests {
             json!({"id": id, "add_tags": {"count": "has space"}}),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("identifier words"), "{err}");
-        // Key names cannot carry the composed form (values are the object values)
+        assert!(err.to_string().contains("identifier word"), "{err}");
+        // Source names cannot carry the composed form (targets are the object values)
         let err = call(
             &path,
             MEMORY_CREATE,

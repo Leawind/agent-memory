@@ -111,12 +111,7 @@ mod tests {
         let path = temp_db("tx");
         cleanup(&path);
         let r: Result<(), String> = with_db_in(&path, TxMode::Write, |st| {
-            let links: Vec<(i64, Option<String>)> = st
-                .link_keys(&[("t".into(), None)], true)?
-                .ids
-                .into_iter()
-                .map(|i| (i, None))
-                .collect();
+            let links = st.resolve_tags(&[("t".into(), None)], true)?.links;
             st.insert_memory("s", "c", &links, 1, 1)?;
             Err("boom".into())
         });

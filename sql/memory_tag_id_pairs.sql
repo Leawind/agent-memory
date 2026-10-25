@@ -1,2 +1,2 @@
-SELECT mt.memory_id, mt.tag_id, mt.value FROM memory_tags mt
-ORDER BY mt.memory_id, mt.tag_id
+SELECT memory_id, tag_id, target_tag_id FROM memory_tags
+ORDER BY memory_id, tag_id

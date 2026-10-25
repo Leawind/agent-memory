@@ -91,7 +91,10 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
             let mut entries: Vec<Value> = st
                 .tag_views()?
                 .into_iter()
-                .filter_map(|t| tag_entry(&t))
+                // The catalog advertises the default (organizing) set, same as tag_list;
+                // target-only tags stay reachable through their known uri.
+                .filter(|(_, target_only)| !target_only)
+                .filter_map(|(view, _)| tag_entry(&view))
                 .collect();
             // The resident convention surfaces individually so hosts can pin and subscribe to it.
             // A big-but-safe page bound: convention memories are few by design (resident rules),
@@ -429,9 +432,7 @@ mod tests {
         store::with_db_in(path, TxMode::Write, |st| -> Result<(), String> {
             st.tag_create("rust", "Rust language")?;
             st.tag_create("项目", "")?;
-            let rust_ids = st.link_keys(&[("rust".into(), None)], true)?.ids;
-            let rust_links: Vec<(i64, Option<String>)> =
-                rust_ids.into_iter().map(|i| (i, None)).collect();
+            let rust_links = st.resolve_tags(&[("rust".into(), None)], true)?.links;
             st.insert_memory(
                 "Borrow checker",
                 "The borrow checker forbids aliasing + mutation.",
@@ -439,9 +440,7 @@ mod tests {
                 10,
                 20,
             )?;
-            let conv_ids = st.link_keys(&[(RESERVED_TAG.into(), None)], true)?.ids;
-            let conv_links: Vec<(i64, Option<String>)> =
-                conv_ids.into_iter().map(|i| (i, None)).collect();
+            let conv_links = st.resolve_tags(&[(RESERVED_TAG.into(), None)], true)?.links;
             st.insert_memory(
                 "Commit rules",
                 "Summary in one line; tags lowercase.",
@@ -595,8 +594,7 @@ mod tests {
 
         // Page size honored: seed more convention memories than one page holds
         store::with_db_in(&path, TxMode::Write, |st| -> Result<(), String> {
-            let ids = st.link_keys(&[(RESERVED_TAG.into(), None)], true)?.ids;
-            let links: Vec<(i64, Option<String>)> = ids.into_iter().map(|i| (i, None)).collect();
+            let links = st.resolve_tags(&[(RESERVED_TAG.into(), None)], true)?.links;
             for i in 0..60 {
                 st.insert_memory(&format!("conv {i}"), "body", &links, i as u64, i as u64)?;
             }

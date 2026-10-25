@@ -19,9 +19,9 @@
 //! export/import), `tx` is the transaction entry point, and `migrate` is the migration runner.
 
 mod access;
+mod attributes;
 mod embeddings;
 mod identities;
-mod keys;
 mod memories;
 mod migrate;
 mod ops;

@@ -1,4 +1,5 @@
-SELECT t.name, mt.value FROM memory_tags mt
-JOIN tags t ON t.id = mt.tag_id
+SELECT s.name, g.name FROM memory_tags mt
+JOIN tags s ON s.id = mt.tag_id
+LEFT JOIN tags g ON g.id = mt.target_tag_id
 WHERE mt.memory_id = ?1
-ORDER BY t.name
+ORDER BY s.name

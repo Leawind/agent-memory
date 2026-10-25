@@ -52,7 +52,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Attribute predicates: key=value matches the stored 'key:value' tag exactly (an enum value verbatim; a number in canonical form, so key=1.0 finds key:1); a bare word that is not an existing tag but prefixes stored 'key:value' tags tests existence with any value. Named predicates use @name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule: 1-100 characters of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_' - no spaces, colons, quotes or expression operators. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. A bare word matches presence in any state: the tag may sit on the memory bare, as an edge source ('w:...') or as an edge target ('...:w'). Edge comparisons: key=value matches the displayed 'key:value' edge exactly (the target verbatim; a number in canonical form, so key=1.0 finds key:1). Named predicates use @name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's displayed tag forms matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule: 1-100 characters of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_' - no spaces, colons, quotes or expression operators. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 /// The workflow chapter of get_started's guide: the call order and the mistakes the always-visible
 /// description compresses into one line. The full returned text appends the handshake INSTRUCTIONS
@@ -114,11 +114,11 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_LIST,
-            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (synthesized with zero memories before it exists) and can never be renamed or deleted. Name filterable by regex. Start here when exploring the memory store.",
+            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (seeded with zero memories) and can never be renamed or deleted. Counts cover presence in any role (bare, edge source or edge target). By default only organizing tags are listed (used as edge sources or bare); tags that only ever appear as edge targets are included when the filter matches them. Name filterable by regex. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
-                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax. Omit to list all tags."}
+                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax. Omit to list the default (organizing) tag set; a filter includes edge-target-only tags too."}
                 },
                 "additionalProperties": false
             }),
@@ -126,7 +126,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_UPDATE,
-            "Update a tag: rename it and/or set its description (the only way to fill in a description after tag_create). Memories referencing the tag follow a rename automatically - only the label changes. Omit new_name to keep the current name; omit description to keep the current one; at least one of the two is required. The response carries only the flags renamed / description_updated telling which parts actually changed - names and descriptions are never echoed back.",
+            "Update a tag: rename it and/or set its description (the only way to fill in a description after tag_create). Memories referencing the tag follow a rename automatically in every role (edge sources, edge targets and bare) - only the label changes. Omit new_name to keep the current name; omit description to keep the current one; at least one of the two is required. The response carries only the flags renamed / description_updated telling which parts actually changed - names and descriptions are never echoed back.",
             json!({
                 "type": "object",
                 "properties": {
@@ -141,7 +141,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_DELETE,
-            "Delete a tag. mode 'detach' (default) removes only the tag from memories and keeps them; mode 'purge' also permanently deletes every memory carrying this tag - preview the impact first with dry_run: true (reports the affected memory count and, for purge, their ids) since purge cannot be undone. Responses carry counts only (memories_updated / memories_deleted; a dry_run reports memories_affected), never an echo of the arguments.",
+            "Delete a tag. mode 'detach' (default) removes the tag's annotations from memories (in every role: edge source, edge target, bare) and keeps them; mode 'purge' also permanently deletes every memory carrying the tag in any role - preview the impact first with dry_run: true (reports the affected memory count and, for purge, their ids) since purge cannot be undone. Responses carry counts only (memories_updated / memories_deleted; a dry_run reports memories_affected), never an echo of the arguments.",
             json!({
                 "type": "object",
                 "properties": {
@@ -162,7 +162,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "The memory's tags as one object: each entry is a tag, a key-value pair whose key is unique per memory. A string value is an identifier word (reusable vocabulary; create_missing_tags applies), a number stores in canonical decimal form (1 and 1.0 are the same value), null is a bare tag. Keys follow the identifier rule (no ':'); booleans and arrays are not values - presence flags are bare tags."},
+                    "tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "The memory's tags as one object. Each entry is one annotation: the key is a source tag and the value is either its edge target (a string: an identifier word - reusable vocabulary, create_missing_tags applies; a number: stored in canonical decimal form, 1 and 1.0 are the same name) or null for a bare tag. A source has exactly one edge per memory; a tag cannot be both an edge source and an edge target on one memory; the same tag may sit under several sources. Keys follow the identifier rule (no ':'); booleans and arrays are not targets - presence flags are bare tags."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag keys are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["summary"],
@@ -226,8 +226,8 @@ pub fn tool_definitions() -> Value {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
-                    "add_tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "Tags to add, same shape as memory_create's tags. Applied before remove_tags, so a key present in both ends up removed. Adding a key the memory already carries replaces its value (a key holds one value per memory)."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tag keys to remove - the key name identifies the tag (one value per key); nonexistent keys are a silent no-op."},
+                    "add_tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "Tags to add, same shape as memory_create's tags. Applied before remove_tags, so a tag present in both ends up removed. Adding a source the memory already carries replaces its edge (upsert); a tag cannot be both an edge source and an edge target on one memory."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names to remove - the tag disappears from the memory in every role (its own edge or bare presence and every edge pointing at it); nonexistent names are a silent no-op."},
                     "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag keys in add_tags are an error. True auto-creates them with an empty description."}
                 },
                 "required": ["id"],
@@ -253,7 +253,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_MERGE,
-            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; original tag sources become the union of both and rules recompute the effective set. Only original tag sources are merged; derived tags are recomputed under the rules. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired. The response never echoes the input: a clean merge answers with an empty object, everything reported is a reference report or warning note.",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; the annotations unite: source tags join the target, a source tag both memories carry keeps the target's edge (reported in tags_conflicted), and cross-role collisions resolve deterministically. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' (in any role) additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired. The response never echoes the input: a clean merge answers with an empty object, everything reported is a reference report or warning note.",
             json!({
                 "type": "object",
                 "properties": {

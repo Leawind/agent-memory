@@ -4,6 +4,7 @@
 //! here and referenced by the tool layer (`tools`), keeping limits consistent everywhere.
 
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// API limit: maximum title/summary characters.
@@ -80,11 +81,11 @@ pub fn normalize_id(raw: &str) -> String {
     raw.trim().to_string()
 }
 
-/// The one identifier rule shared by bare tag names, attribute key names and enum attribute
-/// values: one word of Unicode identifier characters (XID_Continue, so letters, digits and `_`
-/// in every script including CJK), with `-` and `.` allowed after the first character. No
-/// spaces, no colon (the `key:value` separator), no quotes or expression operators — which
-/// keeps tag_expr parsing unambiguous and lets the compact display form stay quote-free.
+/// The one identifier rule shared by tag names and edge targets: one word of Unicode identifier
+/// characters (XID_Continue, so letters, digits and `_` in every script including CJK), with `-`
+/// and `.` allowed after the first character. No spaces, no colon (the `source:target` display
+/// separator), no quotes or expression operators — which keeps tag_expr parsing unambiguous and
+/// lets the compact display form stay quote-free.
 fn ident_regex() -> &'static regex::Regex {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
@@ -94,9 +95,8 @@ fn ident_regex() -> &'static regex::Regex {
 }
 
 /// Tag name normalization: trim surrounding whitespace, cap length, enforce the identifier
-/// rule. Colons are reserved for the internally composed `key:value` value tags — input paths
-/// (tags arrays, tag_create, key names) never accept them; `key=value` in tag_expr is the
-/// way to qualify values.
+/// rule. Colons are reserved for the displayed `source:target` edge form — input paths (tags
+/// objects, tag_create) never accept them; `key=value` in tag_expr is the way to match edges.
 pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     let t = raw.trim();
     if t.is_empty() {
@@ -113,13 +113,6 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
         ));
     }
     Ok(t.to_string())
-}
-
-/// Key name normalization: the same identifier rule as tag names (a colon inside a key would
-/// make the stored `key:value` qualification ambiguous). Kept as a named alias so call sites
-/// read as the schema concept they enforce.
-pub fn normalize_key_name(raw: &str) -> Result<String, String> {
-    normalize_tag_name(raw)
 }
 
 /// Canonical decimal text for an attribute number: integers keep their exact form (`1` and
@@ -160,59 +153,78 @@ pub fn parse_number_text(text: &str) -> Option<String> {
     canonical_number(&n)
 }
 
-/// Compose the display form of a (key, value) pair: the bare key when the value is absent, the
-/// colon-joined `key:value` otherwise. Both parts are pre-validated, so the composed form carries
-/// exactly one colon. Internal: input paths qualify values via the tags object, never by naming
-/// this directly.
-pub fn compose_value_tag(key: &str, value: &str) -> String {
-    format!("{key}:{value}")
+/// Display form of an edge: the bare source when the target is absent (a bare tag), the
+/// colon-joined `source:target` otherwise. Both parts are pre-validated, so the composed form
+/// carries exactly one colon. Internal: input paths name edges via the tags object, never by
+/// composing this directly.
+pub fn compose_edge(source: &str, target: &str) -> String {
+    format!("{source}:{target}")
 }
 
-/// A tag as the wire carries it: key name plus optional value (`None` = bare tag). One key holds
-/// one value per memory.
-pub type TagPair = (String, Option<String>);
+/// An annotation as the wire carries it: a source tag name plus an optional target (`None` =
+/// bare tag). One source carries at most one edge per memory.
+pub type TagEdge = (String, Option<String>);
 
-/// API limit: at most this many tags (keys) on one memory per write.
+/// API limit: at most this many tags (annotations) on one memory per write.
 pub const MAX_TAGS_PER_MEMORY: usize = 64;
 
-/// Normalize a tags object (`{key: value|null}`) into pairs: keys follow the identifier rule,
-/// values are identifier words, canonical numbers or null (a bare tag). A key is unique per
-/// memory, which the JSON object encodes structurally — duplicate keys cannot be expressed.
-pub fn normalize_tag_pairs(
+/// Normalize a tags object (`{source: target|null}`) into edges: names follow the identifier
+/// rule, targets are identifier words, canonical numbers or null (a bare tag). The object
+/// structurally encodes source uniqueness (duplicate keys cannot be expressed); the model's
+/// role exclusivity is checked here at the name level — a tag cannot point to itself, and a
+/// name that is some entry's target cannot simultaneously be another entry's source or a bare
+/// tag on the same memory.
+pub fn normalize_tag_edges(
     object: &serde_json::Map<String, Value>,
-) -> Result<Vec<TagPair>, String> {
+) -> Result<Vec<TagEdge>, String> {
     if object.len() > MAX_TAGS_PER_MEMORY {
         return Err(format!(
             "at most {MAX_TAGS_PER_MEMORY} tags per memory are allowed"
         ));
     }
-    let mut pairs = Vec::with_capacity(object.len());
-    for (raw_key, value) in object {
-        let key = normalize_key_name(raw_key)?;
-        let pair = match value {
-            Value::Null => (key, None),
+    let mut edges = Vec::with_capacity(object.len());
+    for (raw_source, value) in object {
+        let source = normalize_tag_name(raw_source)?;
+        let edge = match value {
+            Value::Null => (source, None),
             Value::String(text) => {
                 normalize_tag_name(text).map_err(|_| {
                     format!(
-                        "tag '{key}': string values must be identifier words (letters, digits, '_', '-', '.'), got '{text}'"
+                        "tag '{source}': the target must be an identifier word (letters, digits, '_', '-', '.'), got '{text}'"
                     )
                 })?;
-                (key, Some(text.clone()))
+                (source, Some(text.clone()))
             }
             Value::Number(n) => {
                 let canonical = canonical_number(n)
-                    .ok_or_else(|| format!("tag '{key}': {n} is not a finite number"))?;
-                (key, Some(canonical))
+                    .ok_or_else(|| format!("tag '{source}': {n} is not a finite number"))?;
+                (source, Some(canonical))
             }
             other => {
                 return Err(format!(
-                    "tag '{key}' must map to a string, number or null (a bare tag), got {other} — bools are not values (presence flags are bare tags)"
+                    "tag '{source}' must map to a string, number or null (a bare tag), got {other} — bools are not targets (presence flags are bare tags)"
                 ))
             }
         };
-        pairs.push(pair);
+        if edge.1.as_deref() == Some(edge.0.as_str()) {
+            return Err(format!("tag '{}': an edge cannot point to itself", edge.0));
+        }
+        edges.push(edge);
     }
-    Ok(pairs)
+    let mut target_of: HashMap<&str, &str> = HashMap::new();
+    for (source, target) in &edges {
+        if let Some(target) = target {
+            target_of.insert(target.as_str(), source);
+        }
+    }
+    for (source, _) in &edges {
+        if let Some(&edge_source) = target_of.get(source.as_str()) {
+            return Err(format!(
+                "tag '{source}' cannot be both an edge target (of '{edge_source}') and a source/bare tag on one memory — no nesting",
+            ));
+        }
+    }
+    Ok(edges)
 }
 
 /// Identity name normalization: trim surrounding whitespace and cap length (same rules as tag names).
@@ -253,9 +265,9 @@ mod tests {
 
     #[test]
     fn tag_name_format_is_enforced() {
-        // The shared identifier rule for tags, keys and enum values: XID_Continue characters
-        // with '-' and '.' after the first; no colon (reserved for key:value), spaces, quotes
-        // or operators
+        // The shared identifier rule for tags and edge targets: XID_Continue characters
+        // with '-' and '.' after the first; no colon (reserved for source:target), spaces,
+        // quotes or operators
         for ok in [
             "rust",
             "_private",
@@ -267,7 +279,7 @@ mod tests {
             assert!(normalize_tag_name(ok).is_ok(), "{ok} should be valid");
         }
         for bad in [
-            "project:agent-memory", // colon is the key:value separator, input paths reject it
+            "project:agent-memory", // colon is the source:target display separator
             "rust & life",          // expression operator with spaces
             "a&b",                  // glued operator
             "a|b",
@@ -284,14 +296,6 @@ mod tests {
         ] {
             assert!(normalize_tag_name(bad).is_err(), "{bad} should be invalid");
         }
-    }
-
-    #[test]
-    fn key_names_follow_the_same_identifier_rule() {
-        assert_eq!(normalize_key_name(" project "), Ok("project".to_string()));
-        assert!(normalize_key_name("a:b").is_err());
-        assert!(normalize_key_name("").is_err());
-        assert!(normalize_key_name("has space").is_err());
     }
 
     #[test]
@@ -319,15 +323,15 @@ mod tests {
     }
 
     #[test]
-    fn tag_pairs_normalize_from_the_wire_object() {
+    fn tag_edges_normalize_from_the_wire_object() {
         let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
             r#"{"rust": null, "project": "agent-memory", "count": 2.5, "big": 1e300}"#,
         )
         .unwrap();
-        let mut pairs = normalize_tag_pairs(&object).unwrap();
-        pairs.sort();
+        let mut edges = normalize_tag_edges(&object).unwrap();
+        edges.sort();
         assert_eq!(
-            pairs,
+            edges,
             vec![
                 ("big".to_string(), Some("1e300".to_string())),
                 ("count".to_string(), Some("2.5".to_string())),
@@ -337,12 +341,17 @@ mod tests {
         );
         for (body, expected) in [
             (r#"{"project": ["a"]}"#, "must map to"),
-            (r#"{"project": true}"#, "bools are not values"),
-            (r#"{"project": "has space"}"#, "identifier words"),
+            (r#"{"project": true}"#, "bools are not targets"),
+            (r#"{"project": "has space"}"#, "identifier word"),
+            // A tag cannot be both an edge target and a source/bare tag on one memory
+            (r#"{"project": "nmmt", "nmmt": "rust"}"#, "no nesting"),
+            (r#"{"a": "x", "x": null}"#, "no nesting"),
+            // No self-edges
+            (r#"{"x": "x"}"#, "cannot point to itself"),
         ] {
             let object =
                 serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(body).unwrap();
-            let err = normalize_tag_pairs(&object).unwrap_err();
+            let err = normalize_tag_edges(&object).unwrap_err();
             assert!(err.contains(expected), "{body}: got {err}");
         }
     }

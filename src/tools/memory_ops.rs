@@ -2,7 +2,7 @@
 
 use crate::auth::IdentityCtx;
 use crate::model::{
-    normalize_id, normalize_tag_name, normalize_tag_pairs, now, TagPair, RESERVED_TAG,
+    normalize_id, normalize_tag_edges, normalize_tag_name, now, TagEdge, RESERVED_TAG,
 };
 use crate::search;
 use crate::store::{ListFilter, Store};
@@ -24,20 +24,22 @@ fn resolve_tag_expr(st: &Store, raw: &str) -> Result<TagExpr, ToolError> {
         )
         .map_err(ToolError::invalid)?;
     let mut unknown: Vec<String> = Vec::new();
-    // Leaf names are display forms: a valued `key:value` leaf validates its KEY against the
-    // vocabulary (values are per-memory data, not vocabulary), a bare leaf validates itself.
+    // Leaf names are display forms: a composed `source:target` leaf validates its SOURCE half
+    // against the vocabulary; the target half stays unchecked — a typo'd target simply matches
+    // nothing (values-as-targets are per-memory facts as much as vocabulary), while an unknown
+    // source is far more likely a typo and gets the did-you-mean path. A bare leaf validates itself.
     for name in expr.tag_names() {
-        let key = match name.split_once(':') {
-            Some((key, _)) => key,
+        let source = match name.split_once(':') {
+            Some((source, _)) => source,
             None => name,
         };
-        if !st.tag_exists(key).map_err(ToolError::invalid)? {
+        if !st.tag_exists(source).map_err(ToolError::invalid)? {
             match st
-                .find_tag_case_insensitive(key)
+                .find_tag_case_insensitive(source)
                 .map_err(ToolError::invalid)?
             {
-                Some(similar) => unknown.push(format!("'{key}' (did you mean '{similar}'?)")),
-                None => unknown.push(format!("'{key}'")),
+                Some(similar) => unknown.push(format!("'{source}' (did you mean '{similar}'?)")),
+                None => unknown.push(format!("'{source}'")),
             }
         }
     }
@@ -60,8 +62,8 @@ fn opt_tag_expr(st: &Store, args: &Map<String, Value>) -> Result<Option<TagExpr>
     Ok(expr)
 }
 
-/// Attach the typed `attributes` view (derived from the `key:value` tags + key registry) to a
-/// memory view, only when the memory carries at least one registered key — sparse by default.
+/// Attach the typed `attributes` view (derived from the edges' target names) to a memory view,
+/// only when the memory carries at least one edge — sparse by default.
 fn attach_attributes(st: &Store, m: &crate::model::Memory, view: &mut Value) -> Result<(), String> {
     let attributes = st.attributes_view(m)?;
     if !attributes.as_object().expect("object").is_empty() {
@@ -77,14 +79,15 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(c) if !c.trim().is_empty() => validate_content(&c)?,
         _ => String::new(),
     };
-    // One tags object: keys map to a value (string or number) or null for a bare tag. A key is
-    // unique per memory, which the object encodes structurally.
-    let tags: Vec<TagPair> = match args.get("tags") {
+    // One tags object: entries map a source tag to its target (string or number) or null for a
+    // bare tag. Source uniqueness is structural (JSON object); role exclusivity is checked here
+    // at the name level (no nesting, no self-edges).
+    let edges: Vec<TagEdge> = match args.get("tags") {
         None | Some(Value::Null) => Vec::new(),
-        Some(Value::Object(object)) => normalize_tag_pairs(object).map_err(ToolError::invalid)?,
+        Some(Value::Object(object)) => normalize_tag_edges(object).map_err(ToolError::invalid)?,
         Some(other) => {
             return Err(ToolError::invalid(format!(
-                "tags must be an object mapping key names to values (string, number or null), got {other}"
+                "tags must be an object mapping source tag names to targets (string, number or null), got {other}"
             )))
         }
     };
@@ -92,20 +95,14 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     // from rotting through casual tagging; the agent opts into auto-creation explicitly.
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
 
-    let linkage = st.link_keys(&tags, create_missing)?;
-    let links: Vec<(i64, Option<String>)> = linkage
-        .ids
-        .iter()
-        .copied()
-        .zip(tags.iter().map(|(_, v)| v.clone()))
-        .collect();
+    let linkage = st.resolve_tags(&edges, create_missing)?;
 
     // Duplicate detection (deterministic rule: titles exactly equal after normalization). Computed before insertion so the memory cannot match itself.
     // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
     let duplicate_of = st.find_duplicates_by_summary(&summary)?;
 
     let ts = now();
-    let id = st.insert_memory(&summary, &content, &links, ts, ts)?;
+    let id = st.insert_memory(&summary, &content, &linkage.links, ts, ts)?;
     // Echo-free response: the caller just stated summary/content/tags, so none of them come back —
     // only the facts it cannot derive (id, server timestamp) plus the sparse write companions
     // (three-way tag-link classification minus the derivable reused set, duplicate hints), each
@@ -132,8 +129,8 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
     Ok(out)
 }
 
-/// remove_tags carries key names: the same identifier rule as tag names (a colon inside a name
-/// would make the keyed qualification ambiguous).
+/// remove_tags carries tag names: the same identifier rule as everywhere (a colon would name
+/// an edge, not a tag).
 fn normalize_tag_name_list(names: &[String]) -> Result<Vec<String>, ToolError> {
     names
         .iter()
@@ -495,17 +492,18 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(_) => Some(String::new()),
         None => None,
     };
-    // Incremental tag edits: `add_tags` maps keys to values (upserting the key's value on the
-    // memory), `remove_tags` lists key names whose relation rows are dropped — one key holds one
-    // value, so the key name identifies at most one tag. Restating untouched tags is never needed.
-    let add_tags: Option<Vec<TagPair>> = match args.get("add_tags") {
+    // Incremental tag edits: `add_tags` maps sources to targets (upserting the source's edge on
+    // the memory), `remove_tags` lists tag names whose annotations are dropped in every role —
+    // the name identifies the tag wherever it sits (source, target or bare). Restating
+    // untouched tags is never needed.
+    let add_tags: Option<Vec<TagEdge>> = match args.get("add_tags") {
         None | Some(Value::Null) => None,
         Some(Value::Object(object)) => {
-            Some(normalize_tag_pairs(object).map_err(ToolError::invalid)?)
+            Some(normalize_tag_edges(object).map_err(ToolError::invalid)?)
         }
         Some(other) => {
             return Err(ToolError::invalid(format!(
-                "add_tags must be an object mapping key names to values (string, number or null), got {other}"
+                "add_tags must be an object mapping source tag names to targets (string, number or null), got {other}"
             )))
         }
     };
@@ -522,20 +520,15 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
 
     // Resolve tags first (the tags table is what changes), then update the memory — the order matches the error messages.
     let mut linkage_opt = None;
-    let mut add_links: Vec<(i64, Option<String>)> = Vec::new();
+    let mut add_links: Vec<(i64, Option<i64>)> = Vec::new();
     if let Some(add) = &add_tags {
-        let linkage = st.link_keys(add, create_missing)?;
-        add_links = linkage
-            .ids
-            .iter()
-            .copied()
-            .zip(add.iter().map(|(_, v)| v.clone()))
-            .collect();
+        let linkage = st.resolve_tags(add, create_missing)?;
+        add_links = linkage.links.clone();
         linkage_opt = Some(linkage);
     }
     let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(remove) = &remove_tags {
-        remove_ids = st.tag_ids_for_keys(remove)?;
+        remove_ids = st.tag_ids_by_names(remove)?;
     }
 
     if !st.memory_exists(id)? {
@@ -746,12 +739,13 @@ pub fn memory_merge(
 
     // Reserved-tag rule, data-dependent edition: the arguments name no tags, so the entry guard
     // cannot see this — merging unions the tags onto the target (an attach when the source carries
-    // the convention) and deletes a resident memory when the source is one. Both are admin-only moves.
+    // the convention in any role) and deletes a resident memory when the source is one. Both are
+    // admin-only moves.
     let touches_reserved = target
         .tags
         .iter()
         .chain(source.tags.iter())
-        .any(|t| t == RESERVED_TAG);
+        .any(|t| tag_display_touches(t, RESERVED_TAG));
     if touches_reserved && !ctx.can(crate::auth::Cap::Admin) {
         return Err(ToolError::forbidden(format!(
             "merging memories that carry the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (the resident convention is operator-curated)"
@@ -762,29 +756,41 @@ pub fn memory_merge(
         .clone()
         .unwrap_or_else(|| format!("{}\n\n{}", target.content, source.content));
     validate_content(&merged_content)?;
-    // Source tags join the target; a key the target already carries stays as it is (the target
-    // is the surviving identity) and lands in keys_conflicted. No auto-creation — both memories'
-    // keys already exist by definition.
+    // Source annotations join the target; a source tag the target already carries stays as it
+    // is (the target is the surviving identity) and lands in tags_conflicted. No auto-creation —
+    // both memories' tags already exist by definition.
     let source_rows = st.tag_rows_for(source_id)?;
-    let target_keys: Vec<i64> = st
+    let mut rows: Vec<(i64, Option<i64>)> = st
         .tag_rows_for(target_id)?
         .into_iter()
-        .map(|(id, _, _)| id)
+        .map(|r| (r.tag_id, r.target_id))
         .collect();
-    let mut add_links: Vec<(i64, Option<String>)> = Vec::new();
+    let target_tag_ids: Vec<i64> = rows.iter().map(|(rid, _)| *rid).collect();
     let mut conflicted: Vec<String> = Vec::new();
-    for (id, name, value) in source_rows {
-        if target_keys.contains(&id) {
-            conflicted.push(name);
+    for row in source_rows {
+        if target_tag_ids.contains(&row.tag_id) {
+            conflicted.push(row.source);
         } else {
-            add_links.push((id, value));
+            rows.push((row.tag_id, row.target_id));
         }
     }
+    // The union can collide across roles (e.g. the source carries 'nmmt' bare while the target
+    // has 'project:nmmt'): resolve deterministically with the schema migration's rules — first
+    // drop edges pointing at tags that carry their own edge row (nesting, self-edges included),
+    // then drop bare rows of tags that are still targets (presence survives via the edge).
+    let sources: std::collections::HashSet<i64> = rows
+        .iter()
+        .filter(|(_, t)| t.is_some())
+        .map(|(r, _)| *r)
+        .collect();
+    rows.retain(|(_, t)| !(t.is_some() && sources.contains(&t.unwrap())));
+    let targets: std::collections::HashSet<i64> = rows.iter().filter_map(|(_, t)| *t).collect();
+    rows.retain(|(rid, t)| !(t.is_none() && targets.contains(rid)));
     st.update_memory(
         target_id,
         summary.as_deref(),
         Some(&merged_content),
-        &add_links,
+        &rows,
         &[],
     )?;
     let (deleted, _) = st.delete_memories(&[source_id])?;
@@ -805,10 +811,11 @@ pub fn memory_merge(
     let inbound = inbound_references(&memories, &raw_source, "");
     let mut out = json!({});
     if !conflicted.is_empty() {
-        out["keys_conflicted"] = json!(conflicted);
+        out["tags_conflicted"] = json!(conflicted);
         append_note(
             &mut out,
-            "these keys exist on both memories; the target's values were kept".to_string(),
+            "these tags are carried on both memories as sources; the target's edges were kept"
+                .to_string(),
         );
     }
     if !inbound.is_empty() {
@@ -828,6 +835,15 @@ pub fn memory_merge(
         }
     }
     Ok(out)
+}
+
+/// Whether a display-form tag touches the given tag name in any role: bare (`name`), as an
+/// edge source (`name:…`) or as an edge target (`…:name`). Display forms carry at most one
+/// colon, so the three forms are exact.
+fn tag_display_touches(display: &str, name: &str) -> bool {
+    display == name
+        || display.strip_prefix(&format!("{name}:")).is_some()
+        || display.ends_with(&format!(":{name}"))
 }
 
 /// Id-shaped token detection for freshly written text: `m123`, word-bounded and case-sensitive —

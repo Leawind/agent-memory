@@ -73,7 +73,7 @@ impl Policy {
             expr.visit_atoms(&mut |atom| keyed |= matches!(atom, TagAtom::KeyEq { .. }));
             if keyed {
                 return Err(format!(
-                    "invalid decay rule {:?}: key=value comparisons are query-only; use tag names, /regex/ or @named references",
+                    "invalid decay rule {:?}: edge comparisons (key=value) are query-only; use tag names, /regex/ or @named references",
                     rule.predicate
                 ));
             }

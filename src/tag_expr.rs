@@ -1,8 +1,10 @@
 //! Tag set algebra: parse and evaluate boolean expressions over tag names.
 //!
 //! Every tag is a set of memories, so a tag expression is a set expression: `(a&b)|c` selects
-//! memories carrying both `a` and `b`, or carrying `c`. Grammar (precedence `!` > `&` > `|`,
-//! parentheses group, `&&` / `||` accepted as aliases):
+//! memories carrying both `a` and `b`, or carrying `c`. A bare word matches presence in any
+//! state — the tag may sit on the memory bare, as an edge source (`w:…`) or as an edge target
+//! (`…:w`); the store rewrites existing names to a presence regex before evaluation. Grammar
+//! (precedence `!` > `&` > `|`, parentheses group, `&&` / `||` accepted as aliases):
 //!
 //! ```text
 //! expr    := or
@@ -17,8 +19,8 @@
 //! keyed   := bare "=" (bare | quoted)
 //! ```
 //!
-//! A regex atom passes when ANY of the memory's tag names matches (Rust regex syntax, case
-//! sensitive by default — inline flags like `(?i)` work). A `/` opens a regex only at a token
+//! A regex atom passes when ANY of the memory's tag display names matches (Rust regex syntax,
+//! case sensitive by default — inline flags like `(?i)` work). A `/` opens a regex only at a token
 //! boundary; inside a bare word it stays literal, so `proj/alpha` is still one tag name. Inside
 //! a regex, `\/` escapes the delimiter and every other backslash sequence passes through to the
 //! regex engine untouched (`\d`, `\\`, ...).
@@ -26,9 +28,9 @@
 //! Parsing is pure syntax; leaf names are validated against the store by the caller (unknown
 //! names are an error with a did-you-mean hint, mirroring tag linking on writes). Regex atoms
 //! carry no names and match dynamically. A `keyed` atom is syntax only: the store rewrites it
-//! to the stored `key:value` tag (enum value, or canonical number) before use, and
-//! named-predicate definitions reject it as query-only. Values never need quoting for special
-//! characters — attribute values are identifier words or numbers, so the bare form is total.
+//! to the displayed `source:target` edge leaf (canonical number, or the target verbatim) before
+//! use, and named-predicate definitions reject it as query-only. Targets never need quoting for
+//! special characters — tag names are identifier words or numbers, so the bare form is total.
 
 use crate::predicate::Predicate;
 
@@ -40,8 +42,8 @@ pub enum TagAtom {
     Tag(String),
     Named(String),
     Regex(Box<regex::Regex>),
-    /// `key=value` from the query text; the store rewrites it to the stored `key:value` tag
-    /// by the key's registered type (enum: the value verbatim; number: canonicalized).
+    /// `key=value` from the query text; the store rewrites it to the displayed `source:target`
+    /// edge leaf (a number canonicalizes).
     KeyEq {
         key: String,
         value: String,
@@ -360,7 +362,7 @@ impl Parser {
             }
             Tok::Tag(name) => {
                 // `key=value` hangs off a plain tag token; the store rewrites the pair to the
-                // stored `key:value` tag by the key's registered type
+                // displayed `source:target` edge leaf
                 if matches!(self.peek(), Some((Tok::Eq, _))) {
                     self.pos += 1;
                     let value = match self.next() {
@@ -509,9 +511,9 @@ mod tests {
     }
 
     #[test]
-    fn keyed_atoms_carry_key_and_value_for_the_store_rewrite() {
-        // Keyed atoms are pure syntax: the store rewrites them to `key:value` leaves by the
-        // key's registered type (covered by the store tests). A bare name stays a Tag atom.
+    fn keyed_atoms_carry_source_and_target_for_the_store_rewrite() {
+        // Keyed atoms are pure syntax: the store rewrites them to `source:target` display
+        // leaves (covered by the store tests). A bare name stays a Tag atom.
         let parsed = parse("project=agent-memory&!hidden").unwrap();
         let mut pairs = Vec::new();
         parsed.visit_atoms(&mut |a| {

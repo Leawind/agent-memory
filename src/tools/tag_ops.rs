@@ -30,7 +30,14 @@ pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
 
 pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let filter = opt_regex(args, "filter").map_err(ToolError::invalid)?;
-    let mut tags = st.tag_views()?;
+    let mut views = st.tag_views()?;
+    // Default set: the organizing tags — those used as edge sources or bare. A tag whose only
+    // presence is being pointed at is a destination, not a signpost, and stays out of the
+    // default navigation list; an explicit filter requests everything matching.
+    if filter.is_none() {
+        views.retain(|(_, target_only)| !target_only);
+    }
+    let mut tags: Vec<Value> = views.into_iter().map(|(view, _)| view).collect();
     if let Some(re) = &filter {
         tags.retain(|t| re.is_match(t["name"].as_str().unwrap_or_default()));
     }
