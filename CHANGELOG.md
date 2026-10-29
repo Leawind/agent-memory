@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-10-29)
+
 - **前端**：标签选择器上屏 token 后输入框不再残留文本——自定义“添加 token”项不是 allow-create 项，element-plus 默认的 `reserve-keyword` 会把已上屏的 token 留在输入框，下一次键入拼接成错误的边 token（如 `rustproject:nmmt`）；关闭 reserve-keyword 使每次选中即清空，并补组件级回归测试。标签提示与错误文案从键值对措辞改为“源:目标”边措辞（含源端唯一、源端与目标端互斥、数值规范化说明），删除失效的 `tagDuplicateFmt` 文案
 - **标签模型（破坏性，概念级重构）**：键值对概念退役，标签统一为单一命名空间的词汇表——一条记忆携带的标签处于裸 / 边源端 / 边目标端三态之一，`project:nmmt` 即一条从 project 指向 nmmt 的边；一条记忆内至多一条出边且源端与目标端互斥（嵌套禁止，名字层与存储行双重校验，合并按迁移同款确定性规则消解跨角色冲突）；值升格为词条（`memory_tags.value` 改为 `target_tag_id` 引用，迁移 5 原地升级：跨键同名强制合一、嵌套删入边、裸+目标删裸行、自环消除），由此改名与描述对所有角色立即生效、目标名可携带描述并进入纠错提示、跨键同值查询成为一次标签查询。`tag_list` 默认只列组织性标签（作过源端或裸用过），仅目标端标签在显式过滤时出现，计数覆盖任意角色；`tag_expr` 裸词改为 presence 匹配（任意状态在场），`key=value` 匹配边展示名（源半段校验、目标半段不校验，拼错静默返回空）；`remove_tags` 按名在所有角色删除；`tag_delete` detach/purge 与资源目录同步覆盖任意角色；导出格式改为 `[源词条 id, 目标词条 id|null]` 对；wire 输入形状不变（`{源: 目标|null}` 对象），`tags_autocreated` 与合并冲突报告键随语义更名（`keys_conflicted` → `tags_conflicted`）；展示仍为 `source:target`、裸名直书
 
