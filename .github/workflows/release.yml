@@ -32,8 +32,10 @@ jobs:
       # （include/exclude 均拦不住），产物从 ~90 文件膨胀到 3300+。构建完成后
       # node_modules 不再需要，删除后 cargo package 的文件清单即回归干净。
       - run: rm -rf node_modules ui/node_modules ui/lib/node_modules ui/app/node_modules scripts/node_modules
-      # 发布前人工核对包内容：ui/dist 必须在列，node_modules 必须不在列
-      - run: test -z "$(cargo package --list --locked | grep node_modules)" && cargo package --list --locked | grep -q "ui/dist/index.html"
-      - run: cargo publish --locked
+      # 发布前人工核对包内容：ui/dist 必须在列，node_modules 必须不在列。
+      # --allow-dirty：ui/dist 刻意不入 git（构建产物），但 include 又要打它进包，
+      # cargo 的脏工作区检查会因此拒绝，发布流程必须带上。
+      - run: test -z "$(cargo package --list --locked --allow-dirty | grep node_modules)" && cargo package --list --locked --allow-dirty | grep -q "ui/dist/index.html"
+      - run: cargo publish --locked --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
