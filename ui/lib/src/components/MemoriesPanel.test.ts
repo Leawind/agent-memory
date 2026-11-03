@@ -2,6 +2,7 @@
 // (fetch is mocked per route, Element Plus components render for real via unplugin-vue-components)
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { ElMessageBox } from 'element-plus'
 import MemoriesPanel from './MemoriesPanel.vue'
 
 const listPayload = {
@@ -100,6 +101,47 @@ describe('MemoriesPanel', () => {
     const dialog = wrapper.findComponent({ name: 'ElDialog' })
     expect(dialog.exists()).toBe(true)
     expect(dialog.props('modelValue')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('fetch-by-id opens the editor dialog for the entered id', async () => {
+    const promptSpy = vi
+      .spyOn(ElMessageBox, 'prompt')
+      .mockImplementation(() => Promise.resolve({ value: ' m99 ' }) as never)
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+    const headingButtons = wrapper.findAll('.am-heading-actions button')
+    expect(headingButtons.length).toBe(2)
+    expect(headingButtons[0].text()).toContain('按 ID 取记忆')
+    await headingButtons[0].trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(promptSpy).toHaveBeenCalled()
+    // The trimmed id goes to the detail endpoint and the editor dialog opens on it
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith('/api/memories/m99'))).toBe(true)
+    const dialog = wrapper.findComponent({ name: 'ElDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('modelValue')).toBe(true)
+    promptSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('fetch-by-id keeps the dialog closed when the prompt is cancelled', async () => {
+    const promptSpy = vi.spyOn(ElMessageBox, 'prompt').mockImplementation(() => Promise.reject('cancel') as never)
+    const wrapper = mount(MemoriesPanel)
+    await flushPromises()
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+    await wrapper.find('.am-heading-actions button').trigger('click')
+    await flushPromises()
+    expect(promptSpy).toHaveBeenCalled()
+    expect(fetchMock.mock.calls.some((c) => /\/api\/memories\/m\d+/.test(String(c[0])))).toBe(false)
+    expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(false)
+    promptSpy.mockRestore()
     wrapper.unmount()
   })
 

@@ -73,6 +73,12 @@ export default {
     emptyCreate: 'Create the first memory',
     noMatchTitle: 'No matching memories',
     clearFilters: 'Clear filters',
+    fetchById: 'Fetch by ID',
+    fetchPromptTitle: 'Fetch a memory by ID',
+    fetchPromptMessage: 'Enter a memory id to open it directly.',
+    fetchPromptPlaceholder: 'e.g. m12',
+    fetchPromptError: 'The id looks like m12',
+    fetchConfirm: 'Open',
   },
   tags: {
     title: 'Tags',

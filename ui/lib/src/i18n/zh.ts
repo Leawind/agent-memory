@@ -71,6 +71,12 @@ export default {
     emptyCreate: '新建第一条记忆',
     noMatchTitle: '没有匹配的记忆',
     clearFilters: '清除筛选',
+    fetchById: '按 ID 取记忆',
+    fetchPromptTitle: '按 ID 取记忆',
+    fetchPromptMessage: '输入记忆 id，直接打开这条记忆。',
+    fetchPromptPlaceholder: '如 m12',
+    fetchPromptError: 'id 形如 m12',
+    fetchConfirm: '打开',
   },
   tags: {
     title: '标签',

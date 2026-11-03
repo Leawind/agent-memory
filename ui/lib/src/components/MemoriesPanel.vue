@@ -11,7 +11,10 @@
             <p class="am-panel-subtitle">{{ props.subtitle ?? t('memories.subtitle') }}</p>
           </div>
         </div>
-        <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
+        <div class="am-heading-actions">
+          <el-button :icon="Aim" @click="openFetchById">{{ t('memories.fetchById') }}</el-button>
+          <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('memories.create') }}</el-button>
+        </div>
       </div>
 
       <div class="am-toolbar">
@@ -139,7 +142,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { elementPlusLocale } from '../i18n/elementPlus'
-import { Collection, Plus, Search } from '@element-plus/icons-vue'
+import { Aim, Collection, Plus, Search } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
 import { t } from '../i18n'
 import { toastError } from '../toast'
 import { tagExprReady } from '../tagExprGuard'
@@ -293,6 +297,26 @@ function openCreate() {
   editorVisible.value = true
 }
 
+// Direct lookup by id: the id usually comes from a hint elsewhere (agent output, a merge
+// list) and the memory may sit outside what's on screen. The prompt validates the m<number>
+// shape; a missing id surfaces the server's not-found error when the editor fetches it.
+async function openFetchById() {
+  let id: string
+  try {
+    const res = await ElMessageBox.prompt(t('memories.fetchPromptMessage'), t('memories.fetchPromptTitle'), {
+      inputPattern: /^m\d+$/,
+      inputErrorMessage: t('memories.fetchPromptError'),
+      inputPlaceholder: t('memories.fetchPromptPlaceholder'),
+      confirmButtonText: t('memories.fetchConfirm'),
+      cancelButtonText: t('common.cancel'),
+    })
+    id = res.value.trim()
+  } catch {
+    return
+  }
+  openEdit(id)
+}
+
 function openEdit(id: string) {
   editingId.value = id
   editorVisible.value = true
@@ -374,6 +398,13 @@ defineExpose({
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+/* Header action group: the secondary fetch-by-id beside the primary create */
+.am-heading-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .am-panel-subtitle {
   margin: 0;
   overflow: hidden;
