@@ -313,3 +313,68 @@ fn static_ui_is_served() {
     drop(server);
     cleanup(&db);
 }
+
+#[test]
+fn rest_tags_all_lists_target_only_tags_with_keys() {
+    let db = temp_db("rest-tags-all");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "rest-tags-all");
+    let port = server.port;
+
+    // One memory with an edge (project:nmmt), one with a bare tag
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(
+            r#"{"summary": "带边记忆", "content": "c", "tags": {"project": "nmmt"}, "create_missing_tags": true}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(
+            r#"{"summary": "裸标签记忆", "content": "c", "tags": {"rust": null}, "create_missing_tags": true}"#,
+        ),
+    );
+    assert_eq!(status, 200);
+
+    // Default: the target-only value stays hidden
+    let (status, body, _) = request(port, "GET", "/api/tags", None);
+    assert_eq!(status, 200);
+    let listed = json_body(&body);
+    let names: Vec<&str> = listed["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"project") && names.contains(&"rust"));
+    assert!(!names.contains(&"nmmt"));
+
+    // all=true: the value joins with the keys pointing at it
+    let (status, body, _) = request(port, "GET", "/api/tags?all=true", None);
+    assert_eq!(status, 200);
+    let listed = json_body(&body);
+    let tags = listed["tags"].as_array().unwrap();
+    let nmmt = tags
+        .iter()
+        .find(|t| t["name"] == "nmmt")
+        .expect("target-only tag listed with all=true");
+    assert_eq!(nmmt["keys"], serde_json::json!(["project"]));
+
+    // A non-"true" value does not opt in
+    let (status, body, _) = request(port, "GET", "/api/tags?all=1", None);
+    assert_eq!(status, 200);
+    let listed = json_body(&body);
+    assert!(!listed["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["name"] == "nmmt"));
+
+    drop(server);
+    cleanup(&db);
+}

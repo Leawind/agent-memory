@@ -667,6 +667,11 @@ pub fn handle(
                 if let Some(f) = query_get(query, "filter") {
                     args.insert("filter".into(), json!(f));
                 }
+                // Same flag shape as the delete preview: only the exact "true" opts in, so a
+                // stray value can't silently widen the listing
+                if query_get(query, "all").is_some_and(|v| v == "true") {
+                    args.insert("all".into(), json!(true));
+                }
                 store::with_db_in(db_path, tx_mode, |st| {
                     tools::execute(st, ctx, TAG_LIST, &Value::Object(args)).map(|v| (200, v))
                 })

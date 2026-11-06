@@ -114,11 +114,12 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_LIST,
-            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (seeded with zero memories) and can never be renamed or deleted. Counts cover presence in any role (bare, edge source or edge target). By default only organizing tags are listed (used as edge sources or bare); tags that only ever appear as edge targets are included when the filter matches them. Name filterable by regex. Start here when exploring the memory store.",
+            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (seeded with zero memories) and can never be renamed or deleted. Counts cover presence in any role (bare, edge source or edge target). By default only organizing tags are listed (used as edge sources or bare); tags that only ever appear as edge targets (attribute values) join the list when all=true or when the filter matches them. Name filterable by regex. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
-                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax. Omit to list the default (organizing) tag set; a filter includes edge-target-only tags too."}
+                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax. Omit to list the default (organizing) tag set; a filter includes edge-target-only tags too."},
+                    "all": {"type": "boolean", "description": "When true, tags that only ever appear as edge targets (the value half of 'key:value' edges) are listed too. Default false."}
                 },
                 "additionalProperties": false
             }),

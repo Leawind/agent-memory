@@ -1595,6 +1595,79 @@ mod tests {
         cleanup(&path);
     }
 
+    /// Edge-target-only tags (attribute values) stay out of the default listing but join it
+    /// under all=true, each carrying the sorted keys of the edges pointing at it — the data
+    /// navigation faces need to nest `key:value` values under their key.
+    #[test]
+    fn tag_list_all_includes_target_only_tags_with_their_keys() {
+        let path = temp_db("tag-list-all");
+        call(
+            &path,
+            "memory_create",
+            json!({
+                "summary": "a", "content": "ca",
+                "tags": {"project": "nmmt", "topic": "nmmt"},
+                "create_missing_tags": true
+            }),
+        )
+        .unwrap();
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "b", "content": "cb", "tags": {"rust": null}, "create_missing_tags": true}),
+        )
+        .unwrap();
+
+        // Default set: organizing tags only — the target-only value is not listed
+        let rows = call(&path, "tag_list", json!({})).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let names: Vec<&str> = rows.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"project") && names.contains(&"topic") && names.contains(&"rust"));
+        assert!(
+            !names.contains(&"nmmt"),
+            "target-only tag hidden by default"
+        );
+
+        // all=true: the value joins the list with the keys pointing at it (sorted, sparse
+        // elsewhere — organizing tags carry no keys field)
+        let rows = call(&path, "tag_list", json!({"all": true})).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let nmmt = rows
+            .iter()
+            .find(|t| t["name"] == "nmmt")
+            .expect("target-only tag listed under all=true");
+        assert_eq!(nmmt["keys"], json!(["project", "topic"]));
+        assert!(
+            nmmt.get("description").is_none(),
+            "undescribed stays sparse"
+        );
+        let rust = rows.iter().find(|t| t["name"] == "rust").unwrap();
+        assert!(
+            rust.get("keys").is_none(),
+            "keys attach only to edge targets"
+        );
+
+        // A tag both pointed at and organizing stays in the default set yet keeps its keys
+        call(
+            &path,
+            "memory_create",
+            json!({"summary": "c", "content": "cc", "tags": {"nmmt": "leaf"}, "create_missing_tags": true}),
+        )
+        .unwrap();
+        let rows = call(&path, "tag_list", json!({})).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let nmmt = rows.iter().find(|t| t["name"] == "nmmt").unwrap();
+        assert_eq!(nmmt["keys"], json!(["project", "topic"]));
+
+        cleanup(&path);
+    }
+
     /// Default-off auto-creation: unknown tags are rejected with the closest existing tags listed,
     /// so agents cannot fragment the taxonomy by casual tagging (case variants, plurals). The
     /// opt-in flag keeps the auto-create path available when it really is wanted.

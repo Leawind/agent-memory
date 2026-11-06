@@ -105,6 +105,24 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
+    /// For every tag that an edge points at: the sorted names of the tags pointing at it
+    /// (its keys in the displayed `key:value` form). Tags never pointed at are absent.
+    pub fn tag_target_keys(&self) -> Result<HashMap<String, Vec<String>>, String> {
+        let mut st = self
+            .conn
+            .prepare(sql::TAG_TARGET_KEYS)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        for row in rows {
+            let (target, key) = row.map_err(|e| e.to_string())?;
+            out.entry(target).or_default().push(key);
+        }
+        Ok(out)
+    }
+
     /// Update a tag: rename and/or change the description. Tags link to memories by internal id
     /// in both edge roles, so renaming touches only name; references follow automatically in
     /// every role. Errors when the target name already exists (same semantics as exact-duplicate
