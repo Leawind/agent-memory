@@ -46,7 +46,12 @@ pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolErro
     }
     let mut tags: Vec<Value> = views
         .into_iter()
-        .map(|(mut view, _)| {
+        .map(|(mut view, target_only)| {
+            // Sparse role marker: faces need it to tell a value-only entry (nested under its
+            // keys) from a tag that also organizes on its own (listed top-level too)
+            if target_only {
+                view["target_only"] = json!(true);
+            }
             if let Some(keys) = keys_by_target.get(view["name"].as_str().unwrap_or_default()) {
                 view["keys"] = json!(keys);
             }

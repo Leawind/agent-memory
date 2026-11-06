@@ -4,9 +4,13 @@ import type { TagListResp } from '../types'
 
 export type TagDeleteMode = 'detach' | 'purge'
 
-/** filter is a tag-name regex (filtered server-side); the server responds 400 to invalid regexes */
-export function listTags(client: ApiClient, filter?: string): Promise<TagListResp> {
-  const suffix = filter ? `?filter=${encodeURIComponent(filter)}` : ''
+/** filter is a tag-name regex (filtered server-side); the server responds 400 to invalid regexes.
+ *  all=true adds tags that only ever appear as edge targets (the value half of key:value edges). */
+export function listTags(client: ApiClient, filter?: string, all?: boolean): Promise<TagListResp> {
+  const params = new URLSearchParams()
+  if (filter) params.set('filter', filter)
+  if (all) params.set('all', 'true')
+  const suffix = params.size > 0 ? `?${params}` : ''
   return client.get<TagListResp>(`/api/tags${suffix}`)
 }
 

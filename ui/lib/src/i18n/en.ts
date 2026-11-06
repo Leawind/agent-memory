@@ -83,6 +83,7 @@ export default {
   tags: {
     title: 'Tags',
     all: 'All memories',
+    toggleValues: 'Expand or collapse the value list',
     titleFmt: 'Tag #{name}',
     create: 'New Tag',
     createTitle: 'New Tag',

@@ -1,15 +1,22 @@
 // TagsSidebar mount test: vertical tag list with descriptions, click-to-filter select,
-// hover-revealed edit affordance, active-row highlight
+// hover-revealed edit affordance, active-row highlight, keyed values nested under their
+// key (collapsed by default, expandable, `key=value` filter expressions)
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import TagsSidebar from './TagsSidebar.vue'
 
 const tagsPayload = {
   tags: [
-    { name: 'rust', count: 3, description: '语言' },
+    { name: 'score', count: 6 },
+    { name: 'rust', count: 5, description: '语言' },
     // Undescribed tags omit description entirely (sparse agent-facing shape)
-    { name: 'infra', count: 1 },
-    { name: 'convention', count: 2, description: '常驻约定', reserved: true },
+    { name: 'convention', count: 4, description: '常驻约定', reserved: true },
+    // Pointed at by score but also organizing on its own: top-level AND a value under score
+    { name: 'nmmt', count: 3, keys: ['score'] },
+    { name: 'infra', count: 2 },
+    // Value-only tags: nest under score, never their own top-level entry
+    { name: '5', count: 1, keys: ['score'], target_only: true },
+    { name: '3', count: 1, keys: ['score'], target_only: true },
   ],
 }
 
@@ -25,31 +32,74 @@ describe('TagsSidebar', () => {
     )
   })
 
-  it('renders every tag with its description and memory count', async () => {
+  it('renders every top-level tag with its description and memory count', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
     const html = wrapper.html()
+    expect(html).toContain('score')
     expect(html).toContain('rust')
     expect(html).toContain('语言')
     expect(html).toContain('infra')
     expect(html).toContain('convention')
     // Reserved badge is surfaced on the reserved tag
     expect(html).toContain('保留')
-    // Header count reflects the tag total
-    expect(wrapper.find('.sb-count').text()).toBe('3')
+    // Header count reflects the tag total (values included)
+    expect(wrapper.find('.sb-count').text()).toBe('7')
+    // Five top-level rows; value-only tags are not their own entries
+    expect(wrapper.findAll('.sb-item')).toHaveLength(5)
+    // Values start collapsed: no composed value row is visible yet
+    expect(wrapper.text()).not.toContain('score:5')
     wrapper.unmount()
   })
 
-  it('emits select with the clicked tag', async () => {
+  it('keeps value lists collapsed by default and expands on the twist', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
-    const items = wrapper.findAll('.sb-item')
-    expect(items).toHaveLength(3)
-    // Sorted by count desc: rust (3) first
-    await items[0].trigger('click')
-    expect(wrapper.emitted('select')![0]).toEqual([{ name: 'rust', count: 3, description: '语言' }])
+    // Sorted by count desc: score (6) first; it carries three values (nmmt, 3, 5)
+    const scoreRow = wrapper.findAll('.sb-item')[0]
+    expect(scoreRow.text()).toContain('score')
+    expect(wrapper.findAll('.sb-value')).toHaveLength(0)
+
+    const twist = scoreRow.find('.sb-twist')
+    expect(twist.exists()).toBe(true)
+    expect(twist.attributes('aria-expanded')).toBe('false')
+    // The twist swallows the click: it must not also act as a row (filter) click
+    await twist.trigger('click')
+    expect(wrapper.emitted('select')).toBeUndefined()
+
+    await flushPromises()
+    expect(twist.attributes('aria-expanded')).toBe('true')
+    const values = wrapper.findAll('.sb-value')
+    expect(values).toHaveLength(3)
+    expect(values[0].text()).toContain('score:nmmt')
+    expect(values[1].text()).toContain('score:3')
+    expect(values[2].text()).toContain('score:5')
+    // The dual-role tag keeps its own top-level row besides the nested one
+    expect(wrapper.text()).toContain('nmmt')
+
+    // Second click collapses again
+    await scoreRow.find('.sb-twist').trigger('click')
+    expect(wrapper.findAll('.sb-value')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('emits select with the clicked tag and its filter expression', async () => {
+    const wrapper = mount(TagsSidebar)
+    await flushPromises()
+    await flushPromises()
+    // Top-level row: the tag's own name is the expression
+    await wrapper.findAll('.sb-item')[1].trigger('click') // rust (5)
+    expect(wrapper.emitted('select')![0]).toEqual([{ name: 'rust', count: 5, description: '语言' }, 'rust'])
+
+    // Value row: the exact-edge atom `key=value`
+    await wrapper.findAll('.sb-item')[0].find('.sb-twist').trigger('click')
+    await wrapper.findAll('.sb-value')[2].trigger('click') // score:5
+    expect(wrapper.emitted('select')![1]).toEqual([
+      { name: '5', count: 1, keys: ['score'], target_only: true },
+      'score=5',
+    ])
     wrapper.unmount()
   })
 
@@ -60,23 +110,25 @@ describe('TagsSidebar', () => {
     const first = wrapper.findAll('.sb-item')[0]
     // The edit affordance swallows the click: it must not also act as a row (filter) click
     await first.find('.sb-edit').trigger('click')
-    expect(wrapper.emitted('edit')![0]).toEqual([{ name: 'rust', count: 3, description: '语言' }])
+    expect(wrapper.emitted('edit')![0]).toEqual([{ name: 'score', count: 6 }])
     expect(wrapper.emitted('select')).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('marks the row whose tag equals the active expression', async () => {
+  it('marks the row whose expression equals the active expression', async () => {
     const wrapper = mount(TagsSidebar, { props: { active: ' rust ' } })
     await flushPromises()
     await flushPromises()
     const items = wrapper.findAll('.sb-item')
-    expect(items[0].classes()).toContain('is-active')
-    expect(items[1].classes()).not.toContain('is-active')
-
-    await wrapper.setProps({ active: 'infra' })
+    expect(items[1].classes()).toContain('is-active') // rust
     expect(items[0].classes()).not.toContain('is-active')
-    // Sorted by count desc: rust (3), convention (2), infra (1)
-    expect(items[2].classes()).toContain('is-active')
+
+    // A value's expression is `key=value`; the row only exists while expanded
+    await wrapper.setProps({ active: 'score=5' })
+    await wrapper.findAll('.sb-item')[0].find('.sb-twist').trigger('click')
+    const values = wrapper.findAll('.sb-value')
+    expect(values[2].classes()).toContain('is-active')
+    expect(values[0].classes()).not.toContain('is-active')
     wrapper.unmount()
   })
 
@@ -112,13 +164,15 @@ describe('TagsSidebar', () => {
     wrapper.unmount()
   })
 
-  it('refresh() refetches the tag list', async () => {
+  it('refresh() refetches the tag list including edge-target-only values', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     const fetchMock = vi.mocked(globalThis.fetch)
     fetchMock.mockClear()
     await (wrapper.vm as unknown as { refresh: () => Promise<void> }).refresh()
-    expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith('/api/tags'))).toBe(true)
+    const url = String(fetchMock.mock.calls[0]![0])
+    expect(url.startsWith('/api/tags')).toBe(true)
+    expect(url).toContain('all=true')
     wrapper.unmount()
   })
 })

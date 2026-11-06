@@ -13,7 +13,9 @@ export function useTags() {
   async function reload() {
     loading.value = true
     try {
-      const data = await listTags(client)
+      // all=true: the sidebar shows every tag — attribute values (edge targets) nest under
+      // their keys (TagView.keys), so they must be in the payload
+      const data = await listTags(client, undefined, true)
       rows.value = data.tags ?? []
     } finally {
       loading.value = false

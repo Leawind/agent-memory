@@ -50,6 +50,10 @@ export interface TagView {
   description?: string
   /** Present (true) only on the reserved tag (convention), which can be neither renamed nor deleted; the panel hides those actions */
   reserved?: true
+  /** Present (true) when the tag's only presence is being pointed at (the value half of key:value edges); such tags nest under their keys instead of standing on their own */
+  target_only?: true
+  /** Tags whose `key:value` edges point at this tag, sorted; present only when at least one edge points at it */
+  keys?: string[]
 }
 
 export interface TagListResp {

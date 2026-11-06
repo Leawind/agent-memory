@@ -25,62 +25,113 @@
         <span class="sb-all-name">{{ t('tags.all') }}</span>
       </button>
       <p v-if="!loading && rows.length === 0" class="sb-none">{{ t('tags.none') }}</p>
-      <button
-        v-for="tag in sorted"
-        :key="tag.name"
-        type="button"
-        class="sb-item"
-        :class="{ 'is-active': isActive(tag) }"
-        @click="emit('select', tag)"
-      >
-        <span class="sb-item-top">
-          <span class="sb-name">{{ tag.name }}</span>
-          <el-tooltip v-if="tag.reserved" :content="t('tags.reservedHint')" placement="top" :enterable="false">
-            <el-tag size="small" type="warning" class="sb-reserved">{{ t('tags.reserved') }}</el-tag>
-          </el-tooltip>
-          <span class="sb-item-count" :title="t('tags.title')">{{ tag.count }}</span>
-          <!-- Keyed tags (name carries ':') are attribute values: the server owns their lifecycle
-               through the key registry, so the rename/delete affordance is hidden (the row click
-               still filters). Edit lives on a hover-revealed affordance for the rest: the row's
-               own click is the filter toggle, so renaming/deleting gets a smaller, separate
-               target (span + role so a real button is never nested inside this row button) -->
-          <el-tooltip v-if="!tag.name.includes(':')" :content="t('common.edit')" placement="top" :enterable="false">
+      <template v-for="group in groups" :key="group.tag.name">
+        <button
+          type="button"
+          class="sb-item"
+          :class="{ 'is-active': isActive(group.expr) }"
+          @click="emit('select', group.tag, group.expr)"
+        >
+          <span class="sb-item-top">
+            <!-- Expand toggle for keys with values: a span + role (a real button can never nest
+                 inside this row button); the twist slot keeps every row's name aligned -->
             <span
-              class="sb-edit"
+              v-if="group.values.length > 0"
+              class="sb-twist"
+              :class="{ 'is-open': isExpanded(group.tag.name) }"
               role="button"
-              :aria-label="t('common.edit')"
-              @click.stop="emit('edit', tag)"
-              @keydown.enter.stop.prevent="emit('edit', tag)"
+              :aria-label="t('tags.toggleValues')"
+              :aria-expanded="isExpanded(group.tag.name)"
+              tabindex="0"
+              @click.stop="toggleExpanded(group.tag.name)"
+              @keydown.enter.stop.prevent="toggleExpanded(group.tag.name)"
+              @keydown.space.stop.prevent="toggleExpanded(group.tag.name)"
             >
-              <el-icon><Edit /></el-icon>
+              <el-icon :size="12"><CaretRight /></el-icon>
             </span>
-          </el-tooltip>
-        </span>
-        <span v-if="tag.description" class="sb-desc">{{ tag.description }}</span>
-      </button>
+            <span v-else class="sb-twist sb-twist-empty" aria-hidden="true"></span>
+            <span class="sb-name">{{ group.tag.name }}</span>
+            <el-tooltip v-if="group.tag.reserved" :content="t('tags.reservedHint')" placement="top" :enterable="false">
+              <el-tag size="small" type="warning" class="sb-reserved">{{ t('tags.reserved') }}</el-tag>
+            </el-tooltip>
+            <span class="sb-item-count" :title="t('tags.title')">{{ group.tag.count }}</span>
+            <!-- Edit lives on a hover-revealed affordance: the row's own click is the filter
+                 toggle, so renaming/deleting gets a smaller, separate target (span + role so a
+                 real button is never nested inside this row button) -->
+            <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+              <span
+                class="sb-edit"
+                role="button"
+                :aria-label="t('common.edit')"
+                @click.stop="emit('edit', group.tag)"
+                @keydown.enter.stop.prevent="emit('edit', group.tag)"
+              >
+                <el-icon><Edit /></el-icon>
+              </span>
+            </el-tooltip>
+          </span>
+          <span v-if="group.tag.description" class="sb-desc">{{ group.tag.description }}</span>
+        </button>
+        <!-- Value rows: the attribute values (`key:value` edges) nested under their key,
+             shown only while the key is expanded. Clicking one filters by the edge itself
+             (`key=value`); their lifecycle belongs to the edges, so no edit affordance. -->
+        <template v-if="group.values.length > 0 && isExpanded(group.tag.name)">
+          <button
+            v-for="value in group.values"
+            :key="value.expr"
+            type="button"
+            class="sb-item sb-value"
+            :class="{ 'is-active': isActive(value.expr) }"
+            @click="emit('select', value.tag, value.expr)"
+          >
+            <span class="sb-item-top">
+              <span class="sb-name">{{ group.tag.name }}:{{ value.tag.name }}</span>
+              <span class="sb-item-count" :title="t('tags.title')">{{ value.tag.count }}</span>
+            </span>
+          </button>
+        </template>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Collection, Edit, Operation, Plus } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { CaretRight, Collection, Edit, Operation, Plus } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { toastError } from '../toast'
 import { useTags } from '../composables/useTags'
 import type { TagView } from '../types'
 
+/** One attribute value nested under its key: the value tag plus the `key=value` expression
+ *  that filters by the displayed `key:value` edge (a bare name cannot carry the key). */
+interface ValueRow {
+  tag: TagView
+  expr: string
+}
+
+/** A sidebar entry: the tag itself, the expression its click filters by, and the values
+ *  nested under it when edges point from it at other tags. */
+interface GroupRow {
+  tag: TagView
+  expr: string
+  values: ValueRow[]
+}
+
 /** Sidebar listing every tag vertically (Modrinth discover-style): name + description +
- * memory count. Clicking an entry asks the parent to filter the list by that tag; editing
+ * memory count. Clicking an entry asks the parent to filter the list by it; editing
  * (rename/description/delete) goes through the hover-revealed edit affordance. The parent
- * feeds the current expression back as `active` to highlight the filtered row. */
+ * feeds the current expression back as `active` to highlight the filtered row. Tags that
+ * other tags point at (attribute values) are not their own entries: they nest, collapsed
+ * by default, under each key that points at them (TagView.keys). */
 const props = defineProps<{
-  /** The panel's current tag expression; a row is active when the expression is exactly its name */
+  /** The panel's current tag expression; a row is active when the expression matches exactly */
   active?: string
 }>()
 
 const emit = defineEmits<{
-  select: [tag: TagView]
+  /** select carries the tag and the exact filter expression (a value's is `key=value`) */
+  select: [tag: TagView, expr: string]
   edit: [tag: TagView]
   create: []
   predicates: []
@@ -93,10 +144,38 @@ const { rows, loading, reload } = useTags()
 // Most-used first, ties broken by name — a stable order independent of server-side ordering
 const sorted = computed(() => [...rows.value].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)))
 
+// The tree: top-level entries are the tags with a presence of their own (bare or edge
+// source); a value-only tag lives inside its keys' value lists. A tag both pointed at and
+// organizing appears top-level and as a value.
+const groups = computed<GroupRow[]>(() =>
+  sorted.value
+    .filter((tag) => !tag.target_only)
+    .map((tag) => ({
+      tag,
+      expr: tag.name,
+      values: sorted.value
+        .filter((v) => v.keys?.includes(tag.name))
+        .map((v) => ({ tag: v, expr: `${tag.name}=${v.name}` })),
+    })),
+)
+
+// Value lists start collapsed: the sidebar stays scannable, values are a drill-down
+const expandedKeys = ref<Set<string>>(new Set())
+
+function isExpanded(key: string): boolean {
+  return expandedKeys.value.has(key)
+}
+
+function toggleExpanded(key: string): void {
+  const next = new Set(expandedKeys.value)
+  if (!next.delete(key)) next.add(key)
+  expandedKeys.value = next
+}
+
 const isFiltering = computed(() => (props.active ?? '').trim() !== '')
 
-function isActive(tag: TagView): boolean {
-  return (props.active ?? '').trim() === tag.name
+function isActive(expr: string): boolean {
+  return (props.active ?? '').trim() === expr
 }
 
 defineExpose({
@@ -162,6 +241,7 @@ defineExpose({
   color: var(--el-text-color-primary);
 }
 .sb-tool:focus-visible,
+.sb-twist:focus-visible,
 .sb-all:focus-visible,
 .sb-item:focus-visible {
   outline: 2px solid var(--el-color-primary-light-5);
@@ -216,8 +296,8 @@ defineExpose({
   font-weight: 500;
 }
 
-/* Tag entry: name + reserved badge + count on the first line, description below.
-   A plain button styled as a quiet list row (Modrinth filter-entry look). */
+/* Tag entry: twist slot + name + reserved badge + count on the first line, description
+   below. A plain button styled as a quiet list row (Modrinth filter-entry look). */
 .sb-item {
   display: flex;
   flex-direction: column;
@@ -234,7 +314,7 @@ defineExpose({
 .sb-item:hover {
   background: var(--el-fill-color);
 }
-/* The row whose tag is the active expression filter */
+/* The row whose expression is the active filter */
 .sb-item.is-active {
   background: var(--el-color-primary-light-9);
 }
@@ -246,6 +326,26 @@ defineExpose({
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+/* Expand toggle (keys with values) / its empty placeholder (the rest): fixed width so the
+   names line up across rows; the caret turns down while expanded */
+.sb-twist {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  color: var(--el-text-color-placeholder);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.sb-twist:hover {
+  color: var(--el-text-color-regular);
+}
+.sb-twist.is-open {
+  transform: rotate(90deg);
 }
 .sb-name {
   overflow: hidden;
@@ -295,5 +395,15 @@ defineExpose({
   line-height: 1.5;
   color: var(--el-text-color-secondary);
   word-break: break-word;
+}
+
+/* Value row: nested one indent under its key, quieter than the key itself */
+.sb-value {
+  padding-left: 30px;
+}
+.sb-value .sb-name {
+  font-weight: 400;
+  color: var(--el-text-color-regular);
+  font-variant-numeric: tabular-nums;
 }
 </style>

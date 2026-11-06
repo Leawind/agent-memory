@@ -81,6 +81,7 @@ export default {
   tags: {
     title: '标签',
     all: '全部记忆',
+    toggleValues: '展开或收起值列表',
     titleFmt: '标签 #{name}',
     create: '新建标签',
     createTitle: '新建标签',

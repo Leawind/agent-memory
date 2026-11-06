@@ -1641,6 +1641,7 @@ mod tests {
             .find(|t| t["name"] == "nmmt")
             .expect("target-only tag listed under all=true");
         assert_eq!(nmmt["keys"], json!(["project", "topic"]));
+        assert_eq!(nmmt["target_only"], true);
         assert!(
             nmmt.get("description").is_none(),
             "undescribed stays sparse"
@@ -1650,8 +1651,10 @@ mod tests {
             rust.get("keys").is_none(),
             "keys attach only to edge targets"
         );
+        assert!(rust.get("target_only").is_none());
 
-        // A tag both pointed at and organizing stays in the default set yet keeps its keys
+        // A tag both pointed at and organizing stays in the default set yet keeps its keys,
+        // without the target-only marker (faces list it top-level as well as nested)
         call(
             &path,
             "memory_create",
@@ -1664,6 +1667,7 @@ mod tests {
             .clone();
         let nmmt = rows.iter().find(|t| t["name"] == "nmmt").unwrap();
         assert_eq!(nmmt["keys"], json!(["project", "topic"]));
+        assert!(nmmt.get("target_only").is_none());
 
         cleanup(&path);
     }

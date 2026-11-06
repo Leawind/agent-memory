@@ -145,6 +145,10 @@ const summaryView = (m: MockMemory) =>
   )
 // 标签对象（{key: value|null}）→ 记忆的标签集：null 即裸标签，其余拼接 `key:value`。
 // 一个键在一条记忆里只有一个值：同键旧标签（裸的或带值的）先摘除，即 add_tags 的 upsert 语义。
+// 词汇表按真实服务端形状存裸名：边 `key:value` 同时登记 key 与 value 两个词条
+function ensureTag(name: string): void {
+  if (!tags.has(name)) tags.set(name, { description: '', created_at: now() })
+}
 function applyTagsObject(m: MockMemory, object: Record<string, unknown>): void {
   for (const [rawKey, value] of Object.entries(object)) {
     const key = rawKey.trim()
@@ -153,23 +157,66 @@ function applyTagsObject(m: MockMemory, object: Record<string, unknown>): void {
       const i = x.indexOf(':')
       return (i > 0 ? x.slice(0, i) : x) !== key
     })
-    const tag = value === null ? key : `${key}:${String(value)}`
-    m.tags.push(tag)
-    if (!tags.has(tag)) tags.set(tag, { description: '', created_at: now() })
+    ensureTag(key)
+    if (value === null) {
+      m.tags.push(key)
+    } else {
+      m.tags.push(`${key}:${String(value)}`)
+      ensureTag(String(value))
+    }
   }
 }
-// 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、reserved 仅保留标签出现
-const tagViews = () =>
-  [...tags.entries()]
-    .map(([name, tag]) => {
-      const view: Record<string, unknown> = {
-        name,
-        count: memories.filter((m) => m.tags.includes(name)).length,
+// 逐条统计每个裸名在记忆里的角色：出现过的记忆（计数）、是否以裸标签/边源身份出现（own）、
+// 是否被边指向（targeted）以及指向它的键——与真实服务端 tag_view_all/tag_target_keys 对应
+const tagStats = () => {
+  const stats = new Map<string, { mems: Set<number>; own: boolean; targeted: boolean; keys: Set<string> }>()
+  const touch = (name: string) => {
+    let s = stats.get(name)
+    if (!s) {
+      s = { mems: new Set(), own: false, targeted: false, keys: new Set() }
+      stats.set(name, s)
+    }
+    return s
+  }
+  for (const m of memories) {
+    for (const tag of m.tags) {
+      const i = tag.indexOf(':')
+      if (i <= 0) {
+        const s = touch(tag)
+        s.mems.add(m.id)
+        s.own = true
+      } else {
+        const key = tag.slice(0, i)
+        const value = tag.slice(i + 1)
+        const sk = touch(key)
+        sk.mems.add(m.id)
+        sk.own = true
+        const sv = touch(value)
+        sv.mems.add(m.id)
+        sv.targeted = true
+        sv.keys.add(key)
       }
-      if (tag.description) view.description = tag.description
+    }
+  }
+  return stats
+}
+// 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、target_only/keys 仅在
+// 适用时出现。默认集只含组织用标签（裸用或作边源），all=true 才带仅作边目标的词条
+const tagViews = (all = false) => {
+  const stats = tagStats()
+  for (const name of stats.keys()) ensureTag(name)
+  return [...stats.entries()]
+    .filter(([, s]) => all || s.own || !s.targeted)
+    .map(([name, s]) => {
+      const view: Record<string, unknown> = { name, count: s.mems.size }
+      const description = tags.get(name)?.description
+      if (description) view.description = description
+      if (s.targeted && !s.own) view.target_only = true
+      if (s.keys.size > 0) view.keys = [...s.keys].sort()
       return view
     })
     .sort((a, b) => (b.count as number) - (a.count as number) || String(a.name).localeCompare(String(b.name)))
+}
 
 // 片段：命中处前后取一段、转义后用 <mark> 包住（UI 侧会再过 DOMPurify）
 function snippet(content: string, query: string): string {
@@ -344,9 +391,9 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     return
   }
 
-  // 标签
+  // 标签：默认只列组织用标签，all=true 带上仅作边目标的词条（与真实服务端一致）
   if (segs[1] === 'tags' && segs.length === 2 && method === 'GET') {
-    sendJson(res, 200, { tags: tagViews() })
+    sendJson(res, 200, { tags: tagViews(url.searchParams.get('all') === 'true') })
     return
   }
   if (segs[1] === 'tags' && segs.length === 2 && method === 'POST') {
@@ -365,9 +412,21 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     if (typeof body.description === 'string') tag.description = body.description
     const newName = typeof body.new_name === 'string' ? body.new_name : ''
     if (newName && newName !== segs[2]) {
-      tags.delete(segs[2] as string)
+      const oldName = segs[2] as string
+      tags.delete(oldName)
       tags.set(newName, tag)
-      for (const m of memories) m.tags = m.tags.map((x) => (x === segs[2] ? newName : x))
+      // 改名跟随标签的每个角色：裸名、边源（name:v）与边目标（k:name）
+      for (const m of memories) {
+        m.tags = m.tags.map((x) => {
+          const i = x.indexOf(':')
+          if (i <= 0) return x === oldName ? newName : x
+          const key = x.slice(0, i)
+          const value = x.slice(i + 1)
+          if (key === oldName) return `${newName}:${value}`
+          if (value === oldName) return `${key}:${newName}`
+          return x
+        })
+      }
     }
     sendJson(res, 200, null)
     return
@@ -375,10 +434,15 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   if (segs[1] === 'tags' && segs.length === 3 && tag && method === 'DELETE') {
     const name = segs[2] as string
     tags.delete(name)
+    // detach：边随源/目标一起消失；purge：任何角色携带该标签的记忆整个删除
+    const carries = (m: MockMemory) =>
+      m.tags.some((x) => x === name || x.startsWith(`${name}:`) || x.endsWith(`:${name}`))
     if (url.searchParams.get('mode') === 'purge') {
-      for (const m of [...memories]) if (m.tags.includes(name)) memories.splice(memories.indexOf(m), 1)
+      for (const m of [...memories]) if (carries(m)) memories.splice(memories.indexOf(m), 1)
     } else {
-      for (const m of memories) m.tags = m.tags.filter((x) => x !== name)
+      for (const m of memories) {
+        m.tags = m.tags.filter((x) => x !== name && !x.startsWith(`${name}:`) && !x.endsWith(`:${name}`))
+      }
     }
     sendJson(res, 200, null)
     return

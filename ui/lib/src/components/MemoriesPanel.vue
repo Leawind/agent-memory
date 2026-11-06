@@ -328,11 +328,11 @@ function onMutated() {
   emit('changed')
 }
 
-// Sidebar tag click lands here (through the workspace): the tag becomes the whole expression —
-// a click is a deliberate single-tag view, not an edit of whatever expression was typed. Clicking
-// the already-active tag clears the filter. Applied immediately: the tag is known to exist.
-// Keyed tags (name carries ':') pass verbatim: the expression tokenizer keeps ':' inside bare
-// words, so the name is a valid exact-tag atom.
+// Sidebar tag click lands here (through the workspace): the expression becomes the whole
+// value — a click is a deliberate single-tag view, not an edit of whatever expression was
+// typed. Clicking the already-active row clears the filter. Applied immediately: the tag
+// is known to exist. The sidebar sends a tag's own name for top-level rows and the exact
+// `key=value` edge atom for a value nested under a key.
 function toggleTagFilter(name: string) {
   tagExpr.value = tagExpr.value.trim() === name ? '' : name
   run(onSearch)

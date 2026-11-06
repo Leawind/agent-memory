@@ -128,9 +128,11 @@ function createTag(): void {
 }
 
 // ---- Sidebar click = filter: clicking a tag narrows the list to it (clicking the active
-// one clears); the panel owns the expression, the sidebar only mirrors it for highlighting ----
-function toggleFilter(tag: TagView): void {
-  panel.value?.toggleTagFilter(tag.name)
+// one clears); the panel owns the expression, the sidebar only mirrors it for highlighting.
+// The sidebar computes the expression per row: a tag's own name, or `key=value` for a value
+// nested under a key (the exact-edge atom, since a bare value name cannot carry the key). ----
+function toggleFilter(_tag: TagView, expr: string): void {
+  panel.value?.toggleTagFilter(expr)
 }
 
 // Sidebar "all memories" row: drop the tag expression, keep any keyword search
