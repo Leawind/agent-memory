@@ -48,8 +48,8 @@ describe('TagsSidebar', () => {
     expect(wrapper.find('.sb-count').text()).toBe('7')
     // Five top-level rows; value-only tags are not their own entries
     expect(wrapper.findAll('.sb-item')).toHaveLength(5)
-    // Values start collapsed: no composed value row is visible yet
-    expect(wrapper.text()).not.toContain('score:5')
+    // Values start collapsed: no value row is rendered at all
+    expect(wrapper.findAll('.sb-value')).toHaveLength(0)
     wrapper.unmount()
   })
 
@@ -73,9 +73,12 @@ describe('TagsSidebar', () => {
     expect(twist.attributes('aria-expanded')).toBe('true')
     const values = wrapper.findAll('.sb-value')
     expect(values).toHaveLength(3)
-    expect(values[0].text()).toContain('score:nmmt')
-    expect(values[1].text()).toContain('score:3')
-    expect(values[2].text()).toContain('score:5')
+    // The key prefix is dropped — nesting under the key already says it; the full
+    // `key:value` form stays available as the row's hover title
+    expect(values[0].text()).toContain('nmmt')
+    expect(values[1].text()).toContain('3')
+    expect(values[2].text()).toContain('5')
+    expect(values[2].attributes('title')).toBe('score:5')
     // The dual-role tag keeps its own top-level row besides the nested one
     expect(wrapper.text()).toContain('nmmt')
 

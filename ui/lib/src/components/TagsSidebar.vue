@@ -73,8 +73,10 @@
           <span v-if="group.tag.description" class="sb-desc">{{ group.tag.description }}</span>
         </button>
         <!-- Value rows: the attribute values (`key:value` edges) nested under their key,
-             shown only while the key is expanded. Clicking one filters by the edge itself
-             (`key=value`); their lifecycle belongs to the edges, so no edit affordance. -->
+             shown only while the key is expanded. The key prefix is dropped (the nesting
+             already says it); the title keeps the full form on hover. Clicking one filters
+             by the edge itself (`key=value`); their lifecycle belongs to the edges, so no
+             edit affordance. -->
         <template v-if="group.values.length > 0 && isExpanded(group.tag.name)">
           <button
             v-for="value in group.values"
@@ -82,10 +84,11 @@
             type="button"
             class="sb-item sb-value"
             :class="{ 'is-active': isActive(value.expr) }"
+            :title="`${group.tag.name}:${value.tag.name}`"
             @click="emit('select', value.tag, value.expr)"
           >
             <span class="sb-item-top">
-              <span class="sb-name">{{ group.tag.name }}:{{ value.tag.name }}</span>
+              <span class="sb-name">{{ value.tag.name }}</span>
               <span class="sb-item-count" :title="t('tags.title')">{{ value.tag.count }}</span>
             </span>
           </button>
@@ -397,13 +400,14 @@ defineExpose({
   word-break: break-word;
 }
 
-/* Value row: nested one indent under its key, quieter than the key itself */
+/* Value row: the NAME nests one full indent step (twist slot + gap) deeper than its key's
+   name — the key name sits at 10 + 14 + 6 = 30px, so 30px here would align values with keys.
+   The count stays right-aligned (margin-left auto) and does not move. */
 .sb-value {
-  padding-left: 30px;
+  padding-left: 50px;
 }
 .sb-value .sb-name {
   font-weight: 400;
   color: var(--el-text-color-regular);
-  font-variant-numeric: tabular-nums;
 }
 </style>
