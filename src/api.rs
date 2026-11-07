@@ -434,145 +434,130 @@ pub fn handle(
             ("POST", ["embeddings", "test"]) => {
                 ctx.require(Cap::Admin)?;
                 let args = args_from_body()?;
-                // Two modes: an explicit `entries` array probes exactly what the caller sent (the
-                // admin editor verifies the values on screen — a candidate that is disabled or not
-                // saved yet is the interesting case), otherwise every enabled candidate in the
-                // settings list is probed: the list the search-time failover would walk.
-                let entries: Vec<crate::embed::EmbedEntry> = match args.get("entries") {
-                    Some(v) => parse_probe_entries(v, crate::embed::EmbedEntry::from_json)?,
-                    None => store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-                        st.embedding_entries().map_err(ToolError::from)
-                    })?
-                    .into_iter()
-                    .filter(|e| e.usable().is_some())
-                    .collect(),
-                };
-                if entries.is_empty() {
-                    return Err(ToolError::invalid(
-                        "nothing to test: no enabled, fully specified embedding entry exists (embedding settings)",
-                    ));
-                }
-                let mut results = Vec::with_capacity(entries.len());
-                let mut all_ok = true;
-                for (index, entry) in entries.iter().enumerate() {
-                    // An incomplete candidate is reported in place, never skipped: the reply keeps
-                    // one verdict per request position so the UI can line them up with its rows
-                    let Some(cfg) = entry.config() else {
-                        all_ok = false;
-                        results.push(json!({
-                            "index": index,
-                            "model": entry.model,
-                            "ok": false,
-                            "error": "incomplete candidate: base_url and model are both required",
-                        }));
-                        continue;
-                    };
-                    let start = std::time::Instant::now();
-                    match crate::embed::embed_texts(
-                        &cfg,
-                        // The probe text goes through the query side: the prefix is part of the
-                        // effective configuration being tested
-                        &[crate::embed::embed_query_text(
-                            &cfg,
-                            "connection test 连接测试",
-                        )],
-                        crate::embed::BATCH_TIMEOUT,
-                    ) {
-                        Ok(vectors) => {
-                            // The probe just proved the candidate alive: release any failure
-                            // circuit the search-time failover still holds for it
-                            crate::embed::EMBED_FAILOVER.clear(&format!(
-                                "{} {}",
-                                cfg.vector_key(),
-                                cfg.fingerprint()
-                            ));
-                            results.push(json!({
-                                "index": index,
-                                "key": cfg.vector_key(),
-                                "model": cfg.model,
-                                "ok": true,
-                                "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
-                                "elapsed_ms": start.elapsed().as_millis() as u64,
-                            }));
+                let (ok, results) = probe_connections(
+                    db_path,
+                    &args,
+                    "nothing to test: no enabled, fully specified embedding entry exists (embedding settings)",
+                    &crate::embed::EMBED_FAILOVER,
+                    |v| parse_probe_entries(v, crate::embed::EmbedEntry::from_json),
+                    |st| {
+                        Ok(st
+                            .embedding_entries()
+                            .map_err(ToolError::from)?
+                            .into_iter()
+                            .filter(|e| e.usable().is_some())
+                            .collect())
+                    },
+                    |entry| {
+                        let start = std::time::Instant::now();
+                        match entry.config() {
+                            None => ProbeRow {
+                                ok: false,
+                                row: json!({
+                                    "model": entry.model,
+                                    "ok": false,
+                                    "error": INCOMPLETE_CANDIDATE,
+                                }),
+                                elapsed_ms: 0,
+                                clear_identity: None,
+                            },
+                            Some(cfg) => match crate::embed::embed_texts(
+                                &cfg,
+                                // The probe text goes through the query side: the prefix is part
+                                // of the effective configuration being tested
+                                &[crate::embed::embed_query_text(&cfg, "connection test 连接测试")],
+                                crate::embed::BATCH_TIMEOUT,
+                            ) {
+                                Ok(vectors) => ProbeRow {
+                                    ok: true,
+                                    row: json!({
+                                        "model": cfg.model,
+                                        "ok": true,
+                                        "key": cfg.vector_key(),
+                                        "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
+                                    }),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    clear_identity: Some(format!(
+                                        "{} {}",
+                                        cfg.vector_key(),
+                                        cfg.fingerprint()
+                                    )),
+                                },
+                                Err(e) => ProbeRow {
+                                    ok: false,
+                                    row: json!({
+                                        "model": cfg.model,
+                                        "ok": false,
+                                        "key": cfg.vector_key(),
+                                        "error": e,
+                                    }),
+                                    elapsed_ms: 0,
+                                    clear_identity: None,
+                                },
+                            },
                         }
-                        Err(e) => {
-                            all_ok = false;
-                            results.push(json!({
-                                "index": index,
-                                "key": cfg.vector_key(),
-                                "model": cfg.model,
-                                "ok": false,
-                                "error": e,
-                            }));
-                        }
-                    }
-                }
-                Ok((200, json!({ "ok": all_ok, "results": results })))
+                    },
+                )?;
+                Ok((200, json!({ "ok": ok, "results": results })))
             }
             ("POST", ["rerank", "test"]) => {
                 ctx.require(Cap::Admin)?;
                 let args = args_from_body()?;
-                // Same two modes as the embedding probe (see above), with a one-document rerank
-                // as the exercised operation
-                let entries: Vec<crate::rerank::RerankEntry> = match args.get("entries") {
-                    Some(v) => parse_probe_entries(v, crate::rerank::RerankEntry::from_json)?,
-                    None => store::with_db_in(db_path, TxMode::ReadOnly, |st| {
-                        st.rerank_entries().map_err(ToolError::from)
-                    })?
-                    .into_iter()
-                    .filter(|e| e.usable().is_some())
-                    .collect(),
-                };
-                if entries.is_empty() {
-                    return Err(ToolError::invalid(
-                        "nothing to test: no enabled, fully specified reranker entry exists (reranker settings)",
-                    ));
-                }
-                let mut results = Vec::with_capacity(entries.len());
-                let mut all_ok = true;
-                for (index, entry) in entries.iter().enumerate() {
-                    let Some(cfg) = entry.config() else {
-                        all_ok = false;
-                        results.push(json!({
-                            "index": index,
-                            "model": entry.model,
-                            "ok": false,
-                            "error": "incomplete candidate: base_url and model are both required",
-                        }));
-                        continue;
-                    };
-                    let start = std::time::Instant::now();
-                    match crate::rerank::rerank(
-                        &cfg,
-                        "connection test 连接测试",
-                        &["a relevant document 一篇相关文档".to_string()],
-                        crate::rerank::RERANK_TIMEOUT,
-                    ) {
-                        Ok(scores) => {
-                            // Same release as the embedding probe: a verified-alive candidate
-                            // must not stay behind its search-time failure circuit
-                            crate::rerank::RERANK_FAILOVER
-                                .clear(&format!("{} {}", cfg.id, cfg.base_url));
-                            results.push(json!({
-                                "index": index,
-                                "model": cfg.model,
-                                "ok": true,
-                                "scored": scores.len(),
-                                "elapsed_ms": start.elapsed().as_millis() as u64,
-                            }));
+                let (ok, results) = probe_connections(
+                    db_path,
+                    &args,
+                    "nothing to test: no enabled, fully specified reranker entry exists (reranker settings)",
+                    &crate::rerank::RERANK_FAILOVER,
+                    |v| parse_probe_entries(v, crate::rerank::RerankEntry::from_json),
+                    |st| {
+                        Ok(st
+                            .rerank_entries()
+                            .map_err(ToolError::from)?
+                            .into_iter()
+                            .filter(|e| e.usable().is_some())
+                            .collect())
+                    },
+                    // A one-document rerank as the exercised operation
+                    |entry| {
+                        let start = std::time::Instant::now();
+                        match entry.config() {
+                            None => ProbeRow {
+                                ok: false,
+                                row: json!({
+                                    "model": entry.model,
+                                    "ok": false,
+                                    "error": INCOMPLETE_CANDIDATE,
+                                }),
+                                elapsed_ms: 0,
+                                clear_identity: None,
+                            },
+                            Some(cfg) => match crate::rerank::rerank(
+                                &cfg,
+                                "connection test 连接测试",
+                                &["a relevant document 一篇相关文档".to_string()],
+                                crate::rerank::RERANK_TIMEOUT,
+                            ) {
+                                Ok(scores) => ProbeRow {
+                                    ok: true,
+                                    row: json!({
+                                        "model": cfg.model,
+                                        "ok": true,
+                                        "scored": scores.len(),
+                                    }),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    clear_identity: Some(format!("{} {}", cfg.id, cfg.base_url)),
+                                },
+                                Err(e) => ProbeRow {
+                                    ok: false,
+                                    row: json!({ "model": cfg.model, "ok": false, "error": e }),
+                                    elapsed_ms: 0,
+                                    clear_identity: None,
+                                },
+                            },
                         }
-                        Err(e) => {
-                            all_ok = false;
-                            results.push(json!({
-                                "index": index,
-                                "model": cfg.model,
-                                "ok": false,
-                                "error": e,
-                            }));
-                        }
-                    }
-                }
-                Ok((200, json!({ "ok": all_ok, "results": results })))
+                    },
+                )?;
+                Ok((200, json!({ "ok": ok, "results": results })))
             }
             ("GET", ["embeddings", "caches"]) => {
                 ctx.require(Cap::Admin)?;
@@ -829,11 +814,104 @@ fn parse_probe_entries<T>(
     Ok(entries)
 }
 
-/// Validate and canonicalize one ordered model-candidate list from the settings PUT body.
-/// Entries must be objects; an enabled entry must carry non-empty base_url and model; the
-/// per-entry similarity floor must lie in 0..=1 (absent = built-in default). Unknown fields
-/// are dropped — the canonical entry shape is what gets stored and later echoed by GET.
-fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEntry>, ToolError> {
+/// The explanation a probe reports for a candidate missing base_url or model.
+const INCOMPLETE_CANDIDATE: &str = "incomplete candidate: base_url and model are both required";
+
+/// One per-candidate verdict row of a connection probe (see `probe_connections`): `row` is the
+/// operation-specific JSON the reply carries for that request position (`index` is stamped by
+/// the shared loop), `elapsed_ms` is reported only for rows with `ok: true`, and on success
+/// `clear_identity` releases the candidate's search-time failure circuit.
+struct ProbeRow {
+    ok: bool,
+    row: Value,
+    elapsed_ms: u64,
+    clear_identity: Option<String>,
+}
+
+/// Shared body of the two connection-probe endpoints (`POST /api/embeddings/test`,
+/// `POST /api/rerank/test`): acquisition of the candidates, one verdict row per request
+/// position, and the circuit release on success. An incomplete candidate is reported in
+/// place, never skipped, so the UI can line the rows up with its editors. Only the probed
+/// operation and its row fields differ between the faces — they live in `probe`.
+fn probe_connections<T>(
+    db_path: &Path,
+    args: &Map<String, Value>,
+    nothing_to_test: &str,
+    failover: &'static crate::embed::Failover,
+    from_args: impl Fn(&Value) -> Result<Vec<T>, ToolError>,
+    stored: impl Fn(&store::Store) -> Result<Vec<T>, ToolError>,
+    probe: impl Fn(&T) -> ProbeRow,
+) -> Result<(bool, Vec<Value>), ToolError> {
+    // Two acquisition modes: an explicit `entries` array probes exactly what the caller sent
+    // (the admin editor verifies the values on screen — a candidate that is disabled or not
+    // saved yet is the interesting case), otherwise every enabled candidate in the settings
+    // list is probed: the list the search-time failover would walk.
+    let entries = match args.get("entries") {
+        Some(v) => from_args(v)?,
+        None => store::with_db_in(db_path, TxMode::ReadOnly, stored)?,
+    };
+    if entries.is_empty() {
+        return Err(ToolError::invalid(nothing_to_test));
+    }
+    let mut results = Vec::with_capacity(entries.len());
+    let mut all_ok = true;
+    for (index, entry) in entries.iter().enumerate() {
+        let out = probe(entry);
+        let mut row = out.row;
+        row["index"] = json!(index);
+        if out.ok {
+            row["elapsed_ms"] = json!(out.elapsed_ms);
+            // The probe just proved the candidate alive: release any failure circuit the
+            // search-time failover still holds for it
+            if let Some(identity) = &out.clear_identity {
+                failover.clear(identity);
+            }
+        }
+        all_ok &= out.ok;
+        results.push(row);
+    }
+    Ok((all_ok, results))
+}
+
+/// The common fields of one settings-list candidate, extracted and validated (the shared spine
+/// of both ordered model lists). `obj` and `context` stay available for the endpoint-specific
+/// fields; `context` is the "{key}[{i}]" prefix of this entry's error messages.
+struct CandidateFields<'a> {
+    context: String,
+    obj: &'a Map<String, Value>,
+    id: String,
+    name: String,
+    enabled: bool,
+    base_url: String,
+    model: String,
+}
+
+impl CandidateFields<'_> {
+    /// Optional string field: absent, null or empty → None; a non-string type is an error.
+    fn opt_string(&self, field: &str) -> Result<Option<String>, ToolError> {
+        match self.obj.get(field) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
+            Some(Value::String(_)) => Ok(None),
+            Some(_) => Err(ToolError::invalid(format!(
+                "{}.{} must be a string",
+                self.context, field
+            ))),
+        }
+    }
+}
+
+/// Validate and canonicalize one ordered model-candidate list from the settings PUT body
+/// (shared by the embedding and reranker lists). Entries must be objects; an enabled entry
+/// must carry non-empty base_url and model; ids are unique. Unknown fields are dropped —
+/// the canonical entry shape is what gets stored and later echoed by GET. `build` assembles
+/// the endpoint-specific entry (embedding adds the instruction prefixes and the similarity
+/// floor; rerank only the credential).
+fn parse_candidates<T>(
+    key: &str,
+    v: &Value,
+    build: impl Fn(CandidateFields<'_>) -> Result<T, ToolError>,
+) -> Result<Vec<T>, ToolError> {
     let arr = v
         .as_array()
         .ok_or_else(|| ToolError::invalid(format!("{key} must be an array")))?;
@@ -843,117 +921,96 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
         let obj = item
             .as_object()
             .ok_or_else(|| ToolError::invalid(format!("{key}[{i}] must be an object")))?;
-        let opt_string = |field: &str| -> Result<Option<String>, ToolError> {
-            match obj.get(field) {
-                None | Some(Value::Null) => Ok(None),
-                Some(Value::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
-                Some(Value::String(_)) => Ok(None),
-                Some(_) => Err(ToolError::invalid(format!(
-                    "{key}[{i}].{field} must be a string"
-                ))),
-            }
+        let context = format!("{key}[{i}]");
+        let mut f = CandidateFields {
+            context,
+            obj,
+            id: String::new(),
+            name: String::new(),
+            enabled: true,
+            base_url: String::new(),
+            model: String::new(),
         };
-        let enabled = match obj.get("enabled") {
+        f.enabled = match obj.get("enabled") {
             None | Some(Value::Null) => true,
             Some(Value::Bool(b)) => *b,
             Some(_) => {
                 return Err(ToolError::invalid(format!(
-                    "{key}[{i}].enabled must be a boolean"
+                    "{}.enabled must be a boolean",
+                    f.context
                 )))
             }
         };
-        let base_url = opt_string("base_url")?.unwrap_or_default();
-        let model = opt_string("model")?.unwrap_or_default();
+        f.base_url = f.opt_string("base_url")?.unwrap_or_default();
+        f.model = f.opt_string("model")?.unwrap_or_default();
         let (id, name) = parse_model_identity(key, i, item, &mut ids)?;
-        if enabled && (base_url.trim().is_empty() || model.trim().is_empty()) {
+        f.id = id;
+        f.name = name;
+        if f.enabled && (f.base_url.trim().is_empty() || f.model.trim().is_empty()) {
             return Err(ToolError::invalid(format!(
-                "{key}[{i}]: an enabled entry needs a non-empty base_url and model"
+                "{}: an enabled entry needs a non-empty base_url and model",
+                f.context
             )));
         }
-        let min_similarity = match obj.get("min_similarity") {
-            None | Some(Value::Null) => None,
-            Some(Value::Number(n)) => {
-                let f = n.as_f64().unwrap_or(f64::NAN);
-                if !(0.0..=1.0).contains(&f) {
-                    return Err(ToolError::invalid(format!(
-                        "{key}[{i}].min_similarity must be a number between 0 and 1 (0 disables the floor)"
-                    )));
-                }
-                Some(f as f32)
-            }
-            Some(_) => {
-                return Err(ToolError::invalid(format!(
-                    "{key}[{i}].min_similarity must be a number or null"
-                )))
-            }
-        };
-        entries.push(crate::embed::EmbedEntry {
-            id,
-            name,
-            enabled,
-            base_url,
-            model,
-            api_key: opt_string("api_key")?,
-            query_prefix: opt_string("query_prefix")?,
-            passage_prefix: opt_string("passage_prefix")?,
-            min_similarity,
-        });
+        entries.push(build(f)?);
     }
     Ok(entries)
 }
 
-/// Validate and canonicalize the ordered reranker-candidate list (same rules as
-/// `parse_model_entries` minus the embedding-specific fields).
+fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEntry>, ToolError> {
+    parse_candidates(key, v, |f| {
+        // The per-entry similarity floor must lie in 0..=1 (absent = built-in default)
+        let min_similarity = parse_min_similarity(f.obj, &f.context)?;
+        let api_key = f.opt_string("api_key")?;
+        let query_prefix = f.opt_string("query_prefix")?;
+        let passage_prefix = f.opt_string("passage_prefix")?;
+        Ok(crate::embed::EmbedEntry {
+            id: f.id,
+            name: f.name,
+            enabled: f.enabled,
+            base_url: f.base_url,
+            model: f.model,
+            api_key,
+            query_prefix,
+            passage_prefix,
+            min_similarity,
+        })
+    })
+}
+
 fn parse_rerank_entries(
     key: &str,
     v: &Value,
 ) -> Result<Vec<crate::rerank::RerankEntry>, ToolError> {
-    let arr = v
-        .as_array()
-        .ok_or_else(|| ToolError::invalid(format!("{key} must be an array")))?;
-    let mut entries = Vec::with_capacity(arr.len());
-    let mut ids = std::collections::HashSet::new();
-    for (i, item) in arr.iter().enumerate() {
-        let obj = item
-            .as_object()
-            .ok_or_else(|| ToolError::invalid(format!("{key}[{i}] must be an object")))?;
-        let opt_string = |field: &str| -> Result<Option<String>, ToolError> {
-            match obj.get(field) {
-                None | Some(Value::Null) => Ok(None),
-                Some(Value::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
-                Some(Value::String(_)) => Ok(None),
-                Some(_) => Err(ToolError::invalid(format!(
-                    "{key}[{i}].{field} must be a string"
-                ))),
-            }
-        };
-        let enabled = match obj.get("enabled") {
-            None | Some(Value::Null) => true,
-            Some(Value::Bool(b)) => *b,
-            Some(_) => {
+    parse_candidates(key, v, |f| {
+        let api_key = f.opt_string("api_key")?;
+        Ok(crate::rerank::RerankEntry {
+            id: f.id,
+            name: f.name,
+            enabled: f.enabled,
+            base_url: f.base_url,
+            model: f.model,
+            api_key,
+        })
+    })
+}
+
+fn parse_min_similarity(obj: &Map<String, Value>, context: &str) -> Result<Option<f32>, ToolError> {
+    match obj.get("min_similarity") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => {
+            let f = n.as_f64().unwrap_or(f64::NAN);
+            if !(0.0..=1.0).contains(&f) {
                 return Err(ToolError::invalid(format!(
-                    "{key}[{i}].enabled must be a boolean"
-                )))
+                    "{context}.min_similarity must be a number between 0 and 1 (0 disables the floor)"
+                )));
             }
-        };
-        let base_url = opt_string("base_url")?.unwrap_or_default();
-        let model = opt_string("model")?.unwrap_or_default();
-        let (id, name) = parse_model_identity(key, i, item, &mut ids)?;
-        if enabled && (base_url.trim().is_empty() || model.trim().is_empty()) {
-            return Err(ToolError::invalid(format!(
-                "{key}[{i}]: an enabled entry needs a non-empty base_url and model"
-            )));
+            Ok(Some(f as f32))
         }
-        entries.push(crate::rerank::RerankEntry {
-            id,
-            name,
-            enabled,
-            base_url,
-            model,
-            api_key: opt_string("api_key")?,
-        });
+        Some(_) => Err(ToolError::invalid(format!(
+            "{context}.min_similarity must be a number or null"
+        ))),
     }
-    Ok(entries)
 }
 
 fn parse_model_identity(
