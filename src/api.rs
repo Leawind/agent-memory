@@ -120,10 +120,7 @@ pub fn handle(
             }
             ("POST", ["import"]) => {
                 ctx.require(Cap::Admin)?;
-                let dump = match args_from_body() {
-                    Ok(m) => Value::Object(m),
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let dump = Value::Object(args_from_body()?);
                 if dump
                     .get("predicates")
                     .and_then(Value::as_array)
@@ -171,16 +168,11 @@ pub fn handle(
             }
             ("POST", ["identities"]) => {
                 ctx.require(Cap::Admin)?;
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 let name = match args.get("name").and_then(Value::as_str) {
                     Some(n) => normalize_identity_name(n).map_err(ToolError::invalid)?,
                     None => {
-                        return Ok(bad_request(ToolError::invalid(
-                            "missing required argument: name",
-                        )));
+                        return Err(ToolError::invalid("missing required argument: name"));
                     }
                 };
                 let perms = Permissions::from_json(args.get("permissions").unwrap_or(&Value::Null))
@@ -206,10 +198,7 @@ pub fn handle(
             }
             ("PUT", ["identities", name]) => {
                 ctx.require(Cap::Admin)?;
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 let perms = Permissions::from_json(args.get("permissions").unwrap_or(&Value::Null))
                     .map_err(ToolError::invalid)?;
                 store::with_db_in(db_path, TxMode::Write, |st| {
@@ -279,10 +268,7 @@ pub fn handle(
             }
             ("PUT", ["settings"]) => {
                 ctx.require(Cap::Admin)?;
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 const VALID_KEYS: &[&str] = &[
                     "instructions",
                     "auth_required",
@@ -294,10 +280,10 @@ pub fn handle(
                 ];
                 for key in args.keys() {
                     if !VALID_KEYS.contains(&key.as_str()) {
-                        return Ok(bad_request(ToolError::invalid(format!(
+                        return Err(ToolError::invalid(format!(
                             "unknown settings key '{key}' (valid: {})",
                             VALID_KEYS.join(", ")
-                        ))));
+                        )));
                     }
                 }
                 // Boolean keys: auth_required; text items go through the String branch;
@@ -320,10 +306,8 @@ pub fn handle(
                             ));
                         }
                         Some(v) if *key == store::Store::SETTING_SEARCH_LIMITS => {
-                            let limits = match crate::search::Limits::parse(v) {
-                                Ok(limits) => limits,
-                                Err(e) => return Ok(bad_request(ToolError::invalid(e))),
-                            };
+                            let limits =
+                                crate::search::Limits::parse(v).map_err(ToolError::invalid)?;
                             updates.push((key, limits.to_json().to_string()));
                         }
                         Some(v) if *key == store::Store::SETTING_ANONYMOUS_PERMISSIONS => {
@@ -333,71 +317,57 @@ pub fn handle(
                                     Some(Permissions::from_json(v).map_err(ToolError::invalid)?)
                                 }
                                 _ => {
-                                    return Ok(bad_request(ToolError::invalid(format!(
+                                    return Err(ToolError::invalid(format!(
                                         "{key} must be a permissions object or null"
-                                    ))))
+                                    )))
                                 }
                             };
                             anon_perms = Some(parsed);
                         }
                         Some(v) if *key == store::Store::SETTING_EMBEDDING_MODELS => {
                             // Validated + canonicalized here; the canonical JSON is what gets stored
-                            let entries = match parse_model_entries(key, v) {
-                                Ok(entries) => entries,
-                                Err(e) => return Ok(bad_request(e)),
-                            };
-                            if let Err(e) = push_canonical(
+                            let entries = parse_model_entries(key, v)?;
+                            push_canonical(
                                 key,
                                 &entries,
                                 crate::embed::EmbedEntry::to_json,
                                 &mut updates,
-                            ) {
-                                return Ok(bad_request(e));
-                            }
+                            )?;
                         }
                         Some(v) if *key == store::Store::SETTING_RERANK_MODELS => {
-                            let entries = match parse_rerank_entries(key, v) {
-                                Ok(entries) => entries,
-                                Err(e) => return Ok(bad_request(e)),
-                            };
-                            if let Err(e) = push_canonical(
+                            let entries = parse_rerank_entries(key, v)?;
+                            push_canonical(
                                 key,
                                 &entries,
                                 crate::rerank::RerankEntry::to_json,
                                 &mut updates,
-                            ) {
-                                return Ok(bad_request(e));
-                            }
+                            )?;
                         }
                         Some(v) if BOOL_KEYS.contains(key) => match v.as_bool() {
                             Some(on) => {
                                 updates.push((key, if on { "true" } else { "false" }.into()))
                             }
                             None => {
-                                return Ok(bad_request(ToolError::invalid(format!(
-                                    "{key} must be a boolean"
-                                ))))
+                                return Err(ToolError::invalid(format!("{key} must be a boolean")))
                             }
                         },
                         Some(Value::String(s)) => {
                             if s.chars().count() > MAX_INSTRUCTIONS_CHARS {
-                                return Ok(bad_request(ToolError::invalid(format!(
+                                return Err(ToolError::invalid(format!(
                                     "{key} is too long (max {MAX_INSTRUCTIONS_CHARS} characters)"
-                                ))));
+                                )));
                             }
                             updates.push((key, s.clone()));
                         }
                         Some(_) => {
-                            return Ok(bad_request(ToolError::invalid(format!(
-                                "{key} must be a string"
-                            ))))
+                            return Err(ToolError::invalid(format!("{key} must be a string")))
                         }
                     }
                 }
                 if updates.is_empty() && anon_perms.is_none() {
-                    return Ok(bad_request(ToolError::invalid(
+                    return Err(ToolError::invalid(
                         "nothing to update: provide at least one settings key",
-                    )));
+                    ));
                 }
                 store::with_db_in(db_path, TxMode::Write, |st| {
                     // An admin identity must exist before enabling auth, otherwise every request
@@ -431,10 +401,7 @@ pub fn handle(
                 // count, which the UI calls in a loop. Sidesteps the long-running task vs. one-transaction-per-request model conflict.
                 // An explicit `model_key` targets one cache identity (per-model backfill);
                 // without one the highest-priority available candidate's cache is drained.
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 let batch = args
                     .get("batch")
                     .and_then(Value::as_u64)
@@ -454,9 +421,9 @@ pub fn handle(
                             Some(cfg) => crate::embed::process_pending_for(db_path, batch, &cfg)
                                 .unwrap_or_else(crate::embed::EmbedOutcome::Failed),
                             None => {
-                                return Ok(bad_request(ToolError::invalid(format!(
+                                return Err(ToolError::invalid(format!(
                                     "no enabled embedding entry matches cache key '{key}' (its cache can only be deleted)"
-                                ))));
+                                )));
                             }
                         }
                     }
@@ -466,19 +433,13 @@ pub fn handle(
             }
             ("POST", ["embeddings", "test"]) => {
                 ctx.require(Cap::Admin)?;
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 // Two modes: an explicit `entries` array probes exactly what the caller sent (the
                 // admin editor verifies the values on screen — a candidate that is disabled or not
                 // saved yet is the interesting case), otherwise every enabled candidate in the
                 // settings list is probed: the list the search-time failover would walk.
                 let entries: Vec<crate::embed::EmbedEntry> = match args.get("entries") {
-                    Some(v) => match parse_probe_entries(v, crate::embed::EmbedEntry::from_json) {
-                        Ok(entries) => entries,
-                        Err(e) => return Ok(bad_request(e)),
-                    },
+                    Some(v) => parse_probe_entries(v, crate::embed::EmbedEntry::from_json)?,
                     None => store::with_db_in(db_path, TxMode::ReadOnly, |st| {
                         st.embedding_entries().map_err(ToolError::from)
                     })?
@@ -487,9 +448,9 @@ pub fn handle(
                     .collect(),
                 };
                 if entries.is_empty() {
-                    return Ok(bad_request(ToolError::invalid(
+                    return Err(ToolError::invalid(
                         "nothing to test: no enabled, fully specified embedding entry exists (embedding settings)",
-                    )));
+                    ));
                 }
                 let mut results = Vec::with_capacity(entries.len());
                 let mut all_ok = true;
@@ -550,19 +511,11 @@ pub fn handle(
             }
             ("POST", ["rerank", "test"]) => {
                 ctx.require(Cap::Admin)?;
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 // Same two modes as the embedding probe (see above), with a one-document rerank
                 // as the exercised operation
                 let entries: Vec<crate::rerank::RerankEntry> = match args.get("entries") {
-                    Some(v) => {
-                        match parse_probe_entries(v, crate::rerank::RerankEntry::from_json) {
-                            Ok(entries) => entries,
-                            Err(e) => return Ok(bad_request(e)),
-                        }
-                    }
+                    Some(v) => parse_probe_entries(v, crate::rerank::RerankEntry::from_json)?,
                     None => store::with_db_in(db_path, TxMode::ReadOnly, |st| {
                         st.rerank_entries().map_err(ToolError::from)
                     })?
@@ -571,9 +524,9 @@ pub fn handle(
                     .collect(),
                 };
                 if entries.is_empty() {
-                    return Ok(bad_request(ToolError::invalid(
+                    return Err(ToolError::invalid(
                         "nothing to test: no enabled, fully specified reranker entry exists (reranker settings)",
-                    )));
+                    ));
                 }
                 let mut results = Vec::with_capacity(entries.len());
                 let mut all_ok = true;
@@ -663,14 +616,11 @@ pub fn handle(
             }
             ("DELETE", ["embeddings", "caches"]) => {
                 ctx.require(Cap::Admin)?;
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 let Some(key) = args.get("model_key").and_then(Value::as_str) else {
-                    return Ok(bad_request(ToolError::invalid(
+                    return Err(ToolError::invalid(
                         "model_key is required (see GET /api/embeddings/caches)",
-                    )));
+                    ));
                 };
                 store::with_db_in(db_path, tx_mode, |st| {
                     let deleted = st.embedding_delete_model(key).map_err(ToolError::from)?;
@@ -692,17 +642,11 @@ pub fn handle(
                 })
             }
             ("POST", ["tags"]) => {
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 tool_write(db_path, ctx, TAG_CREATE, &Value::Object(args))
             }
             ("PUT", ["tags", tag_name]) => {
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 let mut full = Map::new();
                 full.insert("name".into(), json!(tag_name));
                 for (k, v) in args {
@@ -734,17 +678,11 @@ pub fn handle(
                 })
             }
             ("POST", ["memories"]) => {
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 tool_write(db_path, ctx, MEMORY_CREATE, &Value::Object(args))
             }
             ("POST", ["memories", "merge"]) => {
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 tool_write(db_path, ctx, MEMORY_MERGE, &Value::Object(args))
             }
             ("GET", ["memories", mem_id, "usage"]) => {
@@ -784,10 +722,7 @@ pub fn handle(
                 }
             }
             ("PUT", ["memories", mem_id]) => {
-                let args = match args_from_body() {
-                    Ok(m) => m,
-                    Err(e) => return Ok(bad_request(e)),
-                };
+                let args = args_from_body()?;
                 let mut full = Map::new();
                 full.insert("id".into(), json!(mem_id));
                 for (k, v) in args {
@@ -808,9 +743,9 @@ pub fn handle(
                     Ok(out)
                 }
             }
-            _ => Ok(bad_request(ToolError::invalid(format!(
+            _ => Err(ToolError::invalid(format!(
                 "no such API route: {method} {path}"
-            )))),
+            ))),
         }
     })();
 
@@ -857,10 +792,6 @@ fn tool_write(
     })?;
     tools::after_commit(db_path, tool, args, &mut out, pre);
     Ok((200, out))
-}
-
-fn bad_request(e: ToolError) -> (u16, Value) {
-    (400, json!({ "error": e.message() }))
 }
 
 /// Canonical JSON of a validated candidate list — the form that gets stored and later echoed

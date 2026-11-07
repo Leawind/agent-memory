@@ -255,10 +255,7 @@ impl Failover {
             tried += 1;
             match op(&configs[idx]) {
                 Ok(value) => {
-                    let mut cooled = self
-                        .cooled
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
+                    let mut cooled = self.cooled.lock().unwrap_or_else(PoisonError::into_inner);
                     cooled.retain(|(k, _)| k != &id);
                     drop(cooled);
                     self.preferred.store(idx, Ordering::Relaxed);
@@ -266,10 +263,7 @@ impl Failover {
                 }
                 Err(e) => {
                     eprintln!("embedding candidate #{idx} failed, trying the next: {e}");
-                    let mut cooled = self
-                        .cooled
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
+                    let mut cooled = self.cooled.lock().unwrap_or_else(PoisonError::into_inner);
                     match cooled.iter_mut().find(|(k, _)| k == &id) {
                         Some((_, at)) => *at = Instant::now(),
                         None => cooled.push((id, Instant::now())),
@@ -1009,9 +1003,7 @@ mod tests {
         let identity = |c: &EmbedConfig| c.id.clone();
 
         // First call: a (priority head) answers
-        let (idx, _, value) = failover
-            .first_available(&configs, identity, probe)
-            .unwrap();
+        let (idx, _, value) = failover.first_available(&configs, identity, probe).unwrap();
         assert_eq!((idx, value.as_str()), (0, "a"));
 
         // Head goes down: b takes over, and becomes the sticky choice
@@ -1050,8 +1042,7 @@ mod tests {
     fn failure_cooldown_skips_dead_candidates_then_half_opens() {
         // The identity is the production shape: id + fingerprint, so a reconfigured candidate is
         // never skipped for its predecessor's failure
-        let identity =
-            |c: &EmbedConfig| format!("{} {}", c.vector_key(), c.fingerprint());
+        let identity = |c: &EmbedConfig| format!("{} {}", c.vector_key(), c.fingerprint());
         let failover = Failover::with_cooldown(Duration::from_millis(80));
         let configs = [cfg("a", None, None), cfg("b", None, None)];
         let calls = std::cell::RefCell::new(Vec::new());
