@@ -11,8 +11,11 @@
 //! caches of all configured models coexist in the embeddings table and per-model backfill/delete is a
 //! pure bookkeeping operation.
 //!
-//! Network calls always happen outside database transactions (guaranteed by callers): holding an IMMEDIATE lock across
-//! network I/O in a write transaction is a forbidden deadlock shape, and stretching a read-only snapshot serves no purpose either.
+//! Network calls never happen inside a database write transaction (guaranteed by callers): holding
+//! an IMMEDIATE lock across network I/O is a forbidden deadlock shape. The search path does hold
+//! its read-only snapshot across the embedding/reranker calls — under WAL that blocks nothing; it
+//! only pins checkpointing for the model latency, the accepted cost of scoring one consistent
+//! candidate snapshot (rerank.rs documents the same trade-off from the reranker's side).
 
 use crate::search::{self, Hit};
 use crate::store::{Store, TxMode};
