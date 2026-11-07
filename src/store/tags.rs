@@ -44,7 +44,7 @@ impl Store {
     pub fn find_tag_case_insensitive(&self, name: &str) -> Result<Option<String>, String> {
         let mut st = self
             .conn
-            .prepare(sql::TAG_ALL_NAMES)
+            .prepare_cached(sql::TAG_ALL_NAMES)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| r.get::<_, String>(0))
@@ -96,7 +96,7 @@ impl Store {
     pub fn tag_views(&self) -> Result<Vec<(Value, bool)>, String> {
         let mut st = self
             .conn
-            .prepare(sql::TAG_VIEW_ALL)
+            .prepare_cached(sql::TAG_VIEW_ALL)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| Ok((row_to_tag_view(r)?, r.get::<_, i64>(3)? != 0)))
@@ -110,7 +110,7 @@ impl Store {
     pub fn tag_target_keys(&self) -> Result<HashMap<String, Vec<String>>, String> {
         let mut st = self
             .conn
-            .prepare(sql::TAG_TARGET_KEYS)
+            .prepare_cached(sql::TAG_TARGET_KEYS)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
@@ -203,7 +203,7 @@ impl Store {
     fn ids_with_tag(&self, name: &str) -> Result<Vec<i64>, String> {
         let mut st = self
             .conn
-            .prepare(sql::MEMORY_IDS_WITH_TAG)
+            .prepare_cached(sql::MEMORY_IDS_WITH_TAG)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([name], |r| r.get::<_, i64>(0))
@@ -262,17 +262,22 @@ impl Store {
             missing_description: Vec::new(),
         };
         let mut id_by_name: HashMap<&str, i64> = HashMap::with_capacity(names.len());
+        // One statement per table for the whole name walk (create/import can resolve many
+        // names in one transaction)
+        let mut autocreate = self
+            .conn
+            .prepare_cached(sql::TAG_AUTOCREATE)
+            .map_err(|e| e.to_string())?;
+        let mut by_name = self
+            .conn
+            .prepare_cached(sql::TAG_BY_NAME)
+            .map_err(|e| e.to_string())?;
         for name in &names {
-            let inserted = self
-                .conn
-                .execute(
-                    sql::TAG_AUTOCREATE,
-                    params![name, crate::model::now() as i64],
-                )
+            let inserted = autocreate
+                .execute(params![name, crate::model::now() as i64])
                 .map_err(|e| e.to_string())?;
-            let (id, description): (i64, String) = self
-                .conn
-                .query_row(sql::TAG_BY_NAME, [name], |r| Ok((r.get(0)?, r.get(1)?)))
+            let (id, description): (i64, String) = by_name
+                .query_row([name], |r| Ok((r.get(0)?, r.get(1)?)))
                 .map_err(|e| e.to_string())?;
             id_by_name.insert(name, id);
             if inserted > 0 {
@@ -297,7 +302,7 @@ impl Store {
     pub fn tag_id_names(&self) -> Result<HashMap<i64, String>, String> {
         let mut statement = self
             .conn
-            .prepare(sql::TAG_EXPORT_ALL)
+            .prepare_cached(sql::TAG_EXPORT_ALL)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -308,12 +313,13 @@ impl Store {
     /// Resolve existing tag names to internal ids; nonexistent names are skipped outright (matching the
     /// silent no-op semantics of unlink-by-name).
     pub fn tag_ids_by_names(&self, names: &[String]) -> Result<Vec<i64>, String> {
+        let mut by_name = self
+            .conn
+            .prepare_cached(sql::TAG_BY_NAME)
+            .map_err(|e| e.to_string())?;
         let mut ids = Vec::with_capacity(names.len());
         for n in names {
-            let id = match self
-                .conn
-                .query_row(sql::TAG_BY_NAME, [n], |r| r.get::<_, i64>(0))
-            {
+            let id = match by_name.query_row([n], |r| r.get::<_, i64>(0)) {
                 Ok(id) => Some(id),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
                 Err(e) => return Err(e.to_string()),
@@ -342,7 +348,7 @@ impl Store {
     pub fn tag_rows_for(&self, id: i64) -> Result<Vec<TagRow>, String> {
         let mut statement = self
             .conn
-            .prepare(sql::MEMORY_TAG_ORIGINS)
+            .prepare_cached(sql::MEMORY_TAG_ORIGINS)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([id], |row| {
@@ -367,7 +373,8 @@ impl Store {
             .map_err(|e| e.to_string())?;
         for (tag_id, target_id) in links {
             self.conn
-                .execute(sql::MEMORY_LINK_TAG, params![id, tag_id, target_id])
+                .prepare_cached(sql::MEMORY_LINK_TAG)
+                .and_then(|mut stmt| stmt.execute(params![id, tag_id, target_id]))
                 .map_err(|e| e.to_string())?;
         }
         Ok(())

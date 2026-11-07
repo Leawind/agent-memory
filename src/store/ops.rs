@@ -51,7 +51,7 @@ impl Store {
     fn check_integrity(&self) -> Result<Vec<String>, String> {
         let rows: Vec<String> = self
             .conn
-            .prepare(sql::HYGIENE_INTEGRITY)
+            .prepare_cached(sql::HYGIENE_INTEGRITY)
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
@@ -73,7 +73,7 @@ impl Store {
     fn check_foreign_keys(&self) -> Result<Vec<String>, String> {
         let rows = self
             .conn
-            .prepare(sql::HYGIENE_FOREIGN_KEYS)
+            .prepare_cached(sql::HYGIENE_FOREIGN_KEYS)
             .map_err(|e| e.to_string())?
             .query_map([], |r| {
                 Ok((
@@ -112,7 +112,7 @@ impl Store {
     fn check_tag_refs(&self) -> Result<Vec<String>, String> {
         let orphan_ids: Vec<i64> = self
             .conn
-            .prepare(sql::HYGIENE_ORPHANS)
+            .prepare_cached(sql::HYGIENE_ORPHANS)
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
@@ -135,7 +135,7 @@ impl Store {
     fn check_memory_refs(&self) -> Result<Vec<String>, String> {
         let reverse_ids: Vec<i64> = self
             .conn
-            .prepare(sql::HYGIENE_REVERSE_ORPHANS)
+            .prepare_cached(sql::HYGIENE_REVERSE_ORPHANS)
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
@@ -158,7 +158,7 @@ impl Store {
     fn check_tag_case(&self) -> Result<Vec<String>, String> {
         let names: Vec<String> = self
             .conn
-            .prepare(sql::TAG_ALL_NAMES)
+            .prepare_cached(sql::TAG_ALL_NAMES)
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
@@ -184,7 +184,7 @@ impl Store {
     fn check_empty_summaries(&self) -> Result<Vec<String>, String> {
         let rows = self
             .conn
-            .prepare(sql::HYGIENE_MEMORIES)
+            .prepare_cached(sql::HYGIENE_MEMORIES)
             .map_err(|e| e.to_string())?
             .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?
@@ -202,7 +202,7 @@ impl Store {
     fn check_timestamps(&self) -> Result<Vec<String>, String> {
         let rows = self
             .conn
-            .prepare(sql::HYGIENE_TIMESTAMPS)
+            .prepare_cached(sql::HYGIENE_TIMESTAMPS)
             .map_err(|e| e.to_string())?
             .query_map([], |r| {
                 Ok((
@@ -244,7 +244,7 @@ impl Store {
     fn check_duplicates(&self) -> Result<Vec<String>, String> {
         let rows = self
             .conn
-            .prepare(sql::HYGIENE_DUPLICATES)
+            .prepare_cached(sql::HYGIENE_DUPLICATES)
             .map_err(|e| e.to_string())?
             .query_map([], |r| {
                 Ok((
@@ -282,7 +282,7 @@ impl Store {
     fn check_orphan_embeddings(&self) -> Result<Vec<String>, String> {
         let ids: Vec<i64> = self
             .conn
-            .prepare(sql::HYGIENE_ORPHAN_EMBEDDINGS)
+            .prepare_cached(sql::HYGIENE_ORPHAN_EMBEDDINGS)
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
@@ -427,7 +427,7 @@ impl Store {
         let mut tags = Map::new();
         let mut st = self
             .conn
-            .prepare(sql::TAG_EXPORT_ALL)
+            .prepare_cached(sql::TAG_EXPORT_ALL)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| {
@@ -456,7 +456,7 @@ impl Store {
         let mut refs: HashMap<i64, Vec<Value>> = HashMap::new();
         let mut pairs = self
             .conn
-            .prepare(sql::MEMORY_TAG_ID_PAIRS)
+            .prepare_cached(sql::MEMORY_TAG_ID_PAIRS)
             .map_err(|e| e.to_string())?;
         let pair_rows = pairs
             .query_map([], |r| {
@@ -480,7 +480,7 @@ impl Store {
         let mut memories = Map::new();
         let mut st = self
             .conn
-            .prepare(sql::MEMORY_ALL)
+            .prepare_cached(sql::MEMORY_ALL)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| {

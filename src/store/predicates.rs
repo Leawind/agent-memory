@@ -12,7 +12,7 @@ impl Store {
     pub fn predicate_rows(&self) -> Result<Vec<Definition>, String> {
         let mut statement = self
             .conn
-            .prepare(sql::PREDICATE_ALL)
+            .prepare_cached(sql::PREDICATE_ALL)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([], |row| {

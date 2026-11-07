@@ -85,7 +85,7 @@ impl Store {
     pub fn identity_list(&self) -> Result<Vec<Value>, String> {
         let mut st = self
             .conn
-            .prepare(sql::IDENTITY_ALL)
+            .prepare_cached(sql::IDENTITY_ALL)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| {

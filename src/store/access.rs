@@ -20,7 +20,7 @@ impl Store {
     pub fn access_export(&self, id: i64) -> Result<access::History, String> {
         let mut statement = self
             .conn
-            .prepare(sql::ACCESS_EVENTS_EXPORT)
+            .prepare_cached(sql::ACCESS_EVENTS_EXPORT)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([id], |row| {
@@ -43,7 +43,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let mut statement = self
             .conn
-            .prepare(sql::ACCESS_BUCKETS_FOR)
+            .prepare_cached(sql::ACCESS_BUCKETS_FOR)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([id], |row| {
@@ -68,38 +68,38 @@ impl Store {
     /// Restore frozen event weights, not a replay through current credit-window policy.
     pub fn access_import(&self, id: i64, history: &access::History) -> Result<(), String> {
         history.validate()?;
+        let mut insert = self
+            .conn
+            .prepare_cached(sql::ACCESS_EVENT_INSERT)
+            .map_err(|e| e.to_string())?;
         for event in &history.events {
-            let inserted = self
-                .conn
-                .execute(
-                    sql::ACCESS_EVENT_INSERT,
-                    params![
-                        id,
-                        event.actor,
-                        event.event_key,
-                        event.kind.as_str(),
-                        event.occurred_at as i64,
-                        event.weight
-                    ],
-                )
+            let inserted = insert
+                .execute(params![
+                    id,
+                    event.actor,
+                    event.event_key,
+                    event.kind.as_str(),
+                    event.occurred_at as i64,
+                    event.weight
+                ])
                 .map_err(|e| e.to_string())?;
             if inserted != 1 {
                 return Err("duplicate exported access event key".into());
             }
         }
+        let mut put = self
+            .conn
+            .prepare_cached(sql::ACCESS_BUCKET_PUT)
+            .map_err(|e| e.to_string())?;
         for bucket in &history.buckets {
-            self.conn
-                .execute(
-                    sql::ACCESS_BUCKET_PUT,
-                    params![
-                        id,
-                        bucket.end as i64,
-                        bucket.score,
-                        bucket.reads,
-                        bucket.uses
-                    ],
-                )
-                .map_err(|e| e.to_string())?;
+            put.execute(params![
+                id,
+                bucket.end as i64,
+                bucket.score,
+                bucket.reads,
+                bucket.uses
+            ])
+            .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -107,7 +107,8 @@ impl Store {
     pub fn access_projection(&self, id: i64) -> Result<Projection, String> {
         match self
             .conn
-            .query_row(sql::ACCESS_PROJECTION_GET, [id], |row| projection(row, 0))
+            .prepare_cached(sql::ACCESS_PROJECTION_GET)
+            .and_then(|mut stmt| stmt.query_row([id], |row| projection(row, 0)))
         {
             Ok(state) => Ok(state),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Projection::default()),
@@ -118,7 +119,7 @@ impl Store {
     pub fn access_projection_all(&self) -> Result<HashMap<i64, Projection>, String> {
         let mut statement = self
             .conn
-            .prepare(sql::ACCESS_PROJECTION_ALL)
+            .prepare_cached(sql::ACCESS_PROJECTION_ALL)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([], |row| Ok((row.get(0)?, projection(row, 1)?)))
@@ -128,10 +129,16 @@ impl Store {
 
     fn access_projection_put(&self, id: i64, state: &Projection) -> Result<(), String> {
         self.conn
-            .execute(
-                sql::ACCESS_PROJECTION_PUT,
-                params![id, state.score, state.as_of as i64, state.reads, state.uses],
-            )
+            .prepare_cached(sql::ACCESS_PROJECTION_PUT)
+            .and_then(|mut stmt| {
+                stmt.execute(params![
+                    id,
+                    state.score,
+                    state.as_of as i64,
+                    state.reads,
+                    state.uses
+                ])
+            })
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
@@ -145,26 +152,30 @@ impl Store {
         key: Option<&str>,
         now: u64,
     ) -> Result<(bool, bool), String> {
+        // record_reads walks ids through this function inside one connection: every statement
+        // here is cached so the loop compiles each statement once
         let recent: bool = self
             .conn
-            .query_row(
-                sql::ACCESS_RECENT_CREDIT,
-                params![
-                    id,
-                    actor,
-                    kind.as_str(),
-                    now.saturating_sub(access::CREDIT_WINDOW_SECONDS) as i64
-                ],
-                |row| row.get(0),
-            )
+            .prepare_cached(sql::ACCESS_RECENT_CREDIT)
+            .and_then(|mut stmt| {
+                stmt.query_row(
+                    params![
+                        id,
+                        actor,
+                        kind.as_str(),
+                        now.saturating_sub(access::CREDIT_WINDOW_SECONDS) as i64
+                    ],
+                    |row| row.get(0),
+                )
+            })
             .map_err(|e| e.to_string())?;
         let weight = if recent { 0.0 } else { kind.weight() };
         let inserted = self
             .conn
-            .execute(
-                sql::ACCESS_EVENT_INSERT,
-                params![id, actor, key, kind.as_str(), now as i64, weight],
-            )
+            .prepare_cached(sql::ACCESS_EVENT_INSERT)
+            .and_then(|mut stmt| {
+                stmt.execute(params![id, actor, key, kind.as_str(), now as i64, weight])
+            })
             .map_err(|e| e.to_string())?;
         if inserted == 0 {
             return Ok((false, false));
@@ -184,7 +195,7 @@ impl Store {
         let cutoff = now.saturating_sub(access::RAW_RETENTION_SECONDS) / 3600 * 3600;
         let mut statement = self
             .conn
-            .prepare(sql::ACCESS_COMPACT_BATCH)
+            .prepare_cached(sql::ACCESS_COMPACT_BATCH)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([cutoff as i64], |row| {
@@ -213,13 +224,19 @@ impl Store {
             );
             ids.push(event_id);
         }
+        let mut put = self
+            .conn
+            .prepare_cached(sql::ACCESS_BUCKET_PUT)
+            .map_err(|e| e.to_string())?;
         for ((id, end), state) in buckets {
-            self.conn
-                .execute(
-                    sql::ACCESS_BUCKET_PUT,
-                    params![id, end as i64, state.score, state.reads, state.uses],
-                )
-                .map_err(|e| e.to_string())?;
+            put.execute(params![
+                id,
+                end as i64,
+                state.score,
+                state.reads,
+                state.uses
+            ])
+            .map_err(|e| e.to_string())?;
         }
         self.conn
             .execute(
@@ -233,7 +250,7 @@ impl Store {
     pub fn access_rebuild(&self) -> Result<usize, String> {
         let mut statement = self
             .conn
-            .prepare(sql::ACCESS_MEMORY_IDS)
+            .prepare_cached(sql::ACCESS_MEMORY_IDS)
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([], |row| row.get::<_, i64>(0))
@@ -244,13 +261,19 @@ impl Store {
         self.conn
             .execute(sql::ACCESS_PROJECTION_CLEAR, [])
             .map_err(|e| e.to_string())?;
+        // Compiled once for the whole store walk: rebuilding a large database holds the write
+        // transaction, so per-id re-preparation is pure lock-holding time
+        let mut buckets = self
+            .conn
+            .prepare_cached(sql::ACCESS_BUCKETS_FOR)
+            .map_err(|e| e.to_string())?;
+        let mut events = self
+            .conn
+            .prepare_cached(sql::ACCESS_EVENTS_FOR)
+            .map_err(|e| e.to_string())?;
         for id in &ids {
             let mut state = Projection::default();
-            let mut statement = self
-                .conn
-                .prepare(sql::ACCESS_BUCKETS_FOR)
-                .map_err(|e| e.to_string())?;
-            let rows = statement
+            let rows = buckets
                 .query_map([id], |row| {
                     Ok((
                         row.get::<_, i64>(0)? as u64,
@@ -264,11 +287,7 @@ impl Store {
                 let (at, score, reads, uses) = row.map_err(|e| e.to_string())?;
                 state.add(score, at, reads, uses);
             }
-            let mut statement = self
-                .conn
-                .prepare(sql::ACCESS_EVENTS_FOR)
-                .map_err(|e| e.to_string())?;
-            let rows = statement
+            let rows = events
                 .query_map([id], |row| {
                     Ok((
                         row.get::<_, String>(0)?,

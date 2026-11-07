@@ -37,7 +37,7 @@ impl Store {
     pub fn find_duplicates_by_summary(&self, summary: &str) -> Result<Vec<String>, String> {
         let mut st = self
             .conn
-            .prepare(sql::MEMORY_SUMMARIES)
+            .prepare_cached(sql::MEMORY_SUMMARIES)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
@@ -82,7 +82,7 @@ impl Store {
         let id_set = ids.map(|ids| serde_json::json!(ids).to_string());
         let mut stmt = self
             .conn
-            .prepare(sql::MEMORY_TAG_PAIRS)
+            .prepare_cached(sql::MEMORY_TAG_PAIRS)
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![id_set], |r| {
@@ -109,7 +109,7 @@ impl Store {
     pub fn all_memories(&self) -> Result<Vec<Memory>, String> {
         let mut st = self
             .conn
-            .prepare(sql::MEMORY_ALL)
+            .prepare_cached(sql::MEMORY_ALL)
             .map_err(|e| e.to_string())?;
         let mut out: Vec<Memory> = st
             .query_map([], memory_from_row)
@@ -154,7 +154,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let mut st = self
             .conn
-            .prepare(sql::MEMORY_LIST_PAGE)
+            .prepare_cached(sql::MEMORY_LIST_PAGE)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map(
@@ -196,7 +196,7 @@ impl Store {
         let id_set = serde_json::json!(ids).to_string();
         let mut stmt = self
             .conn
-            .prepare(sql::MEMORY_BY_IDS)
+            .prepare_cached(sql::MEMORY_BY_IDS)
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![id_set], memory_from_row)
@@ -303,11 +303,12 @@ impl Store {
     pub fn delete_memories(&self, ids: &[i64]) -> Result<(Vec<String>, Vec<String>), String> {
         let mut deleted = Vec::new();
         let mut missing = Vec::new();
+        let mut del = self
+            .conn
+            .prepare_cached(sql::MEMORY_DELETE)
+            .map_err(|e| e.to_string())?;
         for id in ids {
-            let n = self
-                .conn
-                .execute(sql::MEMORY_DELETE, [id])
-                .map_err(|e| e.to_string())?;
+            let n = del.execute([id]).map_err(|e| e.to_string())?;
             if n > 0 {
                 deleted.push(Self::format_id(*id));
             } else {

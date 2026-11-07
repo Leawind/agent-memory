@@ -74,7 +74,7 @@ impl Store {
         let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
-            .prepare(sql::EMBEDDING_ACTIVE_ALL)
+            .prepare_cached(sql::EMBEDDING_ACTIVE_ALL)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([&model], |r| {
@@ -94,7 +94,7 @@ impl Store {
     pub fn embedding_cached_models(&self) -> Result<Vec<(String, usize)>, String> {
         let mut st = self
             .conn
-            .prepare(sql::EMBEDDING_MODELS_LIST)
+            .prepare_cached(sql::EMBEDDING_MODELS_LIST)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map([], |r| {
@@ -127,7 +127,7 @@ impl Store {
         let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
-            .prepare(sql::EMBEDDING_PENDING_BATCH)
+            .prepare_cached(sql::EMBEDDING_PENDING_BATCH)
             .map_err(|e| e.to_string())?;
         let rows = st
             .query_map(params![model, limit as i64], |r| {
@@ -154,7 +154,7 @@ impl Store {
         let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
-            .prepare(sql::EMBEDDING_PENDING_FOR)
+            .prepare_cached(sql::EMBEDDING_PENDING_FOR)
             .map_err(|e| e.to_string())?;
         let mut rows = st
             .query_map(params![model, id], |r| {
