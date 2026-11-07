@@ -118,4 +118,44 @@ describe('search snapshot pagination', () => {
     complete(response(200, result('beta-cursor')))
     await request
   })
+
+  it('aborts the superseded in-flight request when a newer search starts', async () => {
+    const signals: (AbortSignal | null | undefined)[] = []
+    localStorage.clear()
+    // A request that never settles on its own: only the newer search resolves it
+    let complete!: (value: unknown) => void
+    const hold = new Promise((resolve) => {
+      complete = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (!String(url).includes('query=')) return Promise.resolve(response(200, {}))
+        signals.push(init?.signal)
+        return hold
+      }),
+    )
+    let store!: MemoriesStore
+    wrapper = mount(
+      defineComponent({
+        setup() {
+          store = useMemories()
+          return () => h('div')
+        },
+      }),
+    )
+    await flushPromises()
+    store.query.value = 'alpha'
+    void store.onSearch()
+    await flushPromises()
+    store.query.value = 'beta'
+    void store.onSearch()
+    await flushPromises()
+    expect(signals).toHaveLength(2)
+    expect(signals[0]?.aborted).toBe(true)
+    expect(signals[1]?.aborted).toBe(false)
+    complete(response(200, result()))
+    await flushPromises()
+    expect(store.searchResults.value.map((r) => r.id)).toEqual(['m1'])
+  })
 })

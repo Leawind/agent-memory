@@ -7,7 +7,8 @@ import type { ResolvedMemoryUIConfig } from '../config'
 import { t } from '../i18n'
 
 export interface ApiClient {
-  get: <T = void>(path: string) => Promise<T>
+  /** `signal` aborts an in-flight request the caller has superseded (typing a new search term) */
+  get: <T = void>(path: string, options?: { signal?: AbortSignal }) => Promise<T>
   post: <T = void>(path: string, body?: unknown) => Promise<T>
   put: <T = void>(path: string, body?: unknown) => Promise<T>
   /** DELETE with an optional JSON body (a few routes take arguments, e.g. cache deletion) */
@@ -64,7 +65,8 @@ export function createApiClient(config: ResolvedMemoryUIConfig): ApiClient {
   }
 
   return {
-    get: <T = void>(path: string) => api<T>(path),
+    get: <T = void>(path: string, options?: { signal?: AbortSignal }) =>
+      api<T>(path, options?.signal ? { signal: options.signal } : {}),
     post: <T = void>(path: string, body?: unknown) =>
       api<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) }),
     put: <T = void>(path: string, body?: unknown) => api<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),

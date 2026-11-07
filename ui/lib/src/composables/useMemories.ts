@@ -101,6 +101,10 @@ export function useMemories() {
   // clearing / paging), late stale responses are discarded so a slow old result never
   // overwrites a newer one
   let requestSeq = 0
+  /** The fetch behind the newest seq: starting a new one aborts it — superseded requests stop
+   * occupying a browser connection and the server sees a cancelled call instead of finishing
+   * work whose answer nobody reads (each search costs a round trip to the embedding service) */
+  let inFlight: AbortController | null = null
 
   function reload(): Promise<void> {
     searchCursor = ''
@@ -114,6 +118,9 @@ export function useMemories() {
 
   async function load(preserveSnapshot: boolean): Promise<void> {
     const seq = ++requestSeq
+    inFlight?.abort()
+    inFlight = new AbortController()
+    const signal = inFlight.signal
     loading.value = true
     try {
       const currentIntent = intent()
@@ -123,7 +130,7 @@ export function useMemories() {
       if (isSearchMode(query.value)) {
         let data: MemorySearchResp
         try {
-          data = await client.get<MemorySearchResp>(`/api/memories?${qs}`)
+          data = await client.get<MemorySearchResp>(`/api/memories?${qs}`, { signal })
         } catch (error) {
           if (seq !== requestSeq) return
           if (!cursor || !(error instanceof ApiError) || error.status !== 400 || error.code !== 'stale_search_cursor')
@@ -131,7 +138,7 @@ export function useMemories() {
           searchCursor = ''
           cursorIntent = ''
           page.value = 1
-          data = await client.get<MemorySearchResp>(`/api/memories?${buildQuery()}`)
+          data = await client.get<MemorySearchResp>(`/api/memories?${buildQuery()}`, { signal })
         }
         if (seq !== requestSeq) return
         searchCursor = data.cursor ?? ''
@@ -147,7 +154,7 @@ export function useMemories() {
       } else {
         searchCursor = ''
         cursorIntent = ''
-        const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`)) as MemoryListResp
+        const data = (await client.get<MemoryListResp>(`/api/memories?${qs}`, { signal })) as MemoryListResp
         if (seq !== requestSeq) return
         // After deletion/filtering the current page may fall out of range: fall back to the
         // last page and refetch
@@ -163,6 +170,11 @@ export function useMemories() {
         keywordMatches.value = undefined
         showSearchResults.value = false
       }
+    } catch (error) {
+      // Superseded requests die by abort: their result is unwanted by definition, not an
+      // error to toast
+      if (seq !== requestSeq) return
+      throw error
     } finally {
       if (seq === requestSeq) loading.value = false
     }
