@@ -7,6 +7,21 @@ use std::collections::HashMap;
 
 use super::Store;
 
+/// Memory row → Memory (id/summary/content/created_at/updated_at columns, in that order);
+/// tags are attached separately (see `Store::tags_by_memory`).
+fn memory_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
+    let created: i64 = r.get(3)?;
+    let updated: i64 = r.get(4)?;
+    Ok(Memory {
+        id: Store::format_id(r.get(0)?),
+        summary: r.get(1)?,
+        content: r.get(2)?,
+        tags: Vec::new(),
+        created_at: created as u64,
+        updated_at: updated as u64,
+    })
+}
+
 /// The AND-composed optional filters of a list query: `tag` is one exact tag name matched for
 /// presence in any role (internal use: the memory:// resource face); `id_set` is a JSON array
 /// text of internal memory ids (the resolved tag expression, regex atoms included). `None` = no
@@ -59,49 +74,35 @@ impl Store {
         Ok(id)
     }
 
-    fn memory_by_id(&self, id: i64) -> Result<Option<Memory>, String> {
-        let row = self.conn.query_row(sql::MEMORY_BY_ID, [id], |r| {
-            let created: i64 = r.get(3)?;
-            let updated: i64 = r.get(4)?;
-            Ok(Memory {
-                id: Self::format_id(r.get(0)?),
-                summary: r.get(1)?,
-                content: r.get(2)?,
-                tags: Vec::new(),
-                created_at: created as u64,
-                updated_at: updated as u64,
-            })
-        });
-        let mut m = match row {
-            Ok(m) => m,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(e) => return Err(e.to_string()),
-        };
-        m.tags = self.tags_of(id)?;
-        Ok(Some(m))
-    }
-
-    /// The memory's tags as display names: bare tags as-is, edges composed `source:target`.
-    fn tags_of(&self, id: i64) -> Result<Vec<String>, String> {
-        let mut st = self
+    /// Display tags for a set of memory ids, grouped by internal id — the batch variant of the
+    /// per-memory tag query (one query for the whole set instead of one per row; bare tags
+    /// as-is, edges composed `source:target`). `None` loads every row (the in-memory
+    /// searcher's full pass); `Some(&[])` selects nothing.
+    fn tags_by_memory(&self, ids: Option<&[i64]>) -> Result<HashMap<i64, Vec<String>>, String> {
+        let id_set = ids.map(|ids| serde_json::json!(ids).to_string());
+        let mut stmt = self
             .conn
-            .prepare(sql::MEMORY_TAGS_OF)
+            .prepare(sql::MEMORY_TAG_PAIRS)
             .map_err(|e| e.to_string())?;
-        let rows = st
-            .query_map([id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        let rows = stmt
+            .query_map(params![id_set], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|(source, target)| match target {
-                        Some(v) => crate::model::compose_edge(&source, &v),
-                        None => source,
-                    })
-                    .collect()
-            })
+        let mut by_memory: HashMap<i64, Vec<String>> = HashMap::new();
+        for row in rows {
+            let (mid, source, target) = row.map_err(|e| e.to_string())?;
+            let display = match target {
+                Some(v) => crate::model::compose_edge(&source, &v),
+                None => source,
+            };
+            by_memory.entry(mid).or_default().push(display);
+        }
+        Ok(by_memory)
     }
 
     /// All memories (with tags, id ascending), for the in-memory searcher.
@@ -111,44 +112,11 @@ impl Store {
             .prepare(sql::MEMORY_ALL)
             .map_err(|e| e.to_string())?;
         let mut out: Vec<Memory> = st
-            .query_map([], |r| {
-                let created: i64 = r.get(3)?;
-                let updated: i64 = r.get(4)?;
-                Ok(Memory {
-                    id: Self::format_id(r.get(0)?),
-                    summary: r.get(1)?,
-                    content: r.get(2)?,
-                    tags: Vec::new(),
-                    created_at: created as u64,
-                    updated_at: updated as u64,
-                })
-            })
+            .query_map([], memory_from_row)
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        let mut tag_stmt = self
-            .conn
-            .prepare(sql::MEMORY_TAG_PAIRS)
-            .map_err(|e| e.to_string())?;
-        let pairs = tag_stmt
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        let mut by_memory: HashMap<i64, Vec<String>> = HashMap::new();
-        for (mid, source, target) in pairs {
-            let display = match target {
-                Some(v) => crate::model::compose_edge(&source, &v),
-                None => source,
-            };
-            by_memory.entry(mid).or_default().push(display);
-        }
+        let by_memory = self.tags_by_memory(None)?;
         for m in &mut out {
             let id = Self::parse_id(&m.id).unwrap_or(0);
             if let Some(tags) = by_memory.get(&id) {
@@ -208,19 +176,51 @@ impl Store {
         let mut page: Vec<Memory> = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+        let ids: Vec<i64> = page.iter().filter_map(|m| Self::parse_id(&m.id)).collect();
+        let by_memory = self.tags_by_memory(Some(&ids))?;
         for m in &mut page {
             let id = Self::parse_id(&m.id).unwrap_or(0);
-            m.tags = self.tags_of(id)?;
+            if let Some(tags) = by_memory.get(&id) {
+                m.tags = tags.clone();
+            }
         }
         Ok((total, page))
     }
 
-    /// Fetch full memories by id in bulk, returning (found, missing).
+    /// Fetch full memories by id in bulk, returning (found, missing) — found in request order,
+    /// one query per table regardless of id count.
     pub fn get_memories(&self, ids: &[i64]) -> Result<(Vec<Memory>, Vec<String>), String> {
-        let mut found = Vec::new();
-        let mut missing = Vec::new();
+        if ids.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let id_set = serde_json::json!(ids).to_string();
+        let mut stmt = self
+            .conn
+            .prepare(sql::MEMORY_BY_IDS)
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![id_set], memory_from_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let tags = self.tags_by_memory(Some(
+            &rows
+                .iter()
+                .filter_map(|m| Self::parse_id(&m.id))
+                .collect::<Vec<_>>(),
+        ))?;
+        let mut by_id: HashMap<i64, Memory> = HashMap::with_capacity(rows.len());
+        for mut m in rows {
+            let internal = Self::parse_id(&m.id).unwrap_or(0);
+            if let Some(t) = tags.get(&internal) {
+                m.tags = t.clone();
+            }
+            by_id.insert(internal, m);
+        }
+        let mut found = Vec::with_capacity(ids.len());
+        let mut missing = Vec::with_capacity(ids.len());
         for id in ids {
-            match self.memory_by_id(*id)? {
+            match by_id.get(id).cloned() {
                 Some(m) => found.push(m),
                 None => missing.push(Self::format_id(*id)),
             }
@@ -335,6 +335,28 @@ mod tests {
             .collect();
         let links = st.resolve_tags(&edges, true).unwrap().links;
         st.insert_memory(summary, content, &links, at, at).unwrap()
+    }
+
+    /// get_memories returns found memories in request order, reports missing ids, and keeps
+    /// duplicated request ids as duplicated rows (the batch fetch is one query per table).
+    #[test]
+    fn get_memories_preserves_request_order_and_duplicates() {
+        let path = temp_db("get-batch");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let a = insert_with_tags(&st, "a", "ca", &["rust"], 1);
+        let b = insert_with_tags(&st, "b", "cb", &["project:nmmt"], 2);
+        let (found, missing) = st.get_memories(&[b, 999, a, b]).unwrap();
+        assert_eq!(missing, vec!["m999".to_string()]);
+        assert_eq!(
+            found.iter().map(|m| m.summary.as_str()).collect::<Vec<_>>(),
+            vec!["b", "a", "b"]
+        );
+        assert_eq!(found[0].tags, vec!["project:nmmt".to_string()]);
+        assert_eq!(found[1].tags, vec!["rust".to_string()]);
+        let (found, missing) = st.get_memories(&[]).unwrap();
+        assert!(found.is_empty() && missing.is_empty());
+        cleanup(&path);
     }
 
     #[test]
