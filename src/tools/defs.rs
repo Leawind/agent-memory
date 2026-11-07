@@ -358,22 +358,38 @@ pub fn affects_search(tool: &str) -> bool {
 }
 
 /// Tool name → the capabilities required from the caller (the single registry of permissions,
-/// enforced centrally at the tools::execute entry point). Tools acting across two capability
-/// domains require both (memory_merge updates one memory and deletes another). Only queried for
-/// tools in TOOL_NAMES; the fallback branch exists for type completeness only.
+/// enforced centrally at the tools::execute entry point). Every tool in TOOL_NAMES must have an
+/// explicit entry here — `required_caps_registry_covers_tool_inventory` enforces it, so a new
+/// tool cannot silently fall into the unknown-name Read fallback. Tools acting across two
+/// capability domains require both (memory_merge updates one memory and deletes another).
+static REQUIRED_CAPS: &[(&str, &[Cap])] = &[
+    (GET_STARTED, &[Cap::Read]),
+    (TAG_CREATE, &[Cap::TagManage]),
+    (TAG_LIST, &[Cap::Read]),
+    (PREDICATE_LIST, &[Cap::Read]),
+    (PREDICATE_SET, &[Cap::Read, Cap::PredicateManage]),
+    (PREDICATE_DELETE, &[Cap::Read, Cap::PredicateManage]),
+    (TAG_UPDATE, &[Cap::TagManage]),
+    (TAG_DELETE, &[Cap::TagManage]),
+    (MEMORY_CREATE, &[Cap::Create]),
+    (MEMORY_LIST, &[Cap::Read]),
+    (MEMORY_SEARCH, &[Cap::Read]),
+    (MEMORY_GET, &[Cap::Read]),
+    (MEMORY_UPDATE, &[Cap::Update]),
+    (MEMORY_EDIT, &[Cap::Update]),
+    (MEMORY_MERGE, &[Cap::Update, Cap::Delete]),
+    (MEMORY_DELETE, &[Cap::Delete]),
+    (MEMORY_USE, &[Cap::Read]),
+];
+
 pub fn required_caps(tool: &str) -> &'static [Cap] {
-    match tool {
-        TAG_CREATE | TAG_UPDATE | TAG_DELETE => &[Cap::TagManage],
-        MEMORY_CREATE => &[Cap::Create],
-        TAG_LIST | MEMORY_LIST | MEMORY_SEARCH | MEMORY_GET | MEMORY_USE | GET_STARTED => {
-            &[Cap::Read]
-        }
-        MEMORY_UPDATE | MEMORY_EDIT => &[Cap::Update],
-        MEMORY_MERGE => &[Cap::Update, Cap::Delete],
-        MEMORY_DELETE => &[Cap::Delete],
-        PREDICATE_SET | PREDICATE_DELETE => &[Cap::Read, Cap::PredicateManage],
-        _ => &[Cap::Read],
-    }
+    REQUIRED_CAPS
+        .iter()
+        .find(|(name, _)| *name == tool)
+        .map(|(_, caps)| *caps)
+        // Unknown tool names never reach this (execute validates the name against TOOL_NAMES
+        // first); an explicit Read keeps the signature total without a panic path.
+        .unwrap_or(&[Cap::Read])
 }
 
 #[cfg(test)]
@@ -401,15 +417,21 @@ mod tests {
         );
     }
 
-    /// The capability registry maps one-to-one onto the tool inventory: every tool has an entry (a new tool added without
-    /// registering it fails here), and the capability assignments of a few key tools are sensible.
+    /// The capability registry maps one-to-one onto the tool inventory — both directions:
+    /// a new tool added without registering its requirements fails here instead of silently
+    /// requiring only Read, and a stale registry entry for a removed tool fails too. The
+    /// capability assignments of a few key tools are pinned on top.
     #[test]
-    fn required_cap_covers_every_tool() {
+    fn required_caps_registry_covers_tool_inventory() {
         use crate::auth::Cap;
-        for name in TOOL_NAMES {
-            // Registered as long as it does not panic (the mapping is a static table; coverage is enough)
-            assert!(!required_caps(name).is_empty());
-        }
+        let mut registered: Vec<&str> = REQUIRED_CAPS.iter().map(|(name, _)| *name).collect();
+        registered.sort_unstable();
+        let mut inventory: Vec<&str> = TOOL_NAMES.to_vec();
+        inventory.sort_unstable();
+        assert_eq!(
+            registered, inventory,
+            "every tool needs an explicit required_caps entry (and no stale ones)"
+        );
         assert_eq!(required_caps("memory_get"), &[Cap::Read]);
         assert_eq!(required_caps("memory_create"), &[Cap::Create]);
         assert_eq!(required_caps("memory_update"), &[Cap::Update]);
@@ -418,5 +440,20 @@ mod tests {
         // A merge rewrites one memory and deletes another: it must not be reachable with either
         // capability alone
         assert_eq!(required_caps("memory_merge"), &[Cap::Update, Cap::Delete]);
+    }
+
+    /// Search-invalidating writes are registered deliberately: every non-read-only tool except
+    /// memory_use (access feedback must preserve snapshots) must bump the search revision. A
+    /// new write tool missing from `affects_search` fails here instead of serving stale cursors.
+    #[test]
+    fn search_invalidating_covers_every_write_tool_except_use() {
+        for name in TOOL_NAMES {
+            if !is_read_only(name) && *name != MEMORY_USE {
+                assert!(
+                    affects_search(name),
+                    "{name} changes search inputs but does not bump the search revision (affects_search)"
+                );
+            }
+        }
     }
 }
