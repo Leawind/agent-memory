@@ -925,13 +925,17 @@ fn semantic_pass(
     query: &str,
     vector_k: usize,
 ) -> (Vec<search::Hit>, bool, Option<String>) {
-    let embedded = crate::embed::EMBED_FAILOVER.first_available(configs, |cfg| {
-        crate::embed::embed_texts(
-            cfg,
-            &[crate::embed::embed_query_text(cfg, query)],
-            crate::embed::QUERY_TIMEOUT,
-        )
-    });
+    let embedded = crate::embed::EMBED_FAILOVER.first_available(
+        configs,
+        |cfg| format!("{} {}", cfg.vector_key(), cfg.fingerprint()),
+        |cfg| {
+            crate::embed::embed_texts(
+                cfg,
+                &[crate::embed::embed_query_text(cfg, query)],
+                crate::embed::QUERY_TIMEOUT,
+            )
+        },
+    );
     let (_, cfg, query_vecs) = match embedded {
         Ok(found) => found,
         Err(e) => {
@@ -993,26 +997,30 @@ fn rerank_pass(
         })
         .collect();
     let document_chars: Vec<_> = documents.iter().map(|doc| doc.chars().count()).collect();
-    let scored = crate::rerank::RERANK_FAILOVER.first_available(&configs, |cfg| {
-        let pool = crate::adaptive::budget(&st.path, cfg, limits, &document_chars);
-        let started = std::time::Instant::now();
-        let result = crate::rerank::rerank(
-            cfg,
-            query,
-            &documents[..pool],
-            crate::rerank::RERANK_TIMEOUT,
-        );
-        crate::adaptive::observe(
-            &st.path,
-            cfg,
-            limits,
-            pool,
-            document_chars.iter().take(pool).sum(),
-            started.elapsed(),
-            result.is_ok(),
-        );
-        result
-    });
+    let scored = crate::rerank::RERANK_FAILOVER.first_available(
+        &configs,
+        |cfg| format!("{} {}", cfg.id, cfg.base_url),
+        |cfg| {
+            let pool = crate::adaptive::budget(&st.path, cfg, limits, &document_chars);
+            let started = std::time::Instant::now();
+            let result = crate::rerank::rerank(
+                cfg,
+                query,
+                &documents[..pool],
+                crate::rerank::RERANK_TIMEOUT,
+            );
+            crate::adaptive::observe(
+                &st.path,
+                cfg,
+                limits,
+                pool,
+                document_chars.iter().take(pool).sum(),
+                started.elapsed(),
+                result.is_ok(),
+            );
+            result
+        },
+    );
     match scored {
         Ok((_, cfg, scores)) => {
             let mut previous = None;

@@ -20,7 +20,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 /// Embedding service configuration (an OpenAI-compatible `/embeddings` endpoint: cloud APIs and
 /// local services such as Ollama/LM Studio share the same shape).
@@ -173,48 +174,127 @@ impl EmbedEntry {
 /// with its connect timeout), and hand the first one whose real call succeeds to the caller. The
 /// probe IS the caller's operation: no extra health-check traffic, and "available" means "the
 /// actual embedding just worked", not merely "the port is open".
+///
+/// A failed attempt also opens a per-candidate circuit: for the cooldown window the candidate is
+/// skipped without any traffic, so a burst of searches against a dead service pays the connect
+/// failure once instead of per request (a refused connect can take seconds to surface at the OS
+/// layer even when the port is long gone). After the window the next call probes the candidate
+/// again (half-open), and a success clears the record — a restarted service is picked up by the
+/// first call past the cooldown at the latest.
 pub struct Failover {
     preferred: AtomicUsize,
+    /// Negative cache keyed by the caller's identity string (id + fingerprint, so a reconfigured
+    /// candidate is never skipped for its predecessor's failures). A Vec on purpose: candidate
+    /// lists are a handful of entries, and the struct must be constructible in a `const` context
+    /// (the shared statics below).
+    cooled: Mutex<Vec<(String, Instant)>>,
+    /// Cooldown window; `new()` fixes it at `FAILURE_COOLDOWN`, tests shrink it.
+    cooldown: Duration,
 }
+
+/// How long a failed candidate stays skipped without a probe.
+pub const FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
 
 impl Failover {
     pub const fn new() -> Self {
         Failover {
             preferred: AtomicUsize::new(0),
+            cooled: Mutex::new(Vec::new()),
+            cooldown: FAILURE_COOLDOWN,
         }
     }
 
-    /// Run `op` against the first candidate that succeeds. Every failed attempt is logged (with
-    /// its position) and the next candidate takes over; only when all fail does the last error
-    /// surface. The sticky preferred index is a hint: a list edit merely makes it fall back to
-    /// priority order (it is clamped, and a stale success index costs one failed attempt at most).
+    /// A constructor for tests: the production cooldown is tuned for real-world pacing, too long
+    /// to wait out in a unit test.
+    #[cfg(test)]
+    fn with_cooldown(cooldown: Duration) -> Self {
+        Failover {
+            preferred: AtomicUsize::new(0),
+            cooled: Mutex::new(Vec::new()),
+            cooldown,
+        }
+    }
+
+    /// Run `op` against the first candidate that succeeds. `identity` names the candidate in the
+    /// failure circuit (stable across calls, distinct per configuration — see the struct docs).
+    /// Every failed attempt is logged (with its position) and the next candidate takes over; only
+    /// when all fail does the last error surface. The sticky preferred index is a hint: a list
+    /// edit merely makes it fall back to priority order (it is clamped, and a stale success index
+    /// costs one failed attempt at most).
     pub fn first_available<'a, C, T>(
         &self,
         configs: &'a [C],
+        identity: impl Fn(&C) -> String,
         mut op: impl FnMut(&C) -> Result<T, String>,
     ) -> Result<(usize, &'a C, T), String> {
         if configs.is_empty() {
             return Err("no candidate service is configured".to_string());
         }
+        let cooldown = self.cooldown;
         let start = self
             .preferred
             .load(Ordering::Relaxed)
             .min(configs.len() - 1);
         let mut last_err = String::new();
+        let mut tried = 0;
         for offset in 0..configs.len() {
             let idx = (start + offset) % configs.len();
+            let id = identity(&configs[idx]);
+            // Circuit open for this identity: skip without traffic. The lock is held only around
+            // the record access, never across `op` (the network call).
+            let open = |s: &Self, id: &str| {
+                s.cooled
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .iter()
+                    .any(|(k, at)| k == id && at.elapsed() < cooldown)
+            };
+            if open(self, &id) {
+                continue;
+            }
+            tried += 1;
             match op(&configs[idx]) {
                 Ok(value) => {
+                    let mut cooled = self
+                        .cooled
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    cooled.retain(|(k, _)| k != &id);
+                    drop(cooled);
                     self.preferred.store(idx, Ordering::Relaxed);
                     return Ok((idx, &configs[idx], value));
                 }
                 Err(e) => {
                     eprintln!("embedding candidate #{idx} failed, trying the next: {e}");
+                    let mut cooled = self
+                        .cooled
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    match cooled.iter_mut().find(|(k, _)| k == &id) {
+                        Some((_, at)) => *at = Instant::now(),
+                        None => cooled.push((id, Instant::now())),
+                    }
                     last_err = e;
                 }
             }
         }
+        if tried == 0 {
+            // Every candidate's circuit is open: degrade immediately instead of re-paying the
+            // connect failure the cooldown exists to prevent.
+            return Err("all candidates are in failure cooldown; skipping the probe".to_string());
+        }
         Err(last_err)
+    }
+
+    /// Manual circuit release: the admin connection probe verified a candidate directly (not via
+    /// `first_available`), so any failure record it holds is stale — clear it so the next search
+    /// picks the candidate up immediately instead of waiting out the cooldown. A candidate that
+    /// never failed is a no-op.
+    pub fn clear(&self, identity: &str) {
+        self.cooled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(k, _)| k != identity);
     }
 }
 
@@ -449,7 +529,11 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     if configs.is_empty() {
         return EmbedOutcome::NotConfigured;
     }
-    match EMBED_FAILOVER.first_available(&configs, |cfg| process_pending_for(db_path, batch, cfg)) {
+    match EMBED_FAILOVER.first_available(
+        &configs,
+        |cfg| format!("{} {}", cfg.vector_key(), cfg.fingerprint()),
+        |cfg| process_pending_for(db_path, batch, cfg),
+    ) {
         Ok((_, _, outcome)) => outcome,
         Err(e) => EmbedOutcome::Failed(e),
     }
@@ -588,7 +672,11 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
                 return;
             }
         };
-    match EMBED_FAILOVER.first_available(&configs, |cfg| dedup_scan(db_path, id, cfg)) {
+    match EMBED_FAILOVER.first_available(
+        &configs,
+        |cfg| format!("{} {}", cfg.vector_key(), cfg.fingerprint()),
+        |cfg| dedup_scan(db_path, id, cfg),
+    ) {
         Ok((_, _, hits)) if !hits.is_empty() => {
             result["similar_to"] = Value::Array(hits);
         }
@@ -918,19 +1006,22 @@ mod tests {
                 Ok(c.model.clone())
             }
         };
+        let identity = |c: &EmbedConfig| c.id.clone();
 
         // First call: a (priority head) answers
-        let (idx, _, value) = failover.first_available(&configs, probe).unwrap();
+        let (idx, _, value) = failover
+            .first_available(&configs, identity, probe)
+            .unwrap();
         assert_eq!((idx, value.as_str()), (0, "a"));
 
         // Head goes down: b takes over, and becomes the sticky choice
         a_down.set(true);
-        let (idx, _, _) = failover.first_available(&configs, probe).unwrap();
+        let (idx, _, _) = failover.first_available(&configs, identity, probe).unwrap();
         assert_eq!(idx, 1);
 
         // Next call starts at the sticky b (the still-dead a is never probed again)
         calls.borrow_mut().clear();
-        let (idx, _, _) = failover.first_available(&configs, probe).unwrap();
+        let (idx, _, _) = failover.first_available(&configs, identity, probe).unwrap();
         assert_eq!(idx, 1);
         assert!(
             !calls.borrow().iter().any(|m| m == "a"),
@@ -940,16 +1031,115 @@ mod tests {
 
         // All candidates failing surfaces the last error
         let err = failover
-            .first_available(&configs, |_| Err::<String, _>("down".into()))
+            .first_available(&configs, identity, |_| Err::<String, _>("down".into()))
             .unwrap_err();
         assert_eq!(err, "down");
 
         // An edited (shrunken) list: the stale sticky index is clamped, no panic
         let small = [cfg("x", None, None)];
         let (idx, _, _) = failover
-            .first_available(&small, |c| Ok(c.model.clone()))
+            .first_available(&small, identity, |c| Ok(c.model.clone()))
             .unwrap();
         assert_eq!(idx, 0);
+    }
+
+    /// The failure circuit: candidates that just failed are skipped without traffic for the
+    /// cooldown window (so a search burst against a dead service pays the connect failure once),
+    /// half-open after the window, and a success clears the record.
+    #[test]
+    fn failure_cooldown_skips_dead_candidates_then_half_opens() {
+        // The identity is the production shape: id + fingerprint, so a reconfigured candidate is
+        // never skipped for its predecessor's failure
+        let identity =
+            |c: &EmbedConfig| format!("{} {}", c.vector_key(), c.fingerprint());
+        let failover = Failover::with_cooldown(Duration::from_millis(80));
+        let configs = [cfg("a", None, None), cfg("b", None, None)];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let b_down = std::cell::Cell::new(true);
+        let probe = |c: &EmbedConfig| {
+            calls.borrow_mut().push(c.model.clone());
+            if c.model == "a" || b_down.get() {
+                Err(format!("{} is down", c.model))
+            } else {
+                Ok(c.model.clone())
+            }
+        };
+
+        // First call: every attempt fails — both circuits arm
+        let err = failover
+            .first_available(&configs, identity, probe)
+            .unwrap_err();
+        assert_eq!(err, "b is down", "the last error surfaces");
+        assert_eq!(calls.borrow().as_slice(), ["a", "b"]);
+
+        // Within the cooldown nothing is probed: degrade immediately with the circuit message
+        b_down.set(false);
+        let err = failover
+            .first_available(&configs, identity, probe)
+            .unwrap_err();
+        assert!(err.contains("cooldown"), "circuit message: {err}");
+        assert_eq!(
+            calls.borrow().as_slice(),
+            ["a", "b"],
+            "no traffic while every circuit is open"
+        );
+
+        // Half-open: past the window the candidates are probed again, and b's success clears
+        // its record while a's failure re-arms its circuit
+        std::thread::sleep(Duration::from_millis(100));
+        calls.borrow_mut().clear();
+        let (idx, _, _) = failover.first_available(&configs, identity, probe).unwrap();
+        assert_eq!(idx, 1, "b recovered and answers");
+        assert_eq!(calls.borrow().as_slice(), ["a", "b"]);
+
+        // b's circuit is clear and it is sticky: an immediate call probes b only, the still
+        // cooled-down a stays untouched
+        calls.borrow_mut().clear();
+        let (idx, _, _) = failover.first_available(&configs, identity, probe).unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(calls.borrow().as_slice(), ["b"]);
+
+        // Manual release (what the admin connection probe does): a has recovered (the user
+        // restarted the service) but its cooldown is still running, and sticky b just went
+        // down — without the release the walk skips the recovered candidate
+        let a_down = std::cell::Cell::new(false);
+        let probe = |c: &EmbedConfig| {
+            calls.borrow_mut().push(c.model.clone());
+            if (c.model == "a" && a_down.get()) || (c.model == "b" && b_down.get()) {
+                Err(format!("{} is down", c.model))
+            } else {
+                Ok(c.model.clone())
+            }
+        };
+        b_down.set(true);
+        calls.borrow_mut().clear();
+        let err = failover
+            .first_available(&configs, identity, probe)
+            .unwrap_err();
+        assert_eq!(err, "b is down");
+        assert_eq!(
+            calls.borrow().as_slice(),
+            ["b"],
+            "recovered-but-cooled a stays skipped: {:?}",
+            calls.borrow()
+        );
+        // The probe's clear: the next call reaches a immediately. b, having failed in the
+        // previous call, is now the one behind a circuit and is skipped — the walk starts at
+        // the cleared, recovered candidate and answers.
+        failover.clear(&format!(
+            "{} {}",
+            configs[0].vector_key(),
+            configs[0].fingerprint()
+        ));
+        calls.borrow_mut().clear();
+        let (idx, _, _) = failover.first_available(&configs, identity, probe).unwrap();
+        assert_eq!(idx, 0, "cleared a answers right after the probe");
+        assert_eq!(
+            calls.borrow().as_slice(),
+            ["a"],
+            "b is now the cooled one; a is probed directly: {:?}",
+            calls.borrow()
+        );
     }
 
     /// Paraphrased recall: the keyword pass only hits m1, while the vector pass also brings in the semantically close m2,

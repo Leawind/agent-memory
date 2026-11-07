@@ -517,14 +517,23 @@ pub fn handle(
                         )],
                         crate::embed::BATCH_TIMEOUT,
                     ) {
-                        Ok(vectors) => results.push(json!({
-                            "index": index,
-                            "key": cfg.vector_key(),
-                            "model": cfg.model,
-                            "ok": true,
-                            "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
-                            "elapsed_ms": start.elapsed().as_millis() as u64,
-                        })),
+                        Ok(vectors) => {
+                            // The probe just proved the candidate alive: release any failure
+                            // circuit the search-time failover still holds for it
+                            crate::embed::EMBED_FAILOVER.clear(&format!(
+                                "{} {}",
+                                cfg.vector_key(),
+                                cfg.fingerprint()
+                            ));
+                            results.push(json!({
+                                "index": index,
+                                "key": cfg.vector_key(),
+                                "model": cfg.model,
+                                "ok": true,
+                                "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
+                                "elapsed_ms": start.elapsed().as_millis() as u64,
+                            }));
+                        }
                         Err(e) => {
                             all_ok = false;
                             results.push(json!({
@@ -586,13 +595,19 @@ pub fn handle(
                         &["a relevant document 一篇相关文档".to_string()],
                         crate::rerank::RERANK_TIMEOUT,
                     ) {
-                        Ok(scores) => results.push(json!({
-                            "index": index,
-                            "model": cfg.model,
-                            "ok": true,
-                            "scored": scores.len(),
-                            "elapsed_ms": start.elapsed().as_millis() as u64,
-                        })),
+                        Ok(scores) => {
+                            // Same release as the embedding probe: a verified-alive candidate
+                            // must not stay behind its search-time failure circuit
+                            crate::rerank::RERANK_FAILOVER
+                                .clear(&format!("{} {}", cfg.id, cfg.base_url));
+                            results.push(json!({
+                                "index": index,
+                                "model": cfg.model,
+                                "ok": true,
+                                "scored": scores.len(),
+                                "elapsed_ms": start.elapsed().as_millis() as u64,
+                            }));
+                        }
                         Err(e) => {
                             all_ok = false;
                             results.push(json!({
