@@ -50,6 +50,12 @@ impl EmbedConfig {
         self.id.clone()
     }
 
+    /// Failure-circuit identity (see `Failover::identity`): shared format with the reranker
+    /// candidates, so both kinds key their cooldowns the same way.
+    pub fn circuit_identity(&self) -> String {
+        Failover::identity(&self.id, &self.base_url, &self.model, &self.api_key)
+    }
+
     /// Cache validity is separate from identity. JSON avoids delimiter collisions.
     pub fn fingerprint(&self) -> String {
         json!([
@@ -183,10 +189,10 @@ impl EmbedEntry {
 /// first call past the cooldown at the latest.
 pub struct Failover {
     preferred: AtomicUsize,
-    /// Negative cache keyed by the caller's identity string (id + fingerprint, so a reconfigured
-    /// candidate is never skipped for its predecessor's failures). A Vec on purpose: candidate
-    /// lists are a handful of entries, and the struct must be constructible in a `const` context
-    /// (the shared statics below).
+    /// Negative cache keyed by the candidate's circuit identity (`Failover::identity` — id,
+    /// endpoint, model and credential, so a reconfigured candidate is never skipped for its
+    /// predecessor's failures). A Vec on purpose: candidate lists are a handful of entries,
+    /// and the struct must be constructible in a `const` context (the shared statics below).
     cooled: Mutex<Vec<(String, Instant)>>,
     /// Cooldown window; `new()` fixes it at `FAILURE_COOLDOWN`, tests shrink it.
     cooldown: Duration,
@@ -196,6 +202,15 @@ pub struct Failover {
 pub const FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
 
 impl Failover {
+    /// The negative-cache key shared by both model kinds: everything that decides whether a
+    /// call to this candidate succeeds (id, endpoint, model, credential). Deliberately not
+    /// the vector-cache fingerprint — fixing an invalid api_key must release the candidate
+    /// from its cooldown instead of waiting it out, and the instruction prefixes don't
+    /// affect reachability at all.
+    pub fn identity(id: &str, base_url: &str, model: &str, api_key: &Option<String>) -> String {
+        json!([id, base_url.trim_end_matches('/'), model, api_key]).to_string()
+    }
+
     pub const fn new() -> Self {
         Failover {
             preferred: AtomicUsize::new(0),
@@ -525,7 +540,7 @@ pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
     }
     match EMBED_FAILOVER.first_available(
         &configs,
-        |cfg| format!("{} {}", cfg.vector_key(), cfg.fingerprint()),
+        |cfg| cfg.circuit_identity(),
         |cfg| process_pending_for(db_path, batch, cfg),
     ) {
         Ok((_, _, outcome)) => outcome,
@@ -668,7 +683,7 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
         };
     match EMBED_FAILOVER.first_available(
         &configs,
-        |cfg| format!("{} {}", cfg.vector_key(), cfg.fingerprint()),
+        |cfg| cfg.circuit_identity(),
         |cfg| dedup_scan(db_path, id, cfg),
     ) {
         Ok((_, _, hits)) if !hits.is_empty() => {
@@ -734,6 +749,37 @@ fn hybrid_hits(
 mod tests {
     use super::*;
     use crate::model::Memory;
+
+    /// The failure-circuit identity covers the credential and the model: fixing an invalid
+    /// api_key or swapping the model releases the candidate from its predecessor's cooldown,
+    /// while a trailing slash on the endpoint does not split one candidate into two identities.
+    #[test]
+    fn circuit_identity_tracks_credential_and_model_not_endpoint_slash() {
+        let cfg = EmbedConfig {
+            id: "local".into(),
+            base_url: "http://x/v1/".into(),
+            model: "bge".into(),
+            api_key: Some("bad".into()),
+            query_prefix: None,
+            passage_prefix: None,
+            min_similarity: 0.0,
+        };
+        let same = EmbedConfig {
+            base_url: "http://x/v1".into(),
+            ..cfg.clone()
+        };
+        assert_eq!(cfg.circuit_identity(), same.circuit_identity());
+        let fixed_key = EmbedConfig {
+            api_key: Some("good".into()),
+            ..cfg.clone()
+        };
+        assert_ne!(cfg.circuit_identity(), fixed_key.circuit_identity());
+        let other_model = EmbedConfig {
+            model: "e5".into(),
+            ..cfg
+        };
+        assert_ne!(same.circuit_identity(), other_model.circuit_identity());
+    }
 
     fn mem(id: i64, summary: &str, content: &str) -> Memory {
         Memory {

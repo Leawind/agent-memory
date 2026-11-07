@@ -26,6 +26,13 @@ impl RerankConfig {
     fn endpoint(&self) -> String {
         format!("{}/rerank", self.base_url.trim_end_matches('/'))
     }
+
+    /// Failure-circuit identity (see `embed::Failover::identity`): shared format with the
+    /// embedding candidates — id, endpoint, model and credential — so a reconfigured
+    /// candidate (a different model or a fixed key) never inherits its predecessor's cooldown.
+    pub fn circuit_identity(&self) -> String {
+        crate::embed::Failover::identity(&self.id, &self.base_url, &self.model, &self.api_key)
+    }
 }
 
 /// One configured reranker candidate (an element of the ordered `rerank_models` settings list),
@@ -197,6 +204,36 @@ pub fn parse_response(body: &Value, docs: usize) -> Result<Vec<(usize, f64)>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Same identity discipline as the embedding side: a reconfigured candidate (new model or
+    /// fixed key) is not its predecessor's failure record; the endpoint's trailing slash is.
+    #[test]
+    fn circuit_identity_tracks_model_and_credential() {
+        let cfg = RerankConfig {
+            id: "local".into(),
+            base_url: "http://x/v1".into(),
+            model: "bge".into(),
+            api_key: Some("bad".into()),
+        };
+        let fixed_key = RerankConfig {
+            api_key: Some("good".into()),
+            ..cfg.clone()
+        };
+        let swapped = RerankConfig {
+            model: "v2".into(),
+            ..cfg.clone()
+        };
+        assert_ne!(cfg.circuit_identity(), fixed_key.circuit_identity());
+        assert_ne!(cfg.circuit_identity(), swapped.circuit_identity());
+        assert_eq!(
+            cfg.circuit_identity(),
+            RerankConfig {
+                base_url: "http://x/v1/".into(),
+                ..cfg
+            }
+            .circuit_identity()
+        );
+    }
 
     #[test]
     fn unnamed_candidate_is_usable_and_round_trips() {

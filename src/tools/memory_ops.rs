@@ -927,7 +927,7 @@ fn semantic_pass(
 ) -> (Vec<search::Hit>, bool, Option<String>) {
     let embedded = crate::embed::EMBED_FAILOVER.first_available(
         configs,
-        |cfg| format!("{} {}", cfg.vector_key(), cfg.fingerprint()),
+        |cfg| cfg.circuit_identity(),
         |cfg| {
             crate::embed::embed_texts(
                 cfg,
@@ -999,7 +999,7 @@ fn rerank_pass(
     let document_chars: Vec<_> = documents.iter().map(|doc| doc.chars().count()).collect();
     let scored = crate::rerank::RERANK_FAILOVER.first_available(
         &configs,
-        |cfg| format!("{} {}", cfg.id, cfg.base_url),
+        |cfg| cfg.circuit_identity(),
         |cfg| {
             let pool = crate::adaptive::budget(&st.path, cfg, limits, &document_chars);
             let started = std::time::Instant::now();

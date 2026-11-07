@@ -475,11 +475,7 @@ pub fn handle(
                                         "dim": vectors.first().map(|v| v.len()).unwrap_or(0),
                                     }),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    clear_identity: Some(format!(
-                                        "{} {}",
-                                        cfg.vector_key(),
-                                        cfg.fingerprint()
-                                    )),
+                                    clear_identity: Some(cfg.circuit_identity()),
                                 },
                                 Err(e) => ProbeRow {
                                     ok: false,
@@ -543,7 +539,7 @@ pub fn handle(
                                         "scored": scores.len(),
                                     }),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    clear_identity: Some(format!("{} {}", cfg.id, cfg.base_url)),
+                                    clear_identity: Some(cfg.circuit_identity()),
                                 },
                                 Err(e) => ProbeRow {
                                     ok: false,
