@@ -63,16 +63,14 @@ pub fn handle(
     // carries them so a short-circuit returns the whole request as that error kind.
     let result: Result<(u16, Value), ToolError> = (|| -> Result<(u16, Value), ToolError> {
         match (method, segments.as_slice()) {
-            ("GET", ["predicates"]) => store::with_db_in(db_path, tx_mode, |st| {
-                tools::execute(st, ctx, tools::PREDICATE_LIST, &json!({})).map(|v| (200, v))
-            }),
-            ("PUT", ["predicates"]) => tool_write(
+            ("GET", ["predicates"]) => tool_call(db_path, ctx, tools::PREDICATE_LIST, &json!({})),
+            ("PUT", ["predicates"]) => tool_call(
                 db_path,
                 ctx,
                 tools::PREDICATE_SET,
                 &Value::Object(args_from_body()?),
             ),
-            ("DELETE", ["predicates"]) => tool_write(
+            ("DELETE", ["predicates"]) => tool_call(
                 db_path,
                 ctx,
                 tools::PREDICATE_DELETE,
@@ -622,13 +620,11 @@ pub fn handle(
                 if query_get(query, "all").is_some_and(|v| v == "true") {
                     args.insert("all".into(), json!(true));
                 }
-                store::with_db_in(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, TAG_LIST, &Value::Object(args)).map(|v| (200, v))
-                })
+                tool_call(db_path, ctx, TAG_LIST, &Value::Object(args))
             }
             ("POST", ["tags"]) => {
                 let args = args_from_body()?;
-                tool_write(db_path, ctx, TAG_CREATE, &Value::Object(args))
+                tool_call(db_path, ctx, TAG_CREATE, &Value::Object(args))
             }
             ("PUT", ["tags", tag_name]) => {
                 let args = args_from_body()?;
@@ -639,7 +635,7 @@ pub fn handle(
                         full.insert(k, v);
                     }
                 }
-                tool_write(db_path, ctx, TAG_UPDATE, &Value::Object(full))
+                tool_call(db_path, ctx, TAG_UPDATE, &Value::Object(full))
             }
             ("DELETE", ["tags", tag_name]) => {
                 let mode = query_get(query, "mode").unwrap_or_else(|| "detach".into());
@@ -649,26 +645,24 @@ pub fn handle(
                 if query_get(query, "dry_run").is_some_and(|v| v == "true") {
                     args["dry_run"] = json!(true);
                 }
-                tool_write(db_path, ctx, TAG_DELETE, &args)
+                tool_call(db_path, ctx, TAG_DELETE, &args)
             }
             ("GET", ["memories"]) => {
                 let args = list_or_search_args(query);
-                store::with_db_in(db_path, tx_mode, |st| {
-                    let name = if query_get(query, "query").is_some() {
-                        MEMORY_SEARCH
-                    } else {
-                        MEMORY_LIST
-                    };
-                    tools::execute(st, ctx, name, &args).map(|v| (200, v))
-                })
+                let name = if query_get(query, "query").is_some() {
+                    MEMORY_SEARCH
+                } else {
+                    MEMORY_LIST
+                };
+                tool_call(db_path, ctx, name, &args)
             }
             ("POST", ["memories"]) => {
                 let args = args_from_body()?;
-                tool_write(db_path, ctx, MEMORY_CREATE, &Value::Object(args))
+                tool_call(db_path, ctx, MEMORY_CREATE, &Value::Object(args))
             }
             ("POST", ["memories", "merge"]) => {
                 let args = args_from_body()?;
-                tool_write(db_path, ctx, MEMORY_MERGE, &Value::Object(args))
+                tool_call(db_path, ctx, MEMORY_MERGE, &Value::Object(args))
             }
             ("GET", ["memories", mem_id, "usage"]) => {
                 ctx.require(Cap::Read)?;
@@ -688,13 +682,12 @@ pub fn handle(
             ("POST", ["memories", mem_id, "use"]) => {
                 let mut args = args_from_body()?;
                 args.insert("id".into(), json!(mem_id));
-                tool_write(db_path, ctx, MEMORY_USE, &Value::Object(args))
+                tool_call(db_path, ctx, MEMORY_USE, &Value::Object(args))
             }
             ("GET", ["memories", mem_id]) => {
-                let v = store::with_db_in(db_path, tx_mode, |st| {
-                    tools::execute(st, ctx, MEMORY_GET, &json!({ "ids": [mem_id] }))
-                })?;
-                tools::after_read(db_path, ctx, MEMORY_GET, &v);
+                // The read-reinforcement hook (after_read) is built into execute_with_db — the
+                // REST face no longer re-members to call it
+                let v = tool_call(db_path, ctx, MEMORY_GET, &json!({ "ids": [mem_id] }))?.1;
                 let not_found = v["missing"].as_array().is_some_and(|m| !m.is_empty())
                     || v["invalid_ids"].as_array().is_some_and(|m| !m.is_empty());
                 if not_found {
@@ -713,10 +706,10 @@ pub fn handle(
                 for (k, v) in args {
                     full.insert(k, v);
                 }
-                tool_write(db_path, ctx, MEMORY_UPDATE, &Value::Object(full))
+                tool_call(db_path, ctx, MEMORY_UPDATE, &Value::Object(full))
             }
             ("DELETE", ["memories", mem_id]) => {
-                let out = tool_write(db_path, ctx, MEMORY_DELETE, &json!({ "ids": [mem_id] }))?;
+                let out = tool_call(db_path, ctx, MEMORY_DELETE, &json!({ "ids": [mem_id] }))?;
                 // Nothing was deleted: the REST face surfaces that as 404 (the tool result reports
                 // it in `missing`; the notification hook already no-opped on the empty deletion)
                 if out.1["deleted"].as_array().is_some_and(|d| d.is_empty()) {
@@ -762,21 +755,19 @@ pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
     })
 }
 
-/// One write-tool call on the REST face, carrying the same post-commit hook sequence as the MCP
-/// path (`execute_with_db` — literally: the shared `tools::after_commit`). Routes only assemble
-/// the arguments and, where the REST surface demands it, adjust the returned status.
-fn tool_write(
+/// One tool call on the REST face. Delegates to `execute_with_db`, so the full pipeline —
+/// pre-capture, the transaction whose mode follows the tool contract, the post-commit hooks
+/// and read reinforcement — lives in exactly one place for both faces. (A face that
+/// re-implements the sequence silently diverges: the REST face once skipped the dedup hint
+/// this way — see tools::after_commit.) Routes only assemble the arguments and, where the
+/// REST surface demands it, adjust the returned status.
+fn tool_call(
     db_path: &Path,
     ctx: &IdentityCtx,
     tool: &str,
     args: &Value,
 ) -> Result<(u16, Value), ToolError> {
-    let pre = crate::notify::capture(db_path, tool, args);
-    let mut out = store::with_db_in(db_path, TxMode::Write, |st| {
-        tools::execute(st, ctx, tool, args)
-    })?;
-    tools::after_commit(db_path, tool, args, &mut out, pre);
-    Ok((200, out))
+    tools::execute_with_db(db_path, ctx, tool, args).map(|v| (200, v))
 }
 
 /// Canonical JSON of a validated candidate list — the form that gets stored and later echoed
