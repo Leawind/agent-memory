@@ -12,7 +12,7 @@
 //! - `memory_list`   → header `total: N | offset: N`, rows `<id> [<tags>] <updated> <summary>`
 //! - `memory_search` → header `total_matches: N | offset: N | returned: N | mode: <mode>`,
 //!   optional flag lines (`keyword_matches` / `semantic_fallback` / `semantic` / `reranked_by` /
-//!   `hint` / `note`, only when they apply), rows `<id> [<tags>] <updated> <score> <summary>`
+//!   `relaxed` / `hint` / `note`, only when they apply), rows `<id> [<tags>] <updated> <score> <summary>`
 //!   plus an indented `  > <snippet>` continuation line
 
 use serde_json::Value;
@@ -116,6 +116,9 @@ fn render_memory_search(v: &Value) -> Option<String> {
         out.push_str("reranked_by: ");
         out.push_str(model);
         out.push('\n');
+    }
+    if v.get("relaxed").and_then(Value::as_bool).unwrap_or(false) {
+        out.push_str("relaxed: true\n");
     }
     for key in ["hint", "note"] {
         if let Some(text) = v.get(key).and_then(Value::as_str) {
@@ -301,6 +304,7 @@ mod tests {
         let v = json!({
             "total_matches": 1, "offset": 0, "returned": 1, "mode": "hybrid",
             "semantic_fallback": true,
+            "relaxed": true,
             "hint": "call memory_get on the ids worth reading",
             "results": [
                 {"id": "m7", "tags": ["doc"], "summary": "summ", "score": 0.031,
@@ -314,6 +318,7 @@ mod tests {
             concat!(
                 "total_matches: 1 | offset: 0 | returned: 1 | mode: hybrid\n",
                 "semantic_fallback: true\n",
+                "relaxed: true\n",
                 "hint: call memory_get on the ids worth reading\n",
                 "m7 [doc] 2026-10-05 18:23 0.031 summ\n",
                 "  > …summ…\n",

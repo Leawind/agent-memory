@@ -1190,7 +1190,7 @@ mod tests {
             mem(1, "token hashing", "sha256 of tokens"),
             mem(2, "密码保存", "哈希存储"),
         ];
-        let keyword_hits = search::literal_channels(&memories, "hashing");
+        let keyword_hits = search::literal_matches(&memories, "hashing").channels;
         assert_eq!(keyword_hits[0].len(), 1);
 
         let mut table = HashMap::new();
@@ -1212,7 +1212,7 @@ mod tests {
         let tilted: Vec<f32> = vec![0.9, 0.1, 0.0, 0.0];
         let mut table2 = table.clone();
         table2.insert(2i64, tilted);
-        let keyword_hits = search::literal_channels(&memories, "hashing");
+        let keyword_hits = search::literal_matches(&memories, "hashing").channels;
         let hits = hybrid_hits(
             &memories,
             keyword_hits,

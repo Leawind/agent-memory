@@ -1,8 +1,9 @@
 //! Literal recall and rank fusion. Content and tags rank independently; all
 //! query terms must be covered across their union before a literal candidate
-//! qualifies. Term content evidence is weighted by inverse document frequency,
-//! so terms matching much of the store carry little ranking signal. Semantic
-//! recall may independently introduce paraphrased candidates.
+//! qualifies, relaxing to partial term matches when nothing covers them all.
+//! Term content evidence is weighted by inverse document frequency, so terms
+//! matching much of the store carry little ranking signal. Semantic recall may
+//! independently introduce paraphrased candidates.
 
 use crate::model::Memory;
 use std::collections::HashMap;
@@ -162,14 +163,61 @@ fn term_idf(memories: &[Memory], terms: &[String]) -> Vec<f64> {
         .collect()
 }
 
-pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
+/// The literal recall result: the two ranking channels plus whether coverage was relaxed.
+pub struct LiteralMatches {
+    pub channels: [Vec<Hit>; 2],
+    /// No memory covered every query term: the channels rank partial term matches instead.
+    pub relaxed: bool,
+}
+
+/// Strict AND coverage first; when nothing covers every term, recall relaxes to partial term
+/// matches ranked by completeness (standard minimum-should-match behavior), so a zero-result
+/// literal recall stops being the caller's problem to fix by re-querying with fewer terms.
+pub fn literal_matches(memories: &[Memory], query: &str) -> LiteralMatches {
     let terms = parse_query(query);
     if terms.is_empty() {
-        return [Vec::new(), Vec::new()];
+        return LiteralMatches {
+            channels: [Vec::new(), Vec::new()],
+            relaxed: false,
+        };
     }
     let idf = term_idf(memories, &terms);
-    let mut content_channel = Vec::new();
-    let mut tag_channel = Vec::new();
+    let strict = coverage_channels(memories, &terms, &idf, true);
+    if strict[0].is_empty() && strict[1].is_empty() {
+        let relaxed = coverage_channels(memories, &terms, &idf, false);
+        // The flag promises partial matches: an empty relaxed pass is still a plain miss
+        let found = !relaxed[0].is_empty() || !relaxed[1].is_empty();
+        return LiteralMatches {
+            channels: relaxed,
+            relaxed: found,
+        };
+    }
+    LiteralMatches {
+        channels: strict,
+        relaxed: false,
+    }
+}
+
+/// One channel entry before ranking: relaxed-mode ranking needs the memory's completeness
+/// count as the primary sort key, which the Hit itself does not carry.
+struct Candidate {
+    idx: usize,
+    score: i64,
+    matched: usize,
+    snippet: String,
+}
+
+/// Score every memory against every term. With `require_all` a single uncovered term
+/// disqualifies the memory (AND semantics); without it, any covered term qualifies and the
+/// completeness count ranks above channel score.
+fn coverage_channels(
+    memories: &[Memory],
+    terms: &[String],
+    idf: &[f64],
+    require_all: bool,
+) -> [Vec<Hit>; 2] {
+    let mut content_entries = Vec::new();
+    let mut tag_entries = Vec::new();
     for (idx, m) in memories.iter().enumerate() {
         let lc_summary = m.summary.to_lowercase();
         let lc_tags: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
@@ -178,7 +226,7 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
 
         let mut content_score = 0f64;
         let mut tag_score = 0i64;
-        let mut all_matched = true;
+        let mut matched = 0usize;
         // Content hit positions per term (original byte offsets), for snippet window selection
         let mut content_hits: Vec<Vec<usize>> = Vec::new();
 
@@ -218,18 +266,25 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
                 term_score += W_PHRASE;
             }
             if term_score == 0 && tag_term == 0 {
-                all_matched = false;
-                break;
+                if require_all {
+                    // AND semantics: one uncovered term disqualifies the memory outright
+                    break;
+                }
+                continue;
             }
             // Inverse document frequency weighs a term's whole content evidence: extra hits
             // on a term that distinguishes documents count for more than extra hits on a
             // term the whole store shares.
+            matched += 1;
             content_score += term_score as f64 * idf[term_index];
             tag_score += tag_term;
             content_hits.push(positions);
         }
 
-        if !all_matched {
+        if require_all && matched < terms.len() {
+            continue;
+        }
+        if !require_all && matched == 0 {
             continue;
         }
         let anchor = choose_snippet_anchor(&content_hits);
@@ -237,29 +292,45 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
         if content_score > 0.0 {
             // f64 evidence encoded as an order-preserving integer (the semantic channel's
             // discipline): fusion reads only order and exact ties, never magnitude.
-            content_channel.push(Hit {
+            content_entries.push(Candidate {
                 idx,
                 score: content_score.to_bits() as i64,
+                matched,
                 snippet: snippet.clone(),
             });
         }
         if tag_score > 0 {
-            tag_channel.push(Hit {
+            tag_entries.push(Candidate {
                 idx,
                 score: tag_score,
+                matched,
                 snippet,
             });
         }
     }
+    [
+        rank_candidates(memories, content_entries),
+        rank_candidates(memories, tag_entries),
+    ]
+}
 
-    for channel in [&mut content_channel, &mut tag_channel] {
-        channel.sort_by(|a, b| {
-            b.score
-                .cmp(&a.score)
-                .then_with(|| tie_break(memories, a.idx, b.idx))
-        });
-    }
-    [content_channel, tag_channel]
+/// Completeness first (strict mode has every candidate at full coverage, so this is inert
+/// there), then channel score, then the standard recency/id tie-break.
+fn rank_candidates(memories: &[Memory], mut entries: Vec<Candidate>) -> Vec<Hit> {
+    entries.sort_by(|a, b| {
+        b.matched
+            .cmp(&a.matched)
+            .then_with(|| b.score.cmp(&a.score))
+            .then_with(|| tie_break(memories, a.idx, b.idx))
+    });
+    entries
+        .into_iter()
+        .map(|c| Hit {
+            idx: c.idx,
+            score: c.score,
+            snippet: c.snippet,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -312,7 +383,7 @@ fn tie_break(memories: &[Memory], a: usize, b: usize) -> std::cmp::Ordering {
 
 #[cfg(test)]
 fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
-    fuse_literal(memories, &literal_channels(memories, query))
+    fuse_literal(memories, &literal_matches(memories, query).channels)
 }
 
 /// Pick the snippet window among candidate anchors: prefer the window covering the most distinct terms, ties broken by the earliest.
@@ -497,6 +568,58 @@ mod tests {
         }
     }
 
+    /// Zero coverage relaxes to partial term matches ranked by completeness.
+    #[test]
+    fn zero_hit_query_relaxes_to_partial_matches() {
+        let memories = [
+            mem("m1", &[], "s", "alpha beta", 1),
+            mem("m2", &[], "s", "alpha", 2),
+            mem("m3", &[], "s", "gamma", 3),
+        ];
+        let matches = literal_matches(&memories, "alpha beta delta");
+        assert!(matches.relaxed, "no memory covers all three terms");
+        let hits = fuse_literal(&memories, &matches.channels);
+        assert_eq!(hits.len(), 2, "m3 matched nothing and stays out");
+        assert_eq!(hits[0].idx, 0, "two-term coverage outranks one-term");
+        assert_eq!(hits[1].idx, 1);
+    }
+
+    /// A query where some memory covers every term keeps strict semantics: partial matches stay out.
+    #[test]
+    fn strict_coverage_survives_without_relaxation() {
+        let memories = [
+            mem("m1", &[], "s", "alpha beta", 1),
+            mem("m2", &[], "s", "alpha", 2),
+        ];
+        let matches = literal_matches(&memories, "alpha beta");
+        assert!(!matches.relaxed);
+        let hits = fuse_literal(&memories, &matches.channels);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].idx, 0);
+    }
+
+    /// Cross-field coverage (one term via tags, another via content) is full coverage: no relaxation.
+    #[test]
+    fn cross_field_coverage_counts_as_full_coverage() {
+        let memories = [mem("m1", &["alpha"], "s", "gamma body", 1)];
+        let matches = literal_matches(&memories, "alpha gamma");
+        assert!(!matches.relaxed);
+        assert_eq!(matches.channels[0].len(), 1);
+        assert_eq!(matches.channels[1].len(), 1);
+    }
+
+    /// Relaxation also reaches the tag channel: a memory matching only through tags joins the
+    /// partial-match ranking.
+    #[test]
+    fn relaxed_tag_only_matches_enter_the_tag_channel() {
+        let memories = [mem("m1", &["alpha"], "s", "unrelated body", 1)];
+        let matches = literal_matches(&memories, "alpha missing");
+        assert!(matches.relaxed);
+        let hits = fuse_literal(&memories, &matches.channels);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].idx, 0);
+    }
+
     #[test]
     fn and_semantics_and_ranking() {
         let a = mem(
@@ -592,9 +715,12 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("借用检查器"));
 
-        // AND semantics: a nonexistent term yields no results
-        let hits = run(&[a], "借用检查器 完全不存在的词");
-        assert_eq!(hits.len(), 0);
+        // AND semantics: a nonexistent term prevents strict coverage, so recall relaxes to the
+        // partial match and flags it
+        let matches = literal_matches(std::slice::from_ref(&a), "借用检查器 完全不存在的词");
+        assert!(matches.relaxed);
+        let hits = fuse_literal(std::slice::from_ref(&a), &matches.channels);
+        assert_eq!(hits.len(), 1);
     }
 
     #[test]
@@ -721,7 +847,7 @@ mod tests {
             mem("m2", &["vue3"], "render", "渲染实现", 2),
             mem("m3", &[], "debounce", "防抖实现", 3),
         ];
-        let channels = literal_channels(&memories, "vue3 防抖");
+        let channels = literal_matches(&memories, "vue3 防抖").channels;
         assert_eq!(channels[0].len(), 1);
         assert_eq!(channels[1].len(), 1);
         assert_eq!(channels[0][0].idx, 0);
@@ -743,12 +869,12 @@ mod tests {
                 1,
             ),
         ];
-        let channels = literal_channels(&memories, "web common");
+        let channels = literal_matches(&memories, "web common").channels;
         assert_eq!(channels[0][0].score, channels[0][1].score);
         assert_eq!(channels[1][0].score, channels[1][1].score);
         let hits = fuse_literal(&memories, &channels);
         assert_eq!(hits[0].score, hits[1].score);
-        let tag_only = literal_channels(&memories, "web");
+        let tag_only = literal_matches(&memories, "web").channels;
         assert!(tag_only[0].is_empty());
         assert_eq!(tag_only[1].len(), 2);
     }

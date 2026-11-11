@@ -211,6 +211,16 @@
       }
     },
     {
+      "name": "zero-hit-relaxes-to-partial",
+      "query": "checksum deployment",
+      "relevance": {
+        "checksum": 3,
+        "checksum-new": 2,
+        "release-current": 3,
+        "release-old": 1
+      }
+    },
+    {
       "name": "unrelated-popularity-cannot-recall",
       "query": "nonexistent-query",
       "relevance": {}

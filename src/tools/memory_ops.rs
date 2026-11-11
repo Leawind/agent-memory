@@ -268,7 +268,8 @@ pub fn memory_search(
         .into_iter()
         .filter(|m| tag_expr.as_ref().is_none_or(|expr| expr.eval(&m.tags)))
         .collect();
-    let keyword_hits = search::literal_channels(&memories, &query);
+    let keyword = search::literal_matches(&memories, &query);
+    let keyword_hits = keyword.channels;
     // Count literal candidates once even when both independent channels support them.
     let keyword_idx: std::collections::HashSet<usize> =
         keyword_hits.iter().flatten().map(|h| h.idx).collect();
@@ -393,6 +394,11 @@ pub fn memory_search(
     if semantic_disabled {
         out["semantic"] = json!("disabled");
     }
+    // Nothing covered every term: the ranking fell back to partial term matches, and the
+    // caller should treat the results as best-effort rather than complete
+    if keyword.relaxed {
+        out["relaxed"] = json!(true);
+    }
     // Which candidate actually answered the query embedding — with several configured models
     // this is the fact a caller cannot derive from the response itself
     if let Some(model) = &vector_model {
@@ -411,7 +417,7 @@ pub fn memory_search(
     );
     if total == 0 {
         out["note"] = json!(
-            "no memory matched every term; drop some terms or try broader ones (matching is case-insensitive substring)"
+            "no memory matched any query term; try different or broader terms (matching is case-insensitive substring)"
         );
     }
     crate::search_snapshot::create(st, scope, revision, out, offset, limit)
