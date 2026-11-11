@@ -319,7 +319,7 @@ fn candidate_budgets_are_configurable_and_page_independent() {
     let (_, body, _) = request(port, "GET", "/api/settings", None);
     let defaults = json_body(&body);
     assert_eq!(defaults["search_limits"]["semantic_candidates"], 100);
-    assert_eq!(defaults["search_limits"]["rerank_candidates"], 50);
+    assert_eq!(defaults["search_limits"]["rerank_candidates"], 100);
     assert_eq!(defaults["search_limits"]["adaptive"]["enabled"], false);
     let (status, _, _) = request(port, "PUT", "/api/settings", Some(&json!({
         "instructions": "must not persist", "search_limits": {"semantic_candidates": 2, "rerank_candidates": 3}

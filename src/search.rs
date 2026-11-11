@@ -42,7 +42,9 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             semantic_candidates: 100,
-            rerank_candidates: 50,
+            // The rerank pool covers the whole semantic candidate head: recall that pays for
+            // 100 vector candidates should not lose half of them to the reranker's cap
+            rerank_candidates: 100,
             adaptive: Adaptive::default(),
         }
     }
@@ -993,7 +995,9 @@ mod tests {
         ] {
             assert!(Limits::parse(&value).is_err(), "{value}");
         }
-        assert_eq!(Limits::parse(&json!({})).unwrap().semantic_candidates, 100);
+        let defaults = Limits::parse(&json!({})).unwrap();
+        assert_eq!(defaults.semantic_candidates, 100);
+        assert_eq!(defaults.rerank_candidates, 100);
         assert_eq!(
             Limits::parse(&json!({"semantic_candidates": 2, "rerank_candidates": 2}))
                 .unwrap()
