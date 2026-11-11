@@ -994,12 +994,18 @@ fn rerank_pass(
     } else {
         limits.rerank_candidates
     };
+    let terms = crate::search::parse_query(query);
     let documents: Vec<String> = hits
         .iter()
         .take(ceiling)
         .map(|h| {
-            // The reranker reads the same text the embedding side sees: title + blank line + content
-            crate::embed::embed_memory_text(&memories[h.idx].summary, &memories[h.idx].content)
+            // The reranker reads the title plus the best-matching content window: cross-encoder
+            // relevance concentrates on the passage around the query evidence, and short focused
+            // inputs score more reliably than long truncated bodies.
+            let m = &memories[h.idx];
+            let window =
+                crate::search::best_window(&m.content, &terms, crate::search::RERANK_WINDOW_CHARS);
+            crate::embed::embed_memory_text(&m.summary, &window)
         })
         .collect();
     let document_chars: Vec<_> = documents.iter().map(|doc| doc.chars().count()).collect();

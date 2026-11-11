@@ -116,7 +116,7 @@ const SNIPPET_AFTER: usize = 120;
 
 /// Split the query: whitespace tokenization; whitespace inside double quotes does not split (the phrase becomes one term).
 /// All terms are lowercased.
-fn parse_query(query: &str) -> Vec<String> {
+pub(crate) fn parse_query(query: &str) -> Vec<String> {
     let mut terms = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
@@ -386,9 +386,10 @@ fn run(memories: &[Memory], query: &str) -> Vec<Hit> {
     fuse_literal(memories, &literal_matches(memories, query).channels)
 }
 
-/// Pick the snippet window among candidate anchors: prefer the window covering the most distinct terms, ties broken by the earliest.
-/// Anchor candidates are the first few content hit positions of each term.
-fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
+/// Pick the window anchor covering the most distinct terms, ties broken by the earliest.
+/// Anchor candidates are the first few content hit positions of each term; the window is
+/// `before`/`after` around each candidate.
+fn best_anchor(content_hits: &[Vec<usize>], before: usize, after: usize) -> Option<usize> {
     let mut candidates: Vec<usize> = Vec::new();
     for positions in content_hits {
         candidates.extend(positions.iter().take(4).copied());
@@ -397,8 +398,8 @@ fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
     candidates.dedup();
     let mut best: Option<(usize, usize)> = None; // (distinct terms covered, anchor)
     for &p in &candidates {
-        let lo = p.saturating_sub(SNIPPET_BEFORE);
-        let hi = p + SNIPPET_AFTER;
+        let lo = p.saturating_sub(before);
+        let hi = p + after;
         let covered = content_hits
             .iter()
             .filter(|ps| ps.iter().any(|&x| x >= lo && x <= hi))
@@ -408,6 +409,10 @@ fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
         }
     }
     best.map(|(_, p)| p)
+}
+
+fn choose_snippet_anchor(content_hits: &[Vec<usize>]) -> Option<usize> {
+    best_anchor(content_hits, SNIPPET_BEFORE, SNIPPET_AFTER)
 }
 
 /// Non-overlapping substring count (the caller guarantees lowercase alignment).
@@ -492,6 +497,32 @@ fn find_all_in_folded(folded: &str, map: &[usize], term: &str) -> Vec<usize> {
         }
     }
     out
+}
+
+/// Window budget for reranker documents: cross-encoder relevance concentrates on the passage
+/// around the query evidence, and the working guidance for local rerankers is short focused
+/// passages rather than long truncated bodies.
+pub const RERANK_WINDOW_CHARS: usize = 800;
+
+/// The best content window for the reranker: the `window_chars` window covering the most
+/// distinct query terms (ties: earliest anchor), falling back to the start of the content
+/// when no term matches. Same anchor policy as snippets with a wider window; raw text, no
+/// ellipses — the reranker reads documents, not display rows.
+pub fn best_window(content: &str, terms: &[String], window_chars: usize) -> String {
+    if content.chars().count() <= window_chars {
+        return content.to_string();
+    }
+    let (folded, map) = fold_with_map(content);
+    let content_hits: Vec<Vec<usize>> = terms
+        .iter()
+        .map(|term| find_all_in_folded(&folded, &map, term))
+        .collect();
+    let before = window_chars / 4;
+    let start = best_anchor(&content_hits, before, window_chars - before)
+        .map_or(0, |anchor| anchor.saturating_sub(before));
+    let start = floor_boundary(content, start);
+    let end = ceil_boundary(content, (start + window_chars).min(content.len()));
+    content[start..end].to_string()
 }
 
 fn floor_boundary(s: &str, mut i: usize) -> usize {
@@ -642,7 +673,15 @@ mod tests {
     #[test]
     fn rare_term_evidence_outranks_common_term_evidence() {
         let filler: Vec<Memory> = (0..3)
-            .map(|i| mem(&format!("f{i}"), &[], "s", "rust mentions fill this store", 1))
+            .map(|i| {
+                mem(
+                    &format!("f{i}"),
+                    &[],
+                    "s",
+                    "rust mentions fill this store",
+                    1,
+                )
+            })
             .collect();
         let mut memories = vec![
             mem("m1", &[], "s", "rust rust boron", 1),
@@ -651,7 +690,10 @@ mod tests {
         memories.extend(filler);
         let hits = run(&memories, "rust boron");
         assert_eq!(hits.len(), 2, "only the two full-coverage memories qualify");
-        assert_eq!(hits[0].idx, 1, "extra evidence on the rare term ranks first");
+        assert_eq!(
+            hits[0].idx, 1,
+            "extra evidence on the rare term ranks first"
+        );
     }
 
     /// A constant per-term multiplier leaves single-term orderings unchanged: the three-hit
@@ -805,6 +847,46 @@ mod tests {
             sn.contains("alpha") && sn.contains("beta"),
             "snippet must cover both terms: {sn}"
         );
+    }
+
+    /// The reranker window follows the same anchor policy as snippets with a wider span.
+    #[test]
+    fn best_window_covers_the_most_terms() {
+        let content = format!(
+            "alpha{}beta{}alpha{}",
+            "x".repeat(120),
+            "x".repeat(15),
+            "x".repeat(10)
+        );
+        let window = best_window(&content, &parse_query("alpha beta"), 100);
+        assert!(
+            window.contains("alpha") && window.contains("beta"),
+            "window must cover both terms: {window}"
+        );
+    }
+
+    #[test]
+    fn best_window_short_content_passes_whole() {
+        let content = "short body";
+        assert_eq!(best_window(content, &parse_query("body"), 800), content);
+    }
+
+    /// No term hits fall back to the start of the content, bounded by the window size.
+    #[test]
+    fn best_window_without_term_hits_starts_at_the_beginning() {
+        let content = format!("{}target", "x".repeat(2000));
+        let window = best_window(&content, &parse_query("absent"), 800);
+        assert!(window.starts_with('x'));
+        assert!(window.chars().count() <= 800);
+        assert!(!window.contains("target"));
+    }
+
+    /// Window edges floor/ceil to character boundaries, so CJK content never cuts mid-character.
+    #[test]
+    fn best_window_keeps_char_boundaries() {
+        let content = format!("{}目标{}", "前".repeat(1000), "后".repeat(1000));
+        let window = best_window(&content, &parse_query("目标"), 800);
+        assert!(window.contains("目标"), "window: {window}");
     }
 
     #[test]
