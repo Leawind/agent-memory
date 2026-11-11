@@ -1,6 +1,8 @@
 //! Literal recall and rank fusion. Content and tags rank independently; all
 //! query terms must be covered across their union before a literal candidate
-//! qualifies. Semantic recall may independently introduce paraphrased candidates.
+//! qualifies. Term content evidence is weighted by inverse document frequency,
+//! so terms matching much of the store carry little ranking signal. Semantic
+//! recall may independently introduce paraphrased candidates.
 
 use crate::model::Memory;
 use std::collections::HashMap;
@@ -134,11 +136,38 @@ fn parse_query(query: &str) -> Vec<String> {
     terms
 }
 
+/// Character-wise lowercase fold without position mapping, for presence checks only.
+fn fold_lower(haystack: &str) -> String {
+    haystack.chars().flat_map(|c| c.to_lowercase()).collect()
+}
+
+/// Lucene-smoothed inverse document frequency, one multiplier per query term: a term matching
+/// much of the store carries little ranking signal, a rare term carries much. Constant per term,
+/// so single-term orderings are untouched; in multi-term queries extra evidence on the rarer
+/// terms wins. Document frequency counts summary or content hits — the content channel's fields.
+fn term_idf(memories: &[Memory], terms: &[String]) -> Vec<f64> {
+    let n = memories.len() as f64;
+    let mut df = vec![0.0f64; terms.len()];
+    for m in memories {
+        let summary = m.summary.to_lowercase();
+        let content = fold_lower(&m.content);
+        for (index, term) in terms.iter().enumerate() {
+            if summary.contains(term.as_str()) || content.contains(term.as_str()) {
+                df[index] += 1.0;
+            }
+        }
+    }
+    df.iter()
+        .map(|&df| ((n - df + 0.5) / (df + 0.5) + 1.0).ln())
+        .collect()
+}
+
 pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
     let terms = parse_query(query);
     if terms.is_empty() {
         return [Vec::new(), Vec::new()];
     }
+    let idf = term_idf(memories, &terms);
     let mut content_channel = Vec::new();
     let mut tag_channel = Vec::new();
     for (idx, m) in memories.iter().enumerate() {
@@ -147,13 +176,13 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
         // Content is folded once and shared by all terms (see find_all_in_folded)
         let (folded, map) = fold_with_map(&m.content);
 
-        let mut content_score = 0i64;
+        let mut content_score = 0f64;
         let mut tag_score = 0i64;
         let mut all_matched = true;
         // Content hit positions per term (original byte offsets), for snippet window selection
         let mut content_hits: Vec<Vec<usize>> = Vec::new();
 
-        for term in &terms {
+        for (term_index, term) in terms.iter().enumerate() {
             let mut term_score = 0i64;
             let tag_term = lc_tags
                 .iter()
@@ -192,7 +221,10 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
                 all_matched = false;
                 break;
             }
-            content_score += term_score;
+            // Inverse document frequency weighs a term's whole content evidence: extra hits
+            // on a term that distinguishes documents count for more than extra hits on a
+            // term the whole store shares.
+            content_score += term_score as f64 * idf[term_index];
             tag_score += tag_term;
             content_hits.push(positions);
         }
@@ -202,10 +234,12 @@ pub fn literal_channels(memories: &[Memory], query: &str) -> [Vec<Hit>; 2] {
         }
         let anchor = choose_snippet_anchor(&content_hits);
         let snippet = make_snippet(&m.content, anchor);
-        if content_score > 0 {
+        if content_score > 0.0 {
+            // f64 evidence encoded as an order-preserving integer (the semantic channel's
+            // discipline): fusion reads only order and exact ties, never magnitude.
             content_channel.push(Hit {
                 idx,
-                score: content_score,
+                score: content_score.to_bits() as i64,
                 snippet: snippet.clone(),
             });
         }
@@ -477,6 +511,35 @@ mod tests {
         // Only memories hit by both terms are returned; m1 (tag + title double hit) should rank ahead of m2 (content hit only).
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].idx, 0);
+    }
+
+    /// Inverse document frequency: with otherwise equal evidence, extra hits on the term that
+    /// distinguishes documents (boron, rare here) outrank extra hits on the term the whole
+    /// store shares (rust). Without idf both sides tie on hit counts.
+    #[test]
+    fn rare_term_evidence_outranks_common_term_evidence() {
+        let filler: Vec<Memory> = (0..3)
+            .map(|i| mem(&format!("f{i}"), &[], "s", "rust mentions fill this store", 1))
+            .collect();
+        let mut memories = vec![
+            mem("m1", &[], "s", "rust rust boron", 1),
+            mem("m2", &[], "s", "rust boron boron", 1),
+        ];
+        memories.extend(filler);
+        let hits = run(&memories, "rust boron");
+        assert_eq!(hits.len(), 2, "only the two full-coverage memories qualify");
+        assert_eq!(hits[0].idx, 1, "extra evidence on the rare term ranks first");
+    }
+
+    /// A constant per-term multiplier leaves single-term orderings unchanged: the three-hit
+    /// memory still outranks the one-hit memory even though the term matches the whole store.
+    #[test]
+    fn ubiquitous_term_keeps_relative_tf_order() {
+        let a = mem("m1", &[], "s", "rust rust rust and more rust mentions", 1);
+        let b = mem("m2", &[], "s", "rust once", 1);
+        let hits = run(&[b, a], "rust");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].idx, 1, "3+ content hits must rank first");
     }
 
     /// Characters whose lowercase form changes length (U+0130 "İ" → "i̇") must not misalign the snippet window:
