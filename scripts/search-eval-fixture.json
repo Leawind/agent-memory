@@ -5,7 +5,7 @@
       "key": "borrow",
       "summary": "Rust borrow checker rules",
       "content": "Rust ownership and borrow checker restrictions. Prefer short borrow lifetimes and explicit ownership transfers.",
-      "tags": ["rust", "procedure", "procedure"],
+      "tags": ["rust", "procedure"],
       "age_days": 300
     },
     {
@@ -40,14 +40,14 @@
       "key": "vue",
       "summary": "Vue3 app bootstrap",
       "content": "Build a browser app with Vue3 composition functions and route components.",
-      "tags": ["vue3", "procedure"],
+      "tags": ["vue3", "web", "procedure"],
       "age_days": 14
     },
     {
       "key": "react",
       "summary": "React app state",
       "content": "React components use state and effects in browser apps.",
-      "tags": ["react", "procedure"],
+      "tags": ["react", "web", "procedure"],
       "age_days": 7
     },
     {
@@ -96,7 +96,7 @@
       "key": "mod-combined",
       "summary": "Minecraft custom block registration",
       "content": "Register custom blocks using the supported engine extension points.",
-      "tags": ["minecraft-modding", "procedure"],
+      "tags": ["minecraft", "modding", "procedure"],
       "age_days": 70
     },
     {
@@ -129,20 +129,6 @@
       "uses": 100
     }
   ],
-  "derivations": [
-    {
-      "name": "vue-web",
-      "expression": "vue3 => web"
-    },
-    {
-      "name": "react-web",
-      "expression": "react => web"
-    },
-    {
-      "name": "mod-equivalence",
-      "expression": "minecraft-modding <=> minecraft, modding"
-    }
-  ],
   "cases": [
     {
       "name": "cross-field-and",
@@ -163,7 +149,7 @@
       }
     },
     {
-      "name": "derived-category",
+      "name": "category-tag",
       "query": "web",
       "relevance": {
         "http": 3,
@@ -198,7 +184,7 @@
       }
     },
     {
-      "name": "equivalence-forward-and-backward",
+      "name": "multi-tag-and",
       "query": "minecraft modding",
       "relevance": {
         "mod-combined": 3,

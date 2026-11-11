@@ -27,11 +27,10 @@ interface Fixture {
   description: string
   decay_rules: { predicate: string; half_life_days: number | null }[]
   memories: Memory[]
-  derivations: { name: string; expression: string }[]
   cases: Case[]
 }
 interface SearchResponse {
-  results: { id: string; summary: string; content?: unknown; lifecycle: { state: string } }[]
+  results: { id: string; summary: string; content?: unknown }[]
 }
 
 const budgets = [2, 5, 10, 20]
@@ -151,7 +150,7 @@ async function run() {
           {
             summary: memory.summary,
             content: memory.content,
-            tags: memory.tags.map((name) => tagIds[name]),
+            tags: memory.tags.map((name) => [tagIds[name], null]),
             created_at: time,
             updated_at: time,
             access: { scoring_version: 1, events, buckets: [] },
@@ -162,7 +161,6 @@ async function run() {
     await api('POST', '/api/import', {
       tags: Object.fromEntries(names.map((name) => [tagIds[name], { name }])),
       memories,
-      tag_rules: { constraints: [], derivations: fixture.derivations },
     })
     const listing = await api<{ memories: { id: string; summary: string }[] }>('GET', '/api/memories?limit=50')
     const bySummary = new Map(fixture.memories.map((memory) => [memory.summary, memory.key]))
