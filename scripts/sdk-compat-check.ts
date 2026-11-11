@@ -17,9 +17,9 @@ const TOKEN = process.env.MCP_TOKEN
 const PROTOCOL_VERSION = '2026-07-28'
 const LEGACY_PROTOCOL_VERSION = '2025-06-18'
 const EXPECTED_TOOLS = [
+  'get_started',
   'tag_create',
   'tag_list',
-  'tag_rule_list',
   'predicate_list',
   'predicate_set',
   'predicate_delete',
@@ -242,8 +242,9 @@ try {
     arguments: {
       summary: 'SDK 联调记忆：现代协议客户端可用',
       content: '手写 2026-07-28 客户端连接成功，含 resources 与订阅流。',
-      tags: ['sdk', '联调'],
-      // Fixture tags: auto-create deliberately, the default now rejects unknown names
+      // Fixture tags: bare tags as `{name: null}` objects (the wire shape of the unified tag
+      // model); auto-create deliberately, the default rejects unknown names
+      tags: { sdk: null, 联调: null },
       create_missing_tags: true,
     },
   })
@@ -251,7 +252,7 @@ try {
   // Echo-free contract: the create response carries only the new id + timestamp plus sparse
   // classifications — never the summary/tags/content just stated
   const structured = payloadOf(created) as
-    { id?: string; summary?: string; tags?: string[]; content?: string } | undefined
+    { id?: string; summary?: string; tags?: Record<string, unknown>; content?: string } | undefined
   createdId = structured?.id ?? null
   check('create returns structured id', typeof createdId === 'string' && createdId.startsWith('m'), createdId ?? '')
   check(
@@ -263,12 +264,12 @@ try {
   // Unknown tags are rejected by default (with the closest existing names listed); the flag opts in
   const unknownTag = await rpc(31, 'tools/call', {
     name: 'memory_create',
-    arguments: { summary: 'tag gate probe', content: 'body', tags: ['sdk'] },
+    arguments: { summary: 'tag gate probe', content: 'body', tags: { sdk: null } },
   })
   check('existing tags need no create_missing_tags', unknownTag.result?.isError !== true)
   const rejectedTag = await rpc(32, 'tools/call', {
     name: 'memory_create',
-    arguments: { summary: 'tag gate probe 2', content: 'body', tags: ['no-such-tag-xyz'] },
+    arguments: { summary: 'tag gate probe 2', content: 'body', tags: { 'no-such-tag-xyz': null } },
   })
   check(
     'unknown tags rejected unless create_missing_tags',
@@ -310,15 +311,9 @@ try {
     arguments: { id: createdId, event_key: 'compat-answer' },
   })
   check('memory_use retries are idempotent', payloadOf(usedAgain)?.recorded === false)
-  const rules = await rpc('tag-rules', 'tools/call', { name: 'tag_rule_list', arguments: {} })
-  check(
-    'tag rules expose both constraints and derivations',
-    Array.isArray(payloadOf(rules)?.constraints) && Array.isArray(payloadOf(rules)?.derivations),
-  )
-
   const updated = await rpc(6, 'tools/call', {
     name: 'memory_update',
-    arguments: { id: createdId, add_tags: ['验证完成'], create_missing_tags: true },
+    arguments: { id: createdId, add_tags: { 验证完成: null }, create_missing_tags: true },
   })
   // Echo-free: the update response only flags what happened; the tag set is verified by a read
   const updatedStructured = payloadOf(updated) as { updated?: boolean } | undefined
