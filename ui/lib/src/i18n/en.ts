@@ -247,8 +247,11 @@ export default {
     backupCard: 'Backup import & export',
     export: 'Export backup (JSON)',
     import: 'Import backup',
+    predicatePlaceholder: 'Filter by tag expression (optional)',
+    merge: 'Merge import',
     importHint:
-      'Import only works on an empty database (it restores rather than merges); point --db at an empty path before importing.',
+      "By default import restores: it needs an empty database and writes everything (predicates and the lifecycle policy included). With merge import enabled it adds to a populated database incrementally: memories whose summary and content already exist verbatim are skipped, the rest are appended; existing data is never modified, and the file's predicates / lifecycle policy are ignored.",
+    importedSkipped: 'Imported {memories} memories and {tags} tags, {skipped} duplicates skipped',
     doctorCard: 'Health check (doctor)',
     runDoctor: 'Run check',
     doctorOk: 'Check passed: all {total} checks are clean',

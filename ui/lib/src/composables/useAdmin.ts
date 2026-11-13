@@ -33,11 +33,11 @@ export function useAdmin() {
     }
   }
 
-  /** Export the backup JSON and trigger a browser download */
-  async function exportData() {
+  /** Export the backup JSON (optionally limited to memories matching a tag expression) and trigger a browser download */
+  async function exportData(predicate?: string) {
     exporting.value = true
     try {
-      const blob = await exportBackup(client)
+      const blob = await exportBackup(client, predicate)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -49,8 +49,12 @@ export function useAdmin() {
     }
   }
 
-  /** Parse a backup file and import it (only allowed on an empty database, enforced server-side). Returns the import counts. */
-  async function importFile(file: File): Promise<ImportResp> {
+  /**
+   * Parse a backup file and import it. Restore (the default) targets an empty database;
+   * `merge` imports incrementally and `predicate` filters inside the file — both enforced
+   * server-side. Returns the import counts.
+   */
+  async function importFile(file: File, options?: { merge?: boolean; predicate?: string }): Promise<ImportResp> {
     importing.value = true
     try {
       const text = await file.text()
@@ -60,7 +64,7 @@ export function useAdmin() {
       } catch {
         throw new Error(t('errors.invalidBackup'))
       }
-      return await importBackup(client, dump)
+      return await importBackup(client, dump, options)
     } finally {
       importing.value = false
     }

@@ -241,7 +241,11 @@ export default {
     backupCard: '备份导入导出',
     export: '导出备份（JSON）',
     import: '导入备份',
-    importHint: '导入仅支持空数据库（导入是恢复而非合并）；当前库已有数据时请换一个空的 --db 路径再导入。',
+    predicatePlaceholder: '按标签表达式筛选（可选）',
+    merge: '合并导入',
+    importHint:
+      '默认为恢复：要求空库，整体写入（含谓词与时效策略）。勾选合并导入则在已有数据的库上增量导入：摘要与正文完全一致的记忆跳过，其余追加；既有数据不会被修改，文件中的谓词与时效策略忽略。',
+    importedSkipped: '已导入 {memories} 条记忆、{tags} 个标签，跳过 {skipped} 条重复',
     doctorCard: '数据体检（doctor）',
     runDoctor: '运行体检',
     doctorOk: '体检通过：{total} 项检查全部通过',

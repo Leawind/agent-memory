@@ -265,6 +265,8 @@ export interface DoctorCheck {
 export interface ImportResp {
   imported_memories: number
   imported_tags: number
+  /** Present in merge mode: memories skipped because the target already carries them verbatim */
+  skipped_memories: number
 }
 
 export interface NamedPredicate {

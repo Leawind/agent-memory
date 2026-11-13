@@ -24,13 +24,28 @@ export function runDoctorRemote(client: ApiClient): Promise<DoctorResp> {
   return client.get<DoctorResp>('/api/doctor')
 }
 
-export function exportBackup(client: ApiClient): Promise<Blob> {
-  return client.getBlob('/api/export')
+/** Download the backup JSON; with `predicate`, only memories matching the tag expression are exported */
+export function exportBackup(client: ApiClient, predicate?: string): Promise<Blob> {
+  const suffix = predicate ? `?predicate=${encodeURIComponent(predicate)}` : ''
+  return client.getBlob(`/api/export${suffix}`)
 }
 
-/** Import a backup JSON (an object, not a string); only allowed on an empty database, enforced server-side */
-export function importBackup(client: ApiClient, dump: unknown): Promise<ImportResp> {
-  return client.post<ImportResp>('/api/import', dump)
+/**
+ * Import a backup JSON (an object, not a string). Restore is the default and targets an empty
+ * database (enforced server-side); `merge` imports incrementally into a populated database,
+ * skipping verbatim duplicates. `predicate` limits the import to matching memories, evaluated
+ * inside the file.
+ */
+export function importBackup(
+  client: ApiClient,
+  dump: unknown,
+  options?: { merge?: boolean; predicate?: string },
+): Promise<ImportResp> {
+  const params = new URLSearchParams()
+  if (options?.merge) params.set('merge', '1')
+  if (options?.predicate) params.set('predicate', options.predicate)
+  const suffix = params.size > 0 ? `?${params}` : ''
+  return client.post<ImportResp>(`/api/import${suffix}`, dump)
 }
 
 /**

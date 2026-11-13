@@ -527,7 +527,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     return
   }
   if (segs[1] === 'import' && method === 'POST') {
-    sendJson(res, 200, { imported_memories: 0, imported_tags: 0 })
+    sendJson(res, 200, { imported_memories: 0, imported_tags: 0, skipped_memories: 0 })
     return
   }
   if (segs[1] === 'embeddings' && method === 'POST') {
