@@ -138,7 +138,7 @@
       <el-dialog
         v-model="adminVisible"
         :title="t('shell.admin')"
-        width="min(1200px, calc(100vw - 24px))"
+        width="calc(100vw - 24px)"
         align-center
         class="admin-dialog"
       >
@@ -508,8 +508,6 @@ body {
   background: var(--el-bg-color-page);
 }
 .topbar-inner {
-  max-width: 1240px;
-  margin: 0 auto;
   padding: 0 24px;
   height: 60px;
   display: flex;
@@ -731,8 +729,6 @@ body {
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 1240px;
-  margin: 0 auto;
   padding: 20px 24px 24px;
   box-sizing: border-box;
   display: flex;
