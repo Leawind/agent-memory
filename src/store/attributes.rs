@@ -10,43 +10,9 @@ use crate::{
 use serde_json::{json, Map, Value};
 
 impl Store {
-    /// Rewrite query atoms to the model's matching semantics:
-    /// - A bare word naming an existing tag becomes a presence regex — the tag counts as carried
-    ///   when it is on the memory in any state (bare, edge source `w:…`, edge target `…:w`).
-    ///   Display forms carry at most one colon, so those three positions are exactly the roles.
-    ///   Unknown words stay literal tags, and leaf validation downstream reports them with the
-    ///   usual did-you-mean.
-    /// - `key=value` becomes the displayed `key:value` edge leaf — a number canonicalizes (so
-    ///   `key=1.0` finds `key:1`), an identifier word goes in verbatim, anything else is a bind
-    ///   error.
+    /// Rewrite query atoms to the model's matching semantics against the live vocabulary table.
     pub fn bind_query_atoms(&self, expr: TagExpr) -> Result<TagExpr, String> {
-        expr.try_map(&mut |atom| match atom {
-            TagAtom::Tag(name) => {
-                if !self.tag_exists(&name)? {
-                    return Ok(TagAtom::Tag(name));
-                }
-                let escaped = regex::escape(&name);
-                let pattern = format!("^{escaped}$|^{escaped}:|:{escaped}$");
-                Ok(TagAtom::Regex(Box::new(
-                    regex::Regex::new(&pattern).expect("escaped presence regex"),
-                )))
-            }
-            TagAtom::KeyEq { key, value } => {
-                let stored = match crate::model::parse_number_text(&value) {
-                    Some(canonical) => crate::model::compose_edge(&key, &canonical),
-                    None => {
-                        crate::model::normalize_tag_name(&value).map_err(|_| {
-                            format!(
-                                "edge target '{value}' for source '{key}' must be an identifier word (letters, digits, '_', '-', '.') or a number"
-                            )
-                        })?;
-                        crate::model::compose_edge(&key, &value)
-                    }
-                };
-                Ok(TagAtom::Tag(stored))
-            }
-            other => Ok(other),
-        })
+        rewrite_query_atoms(expr, &mut |name| self.tag_exists(name))
     }
 
     /// Typed view of a memory's attribute values, derived from its edges alone: a target name
@@ -66,6 +32,83 @@ impl Store {
             out.insert(row.source, rendered);
         }
         Ok(Value::Object(out))
+    }
+}
+
+/// Rewrite query atoms to the model's matching semantics, with tag existence decided by the
+/// caller's vocabulary: the live store (tags table) and dump-local import filters (the export
+/// file's own names) share one rewriting.
+/// - A bare word naming an existing tag becomes a presence regex — the tag counts as carried
+///   when it is on the memory in any state (bare, edge source `w:…`, edge target `…:w`).
+///   Display forms carry at most one colon, so those three positions are exactly the roles.
+///   Unknown words stay literal tags, and leaf validation downstream reports them with the
+///   usual did-you-mean.
+/// - `key=value` becomes the displayed `key:value` edge leaf — a number canonicalizes (so
+///   `key=1.0` finds `key:1`), an identifier word goes in verbatim, anything else is a bind
+///   error.
+pub(crate) fn rewrite_query_atoms(
+    expr: TagExpr,
+    exists: &mut dyn FnMut(&str) -> Result<bool, String>,
+) -> Result<TagExpr, String> {
+    expr.try_map(&mut |atom| match atom {
+        TagAtom::Tag(name) => {
+            if !exists(&name)? {
+                return Ok(TagAtom::Tag(name));
+            }
+            let escaped = regex::escape(&name);
+            let pattern = format!("^{escaped}$|^{escaped}:|:{escaped}$");
+            Ok(TagAtom::Regex(Box::new(
+                regex::Regex::new(&pattern).expect("escaped presence regex"),
+            )))
+        }
+        TagAtom::KeyEq { key, value } => {
+            let stored = match crate::model::parse_number_text(&value) {
+                Some(canonical) => crate::model::compose_edge(&key, &canonical),
+                None => {
+                    crate::model::normalize_tag_name(&value).map_err(|_| {
+                        format!(
+                            "edge target '{value}' for source '{key}' must be an identifier word (letters, digits, '_', '-', '.') or a number"
+                        )
+                    })?;
+                    crate::model::compose_edge(&key, &value)
+                }
+            };
+            Ok(TagAtom::Tag(stored))
+        }
+        other => Ok(other),
+    })
+}
+
+/// Leaf existence check shared by the query-resolution entry points: leaf names are display
+/// forms, so a composed `source:target` leaf validates its SOURCE half only (a typo'd target
+/// simply matches nothing, while an unknown source is far more likely a typo and gets the
+/// did-you-mean path). `hint` case-insensitively suggests a similar name from the same
+/// vocabulary the leaves were validated against.
+pub(crate) fn validate_query_leaves(
+    expr: &TagExpr,
+    exists: &dyn Fn(&str) -> Result<bool, String>,
+    hint: &dyn Fn(&str) -> Result<Option<String>, String>,
+) -> Result<(), String> {
+    let mut unknown: Vec<String> = Vec::new();
+    for name in expr.tag_names() {
+        let source = match name.split_once(':') {
+            Some((source, _)) => source,
+            None => name,
+        };
+        if !exists(source)? {
+            match hint(source)? {
+                Some(similar) => unknown.push(format!("'{source}' (did you mean '{similar}'?)")),
+                None => unknown.push(format!("'{source}'")),
+            }
+        }
+    }
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "unknown tags in tag_expr: {} (see tag_list for available names)",
+            unknown.join(", ")
+        ))
     }
 }
 

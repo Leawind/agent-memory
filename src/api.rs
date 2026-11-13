@@ -118,23 +118,41 @@ pub fn handle(
             }
             ("POST", ["import"]) => {
                 ctx.require(Cap::Admin)?;
+                // Mode and filter ride the query string so the body stays the backup file verbatim:
+                // restore is the default, `?merge=1` imports incrementally into a populated database,
+                // and `?predicate=` limits the import to matching memories (evaluated inside the file).
+                let merge = query_get(query, "merge").is_some_and(|v| v == "1" || v == "true");
+                let predicate = query_get(query, "predicate");
                 let dump = Value::Object(args_from_body()?);
-                if dump
-                    .get("predicates")
-                    .and_then(Value::as_array)
-                    .is_some_and(|rows| !rows.is_empty())
+                // Predicates are configuration: restoring them needs the standalone management
+                // capability. Merge ignores them, so the requirement does not apply there.
+                if !merge
+                    && dump
+                        .get("predicates")
+                        .and_then(Value::as_array)
+                        .is_some_and(|rows| !rows.is_empty())
                 {
                     ctx.require_all(&[Cap::Read, Cap::PredicateManage])?;
                 }
                 store::with_db_in(db_path, TxMode::Write, |st| {
-                    st.import_dump(&dump)
-                        .map_err(ToolError::invalid)
-                        .map(|(memories, tags)| {
-                            (
-                                200,
-                                json!({"imported_memories": memories, "imported_tags": tags}),
-                            )
-                        })
+                    st.import_dump(
+                        &dump,
+                        &store::ImportOptions {
+                            merge,
+                            predicate: predicate.as_deref(),
+                        },
+                    )
+                    .map_err(ToolError::invalid)
+                    .map(|report| {
+                        (
+                            200,
+                            json!({
+                                "imported_memories": report.memories,
+                                "imported_tags": report.tags,
+                                "skipped_memories": report.skipped,
+                            }),
+                        )
+                    })
                 })
             }
             ("GET", ["doctor"]) => {
@@ -741,10 +759,41 @@ pub fn handle(
     }
 }
 
+/// Export failure kinds for the attachment-download path: the http layer maps them to status
+/// codes. Filter resolution failures are client errors; data-layer failures are not.
+pub enum ExportFailure {
+    /// The caller-supplied predicate failed to parse or resolve against the store (400).
+    Invalid(String),
+    /// Data-layer failure (500).
+    Internal(String),
+}
+
 /// Byte stream of the export backup (the attachment download payload, separate from the JSON response channel).
 /// The caller's admin capability is verified by the http layer at interception time. Compact JSON, same as the CLI export.
-pub fn export_bytes(db_path: &Path) -> Result<Vec<u8>, String> {
-    store::with_db_in(db_path, TxMode::ReadOnly, |st| st.export_dump()).map(|dump| {
+/// With `predicate`, only memories matching the tag expression are exported (resolved against the
+/// live store; a bad expression is a client error, not a server failure).
+pub fn export_bytes(db_path: &Path, predicate: Option<&str>) -> Result<Vec<u8>, ExportFailure> {
+    // Filter resolution is a client-visible validation, so its failure must stay distinguishable
+    // from data-layer errors; the captured slot carries it out of the uniform String-error
+    // transaction closure.
+    let mut invalid_filter: Option<String> = None;
+    let dump = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+        let filter = match predicate {
+            None => None,
+            Some(raw) => match st.resolve_query_expr(raw) {
+                Ok(expr) => Some(expr),
+                Err(e) => {
+                    invalid_filter = Some(e);
+                    return Err(String::new());
+                }
+            },
+        };
+        st.export_dump(filter.as_ref())
+    });
+    if let Some(message) = invalid_filter {
+        return Err(ExportFailure::Invalid(message));
+    }
+    dump.map_err(ExportFailure::Internal).map(|dump| {
         let mut bytes = serde_json::to_vec(&dump).unwrap_or_default();
         bytes.push(b'\n');
         bytes
@@ -1055,7 +1104,7 @@ fn list_or_search_args(query: &str) -> Value {
     Value::Object(args)
 }
 
-fn query_get(query: &str, key: &str) -> Option<String> {
+pub(crate) fn query_get(query: &str, key: &str) -> Option<String> {
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         if k == key {

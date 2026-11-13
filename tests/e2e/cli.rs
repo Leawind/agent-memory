@@ -167,3 +167,147 @@ fn export_import_roundtrip_via_cli() {
     cleanup(&src);
     cleanup(&dst);
 }
+
+/// Predicate-filtered export and merge-mode import, over both the CLI and the REST face.
+#[test]
+fn backup_filter_and_merge_work_end_to_end() {
+    let src = temp_db("filter-src");
+    let dst = temp_db("filter-dst");
+    cleanup(&src);
+    cleanup(&dst);
+    let src_s = src.display().to_string();
+    let dst_s = dst.display().to_string();
+
+    // Two memories in the source: one matching the filter, one not
+    {
+        let server = HttpProc::start(&src, "filter-src");
+        let (status, _, _) = request(
+            server.port,
+            "POST",
+            "/api/memories",
+            Some(
+                r#"{"summary": "keep me", "content": "alpha", "tags": {"proj": "one"}, "create_missing_tags": true}"#,
+            ),
+        );
+        assert_eq!(status, 200);
+        let (status, _, _) = request(
+            server.port,
+            "POST",
+            "/api/memories",
+            Some(
+                r#"{"summary": "drop me", "content": "beta", "tags": {"other": null}, "create_missing_tags": true}"#,
+            ),
+        );
+        assert_eq!(status, 200);
+        drop(server);
+    }
+
+    // CLI export with a predicate: only the matching memory travels, no configuration facets
+    let export_path = temp_db("filter-export");
+    let out = run_cli(&[
+        "export",
+        export_path.to_str().unwrap(),
+        "--predicate",
+        "proj=one",
+        "--db",
+        &src_s,
+    ]);
+    assert!(
+        out.status.success(),
+        "filtered export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dump: Value =
+        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    let memories = dump["memories"].as_object().unwrap();
+    assert_eq!(memories.len(), 1);
+    assert!(memories.contains_key("m1"));
+    assert!(dump.get("predicates").is_none());
+    assert!(dump.get("lifecycle_policy").is_none());
+
+    // A bad predicate fails the export outright (CLI: nonzero exit; REST: 400)
+    let bad_export_path = temp_db("bad-export");
+    let out = run_cli(&[
+        "export",
+        bad_export_path.to_str().unwrap(),
+        "--predicate",
+        "nosuchtag",
+        "--db",
+        &src_s,
+    ]);
+    assert!(!out.status.success(), "bad predicate must fail the export");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown tags in tag_expr"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!bad_export_path.exists(), "no file is created on failure");
+    let _ = std::fs::remove_file(&bad_export_path);
+
+    {
+        let server = HttpProc::start(&src, "filter-rest");
+        let (status, body, _) =
+            request(server.port, "GET", "/api/export?predicate=proj%3Done", None);
+        assert_eq!(status, 200);
+        let rest_dump: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(rest_dump["memories"].as_object().unwrap().len(), 1);
+        let (status, _, _) = request(server.port, "GET", "/api/export?predicate=nosuchtag", None);
+        assert_eq!(status, 400);
+        drop(server);
+    }
+
+    // Merge import over CLI: an empty target accepts the merge like a data-only restore...
+    let out = run_cli(&[
+        "import",
+        export_path.to_str().unwrap(),
+        "--merge",
+        "--db",
+        &dst_s,
+    ]);
+    assert!(
+        out.status.success(),
+        "merge import failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("imported 1 memories, 2 tags"),
+        "stdout: {stdout}"
+    );
+    // ...and a second merge finds the same memory verbatim and skips it
+    let out = run_cli(&[
+        "import",
+        export_path.to_str().unwrap(),
+        "--merge",
+        "--db",
+        &dst_s,
+    ]);
+    assert!(out.status.success(), "second merge import failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("imported 0 memories"), "stdout: {stdout}");
+    assert!(stdout.contains("1 duplicates skipped"), "stdout: {stdout}");
+
+    // REST merge import into the populated target reports the skips
+    {
+        let server = HttpProc::start(&dst, "filter-dst");
+        let dump_text = std::fs::read_to_string(&export_path).unwrap();
+        let (status, body, _) = try_request(
+            server.port,
+            "POST",
+            "/api/import?merge=1",
+            Some(dump_text.trim()),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(status, 200);
+        let report = json_body(&body);
+        assert_eq!(report["imported_memories"], 0);
+        assert_eq!(report["imported_tags"], 0);
+        assert_eq!(report["skipped_memories"], 1);
+        drop(server);
+    }
+
+    let _ = std::fs::remove_file(&export_path);
+    cleanup(&src);
+    cleanup(&dst);
+}

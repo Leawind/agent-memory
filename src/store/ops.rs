@@ -1,6 +1,7 @@
 //! Aggregate queries and ops entry points: hygiene checks, statistics, export/import.
 
 use crate::sql;
+use crate::tag_expr::TagExpr;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -11,6 +12,40 @@ use super::Store;
 pub struct HygieneCheck {
     pub id: &'static str,
     pub issues: Vec<String>,
+}
+
+/// Behavior selectors for `import_dump`.
+#[derive(Debug)]
+pub struct ImportOptions<'a> {
+    /// Merge into a non-empty target instead of requiring an empty one: memories whose
+    /// (summary, content) already exist are skipped, present tag rows keep their name and
+    /// description (missing ones are created), and predicate definitions plus the lifecycle
+    /// policy in the file are ignored — merge moves data, not configuration, and never
+    /// modifies existing data.
+    pub merge: bool,
+    /// Import only memories matching this tag expression, evaluated inside the dump file:
+    /// tags and `@name` references resolve against the file's own vocabulary and predicate
+    /// definitions, so the same file imports the same subset on any target.
+    pub predicate: Option<&'a str>,
+}
+
+impl ImportOptions<'_> {
+    /// Default behavior: restore into an empty target with no filter (test convenience).
+    #[cfg(test)]
+    pub const RESTORE: ImportOptions<'static> = ImportOptions {
+        merge: false,
+        predicate: None,
+    };
+}
+
+/// What `import_dump` materialized: inserted memories (duplicates skipped in merge mode are
+/// not counted), tag rows created (present ones reused untouched) and how many memories were
+/// skipped as already present.
+#[derive(Debug)]
+pub struct ImportReport {
+    pub memories: usize,
+    pub tags: usize,
+    pub skipped: usize,
 }
 
 impl Store {
@@ -423,8 +458,14 @@ impl Store {
     /// references tags by id string. Only primary data is included (names/descriptions/content/timestamps), not
     /// derived info such as memory_count, last_used_at or total counts (all derivable from the file itself).
     /// Import renumbers ids; the id keys act only as reference tokens within the file.
-    pub fn export_dump(&self) -> Result<Value, String> {
-        let mut tags = Map::new();
+    ///
+    /// With `filter`, only memories whose display tag names satisfy the expression are exported,
+    /// together with the closure of the tags their annotations reference; the dump then carries
+    /// data only — predicate definitions and the lifecycle policy are configuration and stay
+    /// out. A full export (no filter) keeps the complete shape.
+    pub fn export_dump(&self, filter: Option<&TagExpr>) -> Result<Value, String> {
+        // All tag rows; a filtered export keeps only the closure collected below.
+        let mut all_tags: Vec<(i64, String, String, i64)> = Vec::new();
         let mut st = self
             .conn
             .prepare_cached(sql::TAG_EXPORT_ALL)
@@ -440,25 +481,17 @@ impl Store {
             })
             .map_err(|e| e.to_string())?;
         for row in rows {
-            let (id, name, description, created_at) = row.map_err(|e| e.to_string())?;
-            tags.insert(
-                id.to_string(),
-                json!({
-                    "name": name,
-                    "description": description,
-                    "created_at": created_at,
-                }),
-            );
+            all_tags.push(row.map_err(|e| e.to_string())?);
         }
 
-        // Memory ↔ tag annotations are taken as (source tag id, target tag id) pairs — the
+        // Memory ↔ tag annotations as (memory id, source tag id, target tag id) pairs — the
         // target half rides the annotation row (null for bare tags), memory_id then tag_id ascending.
-        let mut refs: HashMap<i64, Vec<Value>> = HashMap::new();
-        let mut pairs = self
+        let mut pairs: Vec<(i64, i64, Option<i64>)> = Vec::new();
+        let mut st = self
             .conn
             .prepare_cached(sql::MEMORY_TAG_ID_PAIRS)
             .map_err(|e| e.to_string())?;
-        let pair_rows = pairs
+        let pair_rows = st
             .query_map([], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
@@ -468,21 +501,17 @@ impl Store {
             })
             .map_err(|e| e.to_string())?;
         for pair in pair_rows {
-            let (memory_id, tag_id, target_id) = pair.map_err(|e| e.to_string())?;
-            refs.entry(memory_id).or_default().push(json!([
-                tag_id.to_string(),
-                target_id
-                    .map(|t| Value::String(t.to_string()))
-                    .unwrap_or(Value::Null),
-            ]));
+            pairs.push(pair.map_err(|e| e.to_string())?);
         }
 
-        let mut memories = Map::new();
+        // Memory rows collected first: matching needs each memory's display tag names, which
+        // are composed from the pairs and the tag rows above.
+        let mut rows: Vec<(i64, String, String, i64, i64)> = Vec::new();
         let mut st = self
             .conn
             .prepare_cached(sql::MEMORY_ALL)
             .map_err(|e| e.to_string())?;
-        let rows = st
+        let memory_rows = st
             .query_map([], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
@@ -493,8 +522,85 @@ impl Store {
                 ))
             })
             .map_err(|e| e.to_string())?;
+        for row in memory_rows {
+            rows.push(row.map_err(|e| e.to_string())?);
+        }
+
+        // Matched memory ids when filtering, evaluated on the same display forms the
+        // list/search paths see.
+        let matched: Option<HashSet<i64>> = match filter {
+            None => None,
+            Some(expr) => {
+                let names: HashMap<i64, &str> = all_tags
+                    .iter()
+                    .map(|(id, name, ..)| (*id, name.as_str()))
+                    .collect();
+                let mut display: HashMap<i64, Vec<String>> = HashMap::new();
+                for (memory_id, tag_id, target_id) in &pairs {
+                    let source = names
+                        .get(tag_id)
+                        .ok_or("corrupt store: annotation references unknown tag")?;
+                    let composed = match target_id.map(|t| names.get(&t)) {
+                        Some(Some(target)) => crate::model::compose_edge(source, target),
+                        Some(None) | None => (*source).to_string(),
+                    };
+                    display.entry(*memory_id).or_default().push(composed);
+                }
+                Some(
+                    rows.iter()
+                        .filter(|(id, ..)| {
+                            expr.eval(display.get(id).map(Vec::as_slice).unwrap_or(&[]))
+                        })
+                        .map(|(id, ..)| *id)
+                        .collect(),
+                )
+            }
+        };
+
+        // Annotation refs for the exported memories; a filtered export also collects the tag
+        // closure (source halves and edge targets of matched annotations only).
+        let mut refs: HashMap<i64, Vec<Value>> = HashMap::new();
+        let mut closure: HashSet<i64> = HashSet::new();
+        for (memory_id, tag_id, target_id) in pairs {
+            if matched
+                .as_ref()
+                .is_some_and(|set| !set.contains(&memory_id))
+            {
+                continue;
+            }
+            closure.insert(tag_id);
+            if let Some(t) = target_id {
+                closure.insert(t);
+            }
+            refs.entry(memory_id).or_default().push(json!([
+                tag_id.to_string(),
+                target_id
+                    .map(|t| Value::String(t.to_string()))
+                    .unwrap_or(Value::Null),
+            ]));
+        }
+
+        let mut tags = Map::new();
+        for (id, name, description, created_at) in all_tags {
+            if matched.is_some() && !closure.contains(&id) {
+                continue;
+            }
+            tags.insert(
+                id.to_string(),
+                json!({
+                    "name": name,
+                    "description": description,
+                    "created_at": created_at,
+                }),
+            );
+        }
+
+        let mut memories = Map::new();
         for row in rows {
-            let (id, summary, content, created_at, updated_at) = row.map_err(|e| e.to_string())?;
+            let (id, summary, content, created_at, updated_at) = row;
+            if matched.as_ref().is_some_and(|set| !set.contains(&id)) {
+                continue;
+            }
             let tags = refs.remove(&id).unwrap_or_default();
             memories.insert(
                 Self::format_id(id),
@@ -508,33 +614,42 @@ impl Store {
                 }),
             );
         }
-        Ok(json!({
+        let mut dump = json!({
             "exported_at": crate::model::now(),
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
-            "predicates": self.predicates_view()?,
-            "lifecycle_policy": self.lifecycle_policy()?,
-        }))
+        });
+        if matched.is_none() {
+            dump["predicates"] = self.predicates_view()?;
+            dump["lifecycle_policy"] = json!(self.lifecycle_policy()?);
+        }
+        Ok(dump)
     }
 
-    /// Restore data from JSON produced by `export_dump`. The target database must be empty — import is a "restore/
-    /// migration", not a merge, to avoid ambiguity with existing data's ids and tag descriptions.
+    /// Restore or merge data from JSON produced by `export_dump`. Restore mode (default) targets an
+    /// empty database — import is a "restore/migration", not a merge, to avoid ambiguity with existing
+    /// data's ids and tag descriptions. Merge mode (`options.merge`) instead imports into a populated
+    /// target: verbatim-duplicate memories are skipped, present tag rows stay untouched, and the
+    /// file's predicates / lifecycle policy are ignored.
     /// Memories keep their exported created_at / updated_at; ids are not preserved (renumbered),
     /// and the id keys in the export file exist only to express memory→tag references — referencing a tag id
     /// absent from the export errors out outright. Legacy array-shaped exports are always rejected; no compatibility shims.
-    /// Returns (memories imported, tags imported).
-    pub fn import_dump(&self, dump: &Value) -> Result<(usize, usize), String> {
-        let empty = self.stats()?;
-        // The reserved tag is a permanent fixture seeded at open, not user data: a fresh
-        // database always carries exactly that one row, so it does not block import.
-        let unreserved_tags = self.tag_count_unreserved()?;
-        if empty["memories"].as_u64().unwrap_or(0) != 0
-            || unreserved_tags != 0
-            || !self.predicate_rows()?.is_empty()
-        {
-            return Err(
-                "target database is not empty; import refuses to merge -- point --db at a fresh database".into(),
-            );
+    pub fn import_dump(
+        &self,
+        dump: &Value,
+        options: &ImportOptions,
+    ) -> Result<ImportReport, String> {
+        if !options.merge {
+            let empty = self.stats()?;
+            // The reserved tag is a permanent fixture seeded at open, not user data: a fresh
+            // database always carries exactly that one row, so it does not block import.
+            let unreserved_tags = self.tag_count_unreserved()?;
+            if empty["memories"].as_u64().unwrap_or(0) != 0
+                || unreserved_tags != 0
+                || !self.predicate_rows()?.is_empty()
+            {
+                return Err("target database is not empty; import is a restore, use merge mode for an incremental import or point --db at a fresh database".into());
+            }
         }
         let tags = dump
             .get("tags")
@@ -563,12 +678,13 @@ impl Store {
             }
         }
 
-        // Create tags (duplicates within the export file are rejected too — name is unique in the database),
-        // with an export tag id → new database id mapping for translating memory references.
-        // Dump tag names are vocabulary names; both edge halves reference this same table.
-        let mut tag_id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
+        // Normalize dump tag names up front (duplicates within the export file are rejected too —
+        // name is unique in the database): the name map feeds both tag creation and the import
+        // filter's dump-local vocabulary. Dump tag names are vocabulary names; both edge halves
+        // reference this same table.
+        let mut name_by_key: HashMap<&str, String> = HashMap::with_capacity(tags.len());
+        let mut description_by_key: HashMap<&str, String> = HashMap::with_capacity(tags.len());
         let mut seen_names = HashSet::with_capacity(tags.len());
-        let mut created_tags = 0usize;
         for (key, t) in tags {
             let name = t
                 .get("name")
@@ -584,34 +700,101 @@ impl Store {
                 "tag description",
                 crate::model::MAX_TAG_DESC_CHARS,
             )?;
-            // The reserved tag is seeded at open in every database, so the dump's row always
-            // collides: reuse the seeded row as-is (its builtin description cannot be
-            // customized) and keep only genuinely created rows in the import count.
-            let id = if name == crate::model::RESERVED_TAG {
-                self.tag_ids_by_names(std::slice::from_ref(&name))?
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
-            } else {
-                self.tag_create(&name, &description)?;
-                created_tags += 1;
-                self.tag_ids_by_names(std::slice::from_ref(&name))?
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
+            name_by_key.insert(key.as_str(), name);
+            description_by_key.insert(key.as_str(), description);
+        }
+
+        // Optional import filter, evaluated inside the dump: a memory is kept when its display
+        // tag names (composed from the file's own vocabulary) satisfy the expression. This runs
+        // before any write, so a bad filter leaves the store untouched.
+        let keep: Option<HashSet<&str>> = match options.predicate {
+            None => None,
+            Some(raw) => {
+                let vocabulary: HashSet<String> = name_by_key.values().cloned().collect();
+                let predicates: HashMap<String, String> = dump
+                    .get("predicates")
+                    .and_then(Value::as_array)
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|row| {
+                                let name = row.get("name")?.as_str()?.to_string();
+                                let expression = row.get("predicate")?.as_str()?.to_string();
+                                Some((name, expression))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let expr = super::predicates::resolve_dump_filter(raw, &vocabulary, &predicates)?;
+                let mut keep = HashSet::with_capacity(memories.len());
+                for (key, m) in memories {
+                    let display = parse_memory_tag_pairs(key, m)?
+                        .into_iter()
+                        .map(|(source, target)| {
+                            let source = name_by_key.get(source).ok_or_else(|| {
+                                format!("invalid export: memory {key} references unknown tag id '{source}'")
+                            })?;
+                            match target {
+                                None => Ok(source.clone()),
+                                Some(target) => {
+                                    let target = name_by_key.get(target).ok_or_else(|| {
+                                        format!("invalid export: memory {key} references unknown target tag id '{target}'")
+                                    })?;
+                                    Ok(crate::model::compose_edge(source, target))
+                                }
+                            }
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if expr.eval(&display) {
+                        keep.insert(key.as_str());
+                    }
+                }
+                Some(keep)
+            }
+        };
+
+        // Create tags with an export tag id → new database id mapping for translating memory
+        // references. Present rows are reused as-is: the reserved tag is seeded at open in every
+        // database, and merge mode never rewrites existing vocabulary.
+        let mut tag_id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
+        let mut created_tags = 0usize;
+        for key in tags.keys() {
+            let name = &name_by_key[key.as_str()];
+            let id = match self
+                .tag_ids_by_names(std::slice::from_ref(name))?
+                .into_iter()
+                .next()
+            {
+                Some(existing) => existing,
+                None => {
+                    self.tag_create(name, &description_by_key[key.as_str()])?;
+                    created_tags += 1;
+                    self.tag_ids_by_names(std::slice::from_ref(name))?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| format!("tag '{name}' vanished right after creation"))?
+                }
             };
             tag_id_by_key.insert(key.as_str(), id);
         }
 
-        self.import_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
-        if let Some(value) = dump.get("lifecycle_policy") {
-            let policy = crate::lifecycle::Policy::parse(value)?;
-            self.settings_put(
-                Self::SETTING_LIFECYCLE_POLICY,
-                &serde_json::to_string(&policy).map_err(|e| e.to_string())?,
-            )?;
+        // Predicates and the lifecycle policy are configuration, not data: a restore materializes
+        // them into a fresh database, a merge leaves the target's own configuration alone.
+        if !options.merge {
+            self.import_predicates(dump.get("predicates").unwrap_or(&json!([])))?;
+            if let Some(value) = dump.get("lifecycle_policy") {
+                let policy = crate::lifecycle::Policy::parse(value)?;
+                self.settings_put(
+                    Self::SETTING_LIFECYCLE_POLICY,
+                    &serde_json::to_string(&policy).map_err(|e| e.to_string())?,
+                )?;
+            }
         }
+        let mut inserted = 0usize;
+        let mut skipped = 0usize;
         for (key, m) in memories {
+            if keep.as_ref().is_some_and(|set| !set.contains(key.as_str())) {
+                continue;
+            }
             let summary = m
                 .get("summary")
                 .and_then(Value::as_str)
@@ -623,39 +806,25 @@ impl Store {
             let summary =
                 validate_nonempty_len(summary, "summary", crate::model::MAX_SUMMARY_CHARS)?;
             let content = validate_max_len(content, "content", crate::model::MAX_CONTENT_CHARS)?;
+            // Merge skips memories the target already carries verbatim; import never modifies
+            // present data, so an evolved copy arrives as a new memory instead.
+            if options.merge && self.memory_id_by_text(&summary, &content)?.is_some() {
+                skipped += 1;
+                continue;
+            }
             let created_at = m.get("created_at").and_then(Value::as_u64).unwrap_or(0);
             let updated_at = m
                 .get("updated_at")
                 .and_then(Value::as_u64)
                 .unwrap_or(created_at);
-            let empty_tags: Vec<Value> = Vec::new();
-            let tag_refs = m
-                .get("tags")
-                .and_then(Value::as_array)
-                .unwrap_or(&empty_tags);
-            let mut links: Vec<(i64, Option<i64>)> = Vec::with_capacity(tag_refs.len());
-            for r in tag_refs {
-                let pair = r.as_array().ok_or(
-                    "invalid export: memory tags must be [source tag id, target tag id] pairs",
-                )?;
-                let s = pair.first().and_then(Value::as_str).ok_or(
-                    "invalid export: memory tag pairs start with the source tag id string",
-                )?;
-                let target = match pair.get(1) {
-                    None | Some(Value::Null) => None,
-                    Some(Value::String(text)) => Some(text.clone()),
-                    Some(other) => {
-                        return Err(format!(
-                            "invalid export: memory {key} has a non-string target tag id: {other}"
-                        ))
-                    }
-                };
+            let mut links: Vec<(i64, Option<i64>)> = Vec::new();
+            for (s, target) in parse_memory_tag_pairs(key, m)? {
                 let id = tag_id_by_key.get(s).ok_or_else(|| {
                     format!("invalid export: memory {key} references unknown tag id '{s}'")
                 })?;
-                let target_id = match &target {
+                let target_id = match target {
                     None => None,
-                    Some(text) => Some(*tag_id_by_key.get(text.as_str()).ok_or_else(|| {
+                    Some(text) => Some(*tag_id_by_key.get(text).ok_or_else(|| {
                         format!("invalid export: memory {key} references unknown target tag id '{text}'")
                     })?),
                 };
@@ -667,11 +836,48 @@ impl Store {
                     .map_err(|e| format!("invalid exported access history: {e}"))?;
                 self.access_import(id, &history)?;
             }
+            inserted += 1;
         }
         self.access_rebuild()?;
         self.bump_search_revision()?;
-        Ok((memories.len(), created_tags))
+        Ok(ImportReport {
+            memories: inserted,
+            tags: created_tags,
+            skipped,
+        })
     }
+}
+
+/// Parse one memory's tag pairs in the export-file shape: `[source tag id, target tag id|null]`
+/// strings, both halves referencing the file's tags map.
+fn parse_memory_tag_pairs<'a>(
+    key: &str,
+    m: &'a Value,
+) -> Result<Vec<(&'a str, Option<&'a str>)>, String> {
+    let Some(tag_refs) = m.get("tags").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(tag_refs.len());
+    for r in tag_refs {
+        let pair = r
+            .as_array()
+            .ok_or("invalid export: memory tags must be [source tag id, target tag id] pairs")?;
+        let s = pair
+            .first()
+            .and_then(Value::as_str)
+            .ok_or("invalid export: memory tag pairs start with the source tag id string")?;
+        let target = match pair.get(1) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) => Some(text.as_str()),
+            Some(other) => {
+                return Err(format!(
+                    "invalid export: memory {key} has a non-string target tag id: {other}"
+                ))
+            }
+        };
+        out.push((s, target));
+    }
+    Ok(out)
 }
 
 /// Non-empty + length validation (a backstop on the import side; the normal API path is validated by tools::params).
@@ -921,7 +1127,7 @@ mod tests {
         let links = st.resolve_tags(&[("t".into(), None)], true).unwrap().links;
         let tag_key = links[0].0.to_string();
         st.insert_memory("s", "body", &links, 1, 1).unwrap();
-        let dump = st.export_dump().unwrap();
+        let dump = st.export_dump(None).unwrap();
 
         // Derived info never enters the export (all of it is derivable from the export file itself)
         assert!(dump.get("total_memories").is_none());
@@ -942,7 +1148,7 @@ mod tests {
         assert!(dump["exported_at"].as_u64().is_some());
         // A memory without tags exports as an empty array
         st.insert_memory("s2", "body2", &[], 2, 2).unwrap();
-        let dump = st.export_dump().unwrap();
+        let dump = st.export_dump(None).unwrap();
         assert_eq!(dump["memories"]["m2"]["tags"], json!([]));
         cleanup(&path);
     }
@@ -963,7 +1169,7 @@ mod tests {
             ];
             let links = st.resolve_tags(&edges, true).unwrap().links;
             st.insert_memory("s", "body", &links, 1, 1).unwrap();
-            st.export_dump().unwrap()
+            st.export_dump(None).unwrap()
         };
         // The dump carries raw (source id, target id) pairs with the promoted target tags as
         // vocabulary rows; display composition happens on read
@@ -983,7 +1189,10 @@ mod tests {
             );
         }
 
-        Store::open(&dst).unwrap().import_dump(&dump).unwrap();
+        Store::open(&dst)
+            .unwrap()
+            .import_dump(&dump, &ImportOptions::RESTORE)
+            .unwrap();
         let st = Store::open(&dst).unwrap();
         let memory = &st.get_memories(&[1]).unwrap().0[0];
         assert_eq!(
@@ -1012,13 +1221,16 @@ mod tests {
             let links = st.resolve_tags(&[("t".into(), None)], true).unwrap().links;
             st.insert_memory("s1", "body1", &links, 100, 200).unwrap();
             st.insert_memory("s2", "body2", &[], 300, 400).unwrap();
-            st.export_dump().unwrap()
+            st.export_dump(None).unwrap()
         };
 
         // Restore into an empty database: counts and timestamps preserved; references translate automatically after tag ids are renumbered
-        let (memories, tags) = Store::open(&dst).unwrap().import_dump(&dump).unwrap();
-        assert_eq!(memories, 2);
-        assert_eq!(tags, 1);
+        let report = Store::open(&dst)
+            .unwrap()
+            .import_dump(&dump, &ImportOptions::RESTORE)
+            .unwrap();
+        assert_eq!(report.memories, 2);
+        assert_eq!(report.tags, 1);
         let st = Store::open(&dst).unwrap();
         assert_eq!(st.stats().unwrap()["memories"], 2);
         let all = st.all_memories().unwrap();
@@ -1027,9 +1239,15 @@ mod tests {
         assert_eq!(all[0].tags, vec!["t".to_string()]);
         assert_eq!(st.tag_view("t").unwrap()["description"], "带描述的标签");
 
-        // Non-empty target database → rejected
-        let err = Store::open(&dst).unwrap().import_dump(&dump).unwrap_err();
-        assert!(err.contains("not empty"), "got: {err}");
+        // Non-empty target database → rejected, with the merge mode named as the alternative
+        let err = Store::open(&dst)
+            .unwrap()
+            .import_dump(&dump, &ImportOptions::RESTORE)
+            .unwrap_err();
+        assert!(
+            err.contains("not empty") && err.contains("merge"),
+            "got: {err}"
+        );
 
         // Structurally corrupt export file → error
         let broken = Store::open(&temp_db("import-broken-dst"));
@@ -1037,7 +1255,9 @@ mod tests {
         let dst2 = temp_db("import-broken");
         cleanup(&dst2);
         let st2 = Store::open(&dst2).unwrap();
-        let err = st2.import_dump(&json!({"memories": {}})).unwrap_err();
+        let err = st2
+            .import_dump(&json!({"memories": {}}), &ImportOptions::RESTORE)
+            .unwrap_err();
         assert!(err.contains("'tags' must be an object"), "got: {err}");
         cleanup(&src);
         cleanup(&dst);
@@ -1057,11 +1277,16 @@ mod tests {
             "tags": [],
             "memories": [],
         });
-        let err = st.import_dump(&legacy).unwrap_err();
+        let err = st
+            .import_dump(&legacy, &ImportOptions::RESTORE)
+            .unwrap_err();
         assert!(err.contains("must be an object"), "got: {err}");
         // Each direction names its own case
         let err = st
-            .import_dump(&json!({"tags": {}, "memories": []}))
+            .import_dump(
+                &json!({"tags": {}, "memories": []}),
+                &ImportOptions::RESTORE,
+            )
             .unwrap_err();
         assert!(err.contains("'memories' must be an object"), "got: {err}");
         assert_eq!(st.stats().unwrap()["memories"], 0);
@@ -1132,7 +1357,7 @@ mod tests {
             let path = temp_db(&format!("import-invalid-{slug}"));
             cleanup(&path);
             let st = Store::open(&path).unwrap();
-            let err = st.import_dump(dump).unwrap_err();
+            let err = st.import_dump(dump, &ImportOptions::RESTORE).unwrap_err();
             assert!(err.contains(expect), "{slug}: got: {err}");
             // A rejection must leave no memories in the database
             assert_eq!(st.stats().unwrap()["memories"], 0, "{slug}");
@@ -1154,7 +1379,7 @@ mod tests {
             "memories": {"m1": {"summary": "s", "content": "c", "tags": [["3", null]]}},
         });
         let err = crate::store::with_db_in(&path, crate::store::TxMode::Write, |st: &Store| {
-            st.import_dump(&dump).map(|_| ())
+            st.import_dump(&dump, &ImportOptions::RESTORE).map(|_| ())
         })
         .unwrap_err();
         assert!(err.contains("unknown tag id '3'"), "got: {err}");
@@ -1163,5 +1388,164 @@ mod tests {
         assert_eq!(st.tag_count_unreserved().unwrap(), 0, "tags must roll back");
         assert_eq!(st.stats().unwrap()["memories"], 0);
         cleanup(&path);
+    }
+
+    /// A filter narrows the dump to matching memories plus their tag closure, and drops the
+    /// configuration facets; the unfiltered export keeps the complete shape.
+    #[test]
+    fn export_dump_filters_by_predicate_and_carries_data_only() {
+        let path = temp_db("export-filter");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        let links = st
+            .resolve_tags(
+                &[
+                    ("project".to_string(), Some("apollo".to_string())),
+                    ("unrelated".to_string(), None),
+                ],
+                true,
+            )
+            .unwrap()
+            .links;
+        st.insert_memory("apollo note", "body a", &links[..1], 1, 1)
+            .unwrap();
+        st.insert_memory("other note", "body b", &links[1..], 2, 2)
+            .unwrap();
+        let expr = st.resolve_query_expr("project=apollo").unwrap();
+        let dump = st.export_dump(Some(&expr)).unwrap();
+        let memories = dump["memories"].as_object().unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories["m1"]["summary"], "apollo note");
+        let names: HashSet<String> = dump["tags"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        // The tag closure carries both edge halves, nothing else
+        assert_eq!(
+            names,
+            HashSet::from(["project".to_string(), "apollo".to_string()])
+        );
+        assert!(dump.get("predicates").is_none());
+        assert!(dump.get("lifecycle_policy").is_none());
+        let full = st.export_dump(None).unwrap();
+        assert_eq!(full["memories"].as_object().unwrap().len(), 2);
+        assert!(full.get("predicates").is_some());
+        assert!(full.get("lifecycle_policy").is_some());
+        cleanup(&path);
+    }
+
+    /// Merge import: verbatim duplicates are skipped, new memories and tags are added, existing
+    /// tag rows stay untouched, and the file's predicates are ignored.
+    #[test]
+    fn import_dump_merges_into_non_empty_target() {
+        let src = temp_db("merge-src");
+        let dst = temp_db("merge-dst");
+        cleanup(&src);
+        cleanup(&dst);
+        let dump = {
+            let st = Store::open(&src).unwrap();
+            st.tag_create("t", "dump description").unwrap();
+            st.tag_create("fresh", "").unwrap();
+            let links = st.resolve_tags(&[("t".into(), None)], true).unwrap().links;
+            st.insert_memory("s1", "body1", &links, 100, 200).unwrap();
+            st.insert_memory("new", "new body", &[], 300, 400).unwrap();
+            st.predicate_set("active", "t", "").unwrap();
+            st.export_dump(None).unwrap()
+        };
+        // The target already carries the dump's first memory verbatim, its own description for
+        // the shared tag, and no predicates
+        {
+            let st = Store::open(&dst).unwrap();
+            st.tag_create("t", "target description").unwrap();
+            st.insert_memory("s1", "body1", &[], 1, 1).unwrap();
+        }
+        let report = Store::open(&dst)
+            .unwrap()
+            .import_dump(
+                &dump,
+                &ImportOptions {
+                    merge: true,
+                    predicate: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.memories, 1);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(report.tags, 1);
+        let st = Store::open(&dst).unwrap();
+        assert_eq!(st.stats().unwrap()["memories"], 2);
+        // Existing tag description untouched; the new tag arrived
+        assert_eq!(
+            st.tag_view("t").unwrap()["description"],
+            "target description"
+        );
+        assert!(st.tag_view("fresh").is_ok());
+        // The new memory kept its dump timestamps
+        let all = st.all_memories().unwrap();
+        let new_memory = all.iter().find(|m| m.summary == "new").unwrap();
+        assert_eq!((new_memory.created_at, new_memory.updated_at), (300, 400));
+        // Configuration in the file is ignored on merge
+        assert!(st.predicate_rows().unwrap().is_empty());
+        cleanup(&src);
+        cleanup(&dst);
+    }
+
+    /// The import filter evaluates inside the dump file: `@named` references resolve from the
+    /// file's own predicate definitions, and unknown leaves error instead of silently matching
+    /// nothing.
+    #[test]
+    fn import_dump_filters_memories_inside_the_dump() {
+        let dst = temp_db("import-filter");
+        cleanup(&dst);
+        let dump = json!({
+            "exported_at": 1,
+            "tags": {
+                "1": {"name": "project", "description": ""},
+                "2": {"name": "apollo", "description": ""},
+                "3": {"name": "other", "description": ""},
+            },
+            "predicates": [{"name": "active", "predicate": "project", "description": ""}],
+            "memories": {
+                "m1": {"summary": "hit", "content": "c1", "tags": [["1", "2"]]},
+                "m2": {"summary": "miss", "content": "c2", "tags": [["3", null]]},
+            }
+        });
+        let report = Store::open(&dst)
+            .unwrap()
+            .import_dump(
+                &dump,
+                &ImportOptions {
+                    merge: false,
+                    predicate: Some("@active"),
+                },
+            )
+            .unwrap();
+        assert_eq!(report.memories, 1);
+        let st = Store::open(&dst).unwrap();
+        let all = st.all_memories().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].summary, "hit");
+        assert_eq!(all[0].tags, vec!["project:apollo".to_string()]);
+        // The file's vocabulary materializes even where its memories were filtered out
+        assert!(st.tag_view("other").is_ok());
+
+        // An unknown leaf is a hard error (a typo must not silently import nothing)
+        let fresh = temp_db("import-filter-fresh");
+        cleanup(&fresh);
+        let err = Store::open(&fresh)
+            .unwrap()
+            .import_dump(
+                &dump,
+                &ImportOptions {
+                    merge: false,
+                    predicate: Some("nosuchtag"),
+                },
+            )
+            .unwrap_err();
+        assert!(err.contains("unknown tags in tag_expr"), "got: {err}");
+        cleanup(&dst);
+        cleanup(&fresh);
     }
 }

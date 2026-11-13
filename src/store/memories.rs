@@ -2,7 +2,7 @@
 
 use crate::model::Memory;
 use crate::sql;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
 
 use super::Store;
@@ -51,6 +51,18 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// The id of the memory carrying exactly this (summary, content) pair, if any — the merge
+    /// import's verbatim-duplicate probe.
+    pub fn memory_id_by_text(&self, summary: &str, content: &str) -> Result<Option<i64>, String> {
+        let mut st = self
+            .conn
+            .prepare_cached(sql::MEMORY_ID_BY_TEXT)
+            .map_err(|e| e.to_string())?;
+        st.query_row(params![summary, content], |r| r.get::<_, i64>(0))
+            .optional()
+            .map_err(|e| e.to_string())
     }
 
     /// Insert a memory and link the given (source tag id, target tag id) rows (the handler

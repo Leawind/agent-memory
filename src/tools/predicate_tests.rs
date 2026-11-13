@@ -106,9 +106,13 @@ fn backup_restores_forward_references_with_stable_tag_binding() {
     let ctx = IdentityCtx::open_mode();
     set(&path, &ctx, "z-root", "a").unwrap();
     set(&path, &ctx, "a-alias", "@z-root").unwrap();
-    let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
+    let dump =
+        store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump(None)).unwrap();
     let restored = path.with_extension("restored.db");
-    store::with_db_in(&restored, store::TxMode::Write, |st| st.import_dump(&dump)).unwrap();
+    store::with_db_in(&restored, store::TxMode::Write, |st| {
+        st.import_dump(&dump, &store::ImportOptions::RESTORE)
+    })
+    .unwrap();
     assert_eq!(
         execute_with_db(
             &restored,
@@ -148,14 +152,15 @@ fn decay_rules_match_tags_and_survive_export_import() {
         Ok(())
     })
     .unwrap();
-    let dump = store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump()).unwrap();
+    let dump =
+        store::with_db_in(&path, store::TxMode::ReadOnly, |st| st.export_dump(None)).unwrap();
     assert_eq!(dump["lifecycle_policy"]["rules"][0]["predicate"], "temp");
     let restored = path.with_extension("restored.db");
     store::with_db_in(
         &restored,
         store::TxMode::Write,
         |st| -> Result<(), String> {
-            st.import_dump(&dump)?;
+            st.import_dump(&dump, &store::ImportOptions::RESTORE)?;
             let policy = st.lifecycle_policy()?;
             let plan = st.decay_plan();
             assert!(

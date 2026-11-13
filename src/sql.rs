@@ -31,6 +31,7 @@ pub const MEMORY_LINK_TAG: &str = include_str!("../sql/memory_link_tag.sql");
 pub const MEMORY_CLEAR_TAGS: &str = include_str!("../sql/memory_clear_tags.sql");
 pub const MEMORY_BY_IDS: &str = include_str!("../sql/memory_by_ids.sql");
 pub const MEMORY_EXISTS: &str = include_str!("../sql/memory_exists.sql");
+pub const MEMORY_ID_BY_TEXT: &str = include_str!("../sql/memory_id_by_text.sql");
 pub const MEMORY_TAG_ORIGINS: &str = include_str!("../sql/memory_tag_origins.sql");
 pub const MEMORY_ALL: &str = include_str!("../sql/memory_all.sql");
 pub const MEMORY_TAG_PAIRS: &str = include_str!("../sql/memory_tag_pairs.sql");
@@ -147,6 +148,7 @@ mod tests {
             ("MEMORY_CLEAR_TAGS", MEMORY_CLEAR_TAGS),
             ("MEMORY_BY_IDS", MEMORY_BY_IDS),
             ("MEMORY_EXISTS", MEMORY_EXISTS),
+            ("MEMORY_ID_BY_TEXT", MEMORY_ID_BY_TEXT),
             ("MEMORY_TAG_ORIGINS", MEMORY_TAG_ORIGINS),
             ("MEMORY_ALL", MEMORY_ALL),
             ("MEMORY_TAG_PAIRS", MEMORY_TAG_PAIRS),

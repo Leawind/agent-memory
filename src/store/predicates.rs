@@ -1,3 +1,4 @@
+use super::attributes::validate_query_leaves;
 use super::Store;
 use crate::{
     named_predicates::{Atom, Definition, Registry},
@@ -228,4 +229,65 @@ impl Store {
         crate::named_predicates::validate_expansion(&expanded)?;
         Ok(expanded)
     }
+
+    /// Parse and fully resolve a query expression against the live store: syntax, atom rewriting
+    /// (presence regexes, edge leaves), named-predicate expansion and leaf validation with the
+    /// did-you-mean hint. The one entry point every caller of user-supplied `tag_expr` text shares.
+    pub fn resolve_query_expr(&self, raw: &str) -> Result<TagExpr, String> {
+        let expr = self.resolve_named_query(self.bind_query_atoms(tag_expr::parse(raw)?)?)?;
+        validate_query_leaves(&expr, &|name| self.tag_exists(name), &|name| {
+            self.find_tag_case_insensitive(name)
+        })?;
+        Ok(expr)
+    }
+}
+
+/// Resolve an import-filter expression against the export file itself (the file is
+/// self-contained): `@name` references expand from the file's own predicate definitions
+/// (display-form strings), atoms rewrite against the file's tag names, and leaf source halves
+/// must exist in the file — with the same did-you-mean hint, scoped to the file vocabulary.
+pub(crate) fn resolve_dump_filter(
+    raw: &str,
+    tag_names: &HashSet<String>,
+    predicates: &HashMap<String, String>,
+) -> Result<TagExpr, String> {
+    let expr = expand_dump_named(tag_expr::parse(raw)?, predicates, &mut Vec::new())?;
+    let expr =
+        super::attributes::rewrite_query_atoms(expr, &mut |name| Ok(tag_names.contains(name)))?;
+    crate::named_predicates::validate_expansion(&expr)?;
+    validate_query_leaves(&expr, &|name| Ok(tag_names.contains(name)), &|name| {
+        Ok(tag_names
+            .iter()
+            .find(|candidate| candidate.eq_ignore_ascii_case(name))
+            .cloned())
+    })?;
+    Ok(expr)
+}
+
+/// Expand `@name` atoms from a dump's display-form predicate definitions. Cycle detection walks
+/// the reference path (a name may legitimately appear twice in different branches); total
+/// expansion size is bounded by validate_expansion on the final expression.
+fn expand_dump_named(
+    expr: TagExpr,
+    predicates: &HashMap<String, String>,
+    active: &mut Vec<String>,
+) -> Result<TagExpr, String> {
+    expr.try_expand(&mut |atom| match atom {
+        TagAtom::Named(name) => {
+            if active.iter().any(|seen| seen == &name) {
+                return Err(format!(
+                    "named predicate '@{name}' is referenced in a cycle"
+                ));
+            }
+            let raw = predicates
+                .get(&name)
+                .ok_or_else(|| format!("unknown named predicate '@{name}' in export"))?;
+            let inner = tag_expr::parse_rule(raw)?;
+            active.push(name);
+            let expanded = expand_dump_named(inner, predicates, active);
+            active.pop();
+            expanded
+        }
+        other => Ok(TagExpr::Atom(other)),
+    })
 }

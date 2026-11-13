@@ -374,7 +374,7 @@ mod tests {
             assert!((before.value(later) - after.value(later)).abs() < 1e-12);
             assert_eq!((after.reads, after.uses), (1, 3));
             st.access_append(id, "alice", Kind::Use, Some("new"), later)?;
-            let dump = st.export_dump()?;
+            let dump = st.export_dump(None)?;
             assert_eq!(
                 dump["memories"]["m1"]["access"]["buckets"]
                     .as_array()
@@ -393,7 +393,7 @@ mod tests {
         })
         .unwrap();
         store::with_db_in(&restored, TxMode::Write, |st| -> Result<(), String> {
-            st.import_dump(&dump)?;
+            st.import_dump(&dump, &crate::store::ImportOptions::RESTORE)?;
             let original = Store::open(&path)?.access_projection(1)?;
             let restored = st.access_projection(1)?;
             assert!((original.value(later) - restored.value(later)).abs() < 1e-12);
@@ -497,7 +497,9 @@ mod tests {
                 {"actor":"alice","event_key":"key","kind":"use","occurred_at":101,"weight":1.0}
             ]}
         }}});
-        let result = store::with_db_in(&path, TxMode::Write, |st| st.import_dump(&dump));
+        let result = store::with_db_in(&path, TxMode::Write, |st| {
+            st.import_dump(&dump, &crate::store::ImportOptions::RESTORE)
+        });
         assert!(result.is_err());
         let st = Store::open(&path).unwrap();
         assert_eq!(st.stats().unwrap()["memories"], 0);

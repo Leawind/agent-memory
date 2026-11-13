@@ -69,15 +69,28 @@ enum Command {
     Stats,
     /// Data health check: orphan references / case-conflicting tag groups / empty fields (exits with code 1 when issues are found)
     Doctor,
-    /// Export a human-readable JSON backup (refuses to overwrite an existing file)
+    /// Export a JSON backup (refuses to overwrite an existing file)
     Export {
         /// Output file path
         path: PathBuf,
+        /// Export only memories matching this tag expression (bare tags, /regex/,
+        /// key=value, @named-predicate references). The filtered backup carries data only.
+        #[arg(long, value_name = "EXPR")]
+        predicate: Option<String>,
     },
-    /// Restore data from a JSON backup produced by export (the target database must be empty)
+    /// Restore data from a JSON backup produced by export (empty target by default)
     Import {
         /// Backup file path
         path: PathBuf,
+        /// Merge into a non-empty database: memories identical to existing ones (same
+        /// summary and content) are skipped, existing tags stay untouched, and the file's
+        /// predicates / lifecycle policy are ignored — merge adds data, never modifies it.
+        #[arg(long)]
+        merge: bool,
+        /// Import only memories matching this tag expression, evaluated against the
+        /// backup file's own vocabulary and named predicates.
+        #[arg(long, value_name = "EXPR")]
+        predicate: Option<String>,
     },
     /// Batch backfill embeddings for memories missing vectors (rebuilds the derived data
     /// behind semantic search; export/import does not carry vectors, so run this once after restoring a database).
@@ -130,8 +143,12 @@ fn run(cli: Cli) -> i32 {
         } => http::serve_http(&host, port, &db_path, verbose),
         Command::Stats => cmd_stats(&db_path),
         Command::Doctor => cmd_doctor(&db_path),
-        Command::Export { path } => cmd_export(&db_path, &path),
-        Command::Import { path } => cmd_import(&db_path, &path),
+        Command::Export { path, predicate } => cmd_export(&db_path, &path, predicate.as_deref()),
+        Command::Import {
+            path,
+            merge,
+            predicate,
+        } => cmd_import(&db_path, &path, merge, predicate.as_deref()),
         Command::EmbedBackfill { batch, model } => {
             cmd_embed_backfill(&db_path, batch, model.as_deref())
         }
@@ -173,8 +190,14 @@ fn cmd_token_reset(db_path: &std::path::Path, name: Option<&str>) -> i32 {
     }
 }
 
-/// Restore data from an export JSON. The target database must be empty (import is a restore/migration, not a merge).
-fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
+/// Restore data from an export JSON (the target database must be empty), or merge it into a
+/// populated one with `merge`.
+fn cmd_import(
+    db_path: &std::path::Path,
+    file: &std::path::Path,
+    merge: bool,
+    predicate: Option<&str>,
+) -> i32 {
     let text = match std::fs::read_to_string(file) {
         Ok(t) => t,
         Err(e) => {
@@ -189,13 +212,21 @@ fn cmd_import(db_path: &std::path::Path, file: &std::path::Path) -> i32 {
             return 1;
         }
     };
-    match store::with_db_in(db_path, store::TxMode::Write, |st| st.import_dump(&dump)) {
-        Ok((memories, tags)) => {
+    match store::with_db_in(db_path, store::TxMode::Write, |st| {
+        st.import_dump(&dump, &store::ImportOptions { merge, predicate })
+    }) {
+        Ok(report) => {
+            let skipped = if report.skipped > 0 {
+                format!(", {} duplicates skipped", report.skipped)
+            } else {
+                String::new()
+            };
             println!(
-                "imported {} memories, {} tags into {}",
-                memories,
-                tags,
-                db_path.display()
+                "imported {} memories, {} tags into {}{}",
+                report.memories,
+                report.tags,
+                db_path.display(),
+                skipped
             );
             0
         }
@@ -344,8 +375,19 @@ fn cmd_doctor(db_path: &std::path::Path) -> i32 {
     }
 }
 
-fn cmd_export(db_path: &std::path::Path, out_path: &std::path::Path) -> i32 {
-    let dump = match read_db(db_path, |st| st.export_dump()) {
+fn cmd_export(
+    db_path: &std::path::Path,
+    out_path: &std::path::Path,
+    predicate: Option<&str>,
+) -> i32 {
+    let dump = match read_db(db_path, |st| {
+        // The filter resolves against the live vocabulary inside the read transaction; a bad
+        // expression fails before any output file is created.
+        let filter = predicate
+            .map(|raw| st.resolve_query_expr(raw))
+            .transpose()?;
+        st.export_dump(filter.as_ref())
+    }) {
         Ok(d) => d,
         Err(code) => return code,
     };

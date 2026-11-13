@@ -6,7 +6,7 @@ use crate::model::{
 };
 use crate::search;
 use crate::store::{ListFilter, Store};
-use crate::tag_expr::{self, TagExpr};
+use crate::tag_expr::TagExpr;
 use crate::tools::params::{
     opt_bool, opt_str, opt_str_list, opt_u64, req_id_list, req_str, validate_content,
     validate_summary,
@@ -15,41 +15,10 @@ use crate::tools::ToolError;
 use serde_json::{json, Map, Value};
 
 /// Parse and store-validate a tag expression: syntax errors and unknown leaf tags are Invalid,
-/// unknown names get the same did-you-mean hint as tag linking on writes.
+/// unknown names get the same did-you-mean hint as tag linking on writes. The shared resolution
+/// lives in the store (`Store::resolve_query_expr`), which the export path reuses verbatim.
 fn resolve_tag_expr(st: &Store, raw: &str) -> Result<TagExpr, ToolError> {
-    let expr = st
-        .resolve_named_query(
-            st.bind_query_atoms(tag_expr::parse(raw)?)
-                .map_err(ToolError::invalid)?,
-        )
-        .map_err(ToolError::invalid)?;
-    let mut unknown: Vec<String> = Vec::new();
-    // Leaf names are display forms: a composed `source:target` leaf validates its SOURCE half
-    // against the vocabulary; the target half stays unchecked — a typo'd target simply matches
-    // nothing (values-as-targets are per-memory facts as much as vocabulary), while an unknown
-    // source is far more likely a typo and gets the did-you-mean path. A bare leaf validates itself.
-    for name in expr.tag_names() {
-        let source = match name.split_once(':') {
-            Some((source, _)) => source,
-            None => name,
-        };
-        if !st.tag_exists(source).map_err(ToolError::invalid)? {
-            match st
-                .find_tag_case_insensitive(source)
-                .map_err(ToolError::invalid)?
-            {
-                Some(similar) => unknown.push(format!("'{source}' (did you mean '{similar}'?)")),
-                None => unknown.push(format!("'{source}'")),
-            }
-        }
-    }
-    if !unknown.is_empty() {
-        return Err(ToolError::invalid(format!(
-            "unknown tags in tag_expr: {} (see tag_list for available names)",
-            unknown.join(", ")
-        )));
-    }
-    Ok(expr)
+    st.resolve_query_expr(raw).map_err(ToolError::invalid)
 }
 
 /// Read the optional tag_expr argument: absent, empty or whitespace-only counts as no expression

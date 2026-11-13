@@ -31,6 +31,7 @@ mod tags;
 mod tx;
 
 pub use memories::ListFilter;
+pub use ops::ImportOptions;
 pub use tx::{with_db_in, with_db_in_timeout, TxMode};
 
 use rusqlite::{Connection, OptionalExtension};

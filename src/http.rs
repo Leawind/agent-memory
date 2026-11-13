@@ -274,7 +274,7 @@ fn handle_request(db_path: &Path, req: tiny_http::Request, verbose: bool) {
                         return;
                     }
                     return respond_export(
-                        req, db_path, &method, &path, verbose, &ctx.name, started,
+                        req, db_path, &method, &path, &query, verbose, &ctx.name, started,
                     );
                 }
                 match catch_unwind(AssertUnwindSafe(|| {
@@ -416,17 +416,21 @@ fn mcp_summary(msg: &Value) -> Option<String> {
 
 // ---------------------------------------------------------------- Export and static assets
 
+#[allow(clippy::too_many_arguments)]
 fn respond_export(
     req: tiny_http::Request,
     db_path: &Path,
     method: &str,
     path: &str,
+    query: &str,
     verbose: bool,
     identity: &str,
     started: std::time::Instant,
 ) {
+    // `?predicate=` exports only the memories matching the tag expression (percent-decoded by query_get)
+    let predicate = api::query_get(query, "predicate");
     let remote = req.remote_addr();
-    match api::export_bytes(db_path) {
+    match api::export_bytes(db_path, predicate.as_deref()) {
         Ok(bytes) => {
             let disposition = Header::from_bytes(
                 b"Content-Disposition",
@@ -451,20 +455,24 @@ fn respond_export(
             );
             let _ = req.respond(resp);
         }
-        Err(e) => {
+        Err(failure) => {
+            let (status, message) = match failure {
+                api::ExportFailure::Invalid(message) => (400, message),
+                api::ExportFailure::Internal(message) => (500, message),
+            };
             log_request(
                 verbose,
                 method,
                 path,
-                500,
+                status,
                 remote,
                 Some(identity),
                 None,
                 started.elapsed(),
             );
             let _ = req.respond(
-                Response::from_data(err_bytes(&e))
-                    .with_status_code(500)
+                Response::from_data(err_bytes(&message))
+                    .with_status_code(status)
                     .with_header(content_type_header("application/json")),
             );
         }
