@@ -6,9 +6,6 @@ export default {
     name: 'Name',
     expression: 'Predicate',
     create: 'New predicate',
-    hint: "Click a definition to edit. {'@'}name references a definition.",
-    namesHint:
-      'Names contain 1–100 letters, digits, underscores, hyphens or dots; start with a letter, digit or underscore. Derivations require positive predicates.',
   },
   lifecycle: {
     orderHint:
@@ -22,17 +19,15 @@ export default {
     enableDecay: 'Enable decay',
     noDecay: 'No decay',
     days: 'days (half-life)',
-    freshnessWeight: 'Freshness rank weight',
-    reinforcementWeight: 'Access reinforcement rank weight',
-    policyHint:
-      'A weight of zero disables that signal. These ranks only reorder relevant candidates; they never recall more.',
+    freshnessWeight: 'Freshness rank weight (0 disables)',
+    reinforcementWeight: 'Reinforcement rank weight (0 disables)',
     accessTitle: 'Access events and projections',
     rawEvents: 'Raw events',
     buckets: 'Hourly buckets',
     tracked: 'Memories with access history',
     dropped: 'Read events skipped by this process',
     accessHint:
-      'Full reads receive weak credit; explicit uses receive strong credit. The same identity and event kind receive credit once per 60 seconds. Events older than 30 days are compacted hourly; reinforcement has a fixed 30-day half-life.',
+      'Full reads receive weak credit; explicit uses receive strong credit. The same identity and event kind receive credit once per 60 seconds. Events older than 30 days are compacted hourly; the reinforcement half-life is 30 days.',
     refresh: 'Refresh statistics',
     compact: 'Compact one old-event batch',
     rebuild: 'Rebuild score projections',
@@ -46,7 +41,6 @@ export default {
   },
   memories: {
     title: 'Memories',
-    subtitle: 'A memory store shared by multiple agents',
     create: 'New Memory',
     searchPlaceholder: 'Search memories…',
     searchPlaceholderSemantic: 'Search memories (keywords + semantic)…',
@@ -67,11 +61,9 @@ export default {
     deleteTitle: 'Confirm deletion',
     deleteConfirm: 'Permanently delete memory {id}?',
     deleted: 'Deleted',
-    searchEmpty: 'No memory matched every term; drop some terms or try broader ones',
+    searchEmpty: 'No memory matched every term',
     emptyTitle: 'No memories yet',
-    emptyHint: 'Record the facts, conventions and context your agents should remember.',
     emptyCreate: 'Create the first memory',
-    noMatchTitle: 'No matching memories',
     clearFilters: 'Clear filters',
     fetchById: 'Fetch by ID',
     fetchPromptTitle: 'Fetch a memory by ID',
@@ -128,9 +120,7 @@ export default {
     tabPreview: 'Preview',
     contentPlaceholder: 'Optional; Markdown supported',
     tagsLabel: 'Tags',
-    tagsPlaceholder: 'Select or type a tag',
-    tagsHint:
-      'Edge tags go in as source:target (e.g. project:nmmt); a source carries one edge per memory and cannot also be an edge target. Numbers store in canonical form (1 and 1.0 are the same name)',
+    tagsPlaceholder: 'Select or type a tag (edges like project:nmmt)',
     tagTokenError: 'Edge tags look like source:target with a non-empty source and target',
     tagValueErrorFmt: 'Invalid edge target "{value}": a target is an identifier word or a number (e.g. 1.5, 1e3)',
     tagKeyExistsFmt: 'Source "{key}" already carries an edge — remove it first, then type the new target',
@@ -165,8 +155,6 @@ export default {
     language: 'Language',
     admin: 'Admin',
     tokenPromptTitle: 'Access token',
-    tokenPromptDesc:
-      'This server requires token auth. Paste your access token (needed once per browser; it is attached automatically afterwards).',
     tokenPlaceholder: 'Bearer token',
     tokenConfirm: 'Save & connect',
     tokenInvalid: 'Token is invalid or revoked, please retry',
@@ -174,20 +162,16 @@ export default {
     identityNone: 'Not connected',
     anonymous: 'Anonymous',
     addIdentity: 'Add identity',
-    addIdentityDesc: 'Paste an identity token; this browser will remember it and switch to it',
     removeIdentity: 'Remove the token saved in this browser',
   },
   access: {
     title: 'Admin',
-    subtitle: 'Identities & access, backup import/export, data checks, and custom prompts (admin only)',
     navAccess: 'Identities & access',
     navEmbedding: 'Search models',
     navPrompt: 'Custom instructions',
     navBackup: 'Backup & restore',
     navDoctor: 'Health check',
     needAdmin: 'Admin permission is required to manage identities and settings',
-    openMode:
-      'Open mode: the auth switch is off and all requests are unauthenticated, only suitable for personal local deployments. Before enabling, create an admin identity below and save its token; once the switch is on, every /mcp and /api request must carry a valid token.',
     identityCard: 'Identities',
     colName: 'Name',
     colToken: 'Token',
@@ -257,8 +241,6 @@ export default {
     doctorOk: 'Check passed: all {total} checks are clean',
     doctorFail: '{count} issues found ({failed}/{total} checks failing)',
     doctorIssueCount: '{count} issues',
-    doctorEmpty:
-      'Click "Run check" to go through every probe: integrity, foreign keys, tag/memory references, case conflicts, empty summaries, timestamps, duplicate memories, orphan embeddings, vector coverage',
     doctorCheckIntegrity: 'Database integrity (quick_check)',
     doctorCheckForeignKeys: 'Foreign key references',
     doctorCheckTagRefs: 'Tag references (memory_tags → tags)',
@@ -280,19 +262,11 @@ export default {
     embeddingBadgeTesting: 'Testing…',
     embeddingBadgeHealthy: 'Passed',
     embeddingBadgeBroken: 'Partial failure',
-    embeddingPitch:
-      'Add OpenAI-compatible /embeddings candidates (cloud such as SiliconFlow, local such as Ollama): once saved, search gains semantic matching beyond keywords. Candidates are probed in list order with automatic failover.',
-    embeddingUntested: 'Candidates are configured but the connection has not been tested yet.',
-    embeddingChecking: 'Testing the connection…',
-    embeddingHealthy: 'Checks passed: search probes candidates in list order and fails over to the next one.',
-    embeddingBroken: 'Some candidates are unreachable and are skipped at search time:',
     embeddingSave: 'Save',
     embeddingTest: 'Test',
     embeddingAdd: 'Add',
     embeddingEntryUntitled: 'Untitled candidate',
     embeddingEntryIncomplete: 'Incomplete or invalid configuration',
-    embeddingFormHint:
-      'List order is the failover priority; search falls back to keywords when every candidate is down, writes never block',
     embeddingModelChangeWarn:
       'Changing the ID, service URL, model or prefixes invalidates {count} vectors; backfill after saving',
     entryDrag: 'Drag to change priority',
@@ -301,7 +275,6 @@ export default {
     entryIdHint:
       'Vector cache key. Must be unique within embedding models; reordering and display-name edits preserve the cache.',
     entryRerankIdHint: 'Stable identifier for this configuration; must be unique within reranking models.',
-    requiredFieldsHint: '* marks required fields',
     entryNameLabel: 'Display name',
     entryModelLabel: 'API model name',
     entryBaseUrlLabel: 'Service base URL',
@@ -347,18 +320,9 @@ export default {
     runtimeLatency: 'Last latency',
     runtimeSamples: 'Calls',
     runtimeFailures: 'Failures',
-    adaptiveHint:
-      'Disabled by default. Latency and input length guide fast shrinkage and gradual growth. The fixed count is the initial budget and must fit the adaptive range. Semantic recall must cover the maximum; input capacity must cover the minimum × 8000. Statistics are process-local. The latency target is a soft objective and does not measure ranking quality.',
     semanticCandidates: 'Semantic candidates',
     rerankCandidates: 'Reranking candidates',
-    searchLimitsHint:
-      'Semantic candidates must cover the reranking pool. Page size changes returned results, not the candidate budget.',
-    rerankPitch:
-      'Add OpenAI-compatible /rerank candidates (local: Xinference, TEI, …): once saved, the fused search candidates are re-ordered by relevance. Candidates are probed in list order with automatic failover.',
-    rerankUntested: 'Reranker candidates are configured but the connection has not been tested yet.',
-    rerankHealthy: 'Checks passed: search results are re-ordered by relevance.',
-    rerankBroken: 'Reranking is failing; search keeps the fused order:',
-    rerankFormHint:
-      'OpenAI-compatible /rerank (Cohere-style request); when reranking fails the fused order is kept silently',
+    searchLimitsInvalid:
+      'Semantic candidates must cover the reranking pool; when adaptive sizing is on, they must also cover its maximum',
   },
 }

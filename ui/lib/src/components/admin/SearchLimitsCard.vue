@@ -88,14 +88,15 @@
       </div>
     </div>
 
-    <p class="form-hint" :class="{ 'is-invalid': !valid }">{{ t('access.searchLimitsHint') }}</p>
+    <!-- Validation feedback sits on the buttons' row (left of them, buttons right-aligned):
+         it appears and disappears as values change without moving the buttons -->
     <div class="actions">
+      <span v-if="!valid" class="form-error">{{ t('access.searchLimitsInvalid') }}</span>
       <el-button type="primary" :disabled="!dirty || !valid" :loading="saving" @click="save">
         {{ t('common.save') }}
       </el-button>
       <el-button :loading="refreshing" @click="refresh">{{ t('access.runtimeRefresh') }}</el-button>
     </div>
-    <p class="form-hint">{{ t('access.adaptiveHint') }}</p>
     <el-table v-if="runtime?.models?.length" class="runtime-table" :data="runtime.models" size="small">
       <el-table-column prop="id" :label="t('access.runtimeModel')" min-width="100" />
       <el-table-column prop="selected_candidates" :label="t('access.runtimeBudget')" min-width="100" />
@@ -220,19 +221,17 @@ async function refresh(): Promise<void> {
   border-radius: 10px;
   background: var(--el-fill-color-lighter);
 }
-.form-hint {
-  margin: 10px 0 0;
-  color: var(--el-text-color-secondary);
+.form-error {
+  margin-right: auto;
+  color: var(--el-color-danger);
   font-size: 12px;
   line-height: 1.6;
-}
-.is-invalid {
-  color: var(--el-color-danger);
 }
 .actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   margin: 12px 0 4px;
 }

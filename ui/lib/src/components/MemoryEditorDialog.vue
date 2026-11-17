@@ -80,9 +80,6 @@
             <span>{{ t('editor.tagsLabel') }}</span>
           </div>
         </template>
-        <!-- Format guidance above the input: the dropdown opens downward, so a hint below
-             would sit exactly under the open panel -->
-        <div class="form-hint">{{ t('editor.tagsHint') }}</div>
         <!-- The create flow is taken over from allow-create (it has no pre-create hook): the
              query tracked by filter-method drives a controlled first dropdown entry — the "add
              token" action when the token can land, a disabled red refusal otherwise. Illegal
@@ -470,16 +467,6 @@ function blockWhileSaving(done: () => void): void {
 </script>
 
 <style scoped>
-.form-hint {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
-  width: 100%;
-  margin: 0 0 4px;
-}
-.form-hint.is-error {
-  color: var(--el-color-danger);
-}
 .content-label {
   display: flex;
   justify-content: space-between;

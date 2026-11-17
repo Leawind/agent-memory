@@ -508,7 +508,7 @@ describe('AdminPanel', () => {
     wrapper.unmount()
   })
 
-  it('shows the open-mode notice only in the access section', async () => {
+  it('moves the active highlight when a nav section is clicked', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.resolve(jsonResponse({ identities: [] }))),
@@ -518,13 +518,13 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // The notice is an identity/auth concern: it renders in the access section (the default)
-    expect(wrapper.html()).toContain('开放模式')
-    // Switching to any other tab removes it entirely (v-if, not merely hidden)
-    await wrapper.findAll('.admin-nav .nav-item')[1].trigger('click')
-    expect(wrapper.text()).not.toContain('开放模式')
-    await wrapper.findAll('.admin-nav .nav-item')[0].trigger('click')
-    expect(wrapper.text()).toContain('开放模式')
+    const navItems = wrapper.findAll('.admin-nav .nav-item')
+    expect(navItems[0].classes()).toContain('is-active')
+    await navItems[1].trigger('click')
+    expect(navItems[1].classes()).toContain('is-active')
+    expect(navItems[0].classes()).not.toContain('is-active')
+    await navItems[0].trigger('click')
+    expect(navItems[0].classes()).toContain('is-active')
     wrapper.unmount()
   })
 

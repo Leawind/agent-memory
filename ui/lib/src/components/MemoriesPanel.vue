@@ -3,12 +3,9 @@
     <el-config-provider :locale="elementPlusLocale">
       <div v-if="showHeader" class="am-panel-header">
         <div class="am-heading">
-          <div class="am-heading-text">
-            <div class="am-title-line">
-              <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
-              <span v-if="!loading" class="am-total">{{ total }}</span>
-            </div>
-            <p class="am-panel-subtitle">{{ props.subtitle ?? t('memories.subtitle') }}</p>
+          <div class="am-title-line">
+            <h2 class="am-panel-title">{{ props.title ?? t('memories.title') }}</h2>
+            <span v-if="!loading" class="am-total">{{ total }}</span>
           </div>
         </div>
         <div class="am-heading-actions">
@@ -64,17 +61,14 @@
             <el-icon :size="26"><Collection /></el-icon>
           </div>
           <h3 class="am-empty-title">
-            {{ emptyKind === 'none' ? t('memories.emptyTitle') : t('memories.noMatchTitle') }}
-          </h3>
-          <p class="am-empty-hint">
             {{
-              emptyKind === 'search'
-                ? t('memories.searchEmpty')
-                : emptyKind === 'filter'
-                  ? t('memories.exprEmpty')
-                  : t('memories.emptyHint')
+              emptyKind === 'none'
+                ? t('memories.emptyTitle')
+                : emptyKind === 'search'
+                  ? t('memories.searchEmpty')
+                  : t('memories.exprEmpty')
             }}
-          </p>
+          </h3>
           <el-button v-if="emptyKind === 'none'" type="primary" :icon="Plus" @click="openCreate">
             {{ t('memories.emptyCreate') }}
           </el-button>
@@ -154,12 +148,10 @@ import TagExprInput from './TagExprInput.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the toolbar + list are wanted) */
+    /** Hide the title area (when embedded in a host that already has a page title, only the toolbar + list are wanted) */
     showHeader?: boolean
     /** Override the default title */
     title?: string
-    /** Override the default subtitle */
-    subtitle?: string
   }>(),
   { showHeader: true },
 )
@@ -371,14 +363,7 @@ defineExpose({
 </script>
 
 <style scoped>
-/* Header: title + count badge on one line, the explanation visible underneath (it used to be
-   hidden behind an info tooltip) */
-.am-heading-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
+/* Header: title + count badge on one line */
 .am-title-line {
   display: flex;
   align-items: baseline;
@@ -403,16 +388,6 @@ defineExpose({
   display: flex;
   align-items: center;
   flex-shrink: 0;
-}
-
-.am-panel-subtitle {
-  margin: 0;
-  overflow: hidden;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Toolbar: search and the tag expression share the free space; the selects stay compact */
@@ -482,16 +457,10 @@ defineExpose({
   color: var(--el-color-primary);
 }
 .am-empty-title {
-  margin: 16px 0 6px;
+  margin: 16px 0 18px;
   font-size: 16px;
   font-weight: 600;
   color: var(--el-text-color-primary);
-}
-.am-empty-hint {
-  margin: 0 0 18px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
 }
 
 /* Memory card: quiet bordered row, surface fill on hover — reads as one clickable entry */

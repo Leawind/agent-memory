@@ -1,4 +1,4 @@
-// Panel reusability props: show-header / title / subtitle
+// Panel reusability props: show-header / title
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MemoriesPanel from './MemoriesPanel.vue'
@@ -32,7 +32,6 @@ describe('MemoriesPanel reusable props', () => {
     await flushPromises()
     expect(wrapper.find('.am-panel-header').exists()).toBe(true)
     expect(wrapper.find('.am-panel-title').text()).toBe('记忆')
-    expect(wrapper.find('.am-panel-subtitle').text()).toBe('多 agent 共享的记忆库')
     wrapper.unmount()
   })
 
@@ -46,14 +45,12 @@ describe('MemoriesPanel reusable props', () => {
     wrapper.unmount()
   })
 
-  it('overrides title and subtitle text', async () => {
+  it('overrides the title text', async () => {
     const wrapper = mount(MemoriesPanel, {
-      props: { title: '自定义标题', subtitle: '自定义副标题' },
+      props: { title: '自定义标题' },
     })
     await flushPromises()
     expect(wrapper.find('.am-panel-title').text()).toBe('自定义标题')
-    // The subtitle is visible copy under the title, not a hidden tooltip
-    expect(wrapper.find('.am-panel-subtitle').text()).toBe('自定义副标题')
     expect(wrapper.find('.am-info').exists()).toBe(false)
     wrapper.unmount()
   })

@@ -66,8 +66,6 @@
         </li>
       </ul>
     </template>
-    <!-- Before the first run, just one line of hint - no big placeholder block -->
-    <div v-else class="pending">{{ t('access.doctorEmpty') }}</div>
   </el-card>
 </template>
 
@@ -164,10 +162,5 @@ function checkName(id: string): string {
   margin: 2px 0 6px;
   padding-left: 30px;
   line-height: 1.8;
-}
-.pending {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
 }
 </style>

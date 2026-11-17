@@ -27,7 +27,8 @@ describe('i18n messages', () => {
   it('renders the unified tag vocabulary guidance in both languages', () => {
     for (const locale of ['zh', 'en'] as const) {
       setMemoryUILocale(locale)
-      expect(t('editor.tagsHint')).toContain('project:nmmt')
+      // The editor placeholder carries the edge-token example (page copy stays out of the dialog)
+      expect(t('editor.tagsPlaceholder')).toContain('project:nmmt')
       expect(t('editor.tagKeyExistsFmt', { key: 'p' })).toContain('p')
       expect(t('memories.tagExprHelp')).toContain('&')
     }

@@ -1,8 +1,16 @@
 <template>
   <div class="lifecycle-cards">
     <el-card shadow="never">
-      <template #header>{{ t('lifecycle.policyTitle') }}</template>
-      <p class="hint">{{ t('lifecycle.orderHint') }}</p>
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">
+            {{ t('lifecycle.policyTitle') }}
+            <el-tooltip :content="t('lifecycle.orderHint')" placement="top">
+              <el-icon class="am-info"><InfoFilled /></el-icon>
+            </el-tooltip>
+          </span>
+        </div>
+      </template>
       <div v-for="(rule, index) in draft.rules" :key="index" class="decay-rule">
         <div class="setting-row expression-row">
           <span class="setting-label">{{ t('predicates.expression') }}</span>
@@ -84,13 +92,21 @@
         />
       </div>
 
-      <p class="hint">{{ t('lifecycle.policyHint') }}</p>
       <el-button type="primary" :disabled="!dirty || !valid" :loading="saving" @click="save">{{
         t('common.save')
       }}</el-button>
     </el-card>
     <el-card shadow="never">
-      <template #header>{{ t('lifecycle.accessTitle') }}</template>
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">
+            {{ t('lifecycle.accessTitle') }}
+            <el-tooltip :content="t('lifecycle.accessHint')" placement="top">
+              <el-icon class="am-info"><InfoFilled /></el-icon>
+            </el-tooltip>
+          </span>
+        </div>
+      </template>
       <div v-if="stats" class="stat-grid">
         <div class="stat">
           <span class="stat-label">{{ t('lifecycle.rawEvents') }}</span>
@@ -109,7 +125,6 @@
           <span class="stat-value">{{ stats.dropped_read_events }}</span>
         </div>
       </div>
-      <p class="hint">{{ t('lifecycle.accessHint') }}</p>
       <div class="actions">
         <el-button :loading="busy === 'refresh'" :disabled="!!busy" @click="refresh">{{
           t('lifecycle.refresh')
@@ -127,6 +142,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { useApiClient } from '../../api/client'
 import { t } from '../../i18n'
 import { toastSuccess } from '../../toast'
@@ -225,6 +241,17 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
   display: grid;
   gap: 16px;
 }
+.card-header {
+  display: flex;
+  align-items: center;
+}
+.card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
 /* One setting per line: label left, compact controls right */
 .setting-row {
   display: flex;
@@ -294,12 +321,6 @@ async function maintain(action: 'compact' | 'rebuild'): Promise<void> {
 }
 .weight-row + .weight-row {
   margin-top: 2px;
-}
-.hint {
-  margin: 6px 0 10px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
 }
 /* Narrow dialog: drop the expression indent so the rule controls keep the full width */
 @media (max-width: 600px) {

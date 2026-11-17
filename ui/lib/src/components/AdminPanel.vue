@@ -4,9 +4,6 @@
       <div v-if="showHeader" class="am-panel-header">
         <div class="am-heading">
           <h2 class="am-panel-title">{{ props.title ?? t('access.title') }}</h2>
-          <el-tooltip :content="props.subtitle ?? t('access.subtitle')" placement="top">
-            <el-icon class="am-info"><InfoFilled /></el-icon>
-          </el-tooltip>
         </div>
       </div>
 
@@ -33,16 +30,6 @@
           </nav>
 
           <div class="admin-sections">
-            <!-- Open-mode notice: an identity/auth concern, so it lives in the access section
-                 only — a global banner would reshuffle every tab's layout on the fixed-height
-                 dialog. Stateless, so v-if (not v-show) is fine here. -->
-            <el-alert
-              v-if="who?.mode === 'open' && activeSection === 'access'"
-              type="warning"
-              :title="t('access.openMode')"
-              :closable="false"
-            />
-
             <!-- Auth: toggle (right of the title row) + anonymous access + identity table in one card -->
             <AuthCard
               v-show="activeSection === 'access'"
@@ -104,7 +91,7 @@
 import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { elementPlusLocale } from '../i18n/elementPlus'
 import { ElMessageBox } from 'element-plus'
-import { ChatDotRound, FirstAidKit, FolderOpened, InfoFilled, Search, User } from '@element-plus/icons-vue'
+import { ChatDotRound, FirstAidKit, FolderOpened, Search, User } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { useApiClient } from '../api/client'
 import { useContainerWidth } from '../composables/useContainerWidth'
@@ -124,14 +111,12 @@ import DoctorCard from './admin/DoctorCard.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** Caller identity summary: determines whether the panel is usable (admin capability) and the open-mode notice; pass null when the host has no identity wiring */
+    /** Caller identity summary: determines whether the panel is usable (admin capability); pass null when the host has no identity wiring */
     who?: WhoAmI | null
-    /** Hide the title/subtitle area (when embedded in a host that already has a page title, only the content cards are wanted) */
+    /** Hide the title area (when embedded in a host that already has a page title, only the content cards are wanted) */
     showHeader?: boolean
     /** Override the default title */
     title?: string
-    /** Override the default subtitle */
-    subtitle?: string
   }>(),
   { who: null, showHeader: true },
 )

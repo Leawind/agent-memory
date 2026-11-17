@@ -415,9 +415,8 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(badge(wrapper)).toBe('部分异常')
     expect(row(wrapper, 0).find('.entry-verdict').text()).toBe('正常 · 1024 维 · 42ms')
     expect(row(wrapper, 1).find('.entry-verdict').text()).toBe('连接失败')
-    // The reason stays readable without expanding anything
-    expect(wrapper.find('.probe-results').text()).toContain('dead')
-    expect(wrapper.find('.probe-results').text()).toContain('connection refused')
+    // The reason rides on the failing row's verdict itself
+    expect(row(wrapper, 1).find('.entry-verdict').attributes('title')).toContain('connection refused')
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })

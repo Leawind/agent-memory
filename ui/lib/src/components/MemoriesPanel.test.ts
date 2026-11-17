@@ -272,8 +272,7 @@ describe('MemoriesPanel', () => {
     const wrapper = mount(MemoriesPanel)
     await flushPromises()
     await flushPromises()
-    expect(wrapper.find('.am-empty-title').text()).toBe('没有匹配的记忆')
-    expect(wrapper.find('.am-empty').text()).toContain('没有记忆满足该标签表达式')
+    expect(wrapper.find('.am-empty-title').text()).toBe('没有记忆满足该标签表达式')
 
     const fetchMock = vi.mocked(globalThis.fetch)
     fetchMock.mockClear()

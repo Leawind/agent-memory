@@ -12,16 +12,6 @@
       </div>
     </template>
 
-    <p class="state-line" :class="{ 'is-broken': state === 'broken' }">{{ stateText }}</p>
-    <!-- Failure reasons stay visible without expanding anything: the badge alone does not say which
-         candidate is down and why -->
-    <div v-if="failures.length" class="probe-results">
-      <div v-for="f in failures" :key="f.id" class="probe-line">
-        <span>{{ f.model || t('access.embeddingEntryUntitled') }}</span> ·
-        <code class="broken-err">{{ f.error }}</code>
-      </div>
-    </div>
-
     <div ref="listEl" class="entry-list">
       <div
         v-for="(row, i) in draft"
@@ -31,12 +21,7 @@
       >
         <div class="entry-bar">
           <span class="entry-handle" :title="t('access.entryDrag')">
-            <!-- GitHub-style grip: two columns of three dots, the usual drag affordance -->
-            <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-              <path
-                d="M10 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
-              />
-            </svg>
+            <GripVertical class="grip" :size="14" aria-hidden="true" />
           </span>
           <button type="button" class="entry-toggle" @click="row.open = !row.open">
             <el-icon class="entry-caret"><ArrowRight /></el-icon>
@@ -45,7 +30,12 @@
             }}</span>
           </button>
           <span class="entry-tags">
-            <span v-if="verdictOf(row)" class="entry-verdict" :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'">
+            <span
+              v-if="verdictOf(row)"
+              class="entry-verdict"
+              :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'"
+              :title="verdictOf(row)!.ok ? undefined : verdictOf(row)!.error"
+            >
               <el-icon>
                 <CircleCheckFilled v-if="verdictOf(row)!.ok" />
                 <CircleCloseFilled v-else />
@@ -193,7 +183,6 @@
       :closable="false"
       class="settings-hint"
     />
-    <p class="form-hint">{{ t('access.requiredFieldsHint') }} · {{ t('access.embeddingFormHint') }}</p>
     <div class="form-actions">
       <el-button :icon="Plus" @click="addEntry">{{ t('access.embeddingAdd') }}</el-button>
       <span class="form-actions-main">
@@ -230,6 +219,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ArrowRight, CircleCheckFilled, CircleCloseFilled, Plus } from '@element-plus/icons-vue'
+import { GripVertical } from 'lucide-vue-next'
 import { ElMessageBox } from 'element-plus'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
@@ -485,17 +475,6 @@ async function testRow(row: EntryDraft): Promise<void> {
 
 type CardState = 'unconfigured' | 'testing' | 'untested' | 'healthy' | 'broken'
 
-const failures = computed(() =>
-  enabledRows.value
-    .map((r) => ({ r, verdict: verdictOf(r) }))
-    .filter((x): x is { r: EntryDraft; verdict: EmbedTestResult } => x.verdict != null && !x.verdict.ok)
-    .map((x) => ({
-      id: x.r.uiKey,
-      model: x.r.name.trim() || x.r.model.trim(),
-      error: x.verdict.error ?? t('access.entryTestFail'),
-    })),
-)
-
 const state = computed<CardState>(() => {
   if (!enabledRows.value.length) return 'unconfigured'
   if (testingAll.value || testingRowId.value !== null) return 'testing'
@@ -516,16 +495,6 @@ const badgeSuffix = computed(
     ({ unconfigured: 'Unconfigured', testing: 'Testing', untested: 'Untested', healthy: 'Healthy', broken: 'Broken' })[
       state.value
     ],
-)
-const stateText = computed(
-  () =>
-    ({
-      unconfigured: t('access.embeddingPitch'),
-      testing: t('access.embeddingChecking'),
-      untested: t('access.embeddingUntested'),
-      healthy: t('access.embeddingHealthy'),
-      broken: t('access.embeddingBroken'),
-    })[state.value],
 )
 
 // ---- Save / backfill / cache deletion ----
@@ -603,34 +572,6 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
 }
 .settings-hint {
   margin-bottom: 10px;
-}
-
-.state-line {
-  margin: 0 0 12px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--el-text-color-regular);
-}
-.state-line.is-broken {
-  color: var(--el-color-danger);
-}
-
-.probe-results {
-  margin: -6px 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.probe-line {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-color-danger);
-  font-variant-numeric: tabular-nums;
-}
-.broken-err {
-  font-size: 12px;
-  word-break: break-all;
-  color: var(--el-text-color-secondary);
 }
 
 .entry-list {
@@ -787,11 +728,6 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
   font-variant-numeric: tabular-nums;
 }
 
-.form-hint {
-  margin: 12px 0 10px;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-}
 .form-actions {
   display: flex;
   align-items: center;

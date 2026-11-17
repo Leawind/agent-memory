@@ -242,7 +242,8 @@ describe('RerankerSettingsCard', () => {
     await flushPromises()
     expect(badge(wrapper)).toBe('部分异常')
     expect(row(wrapper).find('.entry-verdict').text()).toBe('连接失败')
-    expect(wrapper.find('.probe-results').text()).toContain('connection refused')
+    // The reason rides on the failing row's verdict itself
+    expect(row(wrapper).find('.entry-verdict').attributes('title')).toContain('connection refused')
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })

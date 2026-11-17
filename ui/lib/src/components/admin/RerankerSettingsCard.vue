@@ -11,14 +11,6 @@
       </div>
     </template>
 
-    <p class="state-line" :class="{ 'is-broken': state === 'broken' }">{{ stateText }}</p>
-    <div v-if="failures.length" class="probe-results">
-      <div v-for="f in failures" :key="f.id" class="probe-line">
-        <span>{{ f.model || t('access.embeddingEntryUntitled') }}</span> ·
-        <code class="broken-err">{{ f.error }}</code>
-      </div>
-    </div>
-
     <div ref="listEl" class="entry-list">
       <div
         v-for="(row, i) in draft"
@@ -28,12 +20,7 @@
       >
         <div class="entry-bar">
           <span class="entry-handle" :title="t('access.entryDrag')">
-            <!-- GitHub-style grip: two columns of three dots, the usual drag affordance -->
-            <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-              <path
-                d="M10 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
-              />
-            </svg>
+            <GripVertical class="grip" :size="14" aria-hidden="true" />
           </span>
           <button type="button" class="entry-toggle" @click="row.open = !row.open">
             <el-icon class="entry-caret"><ArrowRight /></el-icon>
@@ -42,7 +29,12 @@
             }}</span>
           </button>
           <span class="entry-tags">
-            <span v-if="verdictOf(row)" class="entry-verdict" :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'">
+            <span
+              v-if="verdictOf(row)"
+              class="entry-verdict"
+              :class="verdictOf(row)!.ok ? 'is-ok' : 'is-bad'"
+              :title="verdictOf(row)!.ok ? undefined : verdictOf(row)!.error"
+            >
               <el-icon>
                 <CircleCheckFilled v-if="verdictOf(row)!.ok" />
                 <CircleCloseFilled v-else />
@@ -119,7 +111,6 @@
       </div>
     </div>
 
-    <p class="form-hint">{{ t('access.requiredFieldsHint') }} · {{ t('access.rerankFormHint') }}</p>
     <div class="form-actions">
       <el-button :icon="Plus" @click="addEntry">{{ t('access.embeddingAdd') }}</el-button>
       <span class="form-actions-main">
@@ -137,6 +128,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ArrowRight, CircleCheckFilled, CircleCloseFilled, Plus } from '@element-plus/icons-vue'
+import { GripVertical } from 'lucide-vue-next'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
 import { testRerankers } from '../../api/ops'
@@ -298,17 +290,6 @@ async function testRow(row: EntryDraft): Promise<void> {
 
 type CardState = 'unconfigured' | 'testing' | 'untested' | 'healthy' | 'broken'
 
-const failures = computed(() =>
-  enabledRows.value
-    .map((r) => ({ r, verdict: verdictOf(r) }))
-    .filter((x): x is { r: EntryDraft; verdict: RerankTestResult } => x.verdict != null && !x.verdict.ok)
-    .map((x) => ({
-      id: x.r.uiKey,
-      model: x.r.name.trim() || x.r.model.trim(),
-      error: x.verdict.error ?? t('access.entryTestFail'),
-    })),
-)
-
 const state = computed<CardState>(() => {
   if (!enabledRows.value.length) return 'unconfigured'
   if (testingAll.value || testingRowId.value !== null) return 'testing'
@@ -329,16 +310,6 @@ const badgeType = computed(
     ({ unconfigured: 'info', testing: 'warning', untested: 'warning', healthy: 'success', broken: 'danger' })[
       state.value
     ] as 'info' | 'warning' | 'success' | 'danger',
-)
-const stateText = computed(
-  () =>
-    ({
-      unconfigured: t('access.rerankPitch'),
-      testing: t('access.embeddingChecking'),
-      untested: t('access.rerankUntested'),
-      healthy: t('access.rerankHealthy'),
-      broken: t('access.rerankBroken'),
-    })[state.value],
 )
 
 const saving = ref(false)
@@ -362,34 +333,6 @@ async function save(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.state-line {
-  margin: 0 0 12px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--el-text-color-regular);
-}
-.state-line.is-broken {
-  color: var(--el-color-danger);
-}
-
-.probe-results {
-  margin: -6px 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.probe-line {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-color-danger);
-  font-variant-numeric: tabular-nums;
-}
-.broken-err {
-  font-size: 12px;
-  word-break: break-all;
-  color: var(--el-text-color-secondary);
 }
 
 .entry-list {
@@ -526,11 +469,6 @@ async function save(): Promise<void> {
   flex: 1;
 }
 
-.form-hint {
-  margin: 12px 0 10px;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-}
 .form-actions {
   display: flex;
   align-items: center;

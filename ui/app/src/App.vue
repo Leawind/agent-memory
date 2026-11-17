@@ -70,30 +70,11 @@
 
             <!-- Language: dropdown. The trigger is a fixed translate icon, never the current language
                  text (nativeName in menu items never follows the UI language; adding a language =
-                 a new dictionary + one menu item). Element Plus icons have no translate glyph and
-                 pulling in a second icon set for one glyph is not worth it, so the standard
-                 "languages" mark is inlined here (same as the de-agent-bug shell). -->
+                 a new dictionary + one menu item). Element Plus icons have no translate glyph,
+                 so it comes from lucide. -->
             <el-dropdown trigger="click" @command="setLang">
               <button type="button" class="lang-btn" :aria-label="t('shell.language')">
-                <svg
-                  class="lang-icon"
-                  viewBox="0 0 24 24"
-                  width="15"
-                  height="15"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="m5 8 6 6" />
-                  <path d="m4 14 6-6 2-3" />
-                  <path d="M2 5h12" />
-                  <path d="M7 2h1" />
-                  <path d="m22 22-5-10-5 10" />
-                  <path d="M14 18h6" />
-                </svg>
+                <Languages class="lang-icon" :size="15" :stroke-width="2" aria-hidden="true" />
                 <el-icon :size="12"><ArrowDown /></el-icon>
               </button>
               <template #dropdown>
@@ -155,9 +136,6 @@
         :title="tokenDialogMode === 'add' ? t('shell.addIdentity') : t('shell.tokenPromptTitle')"
         width="440px"
       >
-        <p class="token-desc">
-          {{ tokenDialogMode === 'add' ? t('shell.addIdentityDesc') : t('shell.tokenPromptDesc') }}
-        </p>
         <el-input
           v-model="tokenInput"
           :placeholder="t('shell.tokenPlaceholder')"
@@ -179,6 +157,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, Check, Collection, Delete, Key, Monitor, Moon, Plus, Sunny } from '@element-plus/icons-vue'
+import { Languages } from 'lucide-vue-next'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 import { AdminPanel, MemoryWorkspace, OpsDialog, provideMemoryUI, setMemoryUILocale, t } from '@agent-memory/ui'
@@ -711,12 +690,6 @@ body {
 }
 
 /* Token dialog copy */
-.token-desc {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.6;
-}
 .token-error {
   margin: 8px 0 0;
   font-size: 12px;
