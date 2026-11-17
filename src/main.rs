@@ -61,7 +61,7 @@ enum Command {
         #[arg(long, value_name = "PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
         /// Verbose logging: record every request (including static assets/health checks) with
-        /// duration, caller identity and MCP call summaries. By default only failed requests and startup/error events are logged.
+        /// duration, caller identity and MCP call summaries
         #[arg(long)]
         verbose: bool,
     },
@@ -69,7 +69,7 @@ enum Command {
     Stats,
     /// Data health check: orphan references / case-conflicting tag groups / empty fields (exits with code 1 when issues are found)
     Doctor,
-    /// Export a JSON backup (refuses to overwrite an existing file)
+    /// Export a JSON backup to a new file
     Export {
         /// Output file path
         path: PathBuf,
@@ -93,7 +93,7 @@ enum Command {
         predicate: Option<String>,
     },
     /// Batch backfill embeddings for memories missing vectors (rebuilds the derived data
-    /// behind semantic search; export/import does not carry vectors, so run this once after restoring a database).
+    /// behind semantic search; run this once after restoring a database).
     /// --model targets one cache identity (see `agent-memory stats` or the admin UI); without it
     /// the highest-priority available candidate's cache is drained.
     EmbedBackfill {
@@ -104,7 +104,7 @@ enum Command {
         #[arg(long)]
         model: Option<String>,
     },
-    /// Manage tokens (no account system: the token is the identity; day-to-day management happens in the Web UI)
+    /// Manage tokens (the token is the identity; day-to-day management happens in the Web UI)
     Token {
         #[command(subcommand)]
         command: TokenCommand,
@@ -298,7 +298,6 @@ fn read_db<T>(
 ) -> Result<T, i32> {
     store::with_db_in(db_path, store::TxMode::ReadOnly, f).map_err(|e| {
         eprintln!("cannot read database at {} ({}).", db_path.display(), e);
-        eprintln!("refusing to report on data that cannot be read cleanly.");
         1
     })
 }
