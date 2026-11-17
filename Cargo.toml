@@ -6,7 +6,6 @@ rust-version = "1.85"
 description = "Self-hosted MCP memory server for AI agents: SQLite-backed, HTTP-only, shared by multiple agents, with an embedded Vue3 management UI."
 license = "MIT"
 repository = "https://github.com/Leawind/agent-memory"
-homepage = "https://github.com/Leawind/agent-memory"
 readme = "README.md"
 keywords = ["mcp", "memory", "ai", "sqlite", "http-server"]
 categories = ["database", "development-tools", "web-programming::http-server"]

@@ -119,7 +119,7 @@ fn spawn_mock_reranker_with_delay(delay: Arc<AtomicU64>) -> (u16, SeenRerank) {
                 .into_iter()
                 .map(|v| v.as_str().unwrap_or_default().to_string())
                 .collect();
-            seen.lock().unwrap().push((query.clone(), docs.clone()));
+            seen.lock().unwrap().push((query, docs.clone()));
             std::thread::sleep(std::time::Duration::from_millis(
                 delay.load(Ordering::Relaxed),
             ));
