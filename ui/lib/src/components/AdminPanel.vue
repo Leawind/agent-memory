@@ -324,6 +324,13 @@ async function askResetToken(row: IdentityRow): Promise<void> {
 }
 .admin-sections > :deep(.el-card) {
   --el-card-bg-color: transparent;
+  /* The tag-expression completion popover is absolutely positioned inside the backup card.
+     Element Plus gives both .el-card (hidden) and .el-card__body (auto) their own overflow,
+     which clips the popover at the card's rounded border — let it escape instead. */
+  overflow: visible;
+}
+.admin-sections :deep(.el-card__body) {
+  overflow: visible;
 }
 
 /* Compact containers: the nav folds into a wrapping pill row above the active section.
