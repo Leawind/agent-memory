@@ -364,6 +364,7 @@ describe('AdminPanel', () => {
             min_similarity: null,
             tokenizer: null,
             max_tokens: null,
+            auto_backfill: false,
           },
         ],
       }),

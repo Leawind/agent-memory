@@ -149,6 +149,10 @@
                 :placeholder="t('access.entryMaxTokensPlaceholder')"
               />
             </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryAutoBackfillLabel')" :hint="t('access.entryAutoBackfillHint')" />
+              <el-switch v-model="row.autoBackfill" class="f-auto-backfill" />
+            </label>
           </div>
 
           <div v-if="verdictOf(row)?.ok === false" class="verdict-error">{{ verdictOf(row)!.error }}</div>
@@ -278,6 +282,7 @@ interface EntryDraft {
   minSimilarity: string
   tokenizer: string
   maxTokens: string
+  autoBackfill: boolean
   open: boolean
   /** The last probe verdict, together with the payload it was taken for (stale verdicts are
    *  dropped instead of being shown against values that were never tested) */
@@ -307,6 +312,7 @@ function entryPayload(r: EntryDraft) {
     min_similarity: r.minSimilarity.trim() === '' ? null : Number(r.minSimilarity),
     tokenizer: r.tokenizer.trim() === '' ? null : r.tokenizer.trim(),
     max_tokens: r.maxTokens.trim() === '' ? null : Number(r.maxTokens),
+    auto_backfill: r.autoBackfill,
   }
 }
 
@@ -328,6 +334,7 @@ function toDraftRow(e: EmbedModelEntry): EntryDraft {
     minSimilarity: e.min_similarity == null ? '' : String(e.min_similarity),
     tokenizer: e.tokenizer ?? '',
     maxTokens: e.max_tokens == null ? '' : String(e.max_tokens),
+    autoBackfill: e.auto_backfill ?? false,
     open: false,
     probe: null,
     progress: null,
@@ -386,6 +393,7 @@ function addEntry(): void {
     minSimilarity: '',
     tokenizer: '',
     maxTokens: '',
+    autoBackfill: false,
     open: true,
     probe: null,
     progress: null,

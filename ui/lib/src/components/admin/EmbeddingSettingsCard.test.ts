@@ -150,7 +150,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(row(wrapper).find('.f-min-similarity').classes()).not.toContain('is-invalid')
     expect(field(wrapper, '.f-api-key').attributes('placeholder') ?? '').toBe('')
     expect(field(wrapper, '.f-query-prefix').attributes('placeholder') ?? '').toBe('')
-    expect(wrapper.findAll('.field-help')).toHaveLength(7)
+    expect(wrapper.findAll('.field-help')).toHaveLength(8)
     expect(wrapper.find('.field-help').attributes('aria-label')).toContain('向量缓存键')
     await field(wrapper, '.f-id').setValue('local')
     await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')
@@ -177,6 +177,8 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     }
     await field(wrapper, '.f-max-tokens').setValue('512')
     await field(wrapper, '.f-tokenizer').setValue('auto')
+    // Automatic backfill is off unless the operator turns it on for this candidate
+    await row(wrapper).find('.f-auto-backfill').trigger('click')
     await button(wrapper, '保存')!.trigger('click')
     await flushPromises()
     const saved = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!).embedding_models[0]
@@ -184,6 +186,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(saved.min_similarity).toBeNull()
     expect(saved.tokenizer).toBe('auto')
     expect(saved.max_tokens).toBe(512)
+    expect(saved.auto_backfill).toBe(true)
     expect(row(wrapper).find('.entry-name').text()).toBe('embeddinggemma-300m')
     wrapper.unmount()
   })
@@ -267,6 +270,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
       '语义召回最低相似度',
       'Tokenizer（魔搭）',
       '最大输入 token 数',
+      '自动补跑',
     ])
     expect((field(wrapper, '.f-model').element as HTMLInputElement).value).toBe('bge-m3')
     expect(button(wrapper, '检测', detail)).toBeTruthy()
@@ -304,6 +308,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
           min_similarity: 0.4,
           tokenizer: null,
           max_tokens: null,
+          auto_backfill: false,
         },
         {
           id: 'e5',
@@ -317,6 +322,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
           min_similarity: 0.4,
           tokenizer: null,
           max_tokens: null,
+          auto_backfill: false,
         },
       ],
     })
@@ -398,6 +404,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
           min_similarity: 0.4,
           tokenizer: null,
           max_tokens: null,
+          auto_backfill: false,
         },
       ],
     })

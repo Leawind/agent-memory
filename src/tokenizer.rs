@@ -506,6 +506,7 @@ mod tests {
             min_similarity: 0.0,
             tokenizer: None,
             max_tokens: None,
+            auto_backfill: false,
         };
         assert_eq!(source_for(&cfg), None);
         cfg.tokenizer = Some("auto".into());

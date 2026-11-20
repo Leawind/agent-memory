@@ -292,6 +292,9 @@ export default {
     entryMaxTokensLabel: '最大输入 token 数',
     entryMaxTokensHint: '模型的单条输入 token 上限，仅在填写 Tokenizer 后生效。留空默认 8192。',
     entryMaxTokensPlaceholder: '默认 8192',
+    entryAutoBackfillLabel: '自动补跑',
+    entryAutoBackfillHint:
+      '开启后，服务启动、定时巡检与保存配置时自动补跑这个模型下缺失的向量；默认关闭，需要时也可在下方手动补跑。写入记忆时该记忆照常嵌入。',
     entryTestOk: '正常 · {dim} 维 · {ms}ms',
     entryTestRerank: '正常 · {count} 篇已打分 · {ms}ms',
     entryTestFail: '连接失败',

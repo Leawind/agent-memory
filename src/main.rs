@@ -11,6 +11,7 @@ mod access;
 mod adaptive;
 mod api;
 mod auth;
+mod backfill;
 mod chunk;
 mod embed;
 mod http;

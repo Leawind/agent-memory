@@ -113,6 +113,9 @@ export interface EmbedModelEntry {
   /** The model's maximum input tokens, applied when a tokenizer is configured; absent/null = the
    *  built-in default limit */
   max_tokens?: number | null
+  /** Whether the background scheduler may drain this model's backlog unattended (start, timer,
+   *  settings save); absent/null = off */
+  auto_backfill?: boolean | null
 }
 
 /** One ordered reranker candidate (settings.rerank_models element) */

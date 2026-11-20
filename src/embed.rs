@@ -57,6 +57,11 @@ pub struct EmbedConfig {
     /// (absent = `DEFAULT_TOKEN_LIMIT`). Inert without a tokenizer — and therefore not part of
     /// the fingerprint in that case.
     pub max_tokens: Option<usize>,
+    /// Whether the background scheduler may drain this candidate's backlog on its own (at
+    /// service start, on a timer, and after settings are saved). Off by default: automatic
+    /// embedding spends the operator's API budget, so it is opt-in per candidate. A memory write
+    /// still embeds that memory — this governs only the unattended sweeps.
+    pub auto_backfill: bool,
 }
 
 /// Token budget assumed when a tokenizer is configured but the model's real limit is not known:
@@ -148,6 +153,8 @@ pub struct EmbedEntry {
     pub tokenizer: Option<String>,
     /// See `EmbedConfig::max_tokens`.
     pub max_tokens: Option<usize>,
+    /// See `EmbedConfig::auto_backfill`.
+    pub auto_backfill: bool,
 }
 
 impl EmbedEntry {
@@ -182,6 +189,10 @@ impl EmbedEntry {
                 .and_then(Value::as_u64)
                 .map(|n| n as usize)
                 .filter(|n| (64..=262_144).contains(n)),
+            auto_backfill: obj
+                .get("auto_backfill")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         })
     }
 
@@ -203,6 +214,7 @@ impl EmbedEntry {
                 .map(|f| (f as f64 * 1000.0).round() / 1000.0),
             "tokenizer": self.tokenizer,
             "max_tokens": self.max_tokens,
+            "auto_backfill": self.auto_backfill,
         })
     }
 
@@ -231,6 +243,7 @@ impl EmbedEntry {
             min_similarity: self.min_similarity.unwrap_or(DEFAULT_MIN_SIMILARITY),
             tokenizer: self.tokenizer.clone(),
             max_tokens: self.max_tokens,
+            auto_backfill: self.auto_backfill,
         })
     }
 
@@ -373,6 +386,28 @@ impl Failover {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|(k, _)| k != identity);
+    }
+
+    /// Whether a candidate is inside its failure cooldown. Callers that pick a candidate
+    /// themselves (the background backfill runs one candidate at a time) consult this before
+    /// paying a connect timeout, and report failures through `fail` so the cooldown is shared
+    /// with the search path.
+    pub fn is_open(&self, identity: &str) -> bool {
+        self.cooled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|(k, at)| k == identity && at.elapsed() < self.cooldown)
+    }
+
+    /// Record a failure for a candidate this caller attempted directly — the same record
+    /// `first_available` would have written, so both paths share one cooldown.
+    pub fn fail(&self, identity: &str) {
+        let mut cooled = self.cooled.lock().unwrap_or_else(PoisonError::into_inner);
+        match cooled.iter_mut().find(|(k, _)| k == identity) {
+            Some((_, at)) => *at = Instant::now(),
+            None => cooled.push((identity.to_string(), Instant::now())),
+        }
     }
 }
 
@@ -782,10 +817,12 @@ static BACKFILL_RUNNING: AtomicBool = AtomicBool::new(false);
 /// faces). The backfill runs on a background thread: the memory is already saved, so a slow or
 /// unavailable embedding service must never hold the write response hostage — vectors land
 /// shortly after, or stay pending for the admin endpoint / CLI backfill (fallback semantics
-/// unchanged). Writes landing while a worker drains are covered by that worker's loop; the only
-/// miss window (a write committing after the worker's final count returned zero) is closed by the
-/// next write or the next backfill run.
+/// unchanged). With the scheduler running the write only wakes it, so one worker owns the queue;
+/// a foreground context (tests, CLI) falls back to spawning its own drain.
 pub fn after_write(db_path: &Path) {
+    if crate::backfill::nudge() {
+        return;
+    }
     use std::sync::atomic::Ordering;
     if BACKFILL_RUNNING.swap(true, Ordering::AcqRel) {
         return; // a worker is already draining the queue
@@ -984,6 +1021,7 @@ mod tests {
             min_similarity: 0.0,
             tokenizer: None,
             max_tokens: None,
+            auto_backfill: false,
         };
         let same = EmbedConfig {
             base_url: "http://x/v1".into(),
@@ -1060,6 +1098,7 @@ mod tests {
             min_similarity: 0.0,
             tokenizer: None,
             max_tokens: None,
+            auto_backfill: false,
         }
     }
 
@@ -1146,6 +1185,7 @@ mod tests {
             min_similarity: None,
             tokenizer: Some("auto".into()),
             max_tokens: Some(512),
+            auto_backfill: false,
         };
         let parsed = EmbedEntry::from_json(&entry.to_json()).unwrap();
         assert_eq!(parsed.tokenizer.as_deref(), Some("auto"));

@@ -410,6 +410,12 @@ pub fn handle(
                     }
                     Ok((200, json!({ "saved": true })))
                 })
+                // Saving settings is one of the automatic backfill's triggers: this is where a
+                // candidate becomes usable, or where a changed fingerprint makes the store
+                // pending again. The nudge is a wake-up, never a wait.
+                .inspect(|_| {
+                    crate::backfill::nudge();
+                })
             }
             ("POST", ["embeddings", "backfill"]) => {
                 ctx.require(Cap::Admin)?;
@@ -1008,6 +1014,16 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
         let passage_prefix = f.opt_string("passage_prefix")?;
         let tokenizer = f.opt_string("tokenizer")?;
         let max_tokens = parse_max_tokens(f.obj, &f.context)?;
+        let auto_backfill = match f.obj.get("auto_backfill") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => {
+                return Err(ToolError::invalid(format!(
+                    "{}.auto_backfill must be a boolean",
+                    f.context
+                )))
+            }
+        };
         Ok(crate::embed::EmbedEntry {
             id: f.id,
             name: f.name,
@@ -1020,6 +1036,7 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
             min_similarity,
             tokenizer,
             max_tokens,
+            auto_backfill,
         })
     })
 }

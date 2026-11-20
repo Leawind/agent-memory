@@ -300,6 +300,9 @@ export default {
     entryMaxTokensHint:
       'The model’s per-input token ceiling; applies only when a Tokenizer is set. Empty uses the default of 8192.',
     entryMaxTokensPlaceholder: 'Default 8192',
+    entryAutoBackfillLabel: 'Automatic backfill',
+    entryAutoBackfillHint:
+      'When on, missing vectors for this model are drained automatically at service start, on the periodic sweep, and after settings are saved. Off by default; the backfill button below still works. A memory write always embeds that memory.',
     entryTestOk: 'OK · {dim}-dim · {ms}ms',
     entryTestRerank: 'OK · {count} scored · {ms}ms',
     entryTestFail: 'Connection failed',
