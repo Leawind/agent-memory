@@ -659,12 +659,12 @@ pub fn best_cosine(a: &[Vec<f32>], b: &[Vec<f32>]) -> f32 {
     best
 }
 
-/// Result of one backfill batch. The distinction between NotConfigured and Failed shapes caller behavior:
-/// the write path stays silent for both (Failed logs to stderr), while the admin endpoint surfaces details to the UI.
-pub enum EmbedOutcome {
-    NotConfigured,
-    Processed { processed: usize, remaining: usize },
-    Failed(String),
+/// What one backfill round accomplished: how many memories got vectors and how many are still
+/// waiting. A round that fails to reach the service is an `Err` instead, so a caller can mark the
+/// candidate as failing and move on.
+pub struct BatchProgress {
+    pub processed: usize,
+    pub remaining: usize,
 }
 
 fn ensure_current_config(st: &Store, cfg: &EmbedConfig) -> Result<(), String> {
@@ -688,7 +688,7 @@ pub fn process_pending_for(
     db_path: &Path,
     batch: usize,
     cfg: &EmbedConfig,
-) -> Result<EmbedOutcome, String> {
+) -> Result<BatchProgress, String> {
     // Batch context: this is where a configured tokenizer gets downloaded (and disk-cached) so the
     // query-time, cache-only assembly can cut exactly from here on. Failure degrades to the
     // character cap for this batch and is negatively cached inside the resolver.
@@ -698,7 +698,7 @@ pub fn process_pending_for(
         st.embedding_pending_batch(&cfg.vector_key(), &cfg.fingerprint(), batch)
     })?;
     if pending.is_empty() {
-        return Ok(EmbedOutcome::Processed {
+        return Ok(BatchProgress {
             processed: 0,
             remaining: 0,
         });
@@ -726,7 +726,7 @@ pub fn process_pending_for(
         write_vectors(st, cfg, &per_memory, &vectors)?;
         st.embedding_pending_count(&cfg.vector_key(), Some(&cfg.fingerprint()))
     })?;
-    Ok(EmbedOutcome::Processed {
+    Ok(BatchProgress {
         processed: per_memory.len(),
         remaining,
     })
@@ -761,29 +761,6 @@ fn embed_texts_batched(
         out.extend(embed_texts(cfg, group, timeout)?);
     }
     Ok(out)
-}
-
-/// Backfill one batch for the highest-priority candidate that can do the work (the write hook and
-/// the default admin/CLI backfill run through here). The explicit per-model variant
-/// (`process_pending_for` + a resolved candidate) serves the cache-management surface.
-pub fn process_pending(db_path: &Path, batch: usize) -> EmbedOutcome {
-    let batch = batch.clamp(1, MAX_BATCH);
-    let configs =
-        match crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| st.embedding_configs()) {
-            Ok(configs) => configs,
-            Err(e) => return EmbedOutcome::Failed(format!("cannot read database: {e}")),
-        };
-    if configs.is_empty() {
-        return EmbedOutcome::NotConfigured;
-    }
-    match EMBED_FAILOVER.first_available(
-        &configs,
-        |cfg| cfg.circuit_identity(),
-        |cfg| process_pending_for(db_path, batch, cfg),
-    ) {
-        Ok((_, _, outcome)) => outcome,
-        Err(e) => EmbedOutcome::Failed(e),
-    }
 }
 
 /// Whether a tool's committed write changes memory content and thereby invalidates vectors: the

@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::common::{cleanup, encodeURIComponent, json_body, request, run_cli, temp_db, HttpProc};
+use crate::common::{cleanup, encodeURIComponent, json_body, request, temp_db, HttpProc};
 
 /// Mock vector dimensions: the embedding is a one-hot vector indexed by the text's byte sum modulo 16.
 /// Same bucket = cosine 1 (semantically close), different bucket = 0 (not recalled), keeping tests fully controllable.
@@ -617,10 +617,6 @@ fn embedding_write_fallback_then_backfill() {
         "doctor 应报告待补跑: {issues}"
     );
 
-    // CLI backfill fails while the service is down (exit code 1) but does not corrupt data
-    let out = run_cli(&["embed-backfill", "--db", &db.display().to_string()]);
-    assert!(!out.status.success(), "服务不可用时补跑应报错退出");
-
     // Service recovered: the backfill endpoint fills in ("batch" controls items per batch)
     let (mock_port, _seen) = spawn_mock_embedding();
     put_settings(
@@ -691,9 +687,6 @@ fn embedding_write_fallback_then_backfill() {
     let (status, body, _) = request(server2.port, "POST", "/api/embeddings/backfill", None);
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["configured"], false);
-    // CLI exits with code 1 on an unconfigured db
-    let out = run_cli(&["embed-backfill", "--db", &db2.display().to_string()]);
-    assert!(!out.status.success());
     drop(server2);
     cleanup(&db2);
 

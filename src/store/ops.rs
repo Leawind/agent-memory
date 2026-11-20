@@ -52,8 +52,7 @@ impl Store {
     /// Health check: a fixed list of named data-hazard probes (read-only). Covers dirty data
     /// that could slip in while foreign keys were off, timestamp/duplicate data-quality
     /// hazards, and derived-data staleness (embedding coverage). The REST doctor endpoint
-    /// returns these as a checklist so the UI can render each verdict;
-    /// `hygiene_issues` flattens the same probes for the CLI.
+    /// returns these as a checklist so the UI can render each verdict.
     pub fn hygiene_checks(&self) -> Result<Vec<HygieneCheck>, String> {
         let probes = [
             ("integrity", self.check_integrity()),
@@ -71,15 +70,6 @@ impl Store {
             .into_iter()
             .map(|(id, result)| result.map(|issues| HygieneCheck { id, issues }))
             .collect()
-    }
-
-    /// Flattened issue lines across every check (the CLI's output shape).
-    pub fn hygiene_issues(&self) -> Result<Vec<String>, String> {
-        Ok(self
-            .hygiene_checks()?
-            .into_iter()
-            .flat_map(|c| c.issues)
-            .collect())
     }
 
     /// PRAGMA quick_check: page-level corruption and broken indexes.
@@ -346,7 +336,7 @@ impl Store {
             if pending > 0 {
                 issues.push(format!(
                     "{pending} memories lack up-to-date embeddings (model '{}'); \
-                     run `agent-memory embed-backfill` or use the admin UI",
+                     backfill from the admin UI",
                     cfg.model
                 ));
             }
@@ -912,6 +902,15 @@ mod tests {
     use super::super::test_support::{cleanup, temp_db};
     use super::*;
 
+    /// Flatten every probe's issue lines into one list, for assertions that only care which
+    /// hazards were reported.
+    fn issue_lines(checks: &[HygieneCheck]) -> Vec<String> {
+        checks
+            .iter()
+            .flat_map(|c| c.issues.iter().cloned())
+            .collect()
+    }
+
     #[test]
     fn next_id_never_reuses_deleted_max() {
         let path = temp_db("next-id");
@@ -949,7 +948,7 @@ mod tests {
         let path = temp_db("hygiene");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        assert!(st.hygiene_issues().unwrap().is_empty());
+        assert!(issue_lines(&st.hygiene_checks().unwrap()).is_empty());
 
         // With foreign keys off, inject orphan references, reverse orphans, case conflicts and an empty title
         st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
@@ -990,7 +989,7 @@ mod tests {
                 [],
             )
             .unwrap();
-        let issues = st.hygiene_issues().unwrap().join("\n");
+        let issues = issue_lines(&st.hygiene_checks().unwrap()).join("\n");
         assert!(issues.contains("999"), "missing orphan: {issues}");
         assert!(
             issues.contains("pointing to missing memories"),
@@ -1114,7 +1113,7 @@ mod tests {
             "fk probe must cover memory_embeddings"
         );
         // The flat CLI view carries the same lines
-        assert!(st.hygiene_issues().unwrap().len() >= 4);
+        assert!(issue_lines(&st.hygiene_checks().unwrap()).len() >= 4);
         cleanup(&path);
     }
 

@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
-use crate::embed::{self, EmbedConfig, EmbedOutcome};
+use crate::embed::{self, EmbedConfig};
 use crate::store::TxMode;
 
 /// How often the worker sweeps on its own.
@@ -247,16 +247,12 @@ fn drain(db_path: PathBuf, cfg: EmbedConfig, run: Arc<Run>) {
     while rounds < MAX_ROUNDS && !run.cancelled() {
         rounds += 1;
         match embed::process_pending_for(&db_path, BATCH, &cfg) {
-            Ok(EmbedOutcome::Processed {
-                processed,
-                remaining,
-            }) => {
-                run.update(processed, remaining);
-                if processed == 0 || remaining == 0 {
+            Ok(progress) => {
+                run.update(progress.processed, progress.remaining);
+                if progress.processed == 0 || progress.remaining == 0 {
                     break;
                 }
             }
-            Ok(_) => break,
             Err(e) => {
                 eprintln!("backfill of '{}' stopped: {e}", cfg.vector_key());
                 embed::EMBED_FAILOVER.fail(&cfg.circuit_identity());
