@@ -60,6 +60,7 @@ pub const ACCESS_EVENTS_EXPORT: &str = include_str!("../sql/access_events_export
 
 pub const EMBEDDING_PUT: &str = include_str!("../sql/embedding_put.sql");
 pub const EMBEDDING_DELETE: &str = include_str!("../sql/embedding_delete.sql");
+pub const EMBEDDING_DELETE_CHUNKS: &str = include_str!("../sql/embedding_delete_chunks.sql");
 pub const EMBEDDING_MODELS_LIST: &str = include_str!("../sql/embedding_models_list.sql");
 pub const EMBEDDING_DELETE_MODEL: &str = include_str!("../sql/embedding_delete_model.sql");
 pub const EMBEDDING_ACTIVE_ALL: &str = include_str!("../sql/embedding_active_all.sql");
@@ -176,6 +177,7 @@ mod tests {
             ("ACCESS_EVENTS_EXPORT", ACCESS_EVENTS_EXPORT),
             ("EMBEDDING_PUT", EMBEDDING_PUT),
             ("EMBEDDING_DELETE", EMBEDDING_DELETE),
+            ("EMBEDDING_DELETE_CHUNKS", EMBEDDING_DELETE_CHUNKS),
             ("EMBEDDING_MODELS_LIST", EMBEDDING_MODELS_LIST),
             ("EMBEDDING_DELETE_MODEL", EMBEDDING_DELETE_MODEL),
             ("EMBEDDING_ACTIVE_ALL", EMBEDDING_ACTIVE_ALL),

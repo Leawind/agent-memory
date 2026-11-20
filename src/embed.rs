@@ -25,6 +25,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
+use tokenizers::Tokenizer;
 
 /// Embedding service configuration (an OpenAI-compatible `/embeddings` endpoint: cloud APIs and
 /// local services such as Ollama/LM Studio share the same shape). `base_url` is the service
@@ -89,9 +90,10 @@ impl EmbedConfig {
     }
 
     /// Cache validity is separate from identity. JSON avoids delimiter collisions. The truncation
-    /// regime travels with the fingerprint (tokenizer source + effective token limit): a vector
-    /// embedded under a different cut is a different vector. An unconfigured tokenizer is a
-    /// constant, so a stray `max_tokens` on a tokenizer-less entry never invalidates anything.
+    /// regime travels with the fingerprint (tokenizer source + effective token limit + chunking
+    /// policy version): a vector embedded under a different cut is a different vector. An
+    /// unconfigured tokenizer is a constant, so a stray `max_tokens` on a tokenizer-less entry
+    /// never invalidates anything.
     pub fn fingerprint(&self) -> String {
         json!([
             self.base_url.trim_end_matches('/'),
@@ -102,6 +104,12 @@ impl EmbedConfig {
             match self.tokenizer {
                 Some(_) => self.max_tokens.unwrap_or(DEFAULT_TOKEN_LIMIT),
                 None => 0,
+            },
+            // Changing how bodies are split changes every vector, so the split layout is part of
+            // the cache identity — but only where splitting happens at all.
+            match self.tokenizer {
+                Some(_) => crate::chunk::POLICY_TAG,
+                None => "",
             }
         ])
         .to_string()
@@ -442,6 +450,36 @@ pub fn embed_passage_text(cfg: &EmbedConfig, summary: &str, content: &str) -> St
     )
 }
 
+/// Every embedding input a memory produces: one text normally, several when the body is long
+/// enough to be split. Splitting needs an exact token count, so it applies only when the
+/// candidate's tokenizer is resolved; otherwise the single truncated text is the whole answer.
+/// Chunks are cut so that prefix + text fits the model's token limit on its own.
+pub fn embed_passage_texts(cfg: &EmbedConfig, summary: &str, content: &str) -> Vec<String> {
+    let Some(limit) = cfg.token_limit() else {
+        return vec![embed_passage_text(cfg, summary, content)];
+    };
+    let Some(tok) = crate::tokenizer::cached(cfg) else {
+        return vec![embed_passage_text(cfg, summary, content)];
+    };
+    crate::chunk::chunk_texts(&tok, summary, content, limit)
+        .into_iter()
+        .map(|text| {
+            let prefix = cfg.passage_prefix.as_deref().unwrap_or("");
+            format!("{prefix}{}", fit_tokens(&tok, prefix, &text, limit))
+        })
+        .collect()
+}
+
+/// Token-exact fit of one already-assembled chunk, with the character cap as the last resort.
+fn fit_tokens(tok: &Tokenizer, prefix: &str, text: &str, limit: usize) -> String {
+    let fitted = crate::tokenizer::truncate_to_tokens(tok, prefix, text, limit);
+    if fitted.is_empty() {
+        cap_chars(text, MAX_INPUT_CHARS)
+    } else {
+        fitted
+    }
+}
+
 /// One failed embedding/reranker service call: the upstream HTTP status when the service
 /// answered (absent for transport and shape failures) and the human-readable detail. Display
 /// renders only the detail, so logging call sites read exactly as before; the admin connection
@@ -568,6 +606,18 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
+/// Best similarity between two memories' chunk lists: the closest pair on either side. A memory
+/// is as relevant as its most relevant passage, not as the average across its body.
+pub fn best_cosine(a: &[Vec<f32>], b: &[Vec<f32>]) -> f32 {
+    let mut best = 0.0f32;
+    for x in a {
+        for y in b {
+            best = best.max(cosine(x, y));
+        }
+    }
+    best
+}
+
 /// Result of one backfill batch. The distinction between NotConfigured and Failed shapes caller behavior:
 /// the write path stays silent for both (Failed logs to stderr), while the admin endpoint surfaces details to the UI.
 pub enum EmbedOutcome {
@@ -630,25 +680,63 @@ pub fn process_pending_for(
         });
     }
 
-    let texts: Vec<String> = pending
-        .iter()
-        .map(|(_, summary, content)| embed_passage_text(cfg, summary, content))
-        .collect();
-    let vectors = embed_texts(cfg, &texts, BATCH_TIMEOUT)?;
+    // One memory may need several texts when its body is split. The round stops adding memories
+    // once the request budget is filled (always keeping at least the first one), so a round stays
+    // one request's worth of work and the rest of the queue waits for the next round.
+    let mut per_memory: Vec<(i64, usize)> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    for (id, summary, content) in &pending {
+        let parts = embed_passage_texts(cfg, summary, content);
+        if !per_memory.is_empty() && texts.len() + parts.len() > MAX_BATCH {
+            break;
+        }
+        per_memory.push((*id, parts.len()));
+        texts.extend(parts);
+    }
+    let vectors = embed_texts_batched(cfg, &texts, BATCH_TIMEOUT)?;
 
     // Storing and counting share one write transaction: the count sees this batch's puts, so the
     // reported remaining is identical to a post-commit recount
     let remaining = crate::store::with_db_in(db_path, TxMode::Write, |st| {
         ensure_current_config(st, cfg)?;
-        for ((id, _, _), vec) in pending.iter().zip(&vectors) {
-            st.embedding_put(*id, &cfg.vector_key(), &cfg.fingerprint(), vec)?;
-        }
+        write_vectors(st, cfg, &per_memory, &vectors)?;
         st.embedding_pending_count(&cfg.vector_key(), Some(&cfg.fingerprint()))
     })?;
     Ok(EmbedOutcome::Processed {
-        processed: pending.len(),
+        processed: per_memory.len(),
         remaining,
     })
+}
+
+/// Hand each memory's share of the flat vector list to storage, in the caller's transaction.
+fn write_vectors(
+    st: &Store,
+    cfg: &EmbedConfig,
+    per_memory: &[(i64, usize)],
+    vectors: &[Vec<f32>],
+) -> Result<(), String> {
+    let mut offset = 0;
+    for (id, count) in per_memory {
+        let end = offset + count;
+        let slice = vectors.get(offset..end).unwrap_or_default();
+        st.embedding_put(*id, &cfg.vector_key(), &cfg.fingerprint(), slice)?;
+        offset = end;
+    }
+    Ok(())
+}
+
+/// Embed a flat text list in request-sized groups; the group boundaries never split a memory's
+/// texts in a way that matters — vectors are matched back by position.
+fn embed_texts_batched(
+    cfg: &EmbedConfig,
+    texts: &[String],
+    timeout: Duration,
+) -> Result<Vec<Vec<f32>>, ServiceError> {
+    let mut out = Vec::with_capacity(texts.len());
+    for group in texts.chunks(MAX_BATCH) {
+        out.extend(embed_texts(cfg, group, timeout)?);
+    }
+    Ok(out)
 }
 
 /// Backfill one batch for the highest-priority candidate that can do the work (the write hook and
@@ -740,17 +828,14 @@ fn ensure_vector_for(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<(), S
     let Some((_, summary, content)) = loaded else {
         return Ok(());
     };
-    let vectors = embed_texts(
-        cfg,
-        &[embed_passage_text(cfg, &summary, &content)],
-        QUERY_TIMEOUT,
-    )?;
-    let Some(vec) = vectors.into_iter().next() else {
+    let texts = embed_passage_texts(cfg, &summary, &content);
+    let vectors = embed_texts_batched(cfg, &texts, QUERY_TIMEOUT)?;
+    if vectors.is_empty() {
         return Ok(());
-    };
+    }
     crate::store::with_db_in(db_path, TxMode::Write, |st| {
         ensure_current_config(st, cfg)?;
-        st.embedding_put(id, &cfg.vector_key(), &cfg.fingerprint(), &vec)
+        st.embedding_put(id, &cfg.vector_key(), &cfg.fingerprint(), &vectors)
     })
 }
 
@@ -767,8 +852,11 @@ fn dedup_scan(db_path: &Path, id: i64, cfg: &EmbedConfig) -> Result<Vec<Value>, 
         let mut hits: Vec<(i64, f32)> = table
             .iter()
             .filter(|(other, _)| **other != id)
-            .map(|(other, vec)| (*other, cosine(mine, vec)))
-            .filter(|(_, s)| *s >= DEDUP_SIMILARITY)
+            .filter_map(|(other, theirs)| {
+                // A memory's similarity is its best matching chunk on either side.
+                let score = best_cosine(mine, theirs);
+                (score >= DEDUP_SIMILARITY).then_some((*other, score))
+            })
             .collect();
         hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let hits = hits
@@ -824,19 +912,24 @@ pub fn dedup_hint(db_path: &Path, result: &mut Value) {
 /// model-specific floor before an independent semantic candidate qualifies.
 pub fn semantic_hits(
     memories: &[crate::model::Memory],
-    table: &HashMap<i64, Vec<f32>>,
+    table: &HashMap<i64, Vec<Vec<f32>>>,
     query_vec: &[f32],
     vector_k: usize,
     min_similarity: f32,
 ) -> Vec<Hit> {
     // The caller supplies eligible memories only, so top-k cannot be consumed by
-    // memories outside the tag filter.
+    // memories outside the tag filter. A multi-chunk memory scores as its best chunk.
     let mut vector_ranked: Vec<(usize, f32)> = memories
         .iter()
         .enumerate()
         .filter_map(|(idx, m)| {
             let id = Store::parse_id(&m.id).unwrap_or(0);
-            table.get(&id).map(|v| (idx, cosine(query_vec, v)))
+            let chunks = table.get(&id)?;
+            let score = chunks
+                .iter()
+                .map(|v| cosine(query_vec, v))
+                .fold(0.0f32, f32::max);
+            Some((idx, score))
         })
         // `> 0.0` also guards zero vectors (cosine 0 = never recalled, see cosine())
         .filter(|(_, score)| *score > 0.0 && *score >= min_similarity)
@@ -859,7 +952,7 @@ pub fn semantic_hits(
 fn hybrid_hits(
     memories: &[crate::model::Memory],
     literal: [Vec<Hit>; 2],
-    table: &HashMap<i64, Vec<f32>>,
+    table: &HashMap<i64, Vec<Vec<f32>>>,
     query_vec: &[f32],
     vector_k: usize,
     min_similarity: f32,
@@ -994,6 +1087,49 @@ mod tests {
         );
     }
 
+    /// Without a resolved tokenizer a body is one text, split or not; with one, a long body
+    /// becomes several texts that each carry the title and stay inside the model window.
+    #[test]
+    fn long_passages_are_split_only_with_a_tokenizer() {
+        let mut plain = cfg("m", None, None);
+        plain.tokenizer = Some("embed-split-test".into());
+        let body = "alpha ".repeat(300);
+        // Configured but never resolved: still a single truncated text
+        assert_eq!(embed_passage_texts(&plain, "title", &body).len(), 1);
+
+        crate::tokenizer::inject_for_test("embed-split-test", crate::tokenizer::test_tokenizer());
+        let mut split = plain;
+        split.max_tokens = Some(64);
+        let texts = embed_passage_texts(&split, "title", &body);
+        assert!(texts.len() > 1, "a 300-token body does not fit 64 tokens");
+        let tok = crate::tokenizer::test_tokenizer();
+        for text in &texts {
+            assert!(text.starts_with("title"), "every chunk keeps the title");
+            let n = tok.encode(text.as_str(), true).unwrap().get_ids().len();
+            assert!(n <= 64, "chunk of {n} tokens exceeds the window");
+        }
+
+        // A short body stays one text, unchanged from the single-vector form
+        let short = embed_passage_texts(&split, "title", "alpha beta");
+        assert_eq!(
+            short,
+            vec![embed_passage_text(&split, "title", "alpha beta")]
+        );
+    }
+
+    /// A multi-chunk memory ranks by its best chunk, not by the average across its body.
+    #[test]
+    fn chunked_memory_scores_as_its_best_chunk() {
+        let memories = vec![mem(1, "long", "c"), mem(2, "other", "c")];
+        let mut table: HashMap<i64, Vec<Vec<f32>>> = HashMap::new();
+        // m1: one irrelevant chunk and one exactly on the query
+        table.insert(1, vec![unit(3, 2), unit(3, 0)]);
+        table.insert(2, vec![unit(3, 1)]);
+        let hits = semantic_hits(&memories, &table, &unit(3, 0), 10, 0.9);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].idx, 0);
+    }
+
     /// Entry round-trip keeps the new fields; out-of-range values normalize to defaults
     /// (hand-edited databases must not crash the parse).
     #[test]
@@ -1040,7 +1176,7 @@ mod tests {
         let original = st.embedding_configs().unwrap()[0].clone();
         assert!(ensure_current_config(&st, &original).is_ok());
         st.insert_memory("s", "body", &[], 1, 1).unwrap();
-        st.embedding_put(1, &original.id, &original.fingerprint(), &[1.0])
+        st.embedding_put(1, &original.id, &original.fingerprint(), &[vec![1.0]])
             .unwrap();
         entry["model"] = json!("replacement");
         st.settings_put(Store::SETTING_EMBEDDING_MODELS, &json!([entry]).to_string())
@@ -1065,9 +1201,9 @@ mod tests {
     fn semantic_floor_filters_weak_candidates() {
         let memories: Vec<Memory> = (0..3).map(|i| mem(i + 1, "s", "c")).collect();
         let mut table = HashMap::new();
-        table.insert(1i64, vec![1.0, 0.0]); // cosine 1.0 with the query
-        table.insert(2i64, vec![0.9, 0.1]); // cosine ≈ 0.994
-        table.insert(3i64, vec![0.6, 0.8]); // cosine 0.6
+        table.insert(1i64, vec![vec![1.0, 0.0]]); // cosine 1.0 with the query
+        table.insert(2i64, vec![vec![0.9, 0.1]]); // cosine ≈ 0.994
+        table.insert(3i64, vec![vec![0.6, 0.8]]); // cosine 0.6
 
         let hits = hybrid_hits(
             &memories,
@@ -1413,8 +1549,8 @@ mod tests {
         assert_eq!(keyword_hits[0].len(), 1);
 
         let mut table = HashMap::new();
-        table.insert(1i64, unit(4, 0)); // same direction as the query
-        table.insert(2i64, unit(4, 1)); // orthogonal to the query (similarity 0, never enters)
+        table.insert(1i64, vec![unit(4, 0)]); // same direction as the query
+        table.insert(2i64, vec![unit(4, 1)]); // orthogonal to the query (similarity 0, never enters)
 
         let hits = hybrid_hits(
             &memories,
@@ -1428,7 +1564,7 @@ mod tests {
         assert_eq!(hits[0].idx, 0);
 
         // m2 enters the results when its similarity to the query is 0.87 (non-orthogonal)
-        let tilted: Vec<f32> = vec![0.9, 0.1, 0.0, 0.0];
+        let tilted: Vec<Vec<f32>> = vec![vec![0.9, 0.1, 0.0, 0.0]];
         let mut table2 = table.clone();
         table2.insert(2i64, tilted);
         let keyword_hits = search::literal_matches(&memories, "hashing").channels;
@@ -1469,9 +1605,9 @@ mod tests {
             snippet: "sb".into(),
         };
         let mut table = HashMap::new();
-        table.insert(2i64, vec![0.95, 0.31]);
-        table.insert(3i64, vec![0.9, 0.44]);
-        table.insert(1i64, vec![0.5, 0.87]);
+        table.insert(2i64, vec![vec![0.95, 0.31]]);
+        table.insert(3i64, vec![vec![0.9, 0.44]]);
+        table.insert(1i64, vec![vec![0.5, 0.87]]);
         let hits = hybrid_hits(
             &[a, b, c],
             [vec![k1, k2], Vec::new()],
@@ -1497,7 +1633,7 @@ mod tests {
         // Vectors tilted progressively further from the query: cosine descends with i, so m1 is
         // the top candidate and m6 the weakest
         for i in 0..6usize {
-            table.insert((i + 1) as i64, vec![1.0, i as f32]);
+            table.insert((i + 1) as i64, vec![vec![1.0, i as f32]]);
         }
         let hits = hybrid_hits(
             &memories,
@@ -1539,7 +1675,7 @@ mod tests {
             },
         ];
         let mut table = HashMap::new();
-        table.insert(4i64, vec![1.0, 0.0]);
+        table.insert(4i64, vec![vec![1.0, 0.0]]);
         let hits = hybrid_hits(
             &memories,
             [keyword_hits, Vec::new()],
@@ -1582,11 +1718,11 @@ mod tests {
         st.insert_memory("a", "body a", &[], 1, 1).unwrap();
         st.insert_memory("b", "body b", &[], 1, 1).unwrap();
         st.insert_memory("c", "body c", &[], 1, 1).unwrap();
-        st.embedding_put(1, "test-model", &fingerprint, &[1.0, 0.0])
+        st.embedding_put(1, "test-model", &fingerprint, &[vec![1.0, 0.0]])
             .unwrap();
-        st.embedding_put(2, "test-model", &fingerprint, &[0.999, 0.045])
+        st.embedding_put(2, "test-model", &fingerprint, &[vec![0.999, 0.045]])
             .unwrap();
-        st.embedding_put(3, "test-model", &fingerprint, &[0.0, 1.0])
+        st.embedding_put(3, "test-model", &fingerprint, &[vec![0.0, 1.0]])
             .unwrap();
 
         let mut result = serde_json::json!({"id": "m1"});
@@ -1606,7 +1742,7 @@ mod tests {
         cleanup(&path2);
         let st2 = Store::open(&path2).unwrap();
         st2.insert_memory("a", "body", &[], 1, 1).unwrap();
-        st2.embedding_put(1, "test-model", "unused", &[1.0])
+        st2.embedding_put(1, "test-model", "unused", &[vec![1.0]])
             .unwrap();
         let mut result = serde_json::json!({"id": "m1"});
         dedup_hint(&path2, &mut result);

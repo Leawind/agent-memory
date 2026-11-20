@@ -363,37 +363,55 @@ pub fn truncate_to_tokens(tok: &Tokenizer, prefix: &str, text: &str, limit: usiz
     tok.decode(&ids[..allowance], true).unwrap_or_default()
 }
 
+/// A tiny WordPiece tokenizer shared by the chunking and embedding tests: whitespace
+/// pre-tokenization, every fixture word one whole vocabulary entry, and a decoder that joins words
+/// with spaces — so token counts and decode → re-encode round-trips are exactly predictable.
+#[cfg(test)]
+pub fn test_tokenizer() -> Tokenizer {
+    use serde_json::{json, Value};
+    let vocab: Value = json!({
+        "[UNK]": 0, "he": 1, "llo": 2, "hello": 3, "world": 4, "helloworld": 5,
+        "alpha": 6, "beta": 7, "gamma": 8, "delta": 9, "deploy": 10, "rollback": 11,
+    });
+    let config = json!({
+        "version": "1.0",
+        "truncation": null,
+        "padding": null,
+        "added_tokens": [],
+        "normalizer": null,
+        "pre_tokenizer": { "type": "Whitespace" },
+        "post_processor": null,
+        "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": true },
+        "model": {
+            "type": "WordPiece",
+            "unk_token": "[UNK]",
+            "continuing_subword_prefix": "##",
+            "max_input_chars_per_word": 100,
+            "vocab": vocab,
+        },
+    });
+    Tokenizer::from_bytes(config.to_string().as_bytes()).expect("tiny tokenizer builds")
+}
+
+/// Register a tokenizer as already resolved, so the embedding paths can be tested without a
+/// download. Test-only: production entries only ever learn a tokenizer through `resolve_eager`.
+#[cfg(test)]
+pub fn inject_for_test(source: &str, tok: Tokenizer) {
+    LOADED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((source.to_string(), Arc::new(tok)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    /// A tiny WordPiece tokenizer: whitespace pre-tokenization; every fixture word is a whole
-    /// vocabulary entry (`"hello"`=1, `"helloworld"`=1 token), and the WordPiece decoder joins
-    /// words with spaces — so decode → re-encode round-trips exactly, which is what the cut
-    /// correctness asserts rely on.
+    /// The tokenizer fixture shared with `tokenizer` tests: whitespace pre-tokenization with whole
+    /// words in the vocabulary, so one word = one token and counts are easy to reason about.
     fn tiny_tokenizer() -> Tokenizer {
-        let vocab: Value = json!({
-            "[UNK]": 0, "he": 1, "llo": 2, "hello": 3, "world": 4, "helloworld": 5,
-        });
-        let config = json!({
-            "version": "1.0",
-            "truncation": null,
-            "padding": null,
-            "added_tokens": [],
-            "normalizer": null,
-            "pre_tokenizer": { "type": "Whitespace" },
-            "post_processor": null,
-            "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": true },
-            "model": {
-                "type": "WordPiece",
-                "unk_token": "[UNK]",
-                "continuing_subword_prefix": "##",
-                "max_input_chars_per_word": 100,
-                "vocab": vocab,
-            },
-        });
-        Tokenizer::from_bytes(config.to_string().as_bytes()).expect("tiny tokenizer builds")
+        test_tokenizer()
     }
 
     #[test]

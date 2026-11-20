@@ -113,7 +113,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, super::MIGRATIONS.len() as i64);
         // Every former value is a vocabulary entry now, sharing its row with the same-named key
         let id_of = |name: &str| -> i64 {
             st.tag_ids_by_names(&[name.to_string()])

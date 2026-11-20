@@ -27,13 +27,15 @@ impl Store {
         }
     }
 
-    /// Store one vector (upsert: re-embedding the same memory overwrites the old row).
+    /// Store one memory's vectors (upsert: re-embedding replaces the previous row). The chunks of
+    /// one memory always land together, and the memory's rows are cleared first, so a re-embed
+    /// with fewer chunks cannot leave stale ones behind.
     pub fn embedding_put(
         &self,
         id: i64,
         model: &str,
         fingerprint: &str,
-        vec: &[f32],
+        vectors: &[Vec<f32>],
     ) -> Result<(), String> {
         if self
             .embedding_cache_key(model, Some(fingerprint))?
@@ -42,19 +44,29 @@ impl Store {
             self.embedding_delete_model(model)?;
             self.settings_put(&format!("embedding_cache:{model}"), fingerprint)?;
         }
+        if vectors.is_empty() {
+            return Ok(());
+        }
         self.conn
-            .execute(
-                sql::EMBEDDING_PUT,
-                params![
-                    id,
-                    model,
-                    vec.len() as i64,
-                    crate::embed::vec_to_blob(vec),
-                    crate::model::now() as i64
-                ],
-            )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .execute(sql::EMBEDDING_DELETE_CHUNKS, params![id, model])
+            .map_err(|e| e.to_string())?;
+        let now = crate::model::now() as i64;
+        for (chunk, vec) in vectors.iter().enumerate() {
+            self.conn
+                .execute(
+                    sql::EMBEDDING_PUT,
+                    params![
+                        id,
+                        model,
+                        chunk as i64,
+                        vec.len() as i64,
+                        crate::embed::vec_to_blob(vec),
+                        now
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     /// Delete one memory's vector (used when an update invalidates it; silent if absent).
@@ -65,12 +77,13 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// All vectors for the current model, for the in-memory cosine pass of hybrid search.
+    /// All vectors for the current model, grouped per memory in chunk order, for the in-memory
+    /// cosine pass of hybrid search (a memory's score is its best chunk).
     pub fn embeddings_active(
         &self,
         model: &str,
         fingerprint: &str,
-    ) -> Result<HashMap<i64, Vec<f32>>, String> {
+    ) -> Result<HashMap<i64, Vec<Vec<f32>>>, String> {
         let model = self.embedding_cache_key(model, Some(fingerprint))?;
         let mut st = self
             .conn
@@ -81,10 +94,12 @@ impl Store {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
             })
             .map_err(|e| e.to_string())?;
-        let mut out = HashMap::new();
+        let mut out: HashMap<i64, Vec<Vec<f32>>> = HashMap::new();
         for row in rows {
             let (id, blob) = row.map_err(|e| e.to_string())?;
-            out.insert(id, crate::embed::blob_to_vec(&blob));
+            out.entry(id)
+                .or_default()
+                .push(crate::embed::blob_to_vec(&blob));
         }
         Ok(out)
     }
@@ -197,5 +212,41 @@ impl Store {
             })
             .map(|n| n as usize)
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::test_support::{cleanup, temp_db};
+
+    /// Chunks of one memory round-trip in order, count as one memory for the cache listings, and a
+    /// re-embed with fewer chunks replaces the set instead of leaving stale rows behind.
+    #[test]
+    fn chunks_roundtrip_and_replace_wholesale() {
+        let path = temp_db("embedding-chunks");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.insert_memory("s", "body", &[], 1, 1).unwrap();
+
+        st.embedding_put(1, "m", "fp", &[vec![1.0, 0.0], vec![0.0, 1.0]])
+            .unwrap();
+        let table = st.embeddings_active("m", "fp").unwrap();
+        assert_eq!(table[&1], vec![vec![1.0, 0.0], vec![0.0, 1.0]]);
+        assert_eq!(st.embedding_embedded_count("m", Some("fp")).unwrap(), 1);
+        assert_eq!(st.embedding_pending_count("m", Some("fp")).unwrap(), 0);
+        assert_eq!(st.embedding_cached_models().unwrap(), vec![("m".into(), 1)]);
+
+        st.embedding_put(1, "m", "fp", &[vec![0.5, 0.5]]).unwrap();
+        assert_eq!(
+            st.embeddings_active("m", "fp").unwrap()[&1],
+            vec![vec![0.5, 0.5]],
+            "the second chunk must not survive the shorter re-embed"
+        );
+        assert_eq!(st.embedding_embedded_count("m", Some("fp")).unwrap(), 1);
+
+        // A fingerprint mismatch makes the whole model pending again (cache identity unchanged)
+        assert_eq!(st.embedding_pending_count("m", Some("other")).unwrap(), 1);
+        cleanup(&path);
     }
 }

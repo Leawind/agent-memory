@@ -294,7 +294,7 @@ export default {
     entryMinSimilarityPlaceholder: 'Default 0.30; 0 disables filtering',
     entryTokenizerLabel: 'Tokenizer (ModelScope)',
     entryTokenizerHint:
-      'When set, embedding texts are truncated at exact token level (the tokenizer is downloaded from ModelScope and cached on the first backfill). auto resolves by the model id above; a specific id or keyword such as BAAI/bge-m3 also works. Empty truncates by character count.',
+      'When set, embedding texts are split and truncated at exact token level: long bodies are split at headings and paragraphs, each passage carrying its section path; the tokenizer is downloaded from ModelScope and cached on the first backfill. auto resolves by the model id above; a specific id or keyword such as BAAI/bge-m3 also works. Empty truncates by character count and keeps one passage per memory.',
     entryTokenizerPlaceholder: 'auto / BAAI/bge-m3',
     entryMaxTokensLabel: 'Max input tokens',
     entryMaxTokensHint:

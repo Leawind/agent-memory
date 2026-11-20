@@ -1071,8 +1071,8 @@ mod tests {
             .unwrap();
         st.conn
             .execute(
-                "INSERT INTO memory_embeddings(memory_id, model, dim, vec, updated_at) \
-                 VALUES (999, 'x', 2, x'00000000', 1)",
+                "INSERT INTO memory_embeddings(memory_id, model, chunk, dim, vec, updated_at) \
+                 VALUES (999, 'x', 0, 2, x'00000000', 1)",
                 [],
             )
             .unwrap();

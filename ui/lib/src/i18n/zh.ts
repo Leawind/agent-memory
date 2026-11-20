@@ -287,7 +287,7 @@ export default {
     entryMinSimilarityPlaceholder: '默认 0.30，0 为不过滤',
     entryTokenizerLabel: 'Tokenizer（魔搭）',
     entryTokenizerHint:
-      '填写后按 token 精确截断嵌入文本（首次补跑时从魔搭下载并缓存）。auto 按上方模型 id 自动查找；也可填具体 id 或关键词，如 BAAI/bge-m3；留空按字符数截断。',
+      '填写后按 token 精确切分与截断嵌入文本：长正文按标题与段落切分，每段带上标题路径；首次补跑时从魔搭下载并缓存。auto 按上方模型 id 自动查找；也可填具体 id 或关键词，如 BAAI/bge-m3；留空按字符数截断且不切分。',
     entryTokenizerPlaceholder: 'auto / BAAI/bge-m3',
     entryMaxTokensLabel: '最大输入 token 数',
     entryMaxTokensHint: '模型的单条输入 token 上限，仅在填写 Tokenizer 后生效。留空默认 8192。',

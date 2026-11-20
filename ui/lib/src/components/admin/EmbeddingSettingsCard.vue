@@ -406,8 +406,8 @@ function identityOf(r: EntryDraft): string {
 }
 
 function fingerprintOf(r: EntryDraft): string {
-  // Mirrors the server's fingerprint(): endpoint, model, both prefixes, then the truncation
-  // regime (tokenizer source + effective token limit) — all of it re-embeds on change
+  // Mirrors the server's fingerprint(): endpoint, model, both prefixes, then the truncation and
+  // split regime (tokenizer source + effective token limit + split layout) — all of it re-embeds
   return JSON.stringify([
     r.baseUrl.trim().replace(/\/+$/, ''),
     r.model.trim(),
@@ -415,6 +415,7 @@ function fingerprintOf(r: EntryDraft): string {
     r.passagePrefix,
     r.tokenizer.trim(),
     fingerprintTokenLimit(r),
+    r.tokenizer.trim() === '' ? '' : 'chunk-v1',
   ])
 }
 
