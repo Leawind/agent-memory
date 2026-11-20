@@ -261,16 +261,15 @@ fn semantic_tag_filter_applies_before_recall_limit() {
             "base_url": format!("http://127.0.0.1:{mock_port}/v1")
         }]}),
     );
-    let mut remaining = 25;
-    for _ in 0..25 {
-        let (status, body, _) = request(port, "POST", "/api/embeddings/backfill", None);
-        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-        remaining = json_body(&body)["remaining"].as_u64().unwrap();
-        if remaining == 0 {
-            break;
-        }
-    }
-    assert_eq!(remaining, 0);
+    // A run drains the whole backlog in the background;  answers with its final counts.
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/embeddings/backfill",
+        Some(r#"{"wait": true}"#),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(json_body(&body)["remaining"], 0);
 
     let mut first_id = Value::Null;
     for limit in [1, 5, 50] {
@@ -635,7 +634,7 @@ fn embedding_write_fallback_then_backfill() {
         port,
         "POST",
         "/api/embeddings/backfill",
-        Some(r#"{"batch": 8}"#),
+        Some(r#"{"wait": true}"#),
     );
     assert_eq!(status, 200);
     let out = json_body(&body);
@@ -644,7 +643,12 @@ fn embedding_write_fallback_then_backfill() {
     assert_eq!(out["remaining"], 0);
 
     // Run again: zero work pass-through
-    let (status, body, _) = request(port, "POST", "/api/embeddings/backfill", None);
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/embeddings/backfill",
+        Some(r#"{"wait": true}"#),
+    );
     assert_eq!(status, 200);
     let out = json_body(&body);
     assert_eq!(out["processed"], 0);
@@ -873,7 +877,7 @@ fn embedding_multi_model_caches_and_failover() {
         port,
         "POST",
         "/api/embeddings/backfill",
-        Some(&serde_json::to_string(&json!({ "model_key": b_key })).unwrap()),
+        Some(&serde_json::to_string(&json!({ "model_key": b_key, "wait": true })).unwrap()),
     );
     assert_eq!(status, 200);
     assert_eq!(json_body(&body)["processed"], 1);
@@ -1045,7 +1049,7 @@ fn embedding_cache_ids_survive_reordering_and_renaming() {
             port,
             "POST",
             "/api/embeddings/backfill",
-            Some(&json!({"model_key":id}).to_string()),
+            Some(&json!({"model_key":id,"wait":true}).to_string()),
         );
         assert_eq!(status, 200);
         assert_eq!(json_body(&body)["processed"], 1);

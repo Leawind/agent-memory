@@ -22,7 +22,7 @@ use crate::store::{Store, TxMode};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokenizers::Tokenizer;
@@ -409,6 +409,12 @@ impl Failover {
             None => cooled.push((identity.to_string(), Instant::now())),
         }
     }
+
+    /// The candidate that answered last: the starting point for callers that select candidates
+    /// themselves (the background sweep walks the list from here).
+    pub fn preferred(&self) -> usize {
+        self.preferred.load(Ordering::Relaxed)
+    }
 }
 
 /// Selection state for the embedding candidate list (shared by search / write hook / backfill).
@@ -661,23 +667,6 @@ pub enum EmbedOutcome {
     Failed(String),
 }
 
-impl EmbedOutcome {
-    pub fn to_json(&self) -> Value {
-        match self {
-            EmbedOutcome::NotConfigured => json!({ "configured": false }),
-            EmbedOutcome::Processed {
-                processed,
-                remaining,
-            } => json!({
-                "configured": true,
-                "processed": processed,
-                "remaining": remaining,
-            }),
-            EmbedOutcome::Failed(e) => json!({ "configured": true, "error": e }),
-        }
-    }
-}
-
 fn ensure_current_config(st: &Store, cfg: &EmbedConfig) -> Result<(), String> {
     if st
         .embedding_configs()?
@@ -809,43 +798,18 @@ pub fn needs_backfill(tool: &str) -> bool {
     )
 }
 
-/// Single-flight guard for the background backfill worker: at most one drain loop runs at a time,
-/// so a burst of writes cannot pile up threads.
-static BACKFILL_RUNNING: AtomicBool = AtomicBool::new(false);
-
 /// The write path's hook point (called after a memory-write transaction commits, on both server
 /// faces). The backfill runs on a background thread: the memory is already saved, so a slow or
 /// unavailable embedding service must never hold the write response hostage — vectors land
 /// shortly after, or stay pending for the admin endpoint / CLI backfill (fallback semantics
-/// unchanged). With the scheduler running the write only wakes it, so one worker owns the queue;
-/// a foreground context (tests, CLI) falls back to spawning its own drain.
+/// unchanged). Saving a memory always embeds it, whether or not the candidate opted into
+/// automatic sweeps.
 pub fn after_write(db_path: &Path) {
-    if crate::backfill::nudge() {
-        return;
-    }
-    use std::sync::atomic::Ordering;
-    if BACKFILL_RUNNING.swap(true, Ordering::AcqRel) {
-        return; // a worker is already draining the queue
-    }
+    // A thin hand-off: the backfill module owns runs, per-model serialization and progress. The
+    // thread only keeps the response from waiting on a pending-count read.
     let db_path = db_path.to_path_buf();
-    std::thread::spawn(move || {
-        loop {
-            match process_pending(&db_path, 4) {
-                EmbedOutcome::Processed { remaining, .. } if remaining > 0 => continue,
-                EmbedOutcome::Failed(e) => {
-                    eprintln!(
-                        "embedding backfill failed (the memory itself is saved; it will be retried by the next backfill): {e}"
-                    );
-                    break;
-                }
-                _ => break, // queue drained, or semantic search not configured
-            }
-        }
-        BACKFILL_RUNNING.store(false, Ordering::Release);
-    });
+    std::thread::spawn(move || crate::backfill::start_write_run(&db_path));
 }
-
-// `use std::sync::atomic::AtomicBool` is spelled out at the top; the static above needs the type only.
 
 /// Cosine similarity at which a stored memory counts as a near-duplicate of a freshly created one.
 /// Advisory threshold: false positives cost a harmless hint, misses cost nothing (the exact-summary

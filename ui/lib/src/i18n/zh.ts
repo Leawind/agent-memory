@@ -306,6 +306,8 @@ export default {
     cacheRowSummary: '向量 {embedded} · 待补 {pending}',
     cacheRowDetail: '已缓存 {embedded} 条向量，待补跑 {pending} 条',
     cacheBackfill: '补跑',
+    cacheBackfillTrigger_auto: '自动',
+    cacheBackfillTrigger_write: '写入',
     cacheBackfillStop: '中断',
     cacheBackfillProgress: '补跑中 {done}/{total}',
     cacheBackfillStopped: '已中断，本轮补跑 {count} 条',

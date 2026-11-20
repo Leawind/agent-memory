@@ -314,6 +314,8 @@ export default {
     cacheRowSummary: 'Vectors {embedded} · pending {pending}',
     cacheRowDetail: '{embedded} vectors cached, {pending} pending',
     cacheBackfill: 'Backfill',
+    cacheBackfillTrigger_auto: 'Automatic',
+    cacheBackfillTrigger_write: 'On write',
     cacheBackfillStop: 'Stop',
     cacheBackfillProgress: 'Backfilling {done}/{total}',
     cacheBackfillStopped: 'Stopped after {count} memories in this run',

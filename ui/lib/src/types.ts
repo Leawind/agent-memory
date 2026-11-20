@@ -237,11 +237,32 @@ export interface EmbeddingCoverage {
   }>
 }
 
+/** One backfill run as reported by the server (it belongs to one model and is serialized there) */
+export interface EmbedBackfillRun {
+  model_key: string
+  trigger: 'auto' | 'manual' | 'write'
+  started_at: number
+  done: number
+  total: number
+  remaining: number
+}
+
 export interface EmbedBackfillResp {
   configured: boolean
+  model_key?: string
+  /** A run exists after this request (started now, or already running and joined) */
+  running?: boolean
+  /** This request created the run (false when it joined an existing one) */
+  started?: boolean
   processed?: number
   remaining?: number
+  total?: number
+  run?: EmbedBackfillRun
   error?: string
+}
+
+export interface EmbedBackfillRunsResp {
+  runs: EmbedBackfillRun[]
 }
 
 export interface VectorCacheDeleteResp {

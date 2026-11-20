@@ -170,7 +170,7 @@
               size="small"
               type="primary"
               plain
-              :disabled="runningRowId !== null"
+              :loading="startingKey === identityOf(row)"
               @click="startBackfill(row)"
             >
               {{ t('access.cacheBackfill') }}
@@ -188,12 +188,20 @@
             </el-button>
           </div>
 
-          <div v-if="row.progress" class="entry-progress">
-            <el-progress class="progress-bar" :percentage="progressPct(row)" :stroke-width="8" />
+          <div v-if="runOf(row)" class="entry-progress">
+            <el-progress class="progress-bar" :percentage="progressPct(runOf(row)!)" :stroke-width="8" />
             <span class="progress-text">
-              {{ t('access.cacheBackfillProgress', { done: row.progress.done, total: row.progress.total }) }}
+              {{
+                t('access.cacheBackfillProgress', {
+                  done: runOf(row)!.done,
+                  total: runOf(row)!.done + runOf(row)!.remaining,
+                })
+              }}
             </span>
-            <el-button size="small" @click="cancelBackfill">{{ t('access.cacheBackfillStop') }}</el-button>
+            <el-tag v-if="runOf(row)!.trigger !== 'manual'" size="small" type="info">
+              {{ t(`access.cacheBackfillTrigger_${runOf(row)!.trigger}`) }}
+            </el-tag>
+            <el-button size="small" @click="stopBackfill(row)">{{ t('access.cacheBackfillStop') }}</el-button>
           </div>
         </div>
       </div>
@@ -241,17 +249,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowRight, CircleCheckFilled, CircleCloseFilled, Plus } from '@element-plus/icons-vue'
 import { GripVertical } from 'lucide-vue-next'
 import { ElMessageBox } from 'element-plus'
 import { t } from '../../i18n'
 import { useApiClient } from '../../api/client'
-import { deleteVectorCache, listVectorCaches, testEmbeddings } from '../../api/ops'
+import {
+  cancelBackfill as cancelBackfillRun,
+  deleteVectorCache,
+  listBackfillRuns,
+  listVectorCaches,
+  startBackfill as startBackfillRun,
+  testEmbeddings,
+} from '../../api/ops'
 import { toastSuccess } from '../../toast'
-import { useAdmin } from '../../composables/useAdmin'
 import { useDragOrder } from '../../composables/useDragOrder'
-import type { EmbedModelEntry, EmbedTestResult, VectorCacheInfo } from '../../types'
+import type { EmbedBackfillRun, EmbedModelEntry, EmbedTestResult, VectorCacheInfo } from '../../types'
 import { run } from './caps'
 import ModelFieldLabel from './ModelFieldLabel.vue'
 import { candidateFieldErrors } from './modelFields'
@@ -264,7 +278,6 @@ const props = defineProps<{
 const emit = defineEmits<{ changed: [] }>()
 
 const api = useApiClient()
-const { backfill, cancelBackfill } = useAdmin()
 
 // ---- Draft rows: form fields plus UI state (expanded / verdict / progress) ----
 // `uiKey` is the stable rendering key and the verdict's owner: rows are keyed by it, so reordering never
@@ -287,7 +300,6 @@ interface EntryDraft {
   /** The last probe verdict, together with the payload it was taken for (stale verdicts are
    *  dropped instead of being shown against values that were never tested) */
   probe: { payload: string; result: EmbedTestResult } | null
-  progress: { done: number; total: number } | null
 }
 
 let nextId = 1
@@ -337,7 +349,6 @@ function toDraftRow(e: EmbedModelEntry): EntryDraft {
     autoBackfill: e.auto_backfill ?? false,
     open: false,
     probe: null,
-    progress: null,
   }
 }
 
@@ -396,7 +407,6 @@ function addEntry(): void {
     autoBackfill: false,
     open: true,
     probe: null,
-    progress: null,
   })
 }
 
@@ -440,10 +450,11 @@ const changedCacheKeys = computed(
 )
 const identityChanged = computed(() => changedCacheKeys.value.size > 0)
 
-// ---- Vector caches (per identity) ----
+// ---- Vector caches (per identity) and backfill runs ----
 const caches = ref<VectorCacheInfo[]>([])
+const runs = ref<EmbedBackfillRun[]>([])
 const deletingKey = ref<string | null>(null)
-const runningRowId = ref<number | null>(null)
+const startingKey = ref<string | null>(null)
 
 const cacheByKey = computed(() => new Map(caches.value.map((c) => [c.key, c])))
 const vectorCount = computed(() =>
@@ -461,11 +472,18 @@ function cacheOf(r: EntryDraft): VectorCacheInfo | undefined {
   return cacheByKey.value.get(identityOf(r))
 }
 
+/** The run for a row's identity, whoever started it: the automatic sweep and another operator's
+ *  click show up here exactly like this page's own button. */
+function runOf(r: EntryDraft): EmbedBackfillRun | undefined {
+  return runs.value.find((run) => run.model_key === identityOf(r))
+}
+
 /** Backfill drains the identity's queue through the saved entry — it must exist there and be
- *  enabled, so an uncommitted or switched-off row's button stays hidden */
+ *  enabled, so an uncommitted or switched-off row's button stays hidden. A run in flight replaces
+ *  the button with its progress. */
 function canBackfill(r: EntryDraft): boolean {
   const cache = cacheOf(r)
-  if (!cache || cache.pending === 0 || !r.enabled) return false
+  if (!cache || cache.pending === 0 || !r.enabled || runOf(r)) return false
   const savedEntry = saved.value.find((entry) => identityOf(entry) === identityOf(r))
   return !!savedEntry && savedEntry.enabled && fingerprintOf(savedEntry) === fingerprintOf(r)
 }
@@ -475,15 +493,49 @@ async function refreshCaches(): Promise<void> {
   caches.value = out?.caches ?? []
 }
 
-onMounted(() => {
-  void refreshCaches()
+async function refreshRuns(): Promise<void> {
+  const had = runs.value.length > 0
+  const out = await run(() => listBackfillRuns(api))
+  if (!out) return
+  runs.value = out.runs ?? []
+  // A run ended: coverage changed, and the host may want the rest of the panel to catch up
+  if (had && runs.value.length === 0) {
+    void refreshCaches()
+    emit('changed')
+  }
+}
+
+// Poll only while something is running; an idle card costs no requests.
+const RUN_POLL_MS = 1000
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+
+function schedulePoll(): void {
+  if (pollTimer !== undefined || runs.value.length === 0) return
+  pollTimer = setTimeout(async () => {
+    pollTimer = undefined
+    await refreshRuns()
+    schedulePoll()
+  }, RUN_POLL_MS)
+}
+
+onMounted(async () => {
+  await refreshCaches()
+  await refreshRuns()
+  schedulePoll()
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer !== undefined) clearTimeout(pollTimer)
 })
 
 // Coverage and pending counts move with every write / external backfill, so they are re-read
 // whenever the settings arrive fresh (the host reloads the panel on every reopen)
 watch(
   () => props.models,
-  () => void refreshCaches(),
+  () => {
+    void refreshCaches()
+    void refreshRuns()
+  },
 )
 
 // ---- Probes: per row (exactly that row's current values) and over the whole list ----
@@ -577,37 +629,46 @@ async function save(): Promise<void> {
     saved.value = draft.value.map((r) => ({ ...r }))
     emit('changed')
     void refreshCaches()
+    // A save can start a sweep server-side (enabling a model, or a changed fingerprint making
+    // the store pending): pick the run up so its progress shows without reopening the panel.
+    void refreshRuns().then(schedulePoll)
   } finally {
     saving.value = false
   }
 }
 
-function progressPct(row: EntryDraft): number {
-  const p = row.progress
-  if (!p || p.total <= 0) return 0
-  return Math.max(0, Math.min(100, Math.round((p.done / p.total) * 100)))
+function progressPct(run: EmbedBackfillRun): number {
+  const total = run.done + run.remaining
+  if (total <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((run.done / total) * 100)))
 }
 
+/** Start (or join) this identity's run; progress then comes from the server's run list, so the
+ *  card shows the same numbers no matter who started it. */
 async function startBackfill(row: EntryDraft): Promise<void> {
-  if (runningRowId.value !== null) return
-  runningRowId.value = row.uiKey
-  row.progress = { done: 0, total: cacheOf(row)?.pending ?? 0 }
+  const key = identityOf(row)
+  if (startingKey.value !== null || runOf(row)) return
+  startingKey.value = key
   try {
-    const out = await run(() =>
-      backfill(identityOf(row), (done, total) => {
-        row.progress = { done, total }
-      }),
-    )
+    const out = await run(() => startBackfillRun(api, key))
     if (!out) return
-    if (out.cancelled) toastSuccess(t('access.cacheBackfillStopped', { count: out.done }))
-    else if (out.done === 0) toastSuccess(t('access.embeddingUpToDate'))
-    else toastSuccess(t('access.embeddingDone', { count: out.done }))
+    if (!out.configured) {
+      toastSuccess(t('access.embeddingUpToDate'))
+      return
+    }
+    await refreshRuns()
   } finally {
-    runningRowId.value = null
-    row.progress = null
-    void refreshCaches()
-    emit('changed')
+    startingKey.value = null
+    schedulePoll()
   }
+}
+
+async function stopBackfill(row: EntryDraft): Promise<void> {
+  const key = identityOf(row)
+  const out = await run(() => cancelBackfillRun(api, key))
+  if (!out) return
+  await refreshRuns()
+  if (out.cancelled) toastSuccess(t('access.cacheBackfillStopped', { count: runOf(row)?.done ?? 0 }))
 }
 
 async function deleteCacheAt(key: string, model: string, count: number): Promise<void> {

@@ -232,7 +232,9 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(wrapper.findAll('.entry')).toHaveLength(0)
     expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
     expect(button(wrapper, '检测')!.attributes('disabled')).toBeDefined()
-    expect(calls.every((c) => c.url.includes('/api/embeddings/caches'))).toBe(true)
+    expect(
+      calls.every((c) => c.url.includes('/api/embeddings/caches') || c.url.includes('/api/embeddings/backfill')),
+    ).toBe(true)
     wrapper.unmount()
   })
 
@@ -504,44 +506,88 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     wrapper.unmount()
   })
 
-  it('backfills one identity with a progress bar and stops when interrupted', async () => {
-    const batches: Array<ReturnType<typeof deferred<unknown>>> = []
+  it('shows a backfill run started here, follows its progress, and stops it on request', async () => {
+    // The run lives server-side, so the card polls: fake timers drive the poll deterministically.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let run: { done: number; remaining: number } | null = null
     const { wrapper, calls } = await mountCard(
       [MODEL],
       [
         cacheRoute([{ ...CACHE, embedded: 0, pending: 3 }]),
         (r) => {
+          if (r.url.includes('/api/embeddings/backfill/cancel')) return { cancelled: true }
           if (!r.url.includes('/api/embeddings/backfill')) return undefined
-          const d = deferred<unknown>()
-          batches.push(d)
-          return d.promise
+          if (r.method === 'POST') return { configured: true, running: true, started: true }
+          return {
+            runs: run
+              ? [
+                  {
+                    model_key: 'local-model',
+                    trigger: 'manual',
+                    started_at: 0,
+                    done: run.done,
+                    total: 3,
+                    remaining: run.remaining,
+                  },
+                ]
+              : [],
+          }
         },
       ],
     )
     await expand(wrapper)
     // Pending vectors and a committed entry: backfill is offered
     expect(button(wrapper, '补跑', row(wrapper))).toBeTruthy()
+    run = { done: 0, remaining: 3 }
     await button(wrapper, '补跑', row(wrapper))!.trigger('click')
     await flushPromises()
-    expect(batches).toHaveLength(1)
-    // The batch lands: the progress bar and its percentage show the run in flight
-    batches[0].resolve({ configured: true, processed: 1, remaining: 2 })
-    await flushPromises()
-    await flushPromises()
     expect(row(wrapper).find('.entry-progress').exists()).toBe(true)
+    expect(row(wrapper).find('.progress-text').text()).toBe('补跑中 0/3')
+    // The next poll picks up the server's progress — no local counter involved
+    run = { done: 1, remaining: 2 }
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
     expect(row(wrapper).find('.el-progress__text').text()).toBe('33%')
     expect(row(wrapper).find('.progress-text').text()).toBe('补跑中 1/3')
-    expect(batches).toHaveLength(2)
-    // Interrupting stops the loop after the batch in flight (which still lands)
+    // Interrupting stops the run server-side; the card folds the progress away once it disappears
+    run = null
     await button(wrapper, '中断', row(wrapper))!.trigger('click')
-    batches[1].resolve({ configured: true, processed: 1, remaining: 1 })
     await flushPromises()
-    await flushPromises()
-    expect(calls.filter((c) => c.url.includes('/api/embeddings/backfill'))).toHaveLength(2)
+    expect(calls.some((c) => c.url.includes('/api/embeddings/backfill/cancel'))).toBe(true)
     expect(row(wrapper).find('.entry-progress').exists()).toBe(false)
     expect(wrapper.emitted('changed')).toHaveLength(1)
     wrapper.unmount()
+    vi.useRealTimers()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
+  it('shows a run someone else started, marked with its trigger', async () => {
+    const { wrapper } = await mountCard(
+      [MODEL],
+      [
+        cacheRoute([{ ...CACHE, embedded: 0, pending: 3 }]),
+        (r) =>
+          r.url.includes('/api/embeddings/backfill') && r.method !== 'POST'
+            ? {
+                runs: [
+                  {
+                    model_key: 'local-model',
+                    trigger: 'auto',
+                    started_at: 0,
+                    done: 1,
+                    total: 3,
+                    remaining: 2,
+                  },
+                ],
+              }
+            : undefined,
+      ],
+    )
+    await expand(wrapper)
+    expect(row(wrapper).find('.progress-text').text()).toBe('补跑中 1/3')
+    expect(row(wrapper).find('.el-tag').text()).toBe('自动')
+    expect(button(wrapper, '补跑', row(wrapper))).toBeUndefined()
+    wrapper.unmount()
   })
 
   it('deletes one identity cache only after confirmation, carrying model_key on DELETE', async () => {

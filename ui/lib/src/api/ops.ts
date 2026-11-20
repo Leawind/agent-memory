@@ -3,6 +3,7 @@ import type { ApiClient } from './client'
 import type {
   DoctorResp,
   EmbedBackfillResp,
+  EmbedBackfillRunsResp,
   EmbedTestResp,
   HealthInfo,
   ImportResp,
@@ -49,12 +50,21 @@ export function importBackup(
 }
 
 /**
- * Backfill a batch of semantic search vectors, returning processed / remaining (the UI loops
- * until remaining=0). With modelKey, drains that specific cache identity instead of the
- * active candidate's.
+ * Start (or join) a backfill run for one model. The run drains in the background under the
+ * server's per-model single-flight rule; progress is read through `listBackfillRuns`.
  */
-export function backfillEmbeddings(client: ApiClient, modelKey?: string): Promise<EmbedBackfillResp> {
-  return client.post<EmbedBackfillResp>('/api/embeddings/backfill', modelKey ? { model_key: modelKey } : {})
+export function startBackfill(client: ApiClient, modelKey: string): Promise<EmbedBackfillResp> {
+  return client.post<EmbedBackfillResp>('/api/embeddings/backfill', { model_key: modelKey })
+}
+
+/** Active backfill runs for every model — the page shows them regardless of who started them */
+export function listBackfillRuns(client: ApiClient): Promise<EmbedBackfillRunsResp> {
+  return client.get<EmbedBackfillRunsResp>('/api/embeddings/backfill')
+}
+
+/** Ask a running backfill to stop after its batch in flight */
+export function cancelBackfill(client: ApiClient, modelKey: string): Promise<{ cancelled: boolean }> {
+  return client.post<{ cancelled: boolean }>('/api/embeddings/backfill/cancel', { model_key: modelKey })
 }
 
 /**

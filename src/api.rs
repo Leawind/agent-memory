@@ -412,23 +412,41 @@ pub fn handle(
                 })
                 // Saving settings is one of the automatic backfill's triggers: this is where a
                 // candidate becomes usable, or where a changed fingerprint makes the store
-                // pending again. The nudge is a wake-up, never a wait.
+                // pending again. The sweep runs on its own thread, never delaying the save.
                 .inspect(|_| {
-                    crate::backfill::nudge();
+                    let path = db_path.to_path_buf();
+                    std::thread::spawn(move || crate::backfill::sweep(&path));
                 })
+            }
+            ("GET", ["embeddings", "backfill"]) => {
+                ctx.require(Cap::Admin)?;
+                // Active runs across all candidates: the admin page shows progress for every run,
+                // whether the operator started it or the periodic sweep did.
+                let runs: Vec<Value> = crate::backfill::runs()
+                    .iter()
+                    .map(|p| p.to_json())
+                    .collect();
+                Ok((200, json!({ "runs": runs })))
+            }
+            ("POST", ["embeddings", "backfill", "cancel"]) => {
+                ctx.require(Cap::Admin)?;
+                let args = args_from_body()?;
+                let key = args
+                    .get("model_key")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ToolError::invalid("model_key is required"))?;
+                Ok((200, json!({ "cancelled": crate::backfill::cancel(key) })))
             }
             ("POST", ["embeddings", "backfill"]) => {
                 ctx.require(Cap::Admin)?;
-                // Bounded batch: each request processes a small batch and returns the remaining
-                // count, which the UI calls in a loop. Sidesteps the long-running task vs. one-transaction-per-request model conflict.
-                // An explicit `model_key` targets one cache identity (per-model backfill);
-                // without one the highest-priority available candidate's cache is drained.
+                // Starting a run is the whole operation: it drains in the background under the
+                // per-model single-flight rule, so this never blocks a second caller and the
+                // admin page watches progress through GET. An explicit `model_key` targets one
+                // cache identity; without one the candidate the failover would pick is used.
+                // `wait: true` joins the run and answers once it ends — for scripts and tests.
                 let args = args_from_body()?;
-                let batch = args
-                    .get("batch")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(crate::embed::MAX_BATCH as u64) as usize;
-                let outcome = match args.get("model_key").and_then(Value::as_str) {
+                let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(false);
+                let cfg = match args.get("model_key").and_then(Value::as_str) {
                     Some(key) => {
                         let cfg = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
                             Ok::<_, String>(
@@ -440,8 +458,7 @@ pub fn handle(
                         })
                         .map_err(ToolError::from)?;
                         match cfg {
-                            Some(cfg) => crate::embed::process_pending_for(db_path, batch, &cfg)
-                                .unwrap_or_else(crate::embed::EmbedOutcome::Failed),
+                            Some(cfg) => cfg,
                             None => {
                                 return Err(ToolError::invalid(format!(
                                     "no enabled embedding entry matches cache key '{key}' (its cache can only be deleted)"
@@ -449,9 +466,53 @@ pub fn handle(
                             }
                         }
                     }
-                    None => crate::embed::process_pending(db_path, batch),
+                    None => {
+                        let configs = store::with_db_in(db_path, TxMode::ReadOnly, |st| {
+                            st.embedding_configs()
+                        })
+                        .map_err(ToolError::from)?;
+                        let start = if configs.is_empty() {
+                            0
+                        } else {
+                            crate::embed::EMBED_FAILOVER.preferred() % configs.len()
+                        };
+                        match (0..configs.len())
+                            .map(|offset| &configs[(start + offset) % configs.len()])
+                            .next()
+                        {
+                            Some(cfg) => cfg.clone(),
+                            None => {
+                                return Ok((200, json!({ "configured": false })));
+                            }
+                        }
+                    }
                 };
-                Ok((200, outcome.to_json()))
+                let started =
+                    crate::backfill::start_run(db_path, &cfg, crate::backfill::Trigger::Manual)
+                        .map_err(ToolError::from)?;
+                let (run, joined) = match started {
+                    crate::backfill::Start::Started(run) => (Some(run), false),
+                    crate::backfill::Start::AlreadyRunning(run) => (Some(run), true),
+                    crate::backfill::Start::Idle => (None, false),
+                };
+                let progress = match &run {
+                    Some(run) if wait => Some(run.wait()),
+                    Some(run) => Some(run.snapshot()),
+                    None => None,
+                };
+                let mut out = json!({
+                    "configured": true,
+                    "model_key": cfg.vector_key(),
+                    "started": run.is_some() && !joined,
+                    "running": run.is_some(),
+                    "processed": progress.as_ref().map(|p| p.done).unwrap_or(0),
+                    "remaining": progress.as_ref().map(|p| p.remaining).unwrap_or(0),
+                });
+                if let Some(p) = &progress {
+                    out["total"] = json!(p.total);
+                    out["run"] = p.to_json();
+                }
+                Ok((200, out))
             }
             ("POST", ["embeddings", "test"]) => {
                 ctx.require(Cap::Admin)?;
