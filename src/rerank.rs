@@ -10,6 +10,7 @@
 //! place — better ranking is an improvement, never a dependency. Like every other outbound call,
 //! reranking never runs inside a write transaction (the search path holds a read snapshot).
 
+use crate::embed::ServiceError;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -123,7 +124,7 @@ pub fn rerank(
     query: &str,
     documents: &[String],
     timeout: Duration,
-) -> Result<Vec<(usize, f64)>, String> {
+) -> Result<Vec<(usize, f64)>, ServiceError> {
     if documents.is_empty() {
         return Ok(Vec::new());
     }
@@ -138,19 +139,29 @@ pub fn rerank(
             "documents": documents,
             "top_n": documents.len(),
         }))
-        .map_err(|e| format!("rerank request failed: {e}"))?;
+        .map_err(|e| ServiceError {
+            status: None,
+            message: format!("rerank request failed: {e}"),
+        })?;
     let status = resp.status();
-    let body: Value = resp
-        .into_json()
-        .map_err(|e| format!("rerank response is not valid JSON: {e}"))?;
+    let body: Value = resp.into_json().map_err(|e| ServiceError {
+        status: Some(status),
+        message: format!("rerank response is not valid JSON: {e}"),
+    })?;
     if status != 200 {
         let detail = body["error"]["message"]
             .as_str()
             .or_else(|| body["message"].as_str())
             .unwrap_or("unknown error");
-        return Err(format!("rerank service returned {status}: {detail}"));
+        return Err(ServiceError {
+            status: Some(status),
+            message: format!("rerank service returned {status}: {detail}"),
+        });
     }
-    parse_response(&body, documents.len())
+    parse_response(&body, documents.len()).map_err(|message| ServiceError {
+        status: None,
+        message,
+    })
 }
 
 /// Parse a rerank response: `{"results": [{"index": N, "relevance_score": F}, ...]}` is the

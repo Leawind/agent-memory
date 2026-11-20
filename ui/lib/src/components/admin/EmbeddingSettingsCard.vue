@@ -43,7 +43,7 @@
               {{
                 verdictOf(row)!.ok
                   ? t('access.entryTestOk', { dim: verdictOf(row)!.dim ?? 0, ms: verdictOf(row)!.elapsed_ms ?? 0 })
-                  : t('access.entryTestFail')
+                  : failLabel(row)
               }}
             </span>
             <span v-else-if="row.enabled && !complete(row)" class="entry-verdict is-warn">
@@ -132,6 +132,8 @@
               />
             </label>
           </div>
+
+          <div v-if="verdictOf(row)?.ok === false" class="verdict-error">{{ verdictOf(row)!.error }}</div>
 
           <div class="entry-actions">
             <el-button size="small" :loading="testingRowId === row.uiKey" @click="testRow(row)">
@@ -443,6 +445,22 @@ function verdictOf(r: EntryDraft): EmbedTestResult | null {
   return r.probe && r.probe.payload === payloadKey(r) ? r.probe.result : null
 }
 
+/** Upstream status → short verdict suffix; transport failures stay unclassified */
+const FAIL_REASONS: Record<number, string> = {
+  401: 'access.verdictAuthFailed',
+  403: 'access.verdictAuthFailed',
+  402: 'access.verdictInsufficientBalance',
+  404: 'access.verdictEndpointMissing',
+}
+
+function failLabel(r: EntryDraft): string {
+  const status = verdictOf(r)?.status
+  const reason = status
+    ? (FAIL_REASONS[status] ?? (status >= 500 ? 'access.verdictServerError' : undefined))
+    : undefined
+  return reason ? `${t('access.entryTestFail')} · ${t(reason)}` : t('access.entryTestFail')
+}
+
 function record(rows: EntryDraft[], results: EmbedTestResult[] | undefined): void {
   for (const result of results ?? []) {
     const row = rows[result.index]
@@ -679,6 +697,13 @@ async function deleteCacheAt(key: string, model: string, count: number): Promise
   flex-shrink: 0;
 }
 
+.verdict-error {
+  margin: 6px 0 0;
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
 .entry-detail {
   border-top: 1px solid var(--el-border-color-lighter);
   padding: 10px;

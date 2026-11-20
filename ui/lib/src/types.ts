@@ -171,6 +171,8 @@ export interface EmbedTestResult {
   dim?: number
   elapsed_ms?: number
   error?: string
+  /** Upstream HTTP status when the service answered; absent for transport failures */
+  status?: number
 }
 
 export interface EmbedTestResp {
@@ -185,6 +187,8 @@ export interface RerankTestResult {
   scored?: number
   elapsed_ms?: number
   error?: string
+  /** Upstream HTTP status when the service answered; absent for transport failures */
+  status?: number
 }
 
 export interface RerankTestResp {

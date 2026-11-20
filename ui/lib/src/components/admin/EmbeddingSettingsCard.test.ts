@@ -421,6 +421,38 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
+  it('classifies an upstream HTTP status in the verdict and shows the full error in the row', async () => {
+    const { wrapper } = await mountCard(
+      [MODEL],
+      [
+        (r) =>
+          r.url.includes('/api/embeddings/test')
+            ? {
+                ok: false,
+                results: [
+                  {
+                    index: 0,
+                    key: 'bge-m3',
+                    model: 'bge-m3',
+                    ok: false,
+                    status: 402,
+                    error: 'embedding service returned 402: Sorry, your account balance is insufficient',
+                  },
+                ],
+              }
+            : undefined,
+      ],
+    )
+    await button(wrapper, '检测')!.trigger('click')
+    await flushPromises()
+    expect(row(wrapper, 0).find('.entry-verdict').text()).toBe('连接失败 · 余额不足')
+    // The verbatim upstream error stays reachable in the expanded row
+    await expand(wrapper, 0)
+    expect(row(wrapper, 0).find('.verdict-error').text()).toContain('account balance is insufficient')
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
   it('reorders candidates by dragging the handle: the saved order becomes the new priority', async () => {
     const second: EmbedModelEntry = { ...MODEL, id: 'e5', name: 'e5', model: 'e5' }
     const { wrapper, calls } = await mountCard(

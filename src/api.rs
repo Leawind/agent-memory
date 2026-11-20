@@ -501,7 +501,8 @@ pub fn handle(
                                         "model": cfg.model,
                                         "ok": false,
                                         "key": cfg.vector_key(),
-                                        "error": e,
+                                        "error": e.message,
+                                        "status": e.status,
                                     }),
                                     elapsed_ms: 0,
                                     clear_identity: None,
@@ -561,7 +562,12 @@ pub fn handle(
                                 },
                                 Err(e) => ProbeRow {
                                     ok: false,
-                                    row: json!({ "model": cfg.model, "ok": false, "error": e }),
+                                    row: json!({
+                                        "model": cfg.model,
+                                        "ok": false,
+                                        "error": e.message,
+                                        "status": e.status,
+                                    }),
                                     elapsed_ms: 0,
                                     clear_identity: None,
                                 },

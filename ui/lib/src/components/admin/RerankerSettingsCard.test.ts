@@ -248,6 +248,37 @@ describe('RerankerSettingsCard', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
+  it('classifies an upstream HTTP status in the verdict and shows the full error in the row', async () => {
+    const { wrapper } = await mountCard(
+      [ENTRY],
+      [
+        (r) =>
+          r.url.includes('/api/rerank/test')
+            ? {
+                ok: false,
+                results: [
+                  {
+                    index: 0,
+                    model: 'bge-reranker-v2-m3',
+                    ok: false,
+                    status: 404,
+                    error: 'rerank service returned 404: Not Found',
+                  },
+                ],
+              }
+            : undefined,
+      ],
+    )
+    await button(wrapper, '检测')!.trigger('click')
+    await flushPromises()
+    expect(row(wrapper).find('.entry-verdict').text()).toBe('连接失败 · 端点不存在')
+    // The verbatim upstream error stays reachable in the expanded row
+    await expand(wrapper)
+    expect(row(wrapper).find('.verdict-error').text()).toContain('Not Found')
+    wrapper.unmount()
+    document.querySelectorAll('.el-message').forEach((el) => el.remove())
+  })
+
   it('reorders candidates by dragging the handle', async () => {
     const { wrapper, calls } = await mountCard(
       [ENTRY, { ...ENTRY, id: 'second', name: 'second', model: 'second' }],

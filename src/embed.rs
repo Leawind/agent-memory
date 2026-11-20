@@ -254,11 +254,11 @@ impl Failover {
     /// when all fail does the last error surface. The sticky preferred index is a hint: a list
     /// edit merely makes it fall back to priority order (it is clamped, and a stale success index
     /// costs one failed attempt at most).
-    pub fn first_available<'a, C, T>(
+    pub fn first_available<'a, C, T, E: std::fmt::Display>(
         &self,
         configs: &'a [C],
         identity: impl Fn(&C) -> String,
-        mut op: impl FnMut(&C) -> Result<T, String>,
+        mut op: impl FnMut(&C) -> Result<T, E>,
     ) -> Result<(usize, &'a C, T), String> {
         if configs.is_empty() {
             return Err("no candidate service is configured".to_string());
@@ -301,7 +301,7 @@ impl Failover {
                         Some((_, at)) => *at = Instant::now(),
                         None => cooled.push((id, Instant::now())),
                     }
-                    last_err = e;
+                    last_err = e.to_string();
                 }
             }
         }
@@ -376,12 +376,34 @@ pub fn embed_passage_text(cfg: &EmbedConfig, summary: &str, content: &str) -> St
     }
 }
 
+/// One failed embedding/reranker service call: the upstream HTTP status when the service
+/// answered (absent for transport and shape failures) and the human-readable detail. Display
+/// renders only the detail, so logging call sites read exactly as before; the admin connection
+/// probe additionally surfaces the status for a classified verdict.
+#[derive(Clone, Debug)]
+pub struct ServiceError {
+    pub status: Option<u16>,
+    pub message: String,
+}
+
+impl std::fmt::Display for ServiceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<ServiceError> for String {
+    fn from(e: ServiceError) -> String {
+        e.message
+    }
+}
+
 /// Embed a batch. Any network/parsing failure returns Err; the caller decides how to degrade.
 pub fn embed_texts(
     cfg: &EmbedConfig,
     texts: &[String],
     timeout: Duration,
-) -> Result<Vec<Vec<f32>>, String> {
+) -> Result<Vec<Vec<f32>>, ServiceError> {
     if texts.is_empty() {
         return Ok(Vec::new());
     }
@@ -391,28 +413,44 @@ pub fn embed_texts(
     }
     let resp = req
         .send_json(json!({ "model": cfg.model, "input": texts }))
-        .map_err(|e| format!("embedding request failed: {e}"))?;
+        .map_err(|e| ServiceError {
+            status: None,
+            message: format!("embedding request failed: {e}"),
+        })?;
     let status = resp.status();
-    let body: Value = resp
-        .into_json()
-        .map_err(|e| format!("embedding response is not valid JSON: {e}"))?;
+    let body: Value = resp.into_json().map_err(|e| ServiceError {
+        status: Some(status),
+        message: format!("embedding response is not valid JSON: {e}"),
+    })?;
     if status != 200 {
         let detail = body["error"]["message"]
             .as_str()
             .or_else(|| body["message"].as_str())
             .unwrap_or("unknown error");
-        return Err(format!("embedding service returned {status}: {detail}"));
+        return Err(ServiceError {
+            status: Some(status),
+            message: format!("embedding service returned {status}: {detail}"),
+        });
     }
+    // A 200 whose body does not answer the request is a service bug, not an HTTP condition
+    parse_vectors(body, texts.len()).map_err(|message| ServiceError {
+        status: None,
+        message,
+    })
+}
+
+/// Shape-check and decode the `data` array of a 200 embedding response.
+fn parse_vectors(body: Value, inputs: usize) -> Result<Vec<Vec<f32>>, String> {
     let mut data = body["data"]
         .as_array()
         .ok_or("embedding response missing 'data' array")?
         .clone();
     data.sort_by_key(|item| item["index"].as_u64().unwrap_or(0));
-    if data.len() != texts.len() {
+    if data.len() != inputs {
         return Err(format!(
             "embedding service returned {} vectors for {} inputs",
             data.len(),
-            texts.len()
+            inputs
         ));
     }
     data.into_iter()
@@ -1125,14 +1163,14 @@ mod tests {
 
         // All candidates failing surfaces the last error
         let err = failover
-            .first_available(&configs, identity, |_| Err::<String, _>("down".into()))
+            .first_available(&configs, identity, |_| Err::<String, String>("down".into()))
             .unwrap_err();
         assert_eq!(err, "down");
 
         // An edited (shrunken) list: the stale sticky index is clamped, no panic
         let small = [cfg("x", None, None)];
         let (idx, _, _) = failover
-            .first_available(&small, identity, |c| Ok(c.model.clone()))
+            .first_available(&small, identity, |c| Ok::<String, String>(c.model.clone()))
             .unwrap();
         assert_eq!(idx, 0);
     }
