@@ -27,7 +27,9 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Embedding service configuration (an OpenAI-compatible `/embeddings` endpoint: cloud APIs and
-/// local services such as Ollama/LM Studio share the same shape).
+/// local services such as Ollama/LM Studio share the same shape). `base_url` is the service
+/// root; a value pasted with the trailing `/embeddings` is normalized to the root (see
+/// `service_root`), so both spellings share the endpoint and the cache identity.
 #[derive(Clone, Debug)]
 pub struct EmbedConfig {
     pub id: String,
@@ -45,6 +47,19 @@ pub struct EmbedConfig {
     /// Cosine floor for the semantic recall channel (query-time filter only — not part of the
     /// vector identity, changing it never re-embeds). 0.0 disables the floor.
     pub min_similarity: f32,
+}
+
+/// Normalize a configured service base_url: surrounding whitespace and trailing slashes off, and
+/// a trailing full-endpoint path (`/embeddings`, `/rerank`) reduced to the root. Provider docs
+/// show complete URLs and they get pasted into the settings form, so both spellings must select
+/// the same endpoint and carry the same cache identity. Case-sensitive on purpose: URL paths
+/// are, and the compatibility ecosystem serves these paths lowercase.
+pub fn service_root(base_url: &str, endpoint: &str) -> String {
+    let root = base_url.trim().trim_end_matches('/');
+    match root.strip_suffix(endpoint) {
+        Some(stripped) => stripped.trim_end_matches('/').to_string(),
+        None => root.to_string(),
+    }
 }
 
 impl EmbedConfig {
@@ -71,7 +86,7 @@ impl EmbedConfig {
     }
 
     fn endpoint(&self) -> String {
-        format!("{}/embeddings", self.base_url.trim_end_matches('/'))
+        format!("{}/embeddings", service_root(&self.base_url, "/embeddings"))
     }
 }
 
@@ -159,7 +174,7 @@ impl EmbedEntry {
         }
         Some(EmbedConfig {
             id: self.id.clone(),
-            base_url: self.base_url.trim().to_string(),
+            base_url: service_root(&self.base_url, "/embeddings"),
             model: self.model.trim().to_string(),
             api_key: self.api_key.clone(),
             query_prefix: self.query_prefix.clone(),
@@ -962,6 +977,44 @@ mod tests {
         assert_ne!(
             cfg("e5", Some("query: "), None).fingerprint(),
             e5.fingerprint()
+        );
+    }
+
+    /// A service URL pasted with the full endpoint path (provider docs show complete URLs) must
+    /// be indistinguishable from the root spelling: same endpoint, same cache identity.
+    #[test]
+    fn pasted_endpoint_base_url_matches_root_spelling() {
+        let entry = |base_url: &str| {
+            EmbedEntry::from_json(&json!({
+                "id": "bge", "name": "bge", "enabled": true,
+                "base_url": base_url, "model": "BAAI/bge-m3",
+            }))
+            .expect("entry parses")
+            .config()
+            .expect("complete")
+        };
+        let root = entry("https://api.siliconflow.cn/v1");
+        assert_eq!(
+            root.endpoint(),
+            entry("https://api.siliconflow.cn/v1/embeddings").endpoint()
+        );
+        assert_eq!(
+            root.fingerprint(),
+            entry("https://api.siliconflow.cn/v1/embeddings/").fingerprint()
+        );
+        assert_eq!(
+            root.circuit_identity(),
+            entry("https://api.siliconflow.cn/v1/embeddings/").circuit_identity()
+        );
+        // The settings round-trip keeps what the user typed
+        assert_eq!(
+            EmbedEntry::from_json(&json!({
+                "id": "bge", "name": "bge", "enabled": true,
+                "base_url": "https://api.siliconflow.cn/v1/embeddings/", "model": "m",
+            }))
+            .expect("entry parses")
+            .base_url,
+            "https://api.siliconflow.cn/v1/embeddings/"
         );
     }
 

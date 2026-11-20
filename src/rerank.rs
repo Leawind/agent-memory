@@ -13,7 +13,9 @@
 use serde_json::{json, Value};
 use std::time::Duration;
 
-/// Reranker service configuration (see `Failover` reuse in the search handler).
+/// Reranker service configuration (see `Failover` reuse in the search handler). `base_url` is
+/// the service root; a value pasted with the trailing `/rerank` is normalized to the root (see
+/// `embed::service_root`).
 #[derive(Clone, Debug)]
 pub struct RerankConfig {
     pub id: String,
@@ -24,7 +26,10 @@ pub struct RerankConfig {
 
 impl RerankConfig {
     fn endpoint(&self) -> String {
-        format!("{}/rerank", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/rerank",
+            crate::embed::service_root(&self.base_url, "/rerank")
+        )
     }
 
     /// Failure-circuit identity (see `embed::Failover::identity`): shared format with the
@@ -96,7 +101,7 @@ impl RerankEntry {
         }
         Some(RerankConfig {
             id: self.id.clone(),
-            base_url: self.base_url.trim().to_string(),
+            base_url: crate::embed::service_root(&self.base_url, "/rerank"),
             model: self.model.trim().to_string(),
             api_key: self.api_key.clone(),
         })
@@ -243,6 +248,25 @@ mod tests {
         .unwrap();
         assert_eq!(entry.usable().expect("name is optional").model, "reranker");
         assert_eq!(entry.to_json()["name"], "");
+    }
+
+    /// Same tolerance as the embedding side: a base_url pasted with the full endpoint path lands
+    /// on the same endpoint and failure-circuit identity as the root spelling.
+    #[test]
+    fn pasted_endpoint_base_url_matches_root_spelling() {
+        let entry = |base_url: &str| {
+            RerankEntry::from_json(&json!({
+                "id": "rr", "name": "rr", "enabled": true,
+                "base_url": base_url, "model": "bge-reranker-v2-m3",
+            }))
+            .expect("entry parses")
+            .config()
+            .expect("complete")
+        };
+        let root = entry("http://x/v1");
+        let pasted = entry("http://x/v1/rerank/");
+        assert_eq!(root.endpoint(), pasted.endpoint());
+        assert_eq!(root.circuit_identity(), pasted.circuit_identity());
     }
 
     /// Response parsing accepts the common shapes (wrapped results, bare array, `score` naming),

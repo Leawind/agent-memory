@@ -278,6 +278,8 @@ export default {
     entryNameLabel: 'Display name',
     entryModelLabel: 'API model name',
     entryBaseUrlLabel: 'Service base URL',
+    entryBaseUrlHint: 'The service root URL; a full endpoint URL ending in /embeddings is accepted too',
+    entryRerankBaseUrlHint: 'The service root URL; a full endpoint URL ending in /rerank is accepted too',
     entryBaseUrlPlaceholder: 'https://api.siliconflow.cn/v1 or http://127.0.0.1:11434/v1',
     entryApiKeyLabel: 'API key',
     entryQueryPrefixLabel: 'Query instruction prefix',

@@ -72,7 +72,11 @@
               <el-input v-model="row.name" class="f-name" />
             </label>
             <label class="field">
-              <ModelFieldLabel :label="t('access.entryBaseUrlLabel')" required />
+              <ModelFieldLabel
+                :label="t('access.entryBaseUrlLabel')"
+                :hint="t('access.entryRerankBaseUrlHint')"
+                required
+              />
               <el-input
                 v-model="row.baseUrl"
                 :class="{ 'is-invalid': errorsOf(row).baseUrl }"

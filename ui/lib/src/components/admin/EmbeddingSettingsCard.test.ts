@@ -150,7 +150,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(row(wrapper).find('.f-min-similarity').classes()).not.toContain('is-invalid')
     expect(field(wrapper, '.f-api-key').attributes('placeholder') ?? '').toBe('')
     expect(field(wrapper, '.f-query-prefix').attributes('placeholder') ?? '').toBe('')
-    expect(wrapper.findAll('.field-help')).toHaveLength(4)
+    expect(wrapper.findAll('.field-help')).toHaveLength(5)
     expect(wrapper.find('.field-help').attributes('aria-label')).toContain('向量缓存键')
     await field(wrapper, '.f-id').setValue('local')
     await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')

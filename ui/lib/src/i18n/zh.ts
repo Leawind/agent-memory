@@ -272,6 +272,8 @@ export default {
     entryNameLabel: '显示名称',
     entryModelLabel: 'API 模型名',
     entryBaseUrlLabel: '服务地址（base_url）',
+    entryBaseUrlHint: '填服务根地址；粘贴以 /embeddings 结尾的完整端点地址同样有效',
+    entryRerankBaseUrlHint: '填服务根地址；粘贴以 /rerank 结尾的完整端点地址同样有效',
     entryBaseUrlPlaceholder: 'https://api.siliconflow.cn/v1 或 http://127.0.0.1:11434/v1',
     entryApiKeyLabel: 'API Key',
     entryQueryPrefixLabel: '查询指令前缀',
