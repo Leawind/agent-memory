@@ -131,6 +131,24 @@
                 :placeholder="t('access.entryMinSimilarityPlaceholder')"
               />
             </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryTokenizerLabel')" :hint="t('access.entryTokenizerHint')" />
+              <el-input
+                v-model="row.tokenizer"
+                class="f-tokenizer"
+                :placeholder="t('access.entryTokenizerPlaceholder')"
+              />
+            </label>
+            <label class="field">
+              <ModelFieldLabel :label="t('access.entryMaxTokensLabel')" :hint="t('access.entryMaxTokensHint')" />
+              <el-input
+                v-model="row.maxTokens"
+                :class="{ 'is-invalid': errorsOf(row).maxTokens }"
+                :aria-invalid="errorsOf(row).maxTokens"
+                class="f-max-tokens"
+                :placeholder="t('access.entryMaxTokensPlaceholder')"
+              />
+            </label>
           </div>
 
           <div v-if="verdictOf(row)?.ok === false" class="verdict-error">{{ verdictOf(row)!.error }}</div>
@@ -258,6 +276,8 @@ interface EntryDraft {
   queryPrefix: string
   passagePrefix: string
   minSimilarity: string
+  tokenizer: string
+  maxTokens: string
   open: boolean
   /** The last probe verdict, together with the payload it was taken for (stale verdicts are
    *  dropped instead of being shown against values that were never tested) */
@@ -266,6 +286,12 @@ interface EntryDraft {
 }
 
 let nextId = 1
+
+/** The row's effective token limit, as the server fingerprint sees it (default when unset, 0
+ *  without a tokenizer) */
+function fingerprintTokenLimit(r: EntryDraft): number {
+  return r.tokenizer.trim() === '' ? 0 : r.maxTokens.trim() === '' ? 8192 : Number(r.maxTokens)
+}
 
 /** One row's canonical write shape — exactly what a settings PUT sends for that row */
 function entryPayload(r: EntryDraft) {
@@ -279,6 +305,8 @@ function entryPayload(r: EntryDraft) {
     query_prefix: r.queryPrefix === '' ? null : r.queryPrefix,
     passage_prefix: r.passagePrefix === '' ? null : r.passagePrefix,
     min_similarity: r.minSimilarity.trim() === '' ? null : Number(r.minSimilarity),
+    tokenizer: r.tokenizer.trim() === '' ? null : r.tokenizer.trim(),
+    max_tokens: r.maxTokens.trim() === '' ? null : Number(r.maxTokens),
   }
 }
 
@@ -298,6 +326,8 @@ function toDraftRow(e: EmbedModelEntry): EntryDraft {
     queryPrefix: e.query_prefix ?? '',
     passagePrefix: e.passage_prefix ?? '',
     minSimilarity: e.min_similarity == null ? '' : String(e.min_similarity),
+    tokenizer: e.tokenizer ?? '',
+    maxTokens: e.max_tokens == null ? '' : String(e.max_tokens),
     open: false,
     probe: null,
     progress: null,
@@ -354,6 +384,8 @@ function addEntry(): void {
     queryPrefix: '',
     passagePrefix: '',
     minSimilarity: '',
+    tokenizer: '',
+    maxTokens: '',
     open: true,
     probe: null,
     progress: null,
@@ -374,7 +406,16 @@ function identityOf(r: EntryDraft): string {
 }
 
 function fingerprintOf(r: EntryDraft): string {
-  return JSON.stringify([r.baseUrl.trim().replace(/\/+$/, ''), r.model.trim(), r.queryPrefix, r.passagePrefix])
+  // Mirrors the server's fingerprint(): endpoint, model, both prefixes, then the truncation
+  // regime (tokenizer source + effective token limit) — all of it re-embeds on change
+  return JSON.stringify([
+    r.baseUrl.trim().replace(/\/+$/, ''),
+    r.model.trim(),
+    r.queryPrefix,
+    r.passagePrefix,
+    r.tokenizer.trim(),
+    fingerprintTokenLimit(r),
+  ])
 }
 
 const changedCacheKeys = computed(

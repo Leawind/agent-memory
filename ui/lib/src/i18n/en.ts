@@ -292,6 +292,14 @@ export default {
       'Filters semantic candidates below this similarity. Range: 0–1; 0 disables filtering. Empty uses the default.',
     entryMinSimilarityLabel: 'Semantic recall floor',
     entryMinSimilarityPlaceholder: 'Default 0.30; 0 disables filtering',
+    entryTokenizerLabel: 'Tokenizer (ModelScope)',
+    entryTokenizerHint:
+      'When set, embedding texts are truncated at exact token level (the tokenizer is downloaded from ModelScope and cached on the first backfill). auto resolves by the model id above; a specific id or keyword such as BAAI/bge-m3 also works. Empty truncates by character count.',
+    entryTokenizerPlaceholder: 'auto / BAAI/bge-m3',
+    entryMaxTokensLabel: 'Max input tokens',
+    entryMaxTokensHint:
+      'The model’s per-input token ceiling; applies only when a Tokenizer is set. Empty uses the default of 8192.',
+    entryMaxTokensPlaceholder: 'Default 8192',
     entryTestOk: 'OK · {dim}-dim · {ms}ms',
     entryTestRerank: 'OK · {count} scored · {ms}ms',
     entryTestFail: 'Connection failed',

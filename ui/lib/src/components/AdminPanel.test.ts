@@ -362,6 +362,8 @@ describe('AdminPanel', () => {
             query_prefix: null,
             passage_prefix: null,
             min_similarity: null,
+            tokenizer: null,
+            max_tokens: null,
           },
         ],
       }),

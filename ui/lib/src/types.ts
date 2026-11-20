@@ -107,6 +107,12 @@ export interface EmbedModelEntry {
   passage_prefix?: string | null
   /** Absent/null = the server-side built-in default floor */
   min_similarity?: number | null
+  /** ModelScope tokenizer source: 'auto' resolves by the model id, any other id/keyword is used
+   *  verbatim; absent/null keeps the character-cap truncation */
+  tokenizer?: string | null
+  /** The model's maximum input tokens, applied when a tokenizer is configured; absent/null = the
+   *  built-in default limit */
+  max_tokens?: number | null
 }
 
 /** One ordered reranker candidate (settings.rerank_models element) */

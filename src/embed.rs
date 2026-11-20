@@ -47,7 +47,21 @@ pub struct EmbedConfig {
     /// Cosine floor for the semantic recall channel (query-time filter only — not part of the
     /// vector identity, changing it never re-embeds). 0.0 disables the floor.
     pub min_similarity: f32,
+    /// Tokenizer source for exact token counting: `auto` resolves against this candidate's model
+    /// id, any other non-empty value is used verbatim as a ModelScope id / search keyword. None
+    /// keeps the character cap. Changing the resolved truncation regime re-embeds (see
+    /// `fingerprint`), so this participates in cache validity.
+    pub tokenizer: Option<String>,
+    /// The embedding model's maximum input tokens, applied when a tokenizer is configured
+    /// (absent = `DEFAULT_TOKEN_LIMIT`). Inert without a tokenizer — and therefore not part of
+    /// the fingerprint in that case.
+    pub max_tokens: Option<usize>,
 }
+
+/// Token budget assumed when a tokenizer is configured but the model's real limit is not known:
+/// fits the long-context class (bge-m3, OpenAI text-embedding-3); smaller models must set
+/// `max_tokens` explicitly.
+pub const DEFAULT_TOKEN_LIMIT: usize = 8192;
 
 /// Normalize a configured service base_url: surrounding whitespace and trailing slashes off, and
 /// a trailing full-endpoint path (`/embeddings`, `/rerank`) reduced to the root. Provider docs
@@ -74,15 +88,30 @@ impl EmbedConfig {
         Failover::identity(&self.id, &self.base_url, &self.model, &self.api_key)
     }
 
-    /// Cache validity is separate from identity. JSON avoids delimiter collisions.
+    /// Cache validity is separate from identity. JSON avoids delimiter collisions. The truncation
+    /// regime travels with the fingerprint (tokenizer source + effective token limit): a vector
+    /// embedded under a different cut is a different vector. An unconfigured tokenizer is a
+    /// constant, so a stray `max_tokens` on a tokenizer-less entry never invalidates anything.
     pub fn fingerprint(&self) -> String {
         json!([
             self.base_url.trim_end_matches('/'),
             self.model,
             self.query_prefix.as_deref().unwrap_or(""),
-            self.passage_prefix.as_deref().unwrap_or("")
+            self.passage_prefix.as_deref().unwrap_or(""),
+            self.tokenizer.as_deref().unwrap_or(""),
+            match self.tokenizer {
+                Some(_) => self.max_tokens.unwrap_or(DEFAULT_TOKEN_LIMIT),
+                None => 0,
+            }
         ])
         .to_string()
+    }
+
+    /// The exact-token truncation budget when a tokenizer is configured, None = character cap.
+    pub fn token_limit(&self) -> Option<usize> {
+        self.tokenizer
+            .is_some()
+            .then(|| self.max_tokens.unwrap_or(DEFAULT_TOKEN_LIMIT))
     }
 
     fn endpoint(&self) -> String {
@@ -107,6 +136,10 @@ pub struct EmbedEntry {
     /// ~0.2), so the floor travels with the model instead of being one global knob. None = the
     /// built-in default (`DEFAULT_MIN_SIMILARITY`).
     pub min_similarity: Option<f32>,
+    /// See `EmbedConfig::tokenizer`.
+    pub tokenizer: Option<String>,
+    /// See `EmbedConfig::max_tokens`.
+    pub max_tokens: Option<usize>,
 }
 
 impl EmbedEntry {
@@ -135,6 +168,12 @@ impl EmbedEntry {
                 .and_then(Value::as_f64)
                 .map(|f| f as f32)
                 .filter(|f| (0.0..=1.0).contains(f)),
+            tokenizer: string("tokenizer"),
+            max_tokens: obj
+                .get("max_tokens")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+                .filter(|n| (64..=262_144).contains(n)),
         })
     }
 
@@ -154,6 +193,8 @@ impl EmbedEntry {
             "min_similarity": self
                 .min_similarity
                 .map(|f| (f as f64 * 1000.0).round() / 1000.0),
+            "tokenizer": self.tokenizer,
+            "max_tokens": self.max_tokens,
         })
     }
 
@@ -180,6 +221,8 @@ impl EmbedEntry {
             query_prefix: self.query_prefix.clone(),
             passage_prefix: self.passage_prefix.clone(),
             min_similarity: self.min_similarity.unwrap_or(DEFAULT_MIN_SIMILARITY),
+            tokenizer: self.tokenizer.clone(),
+            max_tokens: self.max_tokens,
         })
     }
 
@@ -344,36 +387,59 @@ pub const MAX_INPUT_CHARS: usize = 8_000;
 /// the entry's `min_similarity` field; 0 disables the floor entirely.
 pub const DEFAULT_MIN_SIMILARITY: f32 = 0.30;
 
-/// The memory text sent to the embedding service: title + blank line + content (truncated).
+/// The memory text sent to the embedding service: title + blank line + content, truncated to the
+/// character cap. The reranker's document assembly shares this shape; embedding-side truncation
+/// happens in `embed_passage_text` / `embed_query_text` instead.
 pub fn embed_memory_text(summary: &str, content: &str) -> String {
+    cap_chars(&assemble_memory_text(summary, content), MAX_INPUT_CHARS)
+}
+
+/// The uncapped assembly: title + blank line + content.
+fn assemble_memory_text(summary: &str, content: &str) -> String {
     let mut text = String::new();
     text.push_str(summary.trim());
     if !content.trim().is_empty() {
         text.push_str("\n\n");
         text.push_str(content.trim());
     }
-    if text.chars().count() > MAX_INPUT_CHARS {
-        text = text.chars().take(MAX_INPUT_CHARS).collect();
-    }
     text
+}
+
+fn cap_chars(text: &str, max: usize) -> String {
+    if text.chars().count() > max {
+        text.chars().take(max).collect()
+    } else {
+        text.to_string()
+    }
+}
+
+/// Fit one embedding input under the candidate's truncation regime: with a resolved tokenizer the
+/// cut is exact at token level; otherwise (no tokenizer, not yet downloaded, or download failed)
+/// the character cap applies. Cache-only — resolution must have happened in a batch context.
+fn fit_embedding_input(cfg: &EmbedConfig, prefix: &str, text: &str) -> String {
+    if let Some(limit) = cfg.token_limit() {
+        if let Some(tok) = crate::tokenizer::cached(cfg) {
+            let fitted = crate::tokenizer::truncate_to_tokens(&tok, prefix, text, limit);
+            if !fitted.is_empty() {
+                return format!("{prefix}{fitted}");
+            }
+        }
+    }
+    format!("{prefix}{}", cap_chars(text, MAX_INPUT_CHARS))
 }
 
 /// Query-side text: the model's query instruction prefix, then the query itself.
 pub fn embed_query_text(cfg: &EmbedConfig, query: &str) -> String {
-    let text = embed_memory_text(query, "");
-    match &cfg.query_prefix {
-        Some(p) => format!("{p}{text}"),
-        None => text,
-    }
+    fit_embedding_input(cfg, cfg.query_prefix.as_deref().unwrap_or(""), query.trim())
 }
 
 /// Passage-side text: the model's passage prefix, then title + content.
 pub fn embed_passage_text(cfg: &EmbedConfig, summary: &str, content: &str) -> String {
-    let text = embed_memory_text(summary, content);
-    match &cfg.passage_prefix {
-        Some(p) => format!("{p}{text}"),
-        None => text,
-    }
+    fit_embedding_input(
+        cfg,
+        cfg.passage_prefix.as_deref().unwrap_or(""),
+        &assemble_memory_text(summary, content),
+    )
 }
 
 /// One failed embedding/reranker service call: the upstream HTTP status when the service
@@ -549,6 +615,10 @@ pub fn process_pending_for(
     batch: usize,
     cfg: &EmbedConfig,
 ) -> Result<EmbedOutcome, String> {
+    // Batch context: this is where a configured tokenizer gets downloaded (and disk-cached) so the
+    // query-time, cache-only assembly can cut exactly from here on. Failure degrades to the
+    // character cap for this batch and is negatively cached inside the resolver.
+    crate::tokenizer::resolve_eager(cfg);
     let batch = batch.clamp(1, MAX_BATCH);
     let pending = crate::store::with_db_in(db_path, TxMode::ReadOnly, |st| {
         st.embedding_pending_batch(&cfg.vector_key(), &cfg.fingerprint(), batch)
@@ -819,6 +889,8 @@ mod tests {
             query_prefix: None,
             passage_prefix: None,
             min_similarity: 0.0,
+            tokenizer: None,
+            max_tokens: None,
         };
         let same = EmbedConfig {
             base_url: "http://x/v1".into(),
@@ -893,7 +965,63 @@ mod tests {
             query_prefix: q.map(str::to_string),
             passage_prefix: p.map(str::to_string),
             min_similarity: 0.0,
+            tokenizer: None,
+            max_tokens: None,
         }
+    }
+
+    /// Prefixes change cache validity while the user-assigned ID stays stable; the truncation
+    /// regime travels with the fingerprint too, but an inert `max_tokens` (no tokenizer) never
+    /// invalidates a cache.
+    #[test]
+    fn tokenizer_config_changes_fingerprint() {
+        let mut bare = cfg("bge-m3", None, None);
+        bare.tokenizer = Some("auto".into());
+        assert_ne!(bare.fingerprint(), cfg("bge-m3", None, None).fingerprint());
+        assert_eq!(bare.token_limit(), Some(DEFAULT_TOKEN_LIMIT));
+
+        bare.max_tokens = Some(512);
+        assert_eq!(bare.token_limit(), Some(512));
+        assert_ne!(bare.fingerprint(), cfg("bge-m3", None, None).fingerprint());
+
+        // Inert without a tokenizer: the limit alone changes nothing
+        let mut limit_only = cfg("bge-m3", None, None);
+        limit_only.max_tokens = Some(512);
+        assert_eq!(limit_only.token_limit(), None);
+        assert_eq!(
+            limit_only.fingerprint(),
+            cfg("bge-m3", None, None).fingerprint()
+        );
+    }
+
+    /// Entry round-trip keeps the new fields; out-of-range values normalize to defaults
+    /// (hand-edited databases must not crash the parse).
+    #[test]
+    fn entry_round_trips_tokenizer_fields() {
+        let entry = EmbedEntry {
+            id: "m3".into(),
+            name: "bge-m3".into(),
+            enabled: true,
+            base_url: "https://api.siliconflow.cn/v1".into(),
+            model: "BAAI/bge-m3".into(),
+            api_key: None,
+            query_prefix: None,
+            passage_prefix: None,
+            min_similarity: None,
+            tokenizer: Some("auto".into()),
+            max_tokens: Some(512),
+        };
+        let parsed = EmbedEntry::from_json(&entry.to_json()).unwrap();
+        assert_eq!(parsed.tokenizer.as_deref(), Some("auto"));
+        assert_eq!(parsed.max_tokens, Some(512));
+        assert_eq!(parsed.config().unwrap().token_limit(), Some(512));
+
+        let mut junk = entry.to_json();
+        junk["max_tokens"] = json!(3);
+        assert_eq!(EmbedEntry::from_json(&junk).unwrap().max_tokens, None);
+        junk["max_tokens"] = json!("not-a-number");
+        assert_eq!(EmbedEntry::from_json(&junk).unwrap().max_tokens, None);
+        assert_eq!(EmbedEntry::from_json(&json!({})).unwrap().tokenizer, None);
     }
 
     #[test]

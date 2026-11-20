@@ -26,6 +26,7 @@ mod search_snapshot;
 mod sql;
 mod store;
 mod tag_expr;
+mod tokenizer;
 mod tools;
 mod util;
 
@@ -131,6 +132,9 @@ fn run(cli: Cli) -> i32 {
     // All subcommands share the default database path; with a cwd-relative name, running from the
     // wrong directory would silently create an empty database — always report the resolved location on stderr first (stdout is reserved for command results).
     eprintln!("database: {}", store::normalize_path(&db_path).display());
+    // The tokenizer disk cache lives next to the database; every subcommand may end up embedding,
+    // so point it once here for all of them.
+    crate::tokenizer::init_cache_dir(&db_path);
     match cli.command.unwrap_or(Command::Serve {
         host: DEFAULT_HOST.to_string(),
         port: DEFAULT_PORT,

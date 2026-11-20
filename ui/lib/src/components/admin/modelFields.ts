@@ -3,6 +3,7 @@ interface CandidateFields {
   baseUrl: string
   model: string
   minSimilarity?: string
+  maxTokens?: string
 }
 
 /** Only ID, endpoint and API model are required; empty optional fields are valid. */
@@ -20,10 +21,13 @@ export function candidateFieldErrors(row: CandidateFields, rows: CandidateFields
   }
   const floor = row.minSimilarity?.trim() ?? ''
   const similarity = Number(floor)
+  const limit = row.maxTokens?.trim() ?? ''
+  const tokens = Number(limit)
   return {
     modelId: !id || rows.filter((r) => r.modelId.trim() === id).length > 1,
     baseUrl: !!invalidUrl,
     model: !row.model.trim(),
     minSimilarity: floor !== '' && (!Number.isFinite(similarity) || similarity < 0 || similarity > 1),
+    maxTokens: limit !== '' && (!Number.isInteger(tokens) || tokens < 64 || tokens > 262144),
   }
 }

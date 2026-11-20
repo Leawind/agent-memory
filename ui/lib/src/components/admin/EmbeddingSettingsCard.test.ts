@@ -150,7 +150,7 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(row(wrapper).find('.f-min-similarity').classes()).not.toContain('is-invalid')
     expect(field(wrapper, '.f-api-key').attributes('placeholder') ?? '').toBe('')
     expect(field(wrapper, '.f-query-prefix').attributes('placeholder') ?? '').toBe('')
-    expect(wrapper.findAll('.field-help')).toHaveLength(5)
+    expect(wrapper.findAll('.field-help')).toHaveLength(7)
     expect(wrapper.find('.field-help').attributes('aria-label')).toContain('向量缓存键')
     await field(wrapper, '.f-id').setValue('local')
     await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')
@@ -169,11 +169,21 @@ describe('EmbeddingSettingsCard candidate editor', () => {
     expect(calls.some((c) => c.method === 'PUT')).toBe(false)
     await field(wrapper, '.f-base-url').setValue('http://127.0.0.1:1234/v1')
     await field(wrapper, '.f-min-similarity').setValue('')
+    // The token ceiling only accepts integers inside the server's range
+    for (const invalid of ['abc', '10', '99999999', '3.5']) {
+      await field(wrapper, '.f-max-tokens').setValue(invalid)
+      expect(field(wrapper, '.f-max-tokens').attributes('aria-invalid')).toBe('true')
+      expect(button(wrapper, '保存')!.attributes('disabled')).toBeDefined()
+    }
+    await field(wrapper, '.f-max-tokens').setValue('512')
+    await field(wrapper, '.f-tokenizer').setValue('auto')
     await button(wrapper, '保存')!.trigger('click')
     await flushPromises()
     const saved = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!).embedding_models[0]
     expect(saved.name).toBe('')
     expect(saved.min_similarity).toBeNull()
+    expect(saved.tokenizer).toBe('auto')
+    expect(saved.max_tokens).toBe(512)
     expect(row(wrapper).find('.entry-name').text()).toBe('embeddinggemma-300m')
     wrapper.unmount()
   })
@@ -255,6 +265,8 @@ describe('EmbeddingSettingsCard candidate editor', () => {
       '查询指令前缀',
       '文档指令前缀',
       '语义召回最低相似度',
+      'Tokenizer（魔搭）',
+      '最大输入 token 数',
     ])
     expect((field(wrapper, '.f-model').element as HTMLInputElement).value).toBe('bge-m3')
     expect(button(wrapper, '检测', detail)).toBeTruthy()
@@ -290,6 +302,8 @@ describe('EmbeddingSettingsCard candidate editor', () => {
           query_prefix: null,
           passage_prefix: null,
           min_similarity: 0.4,
+          tokenizer: null,
+          max_tokens: null,
         },
         {
           id: 'e5',
@@ -301,6 +315,8 @@ describe('EmbeddingSettingsCard candidate editor', () => {
           query_prefix: 'query: ',
           passage_prefix: null,
           min_similarity: 0.4,
+          tokenizer: null,
+          max_tokens: null,
         },
       ],
     })
@@ -380,6 +396,8 @@ describe('EmbeddingSettingsCard candidate editor', () => {
           query_prefix: null,
           passage_prefix: null,
           min_similarity: 0.4,
+          tokenizer: null,
+          max_tokens: null,
         },
       ],
     })

@@ -285,6 +285,13 @@ export default {
     entryMinSimilarityHint: '过滤相似度低于此值的语义搜索候选。范围 0～1，0 关闭过滤；留空使用默认值。',
     entryMinSimilarityLabel: '语义召回最低相似度',
     entryMinSimilarityPlaceholder: '默认 0.30，0 为不过滤',
+    entryTokenizerLabel: 'Tokenizer（魔搭）',
+    entryTokenizerHint:
+      '填写后按 token 精确截断嵌入文本（首次补跑时从魔搭下载并缓存）。auto 按上方模型 id 自动查找；也可填具体 id 或关键词，如 BAAI/bge-m3；留空按字符数截断。',
+    entryTokenizerPlaceholder: 'auto / BAAI/bge-m3',
+    entryMaxTokensLabel: '最大输入 token 数',
+    entryMaxTokensHint: '模型的单条输入 token 上限，仅在填写 Tokenizer 后生效。留空默认 8192。',
+    entryMaxTokensPlaceholder: '默认 8192',
     entryTestOk: '正常 · {dim} 维 · {ms}ms',
     entryTestRerank: '正常 · {count} 篇已打分 · {ms}ms',
     entryTestFail: '连接失败',

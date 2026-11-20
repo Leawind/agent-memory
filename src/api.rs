@@ -1006,6 +1006,8 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
         let api_key = f.opt_string("api_key")?;
         let query_prefix = f.opt_string("query_prefix")?;
         let passage_prefix = f.opt_string("passage_prefix")?;
+        let tokenizer = f.opt_string("tokenizer")?;
+        let max_tokens = parse_max_tokens(f.obj, &f.context)?;
         Ok(crate::embed::EmbedEntry {
             id: f.id,
             name: f.name,
@@ -1016,8 +1018,34 @@ fn parse_model_entries(key: &str, v: &Value) -> Result<Vec<crate::embed::EmbedEn
             query_prefix,
             passage_prefix,
             min_similarity,
+            tokenizer,
+            max_tokens,
         })
     })
+}
+
+/// The candidate's maximum input tokens (applied when a tokenizer is configured): a positive
+/// integer in a range wide enough for every current embedding model, absent/null = the built-in
+/// default.
+fn parse_max_tokens(obj: &Map<String, Value>, context: &str) -> Result<Option<usize>, ToolError> {
+    const RANGE: std::ops::RangeInclusive<u64> = 64..=262_144;
+    match obj.get("max_tokens") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => {
+            let v = n.as_u64().ok_or_else(|| {
+                ToolError::invalid(format!("{context}.max_tokens must be a positive integer"))
+            })?;
+            if !RANGE.contains(&v) {
+                return Err(ToolError::invalid(format!(
+                    "{context}.max_tokens must be between 64 and 262144"
+                )));
+            }
+            Ok(Some(v as usize))
+        }
+        Some(_) => Err(ToolError::invalid(format!(
+            "{context}.max_tokens must be a number or null"
+        ))),
+    }
 }
 
 fn parse_rerank_entries(
