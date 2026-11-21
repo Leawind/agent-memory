@@ -111,8 +111,9 @@ function lineHeader(text: string): Record<string, string> {
   )
 }
 
-/** POST one JSON-RPC message the way a legacy (2025-06-18) client does: no `_meta`, no mirrored
- * headers — the initialize handshake pins the version, nothing else is carried per request. */
+/** POST one JSON-RPC message the way a legacy (2025-06-18) client does: no per-request envelope and
+ * no mirrored headers — the initialize handshake pins the version. Anything the caller passes in
+ * `params` rides along untouched, which is how a client's own request metadata gets exercised. */
 async function legacyRpc(id: string | number, method: string, params: Record<string, unknown> = {}): Promise<RpcOk> {
   const res = await fetch(ENDPOINT, {
     method: 'POST',
@@ -576,9 +577,18 @@ try {
     'legacy tools/list works without any envelope',
     legacyTools.status === 200 && hasExpectedInventory(legacyTools.result?.tools as { name: string }[] | undefined),
   )
+  // A client built on the official Rust SDK stamps `_meta.progressToken` into every request; that is
+  // general-purpose request metadata, not a modern-era declaration.
+  const legacyMeta = await legacyRpc('legacy-2b', 'tools/list', { _meta: { progressToken: 0 } })
+  check(
+    'legacy tools/list tolerates _meta request metadata',
+    legacyMeta.status === 200 && hasExpectedInventory(legacyMeta.result?.tools as { name: string }[] | undefined),
+    JSON.stringify(legacyMeta.error ?? '').slice(0, 160),
+  )
   const legacySearch = await legacyRpc('legacy-3', 'tools/call', {
     name: 'memory_search',
     arguments: { query: '联调' },
+    _meta: { progressToken: 1 },
   })
   check('legacy tools/call reads the same store', lineHeader(textOf(legacySearch) ?? '').total_matches === '1')
   const legacyUnknown = await legacyRpc('legacy-4', 'bogus/method')

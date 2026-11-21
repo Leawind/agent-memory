@@ -85,6 +85,38 @@ fn legacy_client_full_flow() {
     assert_eq!(status, 200);
     assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 17);
 
+    // A client built on the official Rust SDK stamps a progress token into every request's `_meta`,
+    // and such a client also sends the legacy version header after the handshake. `_meta` is
+    // general-purpose request metadata in both eras, so this stays a legacy request: rejecting it
+    // breaks that client's MCP startup before any tool is callable
+    let (status, resp) = legacy_post(
+        port,
+        &rpc(
+            json!("codex-1"),
+            "tools/list",
+            json!({"_meta": {"progressToken": 0}}),
+        ),
+        &[("MCP-Protocol-Version", "2025-06-18")],
+    );
+    assert_eq!(status, 200, "{resp}");
+    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 17);
+
+    let (status, resp) = legacy_post(
+        port,
+        &rpc(
+            json!("codex-2"),
+            "tools/call",
+            json!({
+                "name": "memory_list",
+                "arguments": {},
+                "_meta": {"progressToken": 1},
+            }),
+        ),
+        &[("MCP-Protocol-Version", "2025-06-18")],
+    );
+    assert_eq!(status, 200, "{resp}");
+    assert_eq!(resp["result"]["isError"], Value::Null);
+
     let (status, resp) = legacy_post(
         port,
         &rpc(

@@ -8,8 +8,10 @@
 //!
 //! The legacy era (2025-06-18, the revision official SDK clients speak) is served over the same
 //! handlers. It has the initialize handshake and no per-request metadata, so era is resolved per
-//! request, statelessly and body-first: a declared `_meta` protocolVersion picks the era, an absent
-//! `_meta` means a legacy client. Era selects only the envelope strictness and initialize-vs-discover
+//! request, statelessly and body-first: only a declared `_meta` protocol version picks the era, and a
+//! request that declares none is a legacy one. `_meta` itself is the protocol's general-purpose
+//! metadata map in both eras (`progressToken`, trace context, vendor keys), so its presence alone
+//! never declares the modern era. Era selects only the envelope strictness and initialize-vs-discover
 //! — never business behavior — so the two client surfaces cannot fork. Legacy capabilities advertise
 //! no notification channel (GET /mcp answers 405, `subscriptions/listen` is not part of that era's
 //! contract), so legacy clients are never promised an update that cannot arrive.
@@ -171,11 +173,14 @@ pub fn handle(
 
 /// Validate the request's protocol envelope for the era it declares, or produce the error that
 /// era's contract demands. Stateless era resolution, body-first: modern clients are required to
-/// carry their protocol version in `params._meta`, so a declared version picks the era and an
-/// absent `_meta` means a legacy client (the legacy protocol has no per-request metadata; its
-/// version was pinned by the initialize handshake and the server speaks a single legacy revision,
-/// so there is nothing to re-check). A legacy version declared inside a modern envelope is honored
-/// as legacy — the version is the contract, the envelope is ceremony. Mirrored headers are a
+/// carry their protocol version in `params._meta`, so a declared version picks the era and a
+/// declared legacy version is honored as legacy — the version is the contract, the envelope is
+/// ceremony. A request that declares no version is a legacy one: that era establishes its version in
+/// the initialize handshake and the server speaks a single legacy revision, so there is nothing to
+/// re-check per request. `_meta` is not itself a declaration — it is the protocol's general-purpose
+/// metadata map in both eras, and legacy clients legitimately stamp it with `progressToken`, trace
+/// context or vendor keys (every client built on the official Rust SDK sends a progress token on
+/// each request), so only the version key selects the modern envelope. Mirrored headers are a
 /// modern-only requirement and are never enforced for legacy requests (nor for notifications,
 /// which are answered before this check).
 fn check_envelope(
@@ -184,43 +189,26 @@ fn check_envelope(
     params: &Value,
     headers: &TransportHeaders,
 ) -> Result<(), Outcome> {
-    let meta = params.get("_meta");
+    let meta = params.get("_meta").and_then(Value::as_object);
     let declared = meta
         .and_then(|m| m.get(META_PROTOCOL_VERSION))
         .and_then(Value::as_str);
-    let modern = match declared {
-        Some(PROTOCOL_VERSION) => true,
-        Some(LEGACY_PROTOCOL_VERSION) => false,
+    match declared {
+        Some(PROTOCOL_VERSION) => {}
+        // No declaration or the legacy revision declared: a legacy request.
+        Some(LEGACY_PROTOCOL_VERSION) | None => return Ok(()),
         // Declared but unsupported: name every supported version (both eras), so a dual-era client
         // can identify what this server speaks and fail fast.
         Some(other) => return Err(reply(400, unsupported_version_error(id, Some(other)))),
-        // No declared version: a missing _meta is a legacy client; a present-but-broken _meta
-        // (non-object, protocolVersion missing or non-string) is a modern client's bug — reported
-        // by the strict validation below, naming exactly what is missing.
-        None => meta.is_some(),
-    };
-    if !modern {
-        return Ok(());
     }
 
-    let Some(meta) = meta.and_then(Value::as_object) else {
+    // Reached only with the modern revision declared: `_meta` is the object that carries it, and the
+    // capability map is the other half of the modern envelope.
+    let pv = PROTOCOL_VERSION;
+    let Some(meta) = meta else {
         return Err(reply(
             400,
-            error_value(
-                id,
-                -32602,
-                "invalid params: params._meta is required (io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities)",
-            ),
-        ));
-    };
-    let Some(pv) = meta.get(META_PROTOCOL_VERSION).and_then(Value::as_str) else {
-        return Err(reply(
-            400,
-            error_value(
-                id,
-                -32602,
-                "invalid params: _meta.io.modelcontextprotocol/protocolVersion must be a string",
-            ),
+            error_value(id, -32602, "invalid params: params._meta must be an object"),
         ));
     };
     if !meta
@@ -920,26 +908,23 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(value["result"]["resultType"], "complete");
 
-        // Missing protocolVersion inside a present _meta is a modern client's bug → -32602
+        // A _meta without a declared version is not a modern declaration: general-purpose keys are
+        // legal in both eras, so the request is served as legacy (see the dedicated test below)
         let msg = request_of(
             r#"{"jsonrpc":"2.0","id":2,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/clientCapabilities":{}}}}"#,
         );
-        let headers = TransportHeaders {
-            protocol_version: Some(PROTOCOL_VERSION.into()),
-            method: Some("ping".into()),
-            name: None,
-        };
         let Outcome::Reply { status, value } = handle_with(&store, &headers, &msg) else {
             panic!("expected a reply");
         };
-        assert_eq!(status, 400);
-        assert_eq!(value["error"]["code"], -32602);
+        assert_eq!(status, 200);
+        assert_eq!(value["result"]["resultType"], "complete");
 
-        // Missing clientCapabilities → -32602
+        // Missing clientCapabilities in a request that declares the modern version → -32602
+        let modern_headers = conforming_headers("ping", &modern_meta());
         let msg = request_of(
             r#"{"jsonrpc":"2.0","id":3,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#,
         );
-        let Outcome::Reply { status, value } = handle_with(&store, &headers, &msg) else {
+        let Outcome::Reply { status, value } = handle_with(&store, &modern_headers, &msg) else {
             panic!("expected a reply");
         };
         assert_eq!(status, 400);
@@ -964,6 +949,66 @@ mod tests {
             json!(["2026-07-28", "2025-06-18"])
         );
         assert_eq!(value["error"]["data"]["requested"], "1900-01-01");
+        cleanup(&store);
+    }
+
+    /// Every client built on the official Rust SDK stamps `_meta.progressToken` on each request, and
+    /// legacy clients may add trace context or vendor keys there too. `_meta` is the protocol's
+    /// general-purpose metadata map in both eras, so such a request is a legacy request, not a
+    /// broken modern envelope: rejecting it breaks such a client's MCP startup outright.
+    #[test]
+    fn general_purpose_meta_does_not_select_the_modern_era() {
+        let store = temp_db("meta-legacy-keys");
+        let legacy_headers = TransportHeaders {
+            protocol_version: None,
+            method: None,
+            name: None,
+        };
+
+        for params in [
+            r#"{"_meta":{}}"#,
+            r#"{"_meta":{"progressToken":0}}"#,
+            r#"{"_meta":{"progressToken":"abc","traceparent":"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}}"#,
+            // A modern-looking key without the version is still not a declaration
+            r#"{"_meta":{"io.modelcontextprotocol/clientInfo":{"name":"codex-mcp-client","version":"0.171.0"}}}"#,
+            // Not even an object
+            r#"{"_meta":42}"#,
+        ] {
+            let msg = request_of(&format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{params}}}"#
+            ));
+            let Outcome::Reply { status, value } = handle_with(&store, &legacy_headers, &msg)
+            else {
+                panic!("expected a reply");
+            };
+            assert_eq!(status, 200, "legacy tools/list with params {params}");
+            assert_eq!(
+                value["result"]["tools"].as_array().unwrap().len(),
+                tools::TOOL_NAMES.len(),
+                "the whole tool surface stays reachable with params {params}"
+            );
+        }
+
+        // tools/call carries the same metadata: the write goes through, not around
+        let create = request_of(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory_create","arguments":{"summary":"s","content":"c"},"_meta":{"progressToken":7}}}"#,
+        );
+        let Outcome::Reply { status, value } = handle_with(&store, &legacy_headers, &create) else {
+            panic!("expected a reply");
+        };
+        assert_eq!(status, 200);
+        assert_eq!(tool_data(&value)["id"], "m1");
+
+        // resources/read mirrors params.uri into a header only in the modern era: a legacy read with
+        // request metadata needs no header at all
+        let read = request_of(
+            r#"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"memory://memories/m1","_meta":{"progressToken":8}}}"#,
+        );
+        let Outcome::Reply { status, value } = handle_with(&store, &legacy_headers, &read) else {
+            panic!("expected a reply");
+        };
+        assert_eq!(status, 200);
+        assert_eq!(value["result"]["contents"][0]["mimeType"], "text/markdown");
         cleanup(&store);
     }
 
