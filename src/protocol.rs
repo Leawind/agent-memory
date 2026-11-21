@@ -482,9 +482,10 @@ fn discover(store_path: &Path, ctx: &IdentityCtx) -> Value {
     })
 }
 
-/// The effective discovery/handshake prompt: a non-empty `instructions` setting overrides the
-/// built-in default, and the caller's identity line follows last (both eras are authenticated at
-/// the transport before the protocol layer runs).
+/// The effective discovery/handshake prompt: the built-in default always comes first, a non-empty
+/// `instructions` setting is appended to it as the operator's own guidance, and the caller's
+/// identity line follows last (both eras are authenticated at the transport before the protocol
+/// layer runs).
 fn instructions_with_identity(store_path: &Path, ctx: &IdentityCtx) -> String {
     let base = effective_instructions(store_path);
     format!("{base}\n\n{}", ctx.describe_line())
@@ -500,16 +501,19 @@ fn server_info() -> Value {
     })
 }
 
-/// The effective discovery prompt: a non-empty `instructions` setting overrides the built-in default.
+/// The effective discovery prompt. The built-in is never replaced: it describes the surface this
+/// binary actually serves, so a store that stored its own copy would keep describing a surface
+/// that has moved on. The setting is additional guidance appended after it.
 fn effective_instructions(store_path: &Path) -> String {
-    let base = store::with_db_in(store_path, store::TxMode::ReadOnly, |st| {
-        st.settings_get("instructions")
+    let custom = store::with_db_in(store_path, store::TxMode::ReadOnly, |st| {
+        st.settings_get(store::Store::SETTING_INSTRUCTIONS)
     })
     .ok()
-    .flatten();
-    match base {
-        Some(s) if !s.trim().is_empty() => s,
-        _ => tools::INSTRUCTIONS.to_string(),
+    .flatten()
+    .filter(|s| !s.trim().is_empty());
+    match custom {
+        Some(text) => format!("{}\n\n{}", tools::INSTRUCTIONS, text.trim()),
+        None => tools::INSTRUCTIONS.to_string(),
     }
 }
 
@@ -721,10 +725,11 @@ mod tests {
     }
 
     #[test]
-    fn discover_carries_custom_instructions_and_identity_line() {
+    fn discover_appends_custom_instructions_after_the_built_in() {
         let store = temp_db("discover-instructions");
 
-        // A custom prompt overrides the built-in default; the identity line follows last
+        // The operator's text adds to the built-in instead of replacing it; the identity line
+        // still follows last
         store::with_db_in(&store, store::TxMode::Write, |st| -> Result<(), String> {
             st.settings_put("instructions", "这是团队共享记忆库，提交前先检索。")?;
             let (token, _) = st.identity_create("alice", &crate::auth::Permissions::all())?;
@@ -752,9 +757,17 @@ mod tests {
             Outcome::Listen(_) | Outcome::Accepted => panic!("expected a reply"),
         };
         let instructions = resp["result"]["instructions"].as_str().unwrap();
-        assert_eq!(
-            instructions,
-            "这是团队共享记忆库，提交前先检索。\n\nCaller identity: alice; permissions: read, create, update, delete, tag_manage, predicate_manage, admin."
+        assert!(
+            instructions.starts_with(tools::INSTRUCTIONS),
+            "the built-in comes first and is never replaced: {instructions}"
+        );
+        assert!(
+            instructions.contains("这是团队共享记忆库，提交前先检索。"),
+            "the operator's guidance is appended: {instructions}"
+        );
+        assert!(
+            instructions.ends_with("Caller identity: alice; permissions: read, create, update, delete, tag_manage, predicate_manage, admin."),
+            "identity line last: {instructions}"
         );
         cleanup(&store);
     }

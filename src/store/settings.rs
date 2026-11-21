@@ -27,6 +27,10 @@ impl Store {
     }
     pub const SETTING_SEARCH_LIMITS: &'static str = "search_limits";
     pub const SETTING_LIFECYCLE_POLICY: &'static str = "lifecycle_policy";
+    /// The operator's own guidance, appended after the built-in discovery prompt rather than
+    /// replacing it: the built-in describes what this binary serves, and a stored copy of it goes
+    /// stale the next time the built-in changes.
+    pub const SETTING_INSTRUCTIONS: &'static str = "instructions";
 
     pub fn lifecycle_policy(&self) -> Result<crate::lifecycle::Policy, String> {
         self.stored_lifecycle_policy()

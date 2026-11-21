@@ -86,9 +86,9 @@ describe('AdminPanel', () => {
     await wrapper.find('.md-mode-toggle').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('textarea').length).toBe(1)
-    const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')
-    expect(resetBtn).toBeTruthy()
-    expect(resetBtn!.attributes('disabled')).toBeUndefined()
+    const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清空')
+    expect(clearBtn).toBeTruthy()
+    expect(clearBtn!.attributes('disabled')).toBeUndefined()
     // Backup and doctor are centralized in the admin panel
     expect(html).toContain('备份导入导出')
     expect(html).toContain('导出备份')
@@ -125,7 +125,7 @@ describe('AdminPanel', () => {
       '身份与访问',
       '搜索模型',
       '时效与强化',
-      '自定义提示词',
+      '附加说明',
       '备份导入导出',
       '数据体检',
     ])
@@ -212,11 +212,11 @@ describe('AdminPanel', () => {
 
   // Every settings card ends in a button named 保存; scope to the prompt card's own one
   function promptCardSave(wrapper: ReturnType<typeof mount>) {
-    const card = wrapper.findAll('.admin-sections .el-card').find((c) => c.text().includes('自定义提示词'))!
+    const card = wrapper.findAll('.admin-sections .el-card').find((c) => c.text().includes('附加说明'))!
     return card.findAll('button').find((b) => b.text() === '保存')!
   }
 
-  it('prefills the built-in default when unset and gates save on changes', async () => {
+  it('starts an empty supplementary box and sends what you type verbatim', async () => {
     const settingsPuts: string[] = []
     // The mock stores what a PUT saved and returns it on GET, like the real server
     const stored: Record<string, unknown> = {}
@@ -240,13 +240,13 @@ describe('AdminPanel', () => {
       global: { plugins: [ElementPlus] },
     })
     await flushPromises()
-    // When unset, the editor prefills the built-in default directly (what you see is what applies)
+    // The editor holds only the store's own guidance: the built-in is sent regardless of it, so
+    // an unset value is an empty box rather than a copy of the default
     const textarea = wrapper.findAll('textarea')[0]
-    expect((textarea.element as HTMLTextAreaElement).value).toBe('BUILT-IN DEFAULT PROMPT')
-    // Content equals the default -> "reset to default" has nothing to do, disabled
-    const resetBtn = wrapper.findAll('button').find((b) => b.text() === '恢复默认')!
-    expect(resetBtn.attributes('disabled')).toBeDefined()
-    // Content identical to the effective value: a save would be a no-op, the button is disabled
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('')
+    // Nothing to clear, nothing to save
+    const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清空')!
+    expect(clearBtn.attributes('disabled')).toBeDefined()
     const saveBtn = promptCardSave(wrapper)!
     expect(saveBtn.attributes('disabled')).toBeDefined()
     // Editing enables the save, and the PUT carries the edited text verbatim
@@ -264,7 +264,7 @@ describe('AdminPanel', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('saves a default-identical edit as unset (empty) when an override is stored', async () => {
+  it('keeps the stored guidance as additional text instead of a replacement copy', async () => {
     const settingsPuts: string[] = []
     // The mock stores what a PUT saved and returns it on GET, like the real server
     const stored: Record<string, unknown> = { instructions: 'team rules' }
@@ -289,19 +289,15 @@ describe('AdminPanel', () => {
     })
     await flushPromises()
     const saveBtn = promptCardSave(wrapper)!
-    // The stored override differs from nothing yet: save stays disabled
+    // The box shows the stored guidance as-is: it is not compared against the built-in
+    expect((wrapper.findAll('textarea')[0].element as HTMLTextAreaElement).value).toBe('team rules')
     expect(saveBtn.attributes('disabled')).toBeDefined()
-    // Typing text identical to the built-in default still differs from the stored override,
-    // so it is savable — and normalizes to '' (keeps following the default, not freezing a snapshot)
-    await wrapper.findAll('textarea')[0].setValue('BUILT-IN')
+    await wrapper.findAll('textarea')[0].setValue('team rules v2')
     expect(saveBtn.attributes('disabled')).toBeUndefined()
     await saveBtn.trigger('click')
     await flushPromises()
-    expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
-    // After the reload the stored value is unset (empty): the editor follows the default again
-    // and the button settles back to disabled
-    await flushPromises()
-    expect(saveBtn.attributes('disabled')).toBeDefined()
+    // Saved verbatim: no normalization against the built-in, which is never part of this value
+    expect(settingsPuts).toEqual([JSON.stringify({ instructions: 'team rules v2' })])
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
@@ -460,7 +456,7 @@ describe('AdminPanel', () => {
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })
 
-  it('reset-to-default clears the override', async () => {
+  it('clearing removes the store guidance and leaves the built-in alone', async () => {
     const settingsPuts: string[] = []
     vi.stubGlobal(
       'fetch',
@@ -483,14 +479,14 @@ describe('AdminPanel', () => {
     await flushPromises()
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === '恢复默认')!
+      .find((b) => b.text() === '清空')!
       .trigger('click')
     await flushPromises()
-    // Only clears instructions
+    // Only clears this setting
     expect(settingsPuts).toEqual([JSON.stringify({ instructions: '' })])
-    // The editor is filled back with the built-in default, entering the faded default state
+    // The editor empties: the built-in is not copied into it, since nothing here replaces it
     const textarea = wrapper.findAll('textarea')[0]
-    expect((textarea.element as HTMLTextAreaElement).value).toBe('BUILT-IN')
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('')
     wrapper.unmount()
     document.querySelectorAll('.el-message').forEach((el) => el.remove())
   })

@@ -191,8 +191,9 @@ async function load(): Promise<void> {
       api.get<import('../types').StatsInfo>('/api/stats'),
     ])
     identities.value = Array.isArray(list?.identities) ? list.identities : []
-    // When unset, prefill the built-in default directly (what you see is what applies); the card derives its faded state from the content
-    instructions.value = settings?.instructions ?? settings?.default_instructions ?? ''
+    // The operator's own guidance only: the built-in prompt is always sent first and is never
+    // something this editor holds, so an unset value shows as an empty box, not the default text
+    instructions.value = settings?.instructions ?? ''
     defaultInstructions.value = settings?.default_instructions ?? ''
     authRequired.value = settings?.auth_required === true
     anonymousPermissions.value = settings?.anonymous_permissions ?? null

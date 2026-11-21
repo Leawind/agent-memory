@@ -276,7 +276,8 @@ pub fn handle(
                             "rerank_models": rerank_models,
                             "search_limits": st.search_limits()?.to_json(),
                             "lifecycle_policy": st.lifecycle_policy()?,
-                            // Built-in default prompt: what the UI shows as the "restore default" target
+                            // Built-in default prompt: always sent first, shown read-only so the
+                            // operator sees what every caller already receives
                             "default_instructions": tools::INSTRUCTIONS,
                         }),
                     ))
