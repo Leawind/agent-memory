@@ -1055,7 +1055,7 @@ fn rerank_pass(
         })
         .collect();
     (
-        search::fuse(memories, &[(&hits, 1.0), (&reranked, 4.0)]),
+        search::fuse(memories, &[(&hits, 1.0), (&reranked, 8.0)]),
         Some(configs[index].model.clone()),
         true,
     )
