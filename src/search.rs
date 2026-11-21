@@ -105,6 +105,16 @@ const W_WORD_CONTENT: i64 = 2;
 const W_PHRASE: i64 = 8;
 /// Hit-count scoring cap: no further points beyond it, so long documents cannot steamroll field weights.
 const MAX_TF_HITS: usize = 3;
+/// Share of a Chinese term's characters that must sit in contiguous matches before the term
+/// counts as covered. Chinese writes words without separators, so a query typed as one run is a
+/// single whitespace term even when the memory keeps those words apart; demanding the whole run
+/// verbatim made every such query a miss. Whole-term hits never reach this path.
+const CJK_COVER_MIN: f64 = 0.6;
+/// Points a fully covered Chinese term earns per field when the term itself is absent. Both sit
+/// just below the corresponding verbatim weight, so a covered term never outranks the same term
+/// present as a whole in that field.
+const CJK_SUMMARY_POINTS: f64 = 6.0;
+const CJK_CONTENT_POINTS: f64 = 2.0;
 const RRF_K: f64 = 60.0;
 
 pub struct Hit {
@@ -266,6 +276,19 @@ fn coverage_channels(
             // Quoted phrases (any term containing whitespace counts as a phrase) get a bonus for whole-phrase hits
             if term.contains(' ') && (summary_hits > 0 || !positions.is_empty()) {
                 term_score += W_PHRASE;
+            }
+            // Chinese coverage: the whole term is absent from every field (otherwise one of the
+            // branches above already scored it), yet its characters can still sit in contiguous
+            // runs. A verbatim term never reaches this path, so its evidence and ordering are
+            // untouched; only terms that used to score zero are affected.
+            if term_score == 0 && tag_term == 0 && contains_cjk(term) {
+                let cov_summary = cjk_coverage(&lc_summary, term);
+                let cov_content = cjk_coverage(&folded, term);
+                if cov_summary.max(cov_content) >= CJK_COVER_MIN {
+                    let points =
+                        CJK_SUMMARY_POINTS * cov_summary + CJK_CONTENT_POINTS * cov_content;
+                    term_score = (points.round() as i64).max(1);
+                }
             }
             if term_score == 0 && tag_term == 0 {
                 if require_all {
@@ -459,6 +482,89 @@ fn has_word_bounded(haystack: &str, term: &str) -> bool {
         }
     }
     false
+}
+
+/// Whether the term carries any CJK character: those scripts write words without separators, so
+/// whitespace tokenization alone cannot recover word boundaries inside a term.
+fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(
+            c as u32,
+            0x3400..=0x9FFF | 0x3040..=0x30FF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF
+        )
+    })
+}
+
+/// Share of `term`'s characters covered by contiguous occurrences in `haystack`, both already
+/// folded. Greedy longest match from each uncovered position: adjacent characters score their
+/// whole length, a lone bigram scores two. The scan stops as soon as the covered characters can
+/// no longer reach CJK_COVER_MIN, so a plain miss costs only a few lookups.
+fn cjk_coverage(haystack: &str, term: &str) -> f64 {
+    let starts: Vec<usize> = term.char_indices().map(|(offset, _)| offset).collect();
+    let total = starts.len();
+    if total < 2 || haystack.is_empty() {
+        return 0.0;
+    }
+    let char_at = |index: usize| starts.get(index).copied().unwrap_or(term.len());
+    // Short terms tolerate no missing character: two of three characters matching is a
+    // different word, not a partial match of this one.
+    let needed = if total <= 4 {
+        total
+    } else {
+        total - (total as f64 * (1.0 - CJK_COVER_MIN)).floor() as usize
+    };
+    let mut covered = 0usize;
+    let mut index = 0usize;
+    while index + 1 < total {
+        let anchor = &term[char_at(index)..char_at(index + 2)];
+        let mut longest = 0usize;
+        let mut from = 0usize;
+        let mut tries = 0;
+        while tries < 4 {
+            let Some(relative) = haystack[from..].find(anchor) else {
+                break;
+            };
+            let position = from + relative;
+            let mut length = 2usize;
+            let mut cursor = position + anchor.len();
+            while index + length < total {
+                let piece = &term[char_at(index + length)..char_at(index + length + 1)];
+                if haystack[cursor..].starts_with(piece) {
+                    length += 1;
+                    cursor += piece.len();
+                } else {
+                    break;
+                }
+            }
+            longest = longest.max(length);
+            if longest == total - index {
+                break;
+            }
+            tries += 1;
+            // Overlapping anchors are allowed: step one haystack character forward.
+            let step = haystack[position..]
+                .chars()
+                .next()
+                .map_or(1, char::len_utf8);
+            from = position + step;
+            if from >= haystack.len() {
+                break;
+            }
+        }
+        if longest >= 2 {
+            covered += longest;
+            index += longest;
+        } else {
+            index += 1;
+        }
+        if covered + (total - index) < needed {
+            return 0.0;
+        }
+    }
+    if covered < needed {
+        return 0.0;
+    }
+    covered as f64 / total as f64
 }
 
 /// Fold text to lowercase character by character, recording the original byte offset behind each byte of the folded text.
@@ -772,6 +878,58 @@ mod tests {
         let a = mem("m1", &[], "Config Loading", "uses Serde for JSON", 1);
         let hits = run(&[a], "serde json");
         assert_eq!(hits.len(), 1);
+    }
+
+    /// Chinese writes words without separators: a query typed as one run is a single whitespace
+    /// term, and the memory keeps the same words apart. Coverage must still qualify it.
+    #[test]
+    fn unspaced_chinese_term_covers_a_memory_that_holds_the_words_apart() {
+        let a = mem(
+            "m1",
+            &[],
+            "webui 浏览器自动化",
+            "beta 版 ws 会掉线需速战速决；另外才能接第二浏览器",
+            1,
+        );
+        let hits = run(std::slice::from_ref(&a), "会掉线需速战速决才能接第二浏览器");
+        assert_eq!(hits.len(), 1, "the covered term must qualify");
+        // The same characters separated by the caller agree with the unspaced form
+        let spaced = run(
+            std::slice::from_ref(&a),
+            "会掉线需速战速决 才能接第二浏览器",
+        );
+        assert_eq!(spaced.len(), 1);
+    }
+
+    /// Short fragments scattered across a document are not coverage of a long term: one shared
+    /// word out of five must not make an unrelated memory qualify.
+    #[test]
+    fn a_single_shared_chinese_word_is_not_coverage() {
+        let a = mem("m1", &[], "s", "今天聊点别的：部署", 1);
+        let hits = run(std::slice::from_ref(&a), "部署回滚流程检查清单");
+        assert!(
+            hits.is_empty(),
+            "one of five words is 20% coverage, below the threshold"
+        );
+    }
+
+    /// Coverage is a fallback: a memory holding the term verbatim keeps its evidence and stays
+    /// ahead of one that merely covers most of it.
+    #[test]
+    fn verbatim_chinese_term_outranks_partial_coverage() {
+        let exact = mem("m1", &[], "部署回滚流程", "", 1);
+        let partial = mem("m2", &[], "s", "部署旧版回滚流程说明", 9);
+        let hits = run(&[partial, exact], "部署回滚流程");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].idx, 1, "the verbatim hit must rank first");
+    }
+
+    /// Coverage counts characters inside contiguous runs, not a bag of bigrams: a term whose
+    /// characters appear only in isolation covers nothing.
+    #[test]
+    fn isolated_chinese_characters_cover_nothing() {
+        let a = mem("m1", &[], "s", "部 署 回 滚 流 程", 1);
+        assert!(run(std::slice::from_ref(&a), "部署回滚流程").is_empty());
     }
 
     #[test]

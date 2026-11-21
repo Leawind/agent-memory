@@ -386,7 +386,7 @@ pub fn memory_search(
     );
     if total == 0 {
         out["note"] = json!(
-            "no memory matched any query term; try different or broader terms (matching is case-insensitive substring)"
+            "no memory matched any query term; try different or broader terms (matching is case-insensitive, and a Chinese term tolerates a few missing characters)"
         );
     }
     crate::search_snapshot::create(st, scope, revision, out, offset, limit)
