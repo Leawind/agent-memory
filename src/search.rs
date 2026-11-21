@@ -521,16 +521,14 @@ fn alnum_only(text: &str) -> String {
         .collect()
 }
 
-/// Whether a term looks like an identifier written in a particular convention: it has a case
-/// transition, a separator, or a camel hump to disagree about.
+/// Whether a term is worth comparing with case and separators ignored. Terms reach this point
+/// already lowercased, so a camel hump cannot be recognised here; the only reliable signal is
+/// that it is one ASCII word long enough for a separator difference to be meaningful.
 fn is_identifier_shaped(term: &str) -> bool {
     term.is_ascii()
         && !term.contains(' ')
         && term.len() >= 6
-        && (term.contains('_')
-            || term.contains('-')
-            || term.contains('.')
-            || term.chars().any(|c| c.is_ascii_uppercase()))
+        && term.starts_with(|c: char| c.is_ascii_alphabetic())
 }
 
 /// Whether the term carries any CJK character: those scripts write words without separators, so
@@ -927,6 +925,21 @@ mod tests {
         let a = mem("m1", &[], "Config Loading", "uses Serde for JSON", 1);
         let hits = run(&[a], "serde json");
         assert_eq!(hits.len(), 1);
+    }
+
+    /// Terms are lowercased before they are compared, so a camel hump is gone by the time the
+    /// fallback sees the term: the gate must not depend on the case that was typed.
+    #[test]
+    fn a_camel_case_query_matches_its_snake_case_spelling() {
+        let a = mem(
+            "m1",
+            &[],
+            "s",
+            "the death_protection flag is granted here",
+            1,
+        );
+        let hits = run(std::slice::from_ref(&a), "deathProtection");
+        assert_eq!(hits.len(), 1, "lowercasing must not defeat the comparison");
     }
 
     /// An identifier is the same identifier in another convention: the store holds
