@@ -1251,6 +1251,9 @@ fn reranker_reorders_and_degrades() {
     // itself; the scores switch to the reranker scale
     let out = fused("");
     assert_eq!(out["reranked_by"], "mock-rerank", "{out}");
+    // An answered rerank is not a fallback: the two flags are exclusive, and a caller reads
+    // rerank_fallback as "what you see is the fused order, not a reranked one"
+    assert!(out.get("rerank_fallback").is_none(), "{out}");
     let order: Vec<String> = out["results"]
         .as_array()
         .unwrap()
