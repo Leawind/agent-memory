@@ -420,7 +420,9 @@ mod tests {
             start_run(&path, &a, Trigger::Auto),
             Ok(Start::Idle)
         ));
-        assert!(runs().is_empty());
+        // The registry is process-wide: another test's model may own a run, so only this
+        // model's absence is the property under test.
+        assert!(runs().iter().all(|run| run.model_key != a.vector_key()));
         drop(st);
         cleanup(&path);
     }
