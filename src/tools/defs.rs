@@ -61,7 +61,7 @@ pub const GET_STARTED_GUIDE: &str = "Start here. This page is the operating guid
 
 Recommended call order:
 1. tag_list - see the taxonomy first: one line per tag with a memory count, filterable by regex. Tag names are the map of this store.
-2. memory_search - the default way to recall: every whitespace-separated term must match (a Chinese term may be covered by contiguous runs instead of appearing as one verbatim string, since Chinese writes words without spaces), falling back to partial matches (flagged `relaxed`) when nothing matches them all; quoted phrases match verbatim, mode auto adds semantic recall when configured. Results are ranked summaries with snippets - never full content.
+2. memory_search - the default way to recall: every whitespace-separated term must match (a Chinese term may be covered by contiguous runs instead of appearing as one verbatim string, since Chinese writes words without spaces, and an identifier matches regardless of case or separators), falling back to partial matches (flagged `relaxed`) when nothing matches them all; quoted phrases match verbatim, mode auto adds semantic recall when configured. Results are ranked summaries with snippets - never full content.
 3. memory_get - reveal full content only for the ids worth reading (the second level of progressive disclosure).
 4. memory_list - for small, tag-filtered or chronological scans only (newest first, paginated). It is browsing, not ranked recall: do not enumerate the whole store to see what is in here - tag_list + memory_search answer that better and cheaper.
 5. memory_create / memory_update / memory_edit / memory_merge - save durable knowledge; update in place instead of re-storing near-duplicates.

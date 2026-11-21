@@ -115,6 +115,10 @@ const CJK_COVER_MIN: f64 = 0.6;
 /// present as a whole in that field.
 const CJK_SUMMARY_POINTS: f64 = 6.0;
 const CJK_CONTENT_POINTS: f64 = 2.0;
+/// Points for an identifier found once its separators and case are ignored: below the verbatim
+/// weights, since the exact spelling the caller typed is not in the text.
+const W_IDENT_SUMMARY: i64 = 5;
+const W_IDENT_CONTENT: i64 = 2;
 const RRF_K: f64 = 60.0;
 
 pub struct Hit {
@@ -238,6 +242,9 @@ fn coverage_channels(
 
         let mut content_score = 0f64;
         let mut tag_score = 0i64;
+        // Built on first use: most queries never need the alphanumerics-only view.
+        let mut norm_summary: Option<String> = None;
+        let mut norm_content: Option<String> = None;
         let mut matched = 0usize;
         // Content hit positions per term (original byte offsets), for snippet window selection
         let mut content_hits: Vec<Vec<usize>> = Vec::new();
@@ -281,6 +288,27 @@ fn coverage_channels(
             // branches above already scored it), yet its characters can still sit in contiguous
             // runs. A verbatim term never reaches this path, so its evidence and ordering are
             // untouched; only terms that used to score zero are affected.
+            // Identifier conventions: the store holds `SetModRenderAttrByKey`, the caller types
+            // `set_mod_render_attr_by_key`. Comparing the alphanumerics-only forms makes the two
+            // the same string. Only terms that matched nothing verbatim reach this, so the
+            // verbatim path keeps its evidence and ordering.
+            if term_score == 0 && tag_term == 0 && is_identifier_shaped(term) {
+                let needle = alnum_only(term);
+                if needle.len() >= 4 {
+                    if norm_summary
+                        .get_or_insert_with(|| alnum_only(&lc_summary))
+                        .contains(needle.as_str())
+                    {
+                        term_score += W_IDENT_SUMMARY;
+                    }
+                    if norm_content
+                        .get_or_insert_with(|| alnum_only(&folded))
+                        .contains(needle.as_str())
+                    {
+                        term_score += W_IDENT_CONTENT;
+                    }
+                }
+            }
             if term_score == 0 && tag_term == 0 && contains_cjk(term) {
                 let cov_summary = cjk_coverage(&lc_summary, term);
                 let cov_content = cjk_coverage(&folded, term);
@@ -482,6 +510,27 @@ fn has_word_bounded(haystack: &str, term: &str) -> bool {
         }
     }
     false
+}
+
+/// Lowercase alphanumerics only: `set_mod_render_attr_by_key`, `SetModRenderAttrByKey` and
+/// `set-mod-render-attr-by-key` all collapse to the same string.
+fn alnum_only(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Whether a term looks like an identifier written in a particular convention: it has a case
+/// transition, a separator, or a camel hump to disagree about.
+fn is_identifier_shaped(term: &str) -> bool {
+    term.is_ascii()
+        && !term.contains(' ')
+        && term.len() >= 6
+        && (term.contains('_')
+            || term.contains('-')
+            || term.contains('.')
+            || term.chars().any(|c| c.is_ascii_uppercase()))
 }
 
 /// Whether the term carries any CJK character: those scripts write words without separators, so
@@ -878,6 +927,32 @@ mod tests {
         let a = mem("m1", &[], "Config Loading", "uses Serde for JSON", 1);
         let hits = run(&[a], "serde json");
         assert_eq!(hits.len(), 1);
+    }
+
+    /// An identifier is the same identifier in another convention: the store holds
+    /// PascalCase, the caller types snake_case.
+    #[test]
+    fn identifier_conventions_match_each_other() {
+        let a = mem("m1", &[], "s", "call SetModRenderAttrByKey on the level", 1);
+        let hits = run(std::slice::from_ref(&a), "set_mod_render_attr_by_key");
+        assert_eq!(hits.len(), 1, "the normalized form must qualify");
+    }
+
+    /// Normalization is a fallback: the memory holding the exact spelling still comes first.
+    #[test]
+    fn verbatim_identifier_outranks_the_normalized_form() {
+        let exact = mem("m1", &[], "s", "set_mod_render_attr_by_key is the entry", 1);
+        let other = mem("m2", &[], "s", "SetModRenderAttrByKey is the entry", 9);
+        let hits = run(&[other, exact], "set_mod_render_attr_by_key");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].idx, 1, "the verbatim hit must rank first");
+    }
+
+    /// A plain lowercase word takes no part in the identifier fallback: a miss stays a miss.
+    #[test]
+    fn plain_words_do_not_take_the_identifier_path() {
+        let a = mem("m1", &[], "s", "unrelated body", 1);
+        assert!(run(std::slice::from_ref(&a), "arrangement").is_empty());
     }
 
     /// Chinese writes words without separators: a query typed as one run is a single whitespace
