@@ -116,6 +116,19 @@ pub static RERANK_FAILOVER: crate::embed::Failover = crate::embed::Failover::new
 /// documents is fast on GPU and takes a few seconds on CPU — past this the fused order is kept.
 pub const RERANK_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Cooldown for a rejection that says nothing about endpoint health: a rate-limited or briefly
+/// unavailable service is worth probing again within seconds, while the default window would turn
+/// one rejected request into half a minute of unranked answers.
+pub const TRANSIENT_COOLDOWN: Duration = Duration::from_secs(2);
+
+/// Whether a failure is worth re-probing shortly: rate limiting, a server-side error, or a
+/// transport/timeout failure (status absent).
+pub fn is_transient(error: &ServiceError) -> bool {
+    error
+        .status
+        .is_none_or(|status| status == 429 || (500..=599).contains(&status))
+}
+
 /// Rerank `documents` against `query`, returning `(document index, relevance score)` pairs in
 /// descending score order. Any network/parsing failure is an Err; the caller degrades to the
 /// incoming order.
@@ -132,17 +145,39 @@ pub fn rerank(
     if let Some(key) = &cfg.api_key {
         req = req.set("Authorization", &format!("Bearer {key}"));
     }
-    let resp = req
-        .send_json(json!({
-            "model": cfg.model,
-            "query": query,
-            "documents": documents,
-            "top_n": documents.len(),
-        }))
-        .map_err(|e| ServiceError {
-            status: None,
-            message: format!("rerank request failed: {e}"),
-        })?;
+    let resp = match req.send_json(json!({
+        "model": cfg.model,
+        "query": query,
+        "documents": documents,
+        "top_n": documents.len(),
+    })) {
+        Ok(resp) => resp,
+        // ureq reports a non-2xx response as an error; keeping the status is what lets the
+        // caller separate a rate-limited endpoint (probe again shortly) from a broken one
+        // (leave it alone for a while).
+        Err(ureq::Error::Status(code, resp)) => {
+            let detail = resp
+                .into_json::<Value>()
+                .ok()
+                .and_then(|body| {
+                    body["error"]["message"]
+                        .as_str()
+                        .or_else(|| body["message"].as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "unknown error".to_string());
+            return Err(ServiceError {
+                status: Some(code),
+                message: format!("rerank service returned {code}: {detail}"),
+            });
+        }
+        Err(e) => {
+            return Err(ServiceError {
+                status: None,
+                message: format!("rerank request failed: {e}"),
+            })
+        }
+    };
     let status = resp.status();
     let body: Value = resp.into_json().map_err(|e| ServiceError {
         status: Some(status),
@@ -220,6 +255,31 @@ pub fn parse_response(body: &Value, docs: usize) -> Result<Vec<(usize, f64)>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only failures that say nothing about health qualify for the short cooldown: a rejected
+    /// burst, a server error, or a transport failure. A wrong credential or a missing endpoint
+    /// stays cool for the full window.
+    #[test]
+    fn transient_failures_are_classified() {
+        for status in [None, Some(429), Some(500), Some(503)] {
+            assert!(
+                is_transient(&ServiceError {
+                    status,
+                    message: String::new(),
+                }),
+                "{status:?} must be retried shortly"
+            );
+        }
+        for status in [Some(400), Some(401), Some(404)] {
+            assert!(
+                !is_transient(&ServiceError {
+                    status,
+                    message: String::new(),
+                }),
+                "{status:?} must keep the default cooldown"
+            );
+        }
+    }
 
     /// Same identity discipline as the embedding side: a reconfigured candidate (new model or
     /// fixed key) is not its predecessor's failure record; the endpoint's trailing slash is.

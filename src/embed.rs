@@ -273,8 +273,10 @@ pub struct Failover {
     preferred: AtomicUsize,
     /// Negative cache keyed by the candidate's circuit identity (`Failover::identity` — id,
     /// endpoint, model and credential, so a reconfigured candidate is never skipped for its
-    /// predecessor's failures). A Vec on purpose: candidate lists are a handful of entries,
-    /// and the struct must be constructible in a `const` context (the shared statics below).
+    /// predecessor's failures). The instant is when the candidate may be probed again, so a
+    /// caller that recognises a transient failure can cool it for less than the default. A Vec
+    /// on purpose: candidate lists are a handful of entries, and the struct must be
+    /// constructible in a `const` context (the shared statics below).
     cooled: Mutex<Vec<(String, Instant)>>,
     /// Cooldown window; `new()` fixes it at `FAILURE_COOLDOWN`, tests shrink it.
     cooldown: Duration,
@@ -344,7 +346,7 @@ impl Failover {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .iter()
-                    .any(|(k, at)| k == id && at.elapsed() < cooldown)
+                    .any(|(k, until)| k == id && *until > Instant::now())
             };
             if open(self, &id) {
                 continue;
@@ -361,9 +363,10 @@ impl Failover {
                 Err(e) => {
                     eprintln!("embedding candidate #{idx} failed, trying the next: {e}");
                     let mut cooled = self.cooled.lock().unwrap_or_else(PoisonError::into_inner);
+                    let until = Instant::now() + cooldown;
                     match cooled.iter_mut().find(|(k, _)| k == &id) {
-                        Some((_, at)) => *at = Instant::now(),
-                        None => cooled.push((id, Instant::now())),
+                        Some((_, slot)) => *slot = until,
+                        None => cooled.push((id, until)),
                     }
                     last_err = e.to_string();
                 }
@@ -397,17 +400,32 @@ impl Failover {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .any(|(k, at)| k == identity && at.elapsed() < self.cooldown)
+            .any(|(k, until)| k == identity && *until > Instant::now())
     }
 
     /// Record a failure for a candidate this caller attempted directly — the same record
     /// `first_available` would have written, so both paths share one cooldown.
     pub fn fail(&self, identity: &str) {
+        self.fail_for(identity, self.cooldown)
+    }
+
+    /// Record a failure with an explicit cooldown. A rejected request during a rate-limit burst
+    /// says nothing about the endpoint's health, so cooling it for the full window would turn one
+    /// 429 into half a minute of unranked answers; callers that can tell the two apart pass a
+    /// short window here.
+    pub fn fail_for(&self, identity: &str, cooldown: Duration) {
+        let until = Instant::now() + cooldown;
         let mut cooled = self.cooled.lock().unwrap_or_else(PoisonError::into_inner);
         match cooled.iter_mut().find(|(k, _)| k == identity) {
-            Some((_, at)) => *at = Instant::now(),
-            None => cooled.push((identity.to_string(), Instant::now())),
+            Some((_, slot)) => *slot = until,
+            None => cooled.push((identity.to_string(), until)),
         }
+    }
+
+    /// Remember which candidate answered, for callers that walk the list themselves so the next
+    /// call starts where this one succeeded.
+    pub fn prefer(&self, index: usize) {
+        self.preferred.store(index, Ordering::Relaxed);
     }
 
     /// The candidate that answered last: the starting point for callers that select candidates
@@ -945,6 +963,20 @@ fn hybrid_hits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A caller that recognises a transient failure can cool a candidate for less than the
+    /// default window; the record still expires on its own.
+    #[test]
+    fn explicit_cooldown_overrides_the_default_window() {
+        let failover = Failover::new();
+        failover.fail_for("candidate", Duration::from_millis(40));
+        assert!(failover.is_open("candidate"));
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(
+            !failover.is_open("candidate"),
+            "the short window must expire"
+        );
+    }
     use crate::model::Memory;
 
     /// The failure-circuit identity covers the credential and the model: fixing an invalid

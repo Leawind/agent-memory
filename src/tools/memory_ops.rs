@@ -327,11 +327,12 @@ pub fn memory_search(
     // keyword mode keeps its deterministic keyword order; everywhere else the fused order is
     // the silent fallback when no reranker answers. Filtering runs first so no rerank work is
     // spent on candidates the tag expression would drop anyway.
-    let (hits, reranked_by) = if matches!(mode, SearchMode::Auto | SearchMode::Hybrid) {
-        rerank_pass(st, hits, &memories, &query, &limits)
-    } else {
-        (hits, None)
-    };
+    let (hits, reranked_by, rerank_missing) =
+        if matches!(mode, SearchMode::Auto | SearchMode::Hybrid) {
+            rerank_pass(st, hits, &memories, &query, &limits)
+        } else {
+            (hits, None, false)
+        };
 
     let total = hits.len() as u64;
     let keyword_matches = hits.iter().filter(|h| keyword_idx.contains(&h.idx)).count() as u64;
@@ -375,6 +376,11 @@ pub fn memory_search(
     }
     if let Some(model) = &reranked_by {
         out["reranked_by"] = json!(model);
+    }
+    // A configured reranker that never answered: the ranking is the fused fallback, which looks
+    // identical to a reranked one from the outside.
+    if rerank_missing {
+        out["rerank_fallback"] = json!(true);
     }
     // Only hybrid fuses two channels; in keyword mode the count would just duplicate total_matches
     if used_hybrid {
@@ -947,16 +953,18 @@ fn rerank_pass(
     memories: &[crate::model::Memory],
     query: &str,
     limits: &search::Limits,
-) -> (Vec<search::Hit>, Option<String>) {
+) -> (Vec<search::Hit>, Option<String>, bool) {
     let configs = match st.rerank_configs() {
         Ok(configs) => configs,
         Err(e) => {
             eprintln!("rerank skipped (cannot read reranker config): {e}");
-            return (hits, None);
+            return (hits, None, false);
         }
     };
+    // Configured but unable to answer: a caller has to be able to tell that apart from "no
+    // reranker at all", because what it got is the unranked fallback either way.
     if configs.is_empty() || hits.len() < 2 {
-        return (hits, None);
+        return (hits, None, false);
     }
     let ceiling = if limits.adaptive.enabled {
         limits.adaptive.max_candidates
@@ -978,57 +986,77 @@ fn rerank_pass(
         })
         .collect();
     let document_chars: Vec<_> = documents.iter().map(|doc| doc.chars().count()).collect();
-    let scored = crate::rerank::RERANK_FAILOVER.first_available(
-        &configs,
-        |cfg| cfg.circuit_identity(),
-        |cfg| {
-            let pool = crate::adaptive::budget(&st.path, cfg, limits, &document_chars);
-            let started = std::time::Instant::now();
-            let result = crate::rerank::rerank(
-                cfg,
-                query,
-                &documents[..pool],
-                crate::rerank::RERANK_TIMEOUT,
-            );
-            crate::adaptive::observe(
-                &st.path,
-                cfg,
-                limits,
-                pool,
-                document_chars.iter().take(pool).sum(),
-                started.elapsed(),
-                result.is_ok(),
-            );
-            result
-        },
-    );
-    match scored {
-        Ok((_, cfg, scores)) => {
-            let mut previous = None;
-            let mut rank = 1usize;
-            let reranked: Vec<search::Hit> = scores
-                .into_iter()
-                .enumerate()
-                .map(|(position, (doc_idx, relevance))| {
-                    if previous != Some(relevance) {
-                        rank = position + 1;
-                    }
-                    previous = Some(relevance);
-                    search::Hit {
-                        idx: hits[doc_idx].idx,
-                        score: -(rank as i64),
-                        snippet: hits[doc_idx].snippet.clone(),
-                    }
-                })
-                .collect();
-            (
-                search::fuse(memories, &[(&hits, 1.0), (&reranked, 4.0)]),
-                Some(cfg.model.clone()),
-            )
+    // The walk is local because the cooldown depends on the failure: a rate-limited or briefly
+    // unavailable candidate is worth probing again within seconds, and the shared window would
+    // otherwise drop the reranker for the rest of a burst.
+    let start = crate::rerank::RERANK_FAILOVER.preferred() % configs.len();
+    let mut answered: Option<(usize, Vec<(usize, f64)>)> = None;
+    for offset in 0..configs.len() {
+        let index = (start + offset) % configs.len();
+        let cfg = &configs[index];
+        let identity = cfg.circuit_identity();
+        if crate::rerank::RERANK_FAILOVER.is_open(&identity) {
+            continue;
         }
-        Err(e) => {
-            eprintln!("rerank skipped (all rerankers unavailable): {e}");
-            (hits, None)
+        let pool = crate::adaptive::budget(&st.path, cfg, limits, &document_chars);
+        let started = std::time::Instant::now();
+        let result = crate::rerank::rerank(
+            cfg,
+            query,
+            &documents[..pool],
+            crate::rerank::RERANK_TIMEOUT,
+        );
+        crate::adaptive::observe(
+            &st.path,
+            cfg,
+            limits,
+            pool,
+            document_chars.iter().take(pool).sum(),
+            started.elapsed(),
+            result.is_ok(),
+        );
+        match result {
+            Ok(scores) => {
+                crate::rerank::RERANK_FAILOVER.clear(&identity);
+                crate::rerank::RERANK_FAILOVER.prefer(index);
+                answered = Some((index, scores));
+                break;
+            }
+            Err(e) => {
+                let cooldown = if crate::rerank::is_transient(&e) {
+                    crate::rerank::TRANSIENT_COOLDOWN
+                } else {
+                    crate::embed::FAILURE_COOLDOWN
+                };
+                eprintln!("rerank candidate #{index} failed, cooling it {cooldown:?}: {e}");
+                crate::rerank::RERANK_FAILOVER.fail_for(&identity, cooldown);
+            }
         }
     }
+    let Some((index, scores)) = answered else {
+        eprintln!("rerank skipped (no configured reranker answered)");
+        return (hits, None, true);
+    };
+    let mut previous = None;
+    let mut rank = 1usize;
+    let reranked: Vec<search::Hit> = scores
+        .into_iter()
+        .enumerate()
+        .map(|(position, (doc_idx, relevance))| {
+            if previous != Some(relevance) {
+                rank = position + 1;
+            }
+            previous = Some(relevance);
+            search::Hit {
+                idx: hits[doc_idx].idx,
+                score: -(rank as i64),
+                snippet: hits[doc_idx].snippet.clone(),
+            }
+        })
+        .collect();
+    (
+        search::fuse(memories, &[(&hits, 1.0), (&reranked, 4.0)]),
+        Some(configs[index].model.clone()),
+        true,
+    )
 }

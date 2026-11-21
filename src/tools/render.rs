@@ -12,6 +12,7 @@
 //! - `memory_list`   → header `total: N | offset: N`, rows `<id> [<tags>] <updated> <summary>`
 //! - `memory_search` → header `total_matches: N | offset: N | returned: N | mode: <mode>`,
 //!   optional flag lines (`keyword_matches` / `semantic_fallback` / `semantic` / `reranked_by` /
+//!   `rerank_fallback` /
 //!   `relaxed` / `hint` / `note`, only when they apply), rows `<id> [<tags>] <updated> <score> <summary>`
 //!   plus an indented `  > <snippet>` continuation line
 
@@ -116,6 +117,15 @@ fn render_memory_search(v: &Value) -> Option<String> {
         out.push_str("reranked_by: ");
         out.push_str(model);
         out.push('\n');
+    }
+    if v.get("rerank_fallback")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        out.push_str(
+            "rerank_fallback: true
+",
+        );
     }
     if v.get("relaxed").and_then(Value::as_bool).unwrap_or(false) {
         out.push_str("relaxed: true\n");
