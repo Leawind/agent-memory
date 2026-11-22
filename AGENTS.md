@@ -42,6 +42,7 @@ pnpm test / typecheck / format  # JS 侧命令
    跳过，只增不改，文件的谓词与时效策略被忽略。
 8. cargo 构建不得依赖 node 环境。
 9. 格式化统一用 Prettier，提交前先 `pnpm format`。
+   markdown 里的通配符要放进行内代码：Prettier 会把落单的 `*` 当成强调标记改写成下划线。
 10. 记忆正文是多 agent 共写的外部输入：Markdown 渲染必须过统一消毒出口，新增渲染入口
     不得绕过；服务端纯文本数据一律文本插值。
 11. 无账号体系，token 即身份，服务端只存哈希；token 随机性只用 SQLite randomblob，不为
