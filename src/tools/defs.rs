@@ -15,6 +15,7 @@ use std::sync::OnceLock;
 pub const GET_STARTED: &str = "get_started";
 pub const TAG_CREATE: &str = "tag_create";
 pub const TAG_LIST: &str = "tag_list";
+pub const SCOPE_SET: &str = "scope_set";
 pub const PREDICATE_LIST: &str = "predicate_list";
 pub const PREDICATE_SET: &str = "predicate_set";
 pub const PREDICATE_DELETE: &str = "predicate_delete";
@@ -34,6 +35,7 @@ pub const TOOL_NAMES: &[&str] = &[
     GET_STARTED,
     TAG_CREATE,
     TAG_LIST,
+    SCOPE_SET,
     PREDICATE_LIST,
     PREDICATE_SET,
     PREDICATE_DELETE,
@@ -52,7 +54,7 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// Shared tag_expr parameter text: one syntax, two tools (memory_list / memory_search) — the
 /// descriptions must not drift apart.
-const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. A bare word matches presence in any state: the tag may sit on the memory bare, as an edge source ('w:...') or as an edge target ('...:w'). Edge comparisons: key=value matches the displayed 'key:value' edge exactly (the target verbatim; a number in canonical form, so key=1.0 finds key:1). Named predicates use @name. Operands are tag names or regular expressions in slashes: /proj.*/ passes when ANY of the memory's displayed tag forms matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule: 1-100 characters of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_' - no spaces, colons, quotes or expression operators. Literal tag names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
+const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memories whose tag set satisfies the expression are returned. Operators: & (and, also &&), | (or, also ||), ! (not), parentheses for grouping; precedence ! > & > |. mutex(a,b,...) passes when at most one operand is true (zero allowed); expressions are limited to 4096 characters, 256 tokens and nesting depth 64. Example: \"(a&b)|c\" = tagged a AND b, or tagged c. Atoms: a tag name — bare ('rust') or scoped ('system::pc1sw0') — matches that exact tag; 'scope::*' matches any value of the scope ('system::*' = carries some value in system); named predicates use @name. Regular expressions in slashes: /proj.*/ passes when ANY of the memory's tag names matches (Rust regex syntax, case-sensitive - inline flags like (?i) work; escape the slash as \\/, and a slash inside a bare word stays a name character). Names are case-sensitive and follow one identifier rule per half: 1-100 characters overall of Unicode letters, digits, '_', '-' and '.' (XID_Continue), starting with a letter, digit or '_', with at most one '::' and no spaces, quotes or expression operators. A bare name that is a scope is rejected with the wildcard suggested; other literal names unknown to the store are rejected with the closest existing name suggested. Empty string counts as absent.";
 
 /// The workflow chapter of get_started's guide: the call order and the mistakes the always-visible
 /// description compresses into one line. The full returned text appends the handshake INSTRUCTIONS
@@ -60,7 +62,7 @@ const TAG_EXPR_DESCRIPTION: &str = "Tag set algebra over tag names: only memorie
 pub const GET_STARTED_GUIDE: &str = "Start here. This page is the operating guide for this memory server - the only tool whose result is documentation rather than data.
 
 Recommended call order:
-1. tag_list - see the taxonomy first: one line per tag with a memory count, filterable by regex. Tag names are the map of this store.
+1. tag_list - see the taxonomy first: one line per tag and per scope with a memory count, filterable by regex. Tag and scope names are the map of this store.
 2. memory_search - the default way to recall: every whitespace-separated term must match (a Chinese term may be covered by contiguous runs instead of appearing as one verbatim string, since Chinese writes words without spaces, and an identifier matches regardless of case or separators), falling back to partial matches (flagged `relaxed`) when nothing matches them all; quoted phrases match verbatim, mode auto adds semantic recall when configured. Query with the terms a memory would contain, not a sentence: question and function words match most of the store and swamp the ranking, so send two to five distinctive terms. Results are ranked summaries with snippets - never full content.
 3. memory_get - reveal full content only for the ids worth reading (the second level of progressive disclosure).
 4. memory_list - for small, tag-filtered or chronological scans only (newest first, paginated). It is browsing, not ranked recall: do not enumerate the whole store to see what is in here - tag_list + memory_search answer that better and cheaper.
@@ -76,8 +78,8 @@ Common mistakes:
 
 The server's standing instructions follow:";
 
-pub fn tool_definitions() -> Value {
-    Value::Array(vec![
+pub fn tool_definitions(required: &[String]) -> Value {
+    let mut tools = Value::Array(vec![
         def(GET_STARTED,
             "Call this before any other tool of this server: it returns the one-page operating guide (recommended call order, the role of each tool, common mistakes). The essentials: explore the taxonomy with tag_list, recall with memory_search (ranked summaries only), reveal full text selectively with memory_get; memory_list is for small or tag-filtered scans, not for enumerating the whole store. No arguments, no side effects, and the text never changes - call it once per session.",
             json!({"type":"object", "properties":{}, "additionalProperties":false}), true, false),
@@ -100,11 +102,11 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_CREATE,
-            "Create a new tag. Tags are labels used to organize memories; you own the taxonomy. Fails if the tag already exists (check with tag_list). If a tag differing only by case exists, it is created anyway but reported in similar_existing - prefer merging to keep the taxonomy tidy. Responses never echo the input: a clean create answers with an empty object, success being the absence of an error.",
+            "Create a new tag. Tags are labels used to organize memories; you own the taxonomy. The name is bare ('rust') or scoped ('system::pc1sw0'); a scoped name needs its scope to exist first - scope_set creates scopes, the values are ordinary tags created here. Fails if the tag already exists (check with tag_list). If a tag differing only by case exists, it is created anyway but reported in similar_existing - prefer merging to keep the taxonomy tidy. Responses never echo the input: a clean create answers with an empty object, success being the absence of an error.",
             json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Unique tag name (trimmed, 1-100 chars, case-sensitive, any language). Format: only letters, digits, '_', '-' and '.' (no spaces, quotes or expression operators), starting with a letter, digit or '_'."},
+                    "name": {"type": "string", "description": "Unique tag name (trimmed, 1-100 chars, case-sensitive, any language). Bare: one word of letters, digits, '_', '-' or '.' (Unicode), starting with a letter, digit or '_' - no spaces, quotes or expression operators. Scoped: 'scope::value' with both halves one such word and at most one '::'."},
                     "description": {"type": "string", "description": "Optional: what this tag groups (max 512 chars)."}
                 },
                 "required": ["name"],
@@ -114,25 +116,39 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             TAG_LIST,
-            "List tags with descriptions and memory counts. Token-frugal line format, one tag per line: `<count> <name>[: <description>]` - the description is omitted when empty, a `*` before the name marks a reserved tag, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). 'convention' is always listed (seeded with zero memories) and can never be renamed or deleted. Counts cover presence in any role (bare, edge source or edge target). By default only organizing tags are listed (used as edge sources or bare); tags that only ever appear as edge targets (attribute values) join the list when all=true or when the filter matches them. Name filterable by regex. Start here when exploring the memory store.",
+            "Browse the taxonomy by scope. Token-frugal line format: tag rows first, `<count> <[*]name>[: <description>]` - one row per tag, count is the number of memories carrying the tag, a scoped tag's name is its full 'scope::value' form, `*` marks the reserved tag, the description is omitted when empty, names containing whitespace, commas, brackets or quotes are quoted, and newlines inside text render as literal \\n (one line is always one record). Then a `scopes:` header (printed even when there are none) and one row per scope `<count> <[!]name>[: <description>][ (N tags)]` - a scope's count is the distinct memories carrying any of its values, `!` marks a scope required on every write, and the parenthetical appears once a scope holds several values. 'convention' is always listed (seeded with zero memories) and can never be renamed or deleted. Both lists are filterable by regex on the name. Start here when exploring the memory store.",
             json!({
                 "type": "object",
                 "properties": {
-                    "filter": {"type": "string", "description": "Optional regular expression on tag names; tags whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax. Omit to list the default (organizing) tag set; a filter includes edge-target-only tags too."},
-                    "all": {"type": "boolean", "description": "When true, tags that only ever appear as edge targets (the value half of 'key:value' edges) are listed too. Default false."}
+                    "filter": {"type": "string", "description": "Optional regular expression on names; tags and scopes whose name matches anywhere are kept (use ^...$ to anchor). Case-insensitive; Rust regex syntax."}
                 },
                 "additionalProperties": false
             }),
             true, false,
         ),
         def(
+            SCOPE_SET,
+            "Create a scope, or update the existing one's description and its write contract; a scope's name cannot change - it is fixed the moment the scope exists. Scopes are the dimension half of the tag names: 'system::pc1sw0' and 'system::pc1sw1' are the values of the scope 'system', ordinary tags created with tag_create once the scope exists. A missing scope is created (description defaults to empty, starting out not required); an existing one is updated in place - description and/or required, each omitted half keeps its current value. required: true means every memory created from that moment on must declare the scope in memory_create's attributes with a value tag or null (the tool schema names such scopes); required: false clears the contract. Memories written earlier are not reclassified. The response never echoes the input: a create answers {\"created\": true}, an update reports which halves actually changed (description_updated / required_updated).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Scope name: one identifier word of letters, digits, '_', '-' or '.' (Unicode), starting with a letter, digit or '_' - no '::', that separator belongs to the tag names pointing into the scope."},
+                    "description": {"type": "string", "description": "Optional: what this scope dimension groups (max 512 chars). Omitted on update keeps the current one."},
+                    "required": {"type": "boolean", "description": "Mark the scope as required on every memory write (true) or clear the requirement (false). Omit to keep the current flag; a newly created scope starts out not required."}
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+            false, false,
+        ),
+        def(
             TAG_UPDATE,
-            "Update a tag: rename it and/or set its description (the only way to fill in a description after tag_create). Memories referencing the tag follow a rename automatically in every role (edge sources, edge targets and bare) - only the label changes. Omit new_name to keep the current name; omit description to keep the current one; at least one of the two is required. The response carries only the flags renamed / description_updated telling which parts actually changed - names and descriptions are never echoed back.",
+            "Update a tag: rename it and/or set its description. Memories carrying the tag follow a rename automatically - only the name changes, and a rename may move the tag into another scope ('new_name' may be bare or 'scope::value'; its scope must exist - scope_set). The write contract is a property of the scope, not of any one tag: see scope_set for it. Omit new_name to keep the current name; omit description to keep the current one. The response carries only the flags telling which parts actually changed (renamed / description_updated) - names and descriptions are never echoed back.",
             json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Current tag name."},
-                    "new_name": {"type": "string", "description": "New unique name. Omit to keep the current name."},
+                    "new_name": {"type": "string", "description": "New unique name, bare or 'scope::value'. Omit to keep the current name."},
                     "description": {"type": "string", "description": "New description. Omit to keep the current one."}
                 },
                 "required": ["name"],
@@ -163,8 +179,9 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "summary": {"type": "string", "description": "One-line abstract (max 512 chars); make it precise and self-contained."},
                     "content": {"type": "string", "description": "Optional full text of the memory (the body memory_get reveals). Omit or pass empty for a summary-only memory. Markdown is recommended (headings, lists, code blocks, tables); the web admin UI renders it."},
-                    "tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "The memory's tags as one object. Each entry is one annotation: the key is a source tag and the value is either its edge target (a string: an identifier word - reusable vocabulary, create_missing_tags applies; a number: stored in canonical decimal form, 1 and 1.0 are the same name) or null for a bare tag. A source has exactly one edge per memory; a tag cannot be both an edge source and an edge target on one memory; the same tag may sit under several sources. Keys follow the identifier rule (no ':'); booleans and arrays are not targets - presence flags are bare tags."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag keys are an error. True auto-creates them with an empty description."}
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tag names only, such as [\"rust\", \"convention\"] - one identifier word each, no '::'. A scoped tag is declared in attributes as its scope's value, not listed here."},
+                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "Scoped tags, as {scope: value}: {\"system\": \"pc1sw0\"} composes the tag 'system::pc1sw0' (the scope must exist - scope_set). A string value is the value half of the name, a number canonicalizes (1 and 1.0 are the same name), and the composed tag must exist or be auto-creatable (create_missing_tags) - a value of a scope required on every write must already exist. null declares that this memory takes no value in that scope - accepted only for a required scope; for any other scope, drop the key instead. A scope carries at most one value, and a scope named here cannot also appear in tags."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates them with an empty description (never for the value of a required tag)."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -220,16 +237,17 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_UPDATE,
-            "Update a memory: new summary, new content, and/or adjust tags incrementally via add_tags / remove_tags (no need to know the current tag list). For a small change inside long content, memory_edit (exact string replacement) is far cheaper than restating the whole body. Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tags in add_tags are rejected (closest existing tags listed) unless create_missing_tags is true. The response never echoes the input back: the flag `updated` tells whether anything actually changed, and when tags were added, tags_autocreated / tags_missing_description classify them (same meaning as in memory_create; the reused remainder is left implicit - it is the input minus those two lists). Replacing the content changes what other memories' references to this id point at: the response lists referencing memories under referenced_by (ids + summaries) when the content actually changed. Do not reference other memories by id (unstable - see memory_create); id-like text in the written fields draws a warning note.",
+            "Update a memory: new summary, new content, and/or adjust tags incrementally via tags / attributes / remove_tags (no need to know the current tag list). For a small change inside long content, memory_edit (exact string replacement) is far cheaper than restating the whole body. Updating summary or content refreshes the updated time; tag-only adjustments leave it untouched, so curating tags never reshuffles the default newest-first browse. Unknown tag names are rejected (closest existing tags listed) unless create_missing_tags is true; a value of a scope required on every write must already exist. The response never echoes the input back: the flag `updated` tells whether anything actually changed, and when tags were added, tags_autocreated / tags_missing_description classify them (same meaning as in memory_create; the reused remainder is left implicit - it is the input minus those two lists). Replacing the content changes what other memories' references to this id point at: the response lists referencing memories under referenced_by (ids + summaries) when the content actually changed. Do not reference other memories by id (unstable - see memory_create); id-like text in the written fields draws a warning note.",
             json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "pattern": "^m[0-9]+$", "description": "Memory id, e.g. \"m3\"."},
                     "summary": {"type": "string", "description": "Replacement summary."},
                     "content": {"type": "string", "description": "Replacement content; pass empty to clear the body (summary-only memory). Markdown is recommended."},
-                    "add_tags": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "Tags to add, same shape as memory_create's tags. Applied before remove_tags, so a tag present in both ends up removed. Adding a source the memory already carries replaces its edge (upsert); a tag cannot be both an edge source and an edge target on one memory."},
-                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names to remove - the tag disappears from the memory in every role (its own edge or bare presence and every edge pointing at it); nonexistent names are a silent no-op."},
-                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag keys in add_tags are an error. True auto-creates them with an empty description."}
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Bare tags to add, same shape as memory_create's tags. Applied before remove_tags, so a tag in both ends up removed. Scoped tags are declared in attributes, not here."},
+                    "attributes": {"type": "object", "additionalProperties": {"type": ["string", "number", "null"]}, "description": "Scope values to set, same shape as memory_create's attributes. Upserts each scope's value, replacing the tag the memory carries in that scope; null on a required scope clears it, recording that the memory takes no value in it."},
+                    "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tag names to remove from the memory; nonexistent names are a silent no-op. A tag whose scope is required on every write cannot be removed by name - declare null in attributes instead. A bare scope name alone is refused: remove a specific 'scope::value' tag, or declare null."},
+                    "create_missing_tags": {"type": "boolean", "description": "Default false: unknown tag names are an error. True auto-creates them with an empty description (never for the value of a required tag)."}
                 },
                 "required": ["id"],
                 "additionalProperties": false
@@ -254,7 +272,7 @@ pub fn tool_definitions() -> Value {
         ),
         def(
             MEMORY_MERGE,
-            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; the annotations unite: source tags join the target, a source tag both memories carry keeps the target's edge (reported in tags_conflicted), and cross-role collisions resolve deterministically. 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' (in any role) additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired. The response never echoes the input: a clean merge answers with an empty object, everything reported is a reference report or warning note.",
+            "Merge two duplicate memories into one: 'source' is absorbed into 'target', then deleted. The target keeps its id and creation time; the annotations unite: source tags join the target, and a source tag both memories carry, or one whose scope the target already fills, keeps the target's tag and is reported in tags_conflicted (one memory carries at most one value per scope). 'summary' / 'content' replace the target's fields when given; omitted content appends the source content after the target's (blank-line separated), and an omitted summary keeps the target's. This is the closing move after duplicate_of / similar_to flags a near-duplicate - delete + re-create would reset the created time. Requires both the update and delete permissions; memories carrying the reserved tag 'convention' (in any role) additionally need admin. The source id does not survive the merge: the response lists remaining memories that referenced it under referenced_by so their mentions can be repaired. The response never echoes the input: a clean merge answers with an empty object, everything reported is a reference report or warning note.",
             json!({
                 "type": "object",
                 "properties": {
@@ -281,7 +299,64 @@ pub fn tool_definitions() -> Value {
             }),
             false, true,
         ),
-    ])
+    ]);
+    apply_write_contract(&mut tools, required);
+    tools
+}
+
+/// The store's write contract rides the tool schema instead of a prompt paragraph: scopes the
+/// administrator marked as required are named as required keys of `attributes`, and on a create
+/// the container itself becomes mandatory, so a caller reading the tool definition sees the
+/// decisions the store demands. Values stay string-or-null (the scope's vocabulary belongs to
+/// the store, not to the schema), and no scope name is hardcoded here — the list comes from the
+/// store.
+fn apply_write_contract(tools: &mut Value, required_scopes: &[String]) {
+    if required_scopes.is_empty() {
+        return;
+    }
+    let Some(list) = tools.as_array_mut() else {
+        return;
+    };
+    let names = required_scopes.join(", ");
+    for tool in list.iter_mut() {
+        let tool_name = tool.get("name").and_then(Value::as_str);
+        let is_create = tool_name == Some(MEMORY_CREATE);
+        let is_update = tool_name == Some(MEMORY_UPDATE);
+        if !is_create && !is_update {
+            continue;
+        }
+        let Some(schema) = tool.get_mut("inputSchema") else {
+            continue;
+        };
+        let Some(attributes) = schema
+            .get_mut("properties")
+            .and_then(|p| p.get_mut("attributes"))
+        else {
+            continue;
+        };
+        if let Some(description) = attributes.get("description").and_then(Value::as_str) {
+            attributes["description"] = json!(format!(
+                "{description} This store requires a declaration on every write for the scopes: {names}."
+            ));
+        }
+        if attributes.get("properties").map(Value::is_object) != Some(true) {
+            attributes["properties"] = json!({});
+        }
+        for name in required_scopes {
+            attributes["properties"][name.as_str()] = json!({
+                "type": ["string", "null"],
+                "description": "Required on every write: the scope's value (the 'scope::value' tag must exist - create it with tag_create), or null when this memory takes no value in this scope."
+            });
+        }
+        if is_create {
+            attributes["required"] = json!(required_scopes);
+            if let Some(top) = schema.get_mut("required").and_then(Value::as_array_mut) {
+                if !top.iter().any(|v| v.as_str() == Some("attributes")) {
+                    top.push(json!("attributes"));
+                }
+            }
+        }
+    }
 }
 
 fn def(name: &str, description: &str, schema: Value, read_only: bool, destructive: bool) -> Value {
@@ -301,7 +376,7 @@ pub fn known_args(tool: &str) -> Option<&'static Vec<String>> {
     static KNOWN: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
     KNOWN
         .get_or_init(|| {
-            tool_definitions()
+            tool_definitions(&[])
                 .as_array()
                 .expect("tool definitions is an array")
                 .iter()
@@ -324,7 +399,7 @@ pub fn is_read_only(tool: &str) -> bool {
     static READ_ONLY: OnceLock<HashMap<String, bool>> = OnceLock::new();
     READ_ONLY
         .get_or_init(|| {
-            tool_definitions()
+            tool_definitions(&[])
                 .as_array()
                 .expect("tool definitions is an array")
                 .iter()
@@ -345,6 +420,7 @@ pub fn affects_search(tool: &str) -> bool {
     matches!(
         tool,
         TAG_CREATE
+            | SCOPE_SET
             | PREDICATE_SET
             | PREDICATE_DELETE
             | TAG_UPDATE
@@ -366,6 +442,7 @@ static REQUIRED_CAPS: &[(&str, &[Cap])] = &[
     (GET_STARTED, &[Cap::Read]),
     (TAG_CREATE, &[Cap::TagManage]),
     (TAG_LIST, &[Cap::Read]),
+    (SCOPE_SET, &[Cap::TagManage]),
     (PREDICATE_LIST, &[Cap::Read]),
     (PREDICATE_SET, &[Cap::Read, Cap::PredicateManage]),
     (PREDICATE_DELETE, &[Cap::Read, Cap::PredicateManage]),

@@ -20,7 +20,7 @@ fn export_and_import_roundtrip_work() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "roundtrip 记忆甲", "content": "内容甲", "tags": {"tag甲": null}, "create_missing_tags": true}"#,
+                r#"{"summary": "roundtrip 记忆甲", "content": "内容甲", "tags": ["tag甲"], "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);
@@ -29,7 +29,7 @@ fn export_and_import_roundtrip_work() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "roundtrip 记忆乙", "content": "内容乙", "tags": {"tag乙": null}, "create_missing_tags": true}"#,
+                r#"{"summary": "roundtrip 记忆乙", "content": "内容乙", "tags": ["tag乙"], "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);
@@ -97,7 +97,7 @@ fn backup_filter_and_merge_work() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "keep me", "content": "alpha", "tags": {"proj": "one"}, "create_missing_tags": true}"#,
+                r#"{"summary": "keep me", "content": "alpha", "attributes": {"proj": "one"}, "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);
@@ -106,7 +106,7 @@ fn backup_filter_and_merge_work() {
             "POST",
             "/api/memories",
             Some(
-                r#"{"summary": "drop me", "content": "beta", "tags": {"other": null}, "create_missing_tags": true}"#,
+                r#"{"summary": "drop me", "content": "beta", "tags": ["other"], "create_missing_tags": true}"#,
             ),
         );
         assert_eq!(status, 200);
@@ -115,8 +115,12 @@ fn backup_filter_and_merge_work() {
 
     let filtered = {
         let server = HttpProc::start(&src, "filter-rest");
-        let (status, body, _) =
-            request(server.port, "GET", "/api/export?predicate=proj%3Done", None);
+        let (status, body, _) = request(
+            server.port,
+            "GET",
+            "/api/export?predicate=proj%3A%3Aone",
+            None,
+        );
         assert_eq!(status, 200);
         let dump: Value = serde_json::from_slice(&body).unwrap();
         let memories = dump["memories"].as_object().unwrap();
@@ -146,7 +150,8 @@ fn backup_filter_and_merge_work() {
         assert_eq!(status, 200);
         let report = json_body(&body);
         assert_eq!(report["imported_memories"], 1);
-        assert_eq!(report["imported_tags"], 2);
+        // One scoped tag, not a key plus a value: the vocabulary entry is the composed name
+        assert_eq!(report["imported_tags"], 1);
         assert_eq!(report["skipped_memories"], 0);
         // ...and a second merge finds the same memory verbatim and skips it
         let (status, body, _) = try_request(

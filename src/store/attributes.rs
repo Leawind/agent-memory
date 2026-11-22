@@ -1,112 +1,91 @@
-//! Query binding and the typed attribute view, both derived from stored annotation rows alone:
-//! a row is a bare tag (no target) or an edge (source → target), and target names that parse as
-//! canonical numbers render as JSON numbers.
+//! Query validation and the typed attribute view, both derived from stored tag names alone: a
+//! name is a bare word or `scope::value`, and a scoped value that parses as a canonical number
+//! renders as a JSON number.
 
 use super::Store;
 use crate::{
-    model::Memory,
-    tag_expr::{TagAtom, TagExpr},
+    model::{tag_scope_of, Memory},
+    tag_expr::TagExpr,
 };
 use serde_json::{json, Map, Value};
 
 impl Store {
-    /// Rewrite query atoms to the model's matching semantics against the live vocabulary table.
-    pub fn bind_query_atoms(&self, expr: TagExpr) -> Result<TagExpr, String> {
-        rewrite_query_atoms(expr, &mut |name| self.tag_exists(name))
-    }
-
-    /// Typed view of a memory's attribute values, derived from its edges alone: a target name
-    /// renders as a JSON number when it parses as a canonical number, otherwise as a string.
-    /// One edge per source by construction; bare tags are not attributes.
+    /// Typed view of a memory's scoped tags: `system::pc1sw0` renders as `{"system": "pc1sw0"}`,
+    /// and a value that parses as a canonical number renders as a JSON number. Bare tags are not
+    /// attributes.
     pub fn attributes_view(&self, m: &Memory) -> Result<Value, String> {
         let mut out = Map::new();
-        let id = Store::parse_id(&m.id).unwrap_or(0);
-        for row in self.tag_rows_for(id)? {
-            let Some(target) = row.target else { continue };
-            let rendered = match crate::model::parse_number_text(&target) {
-                Some(canonical) => {
-                    serde_json::from_str(&canonical).unwrap_or_else(|_| json!(target))
-                }
-                None => json!(target),
+        for name in &m.tags {
+            let Some(scope) = tag_scope_of(name) else {
+                continue;
             };
-            out.insert(row.source, rendered);
+            let value = crate::model::tag_value_of(name);
+            let rendered = match crate::model::parse_number_text(value) {
+                Some(canonical) => {
+                    serde_json::from_str(&canonical).unwrap_or_else(|_| json!(value))
+                }
+                None => json!(value),
+            };
+            out.insert(scope.to_string(), rendered);
         }
         Ok(Value::Object(out))
     }
 }
 
-/// Rewrite query atoms to the model's matching semantics, with tag existence decided by the
-/// caller's vocabulary: the live store (tags table) and dump-local import filters (the export
-/// file's own names) share one rewriting.
-/// - A bare word naming an existing tag becomes a presence regex — the tag counts as carried
-///   when it is on the memory in any state (bare, edge source `w:…`, edge target `…:w`).
-///   Display forms carry at most one colon, so those three positions are exactly the roles.
-///   Unknown words stay literal tags, and leaf validation downstream reports them with the
-///   usual did-you-mean.
-/// - `key=value` becomes the displayed `key:value` edge leaf — a number canonicalizes (so
-///   `key=1.0` finds `key:1`), an identifier word goes in verbatim, anything else is a bind
-///   error.
-pub(crate) fn rewrite_query_atoms(
-    expr: TagExpr,
-    exists: &mut dyn FnMut(&str) -> Result<bool, String>,
-) -> Result<TagExpr, String> {
-    expr.try_map(&mut |atom| match atom {
-        TagAtom::Tag(name) => {
-            if !exists(&name)? {
-                return Ok(TagAtom::Tag(name));
-            }
-            let escaped = regex::escape(&name);
-            let pattern = format!("^{escaped}$|^{escaped}:|:{escaped}$");
-            Ok(TagAtom::Regex(Box::new(
-                regex::Regex::new(&pattern).expect("escaped presence regex"),
-            )))
-        }
-        TagAtom::KeyEq { key, value } => {
-            let stored = match crate::model::parse_number_text(&value) {
-                Some(canonical) => crate::model::compose_edge(&key, &canonical),
-                None => {
-                    crate::model::normalize_tag_name(&value).map_err(|_| {
-                        format!(
-                            "edge target '{value}' for source '{key}' must be an identifier word (letters, digits, '_', '-', '.') or a number"
-                        )
-                    })?;
-                    crate::model::compose_edge(&key, &value)
-                }
-            };
-            Ok(TagAtom::Tag(stored))
-        }
-        other => Ok(other),
-    })
-}
-
-/// Leaf existence check shared by the query-resolution entry points: leaf names are display
-/// forms, so a composed `source:target` leaf validates its SOURCE half only (a typo'd target
-/// simply matches nothing, while an unknown source is far more likely a typo and gets the
-/// did-you-mean path). `hint` case-insensitively suggests a similar name from the same
-/// vocabulary the leaves were validated against.
+/// Leaf existence check shared by the query-resolution entry points. Leaves name tags, so a bare
+/// leaf must exist as a tag, a `scope::value` leaf only needs its scope to exist (a value that is
+/// absent simply matches nothing), and `scope::*` needs the scope. A bare word naming a scope is
+/// reported as such instead of as an unknown tag: the fix is a different expression, not a
+/// different name.
 pub(crate) fn validate_query_leaves(
     expr: &TagExpr,
-    exists: &dyn Fn(&str) -> Result<bool, String>,
+    tag_exists: &dyn Fn(&str) -> Result<bool, String>,
+    scope_exists: &dyn Fn(&str) -> Result<bool, String>,
     hint: &dyn Fn(&str) -> Result<Option<String>, String>,
 ) -> Result<(), String> {
     let mut unknown: Vec<String> = Vec::new();
     for name in expr.tag_names() {
-        let source = match name.split_once(':') {
-            Some((source, _)) => source,
-            None => name,
-        };
-        if !exists(source)? {
-            match hint(source)? {
-                Some(similar) => unknown.push(format!("'{source}' (did you mean '{similar}'?)")),
-                None => unknown.push(format!("'{source}'")),
+        match tag_scope_of(name) {
+            None => {
+                if tag_exists(name)? {
+                    continue;
+                }
+                if scope_exists(name)? {
+                    unknown.push(format!(
+                        "'{name}' is a scope, not a tag: write {name}::* for any value, or {name}::value for one"
+                    ));
+                    continue;
+                }
+                unknown.push(match hint(name)? {
+                    Some(similar) => format!("'{name}' (did you mean '{similar}'?)"),
+                    None => format!("'{name}'"),
+                });
             }
+            Some(scope) => {
+                if !scope_exists(scope)? {
+                    unknown.push(match hint(scope)? {
+                        Some(similar) => {
+                            format!("scope '{scope}' (did you mean '{similar}'?)")
+                        }
+                        None => format!("scope '{scope}'"),
+                    });
+                }
+            }
+        }
+    }
+    for scope in expr.scope_names() {
+        if !scope_exists(scope)? {
+            unknown.push(match hint(scope)? {
+                Some(similar) => format!("scope '{scope}' (did you mean '{similar}'?)"),
+                None => format!("scope '{scope}'"),
+            });
         }
     }
     if unknown.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "unknown tags in tag_expr: {} (see tag_list for available names)",
+            "unknown names in tag_expr: {} (see tag_list for available tags and scopes)",
             unknown.join(", ")
         ))
     }
@@ -116,164 +95,71 @@ pub(crate) fn validate_query_leaves(
 mod tests {
     use super::super::test_support::{cleanup, temp_db};
     use super::*;
-
-    /// Case sensitivity: tag names are case-sensitive, and the presence regex must not fold
-    /// ASCII case across them.
-    #[test]
-    fn presence_matching_does_not_fold_case() {
-        let path = temp_db("presence-case");
-        cleanup(&path);
-        let st = Store::open(&path).unwrap();
-        for name in ["project", "Project"] {
-            let edges: Vec<crate::model::TagEdge> =
-                vec![(name.to_string(), Some("alpha".to_string()))];
-            let links = st.resolve_tags(&edges, true).unwrap().links;
-            st.insert_memory("s", "c", &links, crate::model::now(), crate::model::now())
-                .unwrap();
-        }
-        // Both spellings exist as distinct tags; each matches only its own display form
-        let expr = st
-            .bind_query_atoms(crate::tag_expr::parse("project").unwrap())
-            .unwrap();
-        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Regex(_))));
-        cleanup(&path);
-    }
-}
-
-#[cfg(test)]
-mod query_tests {
-    use super::super::test_support::{cleanup, temp_db};
-    use super::*;
     use crate::tag_expr;
 
-    fn insert(st: &Store, edges: &[(&str, Option<&str>)]) {
-        let edges: Vec<crate::model::TagEdge> = edges
-            .iter()
-            .map(|(s, t)| ((*s).to_string(), t.map(|t| t.to_string())))
-            .collect();
-        let links = st.resolve_tags(&edges, true).unwrap().links;
+    fn insert(st: &Store, tags: &[&str]) {
+        let names: Vec<String> = tags.iter().map(|tag| (*tag).to_string()).collect();
+        let links = st.resolve_tags(&names, true).unwrap().links;
         st.insert_memory("s", "c", &links, crate::model::now(), crate::model::now())
             .unwrap();
     }
 
-    #[test]
-    fn query_atoms_rewrite_to_presence_and_edge_leaves() {
-        let path = temp_db("query-atoms");
-        cleanup(&path);
-        let st = Store::open(&path).unwrap();
-        insert(
-            &st,
-            &[
-                ("project", Some("alpha")),
-                ("count", Some("1")),
-                ("rust", None),
-            ],
-        );
-
-        // equality rewrites to the composed display leaf, the target verbatim
-        let expr = st
-            .bind_query_atoms(tag_expr::parse("project=alpha").unwrap())
-            .unwrap();
-        assert_eq!(expr.tag_names(), vec!["project:alpha"]);
-        // numbers canonicalize: 1.0 finds the stored 1
-        let expr = st
-            .bind_query_atoms(tag_expr::parse("count=1.0").unwrap())
-            .unwrap();
-        assert_eq!(expr.tag_names(), vec!["count:1"]);
-        // an existing tag becomes a presence regex: matches bare, source and target states
-        let expr = st
-            .bind_query_atoms(tag_expr::parse("project").unwrap())
-            .unwrap();
-        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Regex(_))));
-        assert!(
-            expr.eval(&["project:alpha".to_string()]),
-            "source state matches"
-        );
-        assert!(
-            expr.eval(&["other:project".to_string()]),
-            "target state matches"
-        );
-        assert!(expr.eval(&["project".to_string()]), "bare state matches");
-        assert!(
-            !expr.eval(&["project-x".to_string()]),
-            "substring is not presence"
-        );
-        assert!(!expr.eval(&["xproject".to_string()]));
-        // an unknown bare name stays a literal tag (did-you-mean fires downstream)
-        let expr = st
-            .bind_query_atoms(tag_expr::parse("nmmtp").unwrap())
-            .unwrap();
-        assert!(expr.eval_with(&|a| matches!(a, TagAtom::Tag(n) if n == "nmmtp")));
-        // malformed targets error at bind time
-        assert!(st
-            .bind_query_atoms(tag_expr::parse("project='has space'").unwrap())
-            .is_err());
-        cleanup(&path);
-    }
-
-    /// The presence regex matches all three states and nothing else: a word inside another
-    /// tag's name (prefix or suffix without the colon boundary) must not match. Evaluation is
-    /// pure over display forms, so only the vocabulary needs to exist for the rewrite.
-    #[test]
-    fn presence_regex_is_boundary_exact() {
-        let path = temp_db("presence-boundaries");
-        cleanup(&path);
-        let st = Store::open(&path).unwrap();
-        st.resolve_tags(
-            &[
-                ("nmmt".into(), None),
-                ("project".into(), Some("nmmt-lang".into())),
-            ],
-            true,
+    fn validate(st: &Store, raw: &str) -> Result<(), String> {
+        let expr = tag_expr::parse(raw).unwrap();
+        validate_query_leaves(
+            &expr,
+            &|name| st.tag_exists(name),
+            &|scope| st.scope_exists(scope),
+            &|name| match st.find_tag_case_insensitive(name)? {
+                Some(tag) => Ok(Some(tag)),
+                None => st.find_scope_case_insensitive(name),
+            },
         )
-        .unwrap();
-        let expr = st
-            .bind_query_atoms(tag_expr::parse("nmmt").unwrap())
-            .unwrap();
-        let cases: &[(&[&str], bool)] = &[
-            (&["nmmt"], true),                      // bare
-            (&["project:nmmt"], true),              // target
-            (&["nmmt:rust"], true),                 // source
-            (&["project:nmmt-lang"], false),        // substring only
-            (&["xnmmt"], false),                    // substring only
-            (&["project:nmmt", "unrelated"], true), // among others
-        ];
-        for (tags, expect) in cases {
-            let owned: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-            assert_eq!(expr.eval(&owned), *expect, "tags {tags:?}");
-        }
-        cleanup(&path);
     }
-}
 
-#[cfg(test)]
-mod view_tests {
-    use super::super::test_support::{cleanup, temp_db};
-    use super::*;
-
+    /// Typed view: scoped tags become attributes, number-shaped values become JSON numbers, and
+    /// bare tags stay out of the view.
     #[test]
     fn attributes_view_renders_typed_values() {
         let path = temp_db("attributes-view");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        let edges: Vec<crate::model::TagEdge> = [
-            ("project", Some("alpha")),
-            ("count", Some("1")),
-            ("plain", None),
-        ]
-        .iter()
-        .map(|(s, t)| ((*s).to_string(), t.map(|t| t.to_string())))
-        .collect();
-        let links = st.resolve_tags(&edges, true).unwrap().links;
-        let id = st
-            .insert_memory("s", "c", &links, crate::model::now(), crate::model::now())
-            .unwrap();
-        let memory = &st.get_memories(&[id]).unwrap().0[0];
+        st.scope_create("project", "").unwrap();
+        st.scope_create("count", "").unwrap();
+        insert(&st, &["project::alpha", "count::1", "plain"]);
+        let memory = &st.get_memories(&[1]).unwrap().0[0];
         let view = st.attributes_view(memory).unwrap();
-        assert_eq!(view["project"], serde_json::json!("alpha"));
-        // number-shaped targets are JSON numbers, not strings
-        assert_eq!(view["count"], serde_json::json!(1));
+        assert_eq!(view["project"], json!("alpha"));
+        assert_eq!(view["count"], json!(1));
         assert!(view.get("plain").is_none(), "bare tags are not attributes");
+        cleanup(&path);
+    }
+
+    /// A bare leaf must be a tag; naming a scope is reported as a scope, not as a typo; a scoped
+    /// leaf only needs its scope; a typo gets the did-you-mean hint.
+    #[test]
+    fn leaves_validate_against_tags_and_scopes() {
+        let path = temp_db("leaf-validation");
+        cleanup(&path);
+        let st = Store::open(&path).unwrap();
+        st.scope_create("system", "").unwrap();
+        st.tag_create("rust", "").unwrap();
+        st.tag_create("system::pc1sw0", "").unwrap();
+
+        assert!(validate(&st, "rust").is_ok());
+        assert!(validate(&st, "system::pc1sw0").is_ok());
+        assert!(
+            validate(&st, "system::anything").is_ok(),
+            "an unknown value matches nothing but is not an error"
+        );
+        assert!(validate(&st, "system::*").is_ok());
+
+        let err = validate(&st, "system").unwrap_err();
+        assert!(err.contains("is a scope, not a tag"), "got: {err}");
+        let err = validate(&st, "System::pc1sw0").unwrap_err();
+        assert!(err.contains("did you mean"), "got: {err}");
+        let err = validate(&st, "rust::x").unwrap_err();
+        assert!(err.contains("scope 'rust'"), "got: {err}");
         cleanup(&path);
     }
 }

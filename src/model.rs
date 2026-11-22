@@ -4,7 +4,6 @@
 //! here and referenced by the tool layer (`tools`), keeping limits consistent everywhere.
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// API limit: maximum title/summary characters.
@@ -94,25 +93,78 @@ fn ident_regex() -> &'static regex::Regex {
     })
 }
 
-/// Tag name normalization: trim surrounding whitespace, cap length, enforce the identifier
-/// rule. Colons are reserved for the displayed `source:target` edge form — input paths (tags
-/// objects, tag_create) never accept them; `key=value` in tag_expr is the way to match edges.
+/// The separator between a tag's scope and its value: `system::pc1sw0`. A tag name carries at
+/// most one separator; both halves are identifier words.
+pub const TAG_SCOPE_SEPARATOR: &str = "::";
+
+fn validate_ident(text: &str, what: &str) -> Result<(), String> {
+    if !ident_regex().is_match(text) {
+        return Err(format!(
+            "invalid {what} '{text}': use one identifier word of letters, digits, '_', '-' or '.' (Unicode), starting with a letter, digit or '_' — no spaces, '{TAG_SCOPE_SEPARATOR}', quotes or expression operators"
+        ));
+    }
+    Ok(())
+}
+
+fn check_length(text: &str, what: &str) -> Result<(), String> {
+    if text.chars().count() > MAX_TAG_NAME_CHARS {
+        return Err(format!(
+            "{what} is too long (max {MAX_TAG_NAME_CHARS} characters)"
+        ));
+    }
+    Ok(())
+}
+
+/// One identifier word: a scope name or a value. No separator inside.
+pub fn normalize_ident_word(raw: &str, what: &str) -> Result<String, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err(format!("{what} cannot be empty"));
+    }
+    check_length(t, what)?;
+    validate_ident(t, what)?;
+    Ok(t.to_string())
+}
+
+/// Tag name normalization: trim surrounding whitespace, cap length, enforce the identifier rule
+/// on each part. A bare tag is one word (`rust`); a scoped tag is `scope::value` (`system::pc1sw0`).
 pub fn normalize_tag_name(raw: &str) -> Result<String, String> {
     let t = raw.trim();
     if t.is_empty() {
         return Err("tag name cannot be empty".into());
     }
-    if t.chars().count() > MAX_TAG_NAME_CHARS {
-        return Err(format!(
-            "tag name is too long (max {MAX_TAG_NAME_CHARS} characters)"
-        ));
-    }
-    if !ident_regex().is_match(t) {
-        return Err(format!(
-            "invalid tag name '{t}': use one identifier word of letters, digits, '_', '-' or '.' (Unicode), starting with a letter, digit or '_' — no spaces, colons, quotes or expression operators"
-        ));
+    check_length(t, "tag name")?;
+    match t.split_once(TAG_SCOPE_SEPARATOR) {
+        None => validate_ident(t, "tag name")?,
+        Some((scope, value)) => {
+            if value.contains(TAG_SCOPE_SEPARATOR) {
+                return Err(format!(
+                    "invalid tag name '{t}': at most one '{TAG_SCOPE_SEPARATOR}' separator"
+                ));
+            }
+            validate_ident(scope, "tag scope")?;
+            validate_ident(value, "tag value")?;
+        }
     }
     Ok(t.to_string())
+}
+
+/// The scope half of a tag name, or None for a bare tag.
+pub fn tag_scope_of(name: &str) -> Option<&str> {
+    name.split_once(TAG_SCOPE_SEPARATOR).map(|(scope, _)| scope)
+}
+
+/// The value half of a tag name (the whole name for a bare tag).
+pub fn tag_value_of(name: &str) -> &str {
+    match name.split_once(TAG_SCOPE_SEPARATOR) {
+        Some((_, value)) => value,
+        None => name,
+    }
+}
+
+/// Compose a scoped tag name from its parts. Both halves are pre-validated identifier words.
+pub fn compose_tag_name(scope: &str, value: &str) -> String {
+    format!("{scope}{TAG_SCOPE_SEPARATOR}{value}")
 }
 
 /// Canonical decimal text for an attribute number: integers keep their exact form (`1` and
@@ -153,78 +205,126 @@ pub fn parse_number_text(text: &str) -> Option<String> {
     canonical_number(&n)
 }
 
-/// Display form of an edge: the bare source when the target is absent (a bare tag), the
-/// colon-joined `source:target` otherwise. Both parts are pre-validated, so the composed form
-/// carries exactly one colon. Internal: input paths name edges via the tags object, never by
-/// composing this directly.
-pub fn compose_edge(source: &str, target: &str) -> String {
-    format!("{source}:{target}")
-}
-
-/// An annotation as the wire carries it: a source tag name plus an optional target (`None` =
-/// bare tag). One source carries at most one edge per memory.
-pub type TagEdge = (String, Option<String>);
-
 /// API limit: at most this many tags (annotations) on one memory per write.
 pub const MAX_TAGS_PER_MEMORY: usize = 64;
 
-/// Normalize a tags object (`{source: target|null}`) into edges: names follow the identifier
-/// rule, targets are identifier words, canonical numbers or null (a bare tag). The object
-/// structurally encodes source uniqueness (duplicate keys cannot be expressed); the model's
-/// role exclusivity is checked here at the name level — a tag cannot point to itself, and a
-/// name that is some entry's target cannot simultaneously be another entry's source or a bare
-/// tag on the same memory.
-pub fn normalize_tag_edges(
-    object: &serde_json::Map<String, Value>,
-) -> Result<Vec<TagEdge>, String> {
-    if object.len() > MAX_TAGS_PER_MEMORY {
+/// One memory write's tag declaration after normalization.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TagWrite {
+    /// Tag names the write adds: bare tags as-is, scoped tags composed as `scope::value`.
+    pub tags: Vec<String>,
+    /// Scopes the caller declared with a null value — the memory takes no tag in them. A create
+    /// stores nothing for them (absence *is* the declaration); an incremental update drops the
+    /// tag it currently carries in each of these scopes, which is why they are reported apart.
+    pub cleared: Vec<String>,
+}
+
+/// Normalize one memory write's tags. `bare` lists the tags that carry no value; `attributes`
+/// maps a scope to the value the memory takes in it, and a scope carries at most one value:
+/// - bare tag: one word, listed in `bare` (`rust`);
+/// - scoped tag: a key of `attributes` with a string or number value (`{system: "pc1sw0"}`
+///   composes the name `system::pc1sw0`);
+/// - no value in a scope: a key of `attributes` with null, accepted only for a scope that must
+///   be declared on every write (`required`).
+///
+/// A null on any other key is an error rather than a silent no-op: the caller meant something by
+/// it, and ignoring it would let the write look successful without doing what was asked.
+///
+/// `require_all` demands a declaration for every required scope (fresh memory); an incremental
+/// update passes false and validates only the declarations it carries.
+pub fn normalize_tag_write(
+    bare: &[String],
+    attributes: &serde_json::Map<String, Value>,
+    required_scopes: &[String],
+    require_all: bool,
+) -> Result<TagWrite, String> {
+    let is_required = |scope: &str| required_scopes.iter().any(|r| r == scope);
+    // Every name appears once: the attribute object enforces that structurally, the array does not.
+    let mut tags: Vec<String> = Vec::with_capacity(bare.len() + attributes.len());
+    let mut cleared: Vec<String> = Vec::new();
+    for raw in bare {
+        let name = normalize_tag_name(raw)?;
+        if let Some(scope) = tag_scope_of(&name) {
+            return Err(format!(
+                "tag '{name}' carries a value: declare it in attributes as {{\"{scope}\": \"{}\"}}",
+                tag_value_of(&name)
+            ));
+        }
+        if is_required(&name) {
+            return Err(format!(
+                "scope '{name}' must be declared in attributes with a value or null (it applies to every write), not listed as a bare tag"
+            ));
+        }
+        if tags.contains(&name) {
+            return Err(format!("tag '{name}' is listed twice in tags"));
+        }
+        tags.push(name);
+    }
+
+    let mut declared: Vec<String> = Vec::with_capacity(attributes.len());
+    for (raw_scope, value) in attributes {
+        let scope = normalize_ident_word(raw_scope, "scope name")?;
+        // Keys are compared after trimming, so "system" and " system" name one scope
+        if declared.contains(&scope) {
+            return Err(format!(
+                "attributes names scope '{scope}' more than once (scope names are compared after trimming)"
+            ));
+        }
+        if tags.iter().any(|tag| tag == &scope) {
+            return Err(format!(
+                "'{scope}' is used both as a bare tag and as a scope in this write — one name, one role"
+            ));
+        }
+        declared.push(scope.clone());
+        match value {
+            Value::Null => {
+                if !is_required(&scope) {
+                    return Err(format!(
+                        "attributes.{scope} is null, which declares that the memory takes no value in that scope; only a scope required on every write accepts that declaration — drop the key instead"
+                    ));
+                }
+                cleared.push(scope);
+            }
+            Value::String(text) => {
+                let value = normalize_ident_word(text, "scope value").map_err(|_| {
+                    format!(
+                        "attributes.{scope}: the value must be an identifier word (letters, digits, '_', '-', '.'), got '{text}'"
+                    )
+                })?;
+                tags.push(compose_tag_name(&scope, &value));
+            }
+            Value::Number(n) => {
+                let canonical = canonical_number(n)
+                    .ok_or_else(|| format!("attributes.{scope}: {n} is not a finite number"))?;
+                tags.push(compose_tag_name(&scope, &canonical));
+            }
+            other => {
+                return Err(format!(
+                    "attributes.{scope} must be a string, a number or null, got {other} — booleans are not values (presence flags belong in tags)"
+                ))
+            }
+        }
+    }
+    if tags.len() > MAX_TAGS_PER_MEMORY {
         return Err(format!(
             "at most {MAX_TAGS_PER_MEMORY} tags per memory are allowed"
         ));
     }
-    let mut edges = Vec::with_capacity(object.len());
-    for (raw_source, value) in object {
-        let source = normalize_tag_name(raw_source)?;
-        let edge = match value {
-            Value::Null => (source, None),
-            Value::String(text) => {
-                normalize_tag_name(text).map_err(|_| {
-                    format!(
-                        "tag '{source}': the target must be an identifier word (letters, digits, '_', '-', '.'), got '{text}'"
-                    )
-                })?;
-                (source, Some(text.clone()))
-            }
-            Value::Number(n) => {
-                let canonical = canonical_number(n)
-                    .ok_or_else(|| format!("tag '{source}': {n} is not a finite number"))?;
-                (source, Some(canonical))
-            }
-            other => {
-                return Err(format!(
-                    "tag '{source}' must map to a string, number or null (a bare tag), got {other} — bools are not targets (presence flags are bare tags)"
-                ))
-            }
-        };
-        if edge.1.as_deref() == Some(edge.0.as_str()) {
-            return Err(format!("tag '{}': an edge cannot point to itself", edge.0));
-        }
-        edges.push(edge);
-    }
-    let mut target_of: HashMap<&str, &str> = HashMap::new();
-    for (source, target) in &edges {
-        if let Some(target) = target {
-            target_of.insert(target.as_str(), source);
-        }
-    }
-    for (source, _) in &edges {
-        if let Some(&edge_source) = target_of.get(source.as_str()) {
+    if require_all {
+        let mut missing: Vec<&str> = required_scopes
+            .iter()
+            .map(String::as_str)
+            .filter(|scope| !declared.iter().any(|name| name == scope))
+            .collect();
+        if !missing.is_empty() {
+            missing.sort_unstable();
             return Err(format!(
-                "tag '{source}' cannot be both an edge target (of '{edge_source}') and a source/bare tag on one memory — no nesting",
+                "missing required scopes in attributes: {}; declare each one with its value, or null when this memory takes no value in it",
+                missing.join(", ")
             ));
         }
     }
-    Ok(edges)
+    Ok(TagWrite { tags, cleared })
 }
 
 /// Identity name normalization: trim surrounding whitespace and cap length (same rules as tag names).
@@ -322,38 +422,114 @@ mod tests {
         assert_eq!(parse_number_text("1_000"), None);
     }
 
+    fn attrs(body: &str) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(body).unwrap()
+    }
+
     #[test]
-    fn tag_edges_normalize_from_the_wire_object() {
-        let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
-            r#"{"rust": null, "project": "agent-memory", "count": 2.5, "big": 1e300}"#,
+    fn tag_write_composes_scoped_names() {
+        let bare = vec!["rust".to_string(), "notes".to_string()];
+        let write = normalize_tag_write(
+            &bare,
+            &attrs(r#"{"system": "pc1sw0", "count": 2.5, "big": 1e300}"#),
+            &[],
+            true,
         )
         .unwrap();
-        let mut edges = normalize_tag_edges(&object).unwrap();
-        edges.sort();
+        let mut tags = write.tags;
+        tags.sort();
         assert_eq!(
-            edges,
+            tags,
             vec![
-                ("big".to_string(), Some("1e300".to_string())),
-                ("count".to_string(), Some("2.5".to_string())),
-                ("project".to_string(), Some("agent-memory".to_string())),
-                ("rust".to_string(), None),
+                "big::1e300".to_string(),
+                "count::2.5".to_string(),
+                "notes".to_string(),
+                "rust".to_string(),
+                "system::pc1sw0".to_string(),
             ]
         );
-        for (body, expected) in [
-            (r#"{"project": ["a"]}"#, "must map to"),
-            (r#"{"project": true}"#, "bools are not targets"),
-            (r#"{"project": "has space"}"#, "identifier word"),
-            // A tag cannot be both an edge target and a source/bare tag on one memory
-            (r#"{"project": "nmmt", "nmmt": "rust"}"#, "no nesting"),
-            (r#"{"a": "x", "x": null}"#, "no nesting"),
-            // No self-edges
-            (r#"{"x": "x"}"#, "cannot point to itself"),
+        assert!(write.cleared.is_empty());
+    }
+
+    /// A null in `attributes` is the "no value" declaration: accepted for a required scope (and
+    /// reported so an update can clear the tag it carries), rejected everywhere else where it
+    /// would be a silent no-op.
+    #[test]
+    fn null_attributes_declare_absence_only_for_required_scopes() {
+        let required = vec!["country".to_string()];
+        let write =
+            normalize_tag_write(&[], &attrs(r#"{"country": null}"#), &required, true).unwrap();
+        assert!(write.tags.is_empty());
+        assert_eq!(write.cleared, vec!["country".to_string()]);
+
+        let write = normalize_tag_write(
+            &["rust".to_string()],
+            &attrs(r#"{"country": "cn"}"#),
+            &required,
+            true,
+        )
+        .unwrap();
+        let mut tags = write.tags;
+        tags.sort();
+        assert_eq!(tags, vec!["country::cn".to_string(), "rust".to_string()]);
+
+        for (bare, body, expected) in [
+            // the declaration belongs to every write, so it cannot be a bare tag
+            (
+                &["country".to_string()][..],
+                r#"{}"#,
+                "listed as a bare tag",
+            ),
+            (
+                &[][..],
+                r#"{"country": null, "rust": null}"#,
+                "only a scope required",
+            ),
+            (&[][..], r#"{"project": "has space"}"#, "identifier word"),
+            // a value is one word: a scoped tag is declared through attributes
+            (&[][..], r#"{"project": "a::b"}"#, "identifier word"),
+            (&[][..], r#"{"project": true}"#, "booleans are not values"),
+            (
+                &[][..],
+                r#"{"project": "a", " project ": "b"}"#,
+                "more than once",
+            ),
+            // one name, one role
+            (
+                &["rust".to_string()][..],
+                r#"{"rust": "x"}"#,
+                "one name, one role",
+            ),
         ] {
-            let object =
-                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(body).unwrap();
-            let err = normalize_tag_edges(&object).unwrap_err();
+            let err = normalize_tag_write(bare, &attrs(body), &required, true).unwrap_err();
             assert!(err.contains(expected), "{body}: got {err}");
         }
+    }
+
+    /// A create must declare every required scope; an incremental update only validates what it
+    /// carries, so classifying an older memory later stays possible.
+    #[test]
+    fn required_scopes_must_be_declared_on_create_only() {
+        let required = vec!["country".to_string(), "planet".to_string()];
+        let err =
+            normalize_tag_write(&[], &attrs(r#"{"country": "cn"}"#), &required, true).unwrap_err();
+        assert!(err.contains("planet"), "got {err}");
+        assert!(
+            normalize_tag_write(&[], &attrs(r#"{"country": "cn"}"#), &required, false).is_ok(),
+            "an update may touch one required scope alone"
+        );
+    }
+
+    #[test]
+    fn duplicate_bare_names_are_rejected() {
+        let err = normalize_tag_write(
+            &["rust".to_string(), "rust".to_string()],
+            &serde_json::Map::new(),
+            &[],
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("twice"), "got {err}");
     }
 
     #[test]

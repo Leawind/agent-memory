@@ -118,10 +118,9 @@ impl Registry {
             TagAtom::Regex(_) => {
                 Err("persisted predicates require literal tags; regex atoms are query-only".into())
             }
-            TagAtom::KeyEq { .. } => Err(
-                "edge comparisons (key=value) are query-only; named predicates accept literal tags only"
-                    .into(),
-            ),
+            TagAtom::Scope(scope) => Err(format!(
+                "scope wildcards ('{scope}::*') are query-only; named predicates accept literal tags only"
+            )),
         })
     }
 

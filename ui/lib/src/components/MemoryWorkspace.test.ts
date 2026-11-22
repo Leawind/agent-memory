@@ -12,7 +12,11 @@ const listPayload = {
   memories: [{ id: 'm1', summary: '列表模式的记忆', tags: ['t1'], updated: '2026-10-04 08:00' }],
 }
 const tagsPayload = {
-  tags: [{ name: 'rust', count: 3, description: '语言' }],
+  tags: [
+    { name: 'rust', count: 3, description: '语言' },
+    { name: 'phase::design', count: 2, scope: 'phase' },
+  ],
+  scopes: [{ name: 'phase', count: 2, tag_count: 1 }],
 }
 
 function jsonResponse(body: unknown) {
@@ -124,6 +128,42 @@ describe('MemoryWorkspace', () => {
     // Save succeeds inside the dialog: the workspace must reload both sides afterwards
     const tagDialog = wrapper.findComponent({ name: 'TagDialog' })
     tagDialog.vm.$emit('saved')
+    await flushPromises()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => u.startsWith('/api/tags'))).toBe(true)
+    expect(urls.some((u) => u.startsWith('/api/memories'))).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('a scope header’s edit affordance opens the scope dialog; saving refreshes both sides', async () => {
+    const wrapper = mount(MemoryWorkspace)
+    await flushPromises()
+    await flushPromises()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fetchMock.mockClear()
+
+    // The scope header (after the bare rust row) carries the scope into the dialog
+    const scopeHeader = wrapper.findAll('.sb-scope')[0]
+    await scopeHeader.find('.sb-edit').trigger('click')
+    await flushPromises()
+    const scopeDialog = wrapper.findComponent({ name: 'ScopeDialog' })
+    expect(scopeDialog.props('scope')).toEqual({ name: 'phase', count: 2, tag_count: 1 })
+    expect(scopeDialog.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(true)
+
+    // The folder button in the header opens the create mode (scope = null)
+    await scopeDialog.vm.$emit('update:visible', false)
+    await flushPromises()
+    const tools = wrapper.findAll('.sb-tool')
+    await tools[1].trigger('click')
+    await flushPromises()
+    expect((wrapper.findComponent({ name: 'ScopeDialog' }).props('scope') as unknown) === null).toBe(true)
+    expect(wrapper.findComponent({ name: 'ScopeDialog' }).findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(
+      true,
+    )
+
+    // A saved scope reshapes both the sidebar and the editor's write contract
+    fetchMock.mockClear()
+    wrapper.findComponent({ name: 'ScopeDialog' }).vm.$emit('saved')
     await flushPromises()
     const urls = fetchMock.mock.calls.map((c) => String(c[0]))
     expect(urls.some((u) => u.startsWith('/api/tags'))).toBe(true)

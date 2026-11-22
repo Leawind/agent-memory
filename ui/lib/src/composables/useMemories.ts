@@ -14,7 +14,18 @@ export interface MemoryDraft {
   id: string | null
   summary: string
   content: string
+  /** Bare tags only; scoped tags live in attributes */
   tags: string[]
+  /** Scope → its single value (the value half of scope::value), or null for the explicit "takes
+   *  no tag in this scope" declaration; a key's presence is the declaration itself */
+  attributes: Record<string, string | null>
+}
+
+/** One scope's editor face: the write contract plus the scope's known values (prefix stripped) */
+export interface ScopeColumn {
+  name: string
+  required: boolean
+  values: string[]
 }
 
 /** The tag expression survives reloads: it can be long enough that retyping is a real cost */
@@ -56,7 +67,14 @@ export function useMemories() {
    * (undefined = not reported — keyword mode, or the response predates the field) */
   const keywordMatches = ref<number | undefined>(undefined)
   const loading = ref(false)
+  /** Expression atoms offered by the completion box: every tag name plus each scope's wildcard */
   const tagOptions = ref<string[]>([])
+  /** Bare tag names only (the editor's chip candidates; scoped names belong to their scope rows) */
+  const bareTagOptions = ref<string[]>([])
+  /** Scopes the store requires on every write (the write contract, surfaced by the editor) */
+  const requiredScopes = ref<string[]>([])
+  /** Per-scope editor columns: the required flag and the scope's known values */
+  const scopeOptions = ref<ScopeColumn[]>([])
   /** Tag name -> description, for hover tooltips on the memory cards' tag chips */
   const tagDescriptions = ref<Record<string, string>>({})
 
@@ -183,10 +201,20 @@ export function useMemories() {
   async function loadTagOptions() {
     try {
       const data = (await listTags(client)) as TagListResp
+      const tags = data.tags ?? []
+      const scopeList = data.scopes ?? []
       const descs: Record<string, string> = {}
-      for (const tg of data.tags ?? []) if (tg.description) descs[tg.name] = tg.description
+      for (const tg of tags) if (tg.description) descs[tg.name] = tg.description
       tagDescriptions.value = descs
-      tagOptions.value = (data.tags ?? []).map((tg) => tg.name)
+      // Expression leaves: any tag name (bare or scoped) is an atom, and so is each scope wildcard
+      tagOptions.value = [...tags.map((tg) => tg.name), ...scopeList.map((s) => `${s.name}::*`)]
+      bareTagOptions.value = tags.filter((tg) => !tg.scope).map((tg) => tg.name)
+      requiredScopes.value = scopeList.filter((s) => s.required).map((s) => s.name)
+      scopeOptions.value = scopeList.map((s) => ({
+        name: s.name,
+        required: s.required === true,
+        values: tags.filter((tg) => tg.scope === s.name).map((tg) => tg.name.slice(s.name.length + 2)),
+      }))
     } catch {
       /* Silent: a failed tag dropdown must not block the main list */
     }
@@ -213,6 +241,9 @@ export function useMemories() {
     keywordMatches,
     loading,
     tagOptions,
+    bareTagOptions,
+    requiredScopes,
+    scopeOptions,
     tagDescriptions,
     searching,
     semanticReady,

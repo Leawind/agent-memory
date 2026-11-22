@@ -314,7 +314,7 @@ try {
   check('memory_use retries are idempotent', payloadOf(usedAgain)?.recorded === false)
   const updated = await rpc(6, 'tools/call', {
     name: 'memory_update',
-    arguments: { id: createdId, add_tags: { 验证完成: null }, create_missing_tags: true },
+    arguments: { id: createdId, tags: ['验证完成'], create_missing_tags: true },
   })
   // Echo-free: the update response only flags what happened; the tag set is verified by a read
   const updatedStructured = payloadOf(updated) as { updated?: boolean } | undefined
@@ -324,7 +324,7 @@ try {
     arguments: { ids: [createdId] },
   })
   check(
-    'memory_update add_tags',
+    'memory_update tags',
     (
       (payloadOf(afterUpdate) as { memories?: { tags?: string[] }[] } | undefined)?.memories?.[0]?.tags as
         string[] | undefined

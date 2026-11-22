@@ -38,9 +38,11 @@ pub const LEGACY_PROTOCOL_VERSION: &str = "2025-06-18";
 const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
 
-/// Caching hints for `tools/list` (`ttlMs`, `cacheScope`): the tool surface is static (tools never
-/// change at runtime), so the list is identical for every caller and cacheable for a long time.
-const TOOLS_LIST_CACHE: (i64, &str) = (3_600_000, "public");
+/// Caching hints for `tools/list` (`ttlMs`, `cacheScope`): the list is identical for every caller
+/// (the write contract is store-wide), but it is not static in time — enabling or clearing a
+/// required tag rewrites the schema. No TTL is advertised, so a client re-reads the surface
+/// instead of holding a contract the administrator has since changed.
+const TOOLS_LIST_CACHE: (i64, &str) = (0, "public");
 
 /// Mirrored request headers collected by the transport ("request metadata" in the Streamable HTTP spec),
 /// validated against the request body at the protocol layer.
@@ -330,13 +332,21 @@ fn dispatch(
         "ping" => reply(200, ok_value(id, json!({ "resultType": "complete" }))),
         "tools/list" => {
             let (ttl, scope) = TOOLS_LIST_CACHE;
+            // The write contract (required scopes) is part of the surface, so the listing reads
+            // the store; an unreadable store degrades to the static surface rather than failing
+            // the call.
+            let required = store::with_db_in(store_path, store::TxMode::ReadOnly, |st| {
+                st.required_scopes()
+            })
+            .ok()
+            .unwrap_or_default();
             reply(
                 200,
                 ok_value(
                     id,
                     json!({
                         "resultType": "complete",
-                        "tools": tools::tool_definitions(),
+                        "tools": tools::tool_definitions(&required),
                         "ttlMs": ttl,
                         "cacheScope": scope,
                     }),
@@ -1285,8 +1295,10 @@ mod tests {
         cleanup(&store);
     }
 
+    /// The surface is store-wide but not static in time: the write contract can change, so no
+    /// TTL is advertised (a client must not hold a schema the administrator has since changed).
     #[test]
-    fn tools_list_carries_static_cache_hints() {
+    fn tools_list_carries_no_ttl() {
         let store = temp_db("tools-list");
         let (_, listing) = roundtrip(&store, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
         assert_eq!(listing["result"]["resultType"], "complete");
@@ -1294,8 +1306,74 @@ mod tests {
             listing["result"]["tools"].as_array().unwrap().len(),
             tools::TOOL_NAMES.len()
         );
-        assert_eq!(listing["result"]["ttlMs"], 3_600_000);
+        assert_eq!(listing["result"]["ttlMs"], 0);
         assert_eq!(listing["result"]["cacheScope"], "public");
+        cleanup(&store);
+    }
+
+    /// The write contract is part of the tool surface: a required tag is named in the schema of
+    /// memory_create (where the decision is demanded) and never in memory_update's (an edit only
+    /// validates what it carries). It disappears from the listing when the flag is cleared.
+    #[test]
+    fn tools_list_carries_the_write_contract() {
+        let store = temp_db("tools-contract");
+        {
+            let st = crate::store::Store::open(&store).unwrap();
+            st.scope_create("system", "the box a fact is about")
+                .unwrap();
+            st.tag_create("system::pc1sw0", "").unwrap();
+            let (_, required_updated) = st.scope_update("system", None, Some(true)).unwrap();
+            assert!(required_updated);
+        }
+        let (_, listing) = roundtrip(&store, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
+        let tools = listing["result"]["tools"].as_array().unwrap();
+        let find = |name: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == name)
+                .expect("tool listed")
+                .clone()
+        };
+        let create = find("memory_create");
+        assert_eq!(
+            create["inputSchema"]["properties"]["attributes"]["required"],
+            json!(["system"])
+        );
+        assert_eq!(
+            create["inputSchema"]["properties"]["attributes"]["properties"]["system"]["type"],
+            json!(["string", "null"])
+        );
+        assert!(
+            create["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "attributes"),
+            "declaring attributes becomes mandatory: {create}"
+        );
+        let update = find("memory_update");
+        assert!(
+            update["inputSchema"]["properties"]["attributes"]
+                .get("required")
+                .is_none(),
+            "an incremental update never has to restate the full set: {update}"
+        );
+
+        // Clearing the requirement returns the schema to the contract-free shape
+        {
+            let st = crate::store::Store::open(&store).unwrap();
+            let (_, required_updated) = st.scope_update("system", None, Some(false)).unwrap();
+            assert!(required_updated);
+        }
+        let (_, listing) = roundtrip(&store, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+        let tools = listing["result"]["tools"].as_array().unwrap();
+        let create = tools.iter().find(|t| t["name"] == "memory_create").unwrap();
+        assert!(
+            create["inputSchema"]["properties"]["attributes"]
+                .get("required")
+                .is_none(),
+            "got: {create}"
+        );
         cleanup(&store);
     }
 }

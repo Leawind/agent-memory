@@ -2,20 +2,28 @@
 // The editor defaults to rendered preview for existing memories (MarkdownView → DOMPurify),
 // which needs its officially supported test DOM (happy-dom mis-strips block tags).
 // Behavior tests for the dialog: open sequence, the dirty-gated save button in the title row,
-// and the delete flow (fetch is stubbed; Element Plus renders for real).
+// the two tag containers (bare chips + scope values) and the delete/merge flows (fetch is
+// stubbed; Element Plus renders for real).
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { ElMessageBox } from 'element-plus'
 import MemoryEditorDialog from './MemoryEditorDialog.vue'
+import type { MemoryDraft, ScopeColumn } from '../composables/useMemories'
 
 const fullMemory = {
   id: 'm7',
   summary: '已有记忆摘要',
   content: '正文内容',
-  tags: ['t1', 'project:demo', 'score:3'],
+  tags: ['t1', 'project::demo', 'score::3'],
   created: '2026-10-04 08:00',
   updated: '2026-10-04 08:00',
+  attributes: { project: 'demo', score: 3 },
 }
+
+const scopeOptions: ScopeColumn[] = [
+  { name: 'project', required: false, values: ['demo', 'ui'] },
+  { name: 'score', required: true, values: ['3', '5'] },
+]
 
 function jsonResponse(body: unknown, status = 200) {
   // The client only reads ok/status/text; cast the minimal stub to the full Response type once, here
@@ -43,14 +51,41 @@ function summaryInput() {
   return dialogEl().querySelector('.el-dialog__body input') as HTMLInputElement
 }
 
-async function openDialog(memoryId: string | null) {
+async function openDialog(memoryId: string | null, extraProps: Record<string, unknown> = {}) {
   const wrapper = mount(MemoryEditorDialog, {
-    props: { visible: false, memoryId, tagOptions: ['t1'] },
+    props: {
+      visible: false,
+      memoryId,
+      tagOptions: ['t1'],
+      scopeOptions,
+      requiredScopes: ['score'],
+      ...extraProps,
+    },
     attachTo: document.body,
   })
   await wrapper.setProps({ visible: true })
   await flushPromises()
   return wrapper
+}
+
+/** Route fetch by URL substring + method, recording write bodies */
+function routeFetch(routes: Array<{ match: string; method?: string; body: unknown }>) {
+  const writes: Array<Record<string, unknown>> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = String(init?.method ?? 'GET').toUpperCase()
+      for (const r of routes) {
+        if (url.includes(r.match) && (r.method === undefined || method === r.method)) {
+          if (init?.body) writes.push(JSON.parse(String(init.body)))
+          return Promise.resolve(jsonResponse(r.body))
+        }
+      }
+      return Promise.resolve(jsonResponse({}))
+    }),
+  )
+  return writes
 }
 
 describe('MemoryEditorDialog', () => {
@@ -62,56 +97,90 @@ describe('MemoryEditorDialog', () => {
     document.body.innerHTML = ''
   })
 
-  it('editing: removing a bare tag ships remove_tags by key name, nothing else travels', async () => {
-    const writes: Array<Record<string, unknown>> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((_url: string | URL, init?: RequestInit) => {
-        if (init?.method === 'PUT') {
-          writes.push(JSON.parse(String(init.body)))
-          return Promise.resolve(jsonResponse({ updated: true }))
-        }
-        return Promise.resolve(jsonResponse(fullMemory))
-      }),
-    )
+  it('editing: removing a bare tag ships remove_tags by name, nothing else travels', async () => {
+    const writes = routeFetch([
+      { match: '/api/memories/m7', method: 'PUT', body: { updated: true } },
+      { match: '/api/memories/', body: fullMemory },
+    ])
     const wrapper = await openDialog('m7')
-    // The picker shows the one vocabulary: plain names and edge tokens (source:target) as chips alike
+    // The chips select carries bare names only; scoped names live in the scope rows below
     const select = dialogEl().querySelector('.el-select')!
     expect(select.textContent).toContain('t1')
-    expect(select.textContent).toContain('project:demo')
+    expect(select.textContent).not.toContain('project::demo')
     await new DOMWrapper(select.querySelector('.el-tag__close')!).trigger('click')
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
     expect(writes[0].remove_tags).toEqual(['t1'])
-    expect(writes[0].add_tags).toBeUndefined()
+    expect(writes[0].attributes).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('editing keyed tags: value changes upsert through add_tags, numbers stay JSON numbers', async () => {
-    const writes: Array<Record<string, unknown>> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((_url: string | URL, init?: RequestInit) => {
-        if (init?.method === 'PUT') {
-          writes.push(JSON.parse(String(init.body)))
-          return Promise.resolve(jsonResponse({ updated: true }))
-        }
-        return Promise.resolve(jsonResponse(fullMemory))
-      }),
-    )
+  it('editing scope values: a changed value travels through attributes, scoped to its key', async () => {
+    const writes = routeFetch([
+      { match: '/api/memories/m7', method: 'PUT', body: { updated: true } },
+      { match: '/api/memories/', body: fullMemory },
+    ])
     const wrapper = await openDialog('m7')
-    // Replacing a value: swap the score chip for a new token (driven through the form state;
-    // the select's typing UI is Element Plus's own concern)
-    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
-    vm.form.tags.splice(vm.form.tags.indexOf('score:3'), 1, 'score:7')
+    const vm = wrapper.vm as unknown as { setAttr: (scope: string, value: string) => void }
+    vm.setAttr('score', '5')
     await flushPromises()
     expect(saveButton().disabled).toBe(false)
     await new DOMWrapper(saveButton()).trigger('click')
     await flushPromises()
-    // Only the changed key travels: the upsert carries the new value as a JSON number, and no
-    // remove is emitted (the key itself stays)
-    expect(writes[0].add_tags).toEqual({ score: 7 })
+    // Only the changed scope travels: the upsert carries the new value, and no remove is
+    // emitted (the scope itself stays)
+    expect(writes[0].attributes).toEqual({ score: '5' })
+    expect(writes[0].tags).toBeUndefined()
     expect(writes[0].remove_tags).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('editing: clearing an optional scope removes the composed tag by full name', async () => {
+    const writes = routeFetch([
+      { match: '/api/memories/m7', method: 'PUT', body: { updated: true } },
+      { match: '/api/memories/', body: fullMemory },
+    ])
+    const wrapper = await openDialog('m7')
+    const vm = wrapper.vm as unknown as { setAttr: (scope: string, value: string) => void }
+    vm.setAttr('project', '') // cleared: the declaration itself goes away
+    await flushPromises()
+    expect(saveButton().disabled).toBe(false)
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    expect(writes[0].remove_tags).toEqual(['project::demo'])
+    expect(writes[0].attributes).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('editing: dropping a required scope’s value submits the null declaration, not a removal', async () => {
+    const writes = routeFetch([
+      { match: '/api/memories/m7', method: 'PUT', body: { updated: true } },
+      { match: '/api/memories/', body: fullMemory },
+    ])
+    const wrapper = await openDialog('m7')
+    const vm = wrapper.vm as unknown as { form: MemoryDraft }
+    vm.form.attributes.score = null // the explicit "takes no tag in this scope"
+    await flushPromises()
+    expect(saveButton().disabled).toBe(false)
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    expect(writes[0].attributes).toEqual({ score: null })
+    expect(writes[0].remove_tags).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('the scope rows render the loaded values and the required flag', async () => {
+    const wrapper = await openDialog('m7')
+    const rows = [...dialogEl().querySelectorAll('.scope-row')]
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('project')
+    expect(rows[1].textContent).toContain('score')
+    // The required scope carries the badge and the no-value option
+    expect(rows[1].textContent).toContain('必填')
+    const selects = [
+      ...dialogEl().querySelectorAll('.scope-select .el-select__wrapper, .scope-select .el-input__inner'),
+    ]
+    expect(selects.length).toBeGreaterThanOrEqual(2)
     wrapper.unmount()
   })
 
@@ -134,31 +203,6 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
-  it('editing keyed tags: removals travel by key name', async () => {
-    const writes: Array<Record<string, unknown>> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((_url: string | URL, init?: RequestInit) => {
-        if (init?.method === 'PUT') {
-          writes.push(JSON.parse(String(init.body)))
-          return Promise.resolve(jsonResponse({ updated: true }))
-        }
-        return Promise.resolve(jsonResponse(fullMemory))
-      }),
-    )
-    const wrapper = await openDialog('m7')
-    const vm = wrapper.vm as unknown as { form: { tags: string[] } }
-    vm.form.tags = vm.form.tags.filter((t) => !t.includes(':'))
-    await flushPromises()
-    expect(saveButton().disabled).toBe(false)
-    await new DOMWrapper(saveButton()).trigger('click')
-    await flushPromises()
-    // Removed keys travel by name; untouched bare tags stay out of the body
-    expect(writes[0].remove_tags).toEqual(['project', 'score'])
-    expect(writes[0].add_tags).toBeUndefined()
-    wrapper.unmount()
-  })
-
   it('tag entry: the dropdown offers the add action for legal tokens, a red refusal for illegal ones', async () => {
     const wrapper = await openDialog('m7')
     const vm = wrapper.vm as unknown as {
@@ -176,28 +220,28 @@ describe('MemoryEditorDialog', () => {
     await flushPromises()
     expect(vm.tagQueryEntry?.problem).toBe('name')
     expect(vm.tagQueryEntry?.label).toContain('am-debug)invalid')
-    // An illegal value half ditto
-    vm.onTagQuery('score:1+2')
+    // A scoped name does not belong in the bare chips — the scope rows own it
+    vm.onTagQuery('score::9')
     await flushPromises()
-    expect(vm.tagQueryEntry?.problem).toBe('value')
-    // A key that is already valued refuses with the remove-first hint
-    vm.onTagQuery('score:9')
+    expect(vm.tagQueryEntry?.problem).toBe('scoped')
+    // So does the exact scoped tag the memory already carries
+    vm.onTagQuery('project::demo')
     await flushPromises()
-    expect(vm.tagQueryEntry?.problem).toBe('keydup')
-    // So does an exact ad-hoc chip (re-adding would toggle it off, not duplicate it)
-    vm.onTagQuery('project:demo')
-    await flushPromises()
-    expect(vm.tagQueryEntry?.problem).toBe('keydup')
-    // A vocabulary token needs no add entry — the real option serves
+    expect(vm.tagQueryEntry?.problem).toBe('scoped')
+    // A duplicate bare chip is refused with the toggle hint
     vm.onTagQuery('t1')
     await flushPromises()
-    expect(vm.tagQueryEntry).toBeNull()
+    expect(vm.tagQueryEntry).toBeNull() // t1 is in the vocabulary — the real option serves
     wrapper.unmount()
   })
 
   it('editing: titled 记忆 #<id>, locked while fetching, save stays disabled until edited', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(fullMemory))),
+    )
     const wrapper = mount(MemoryEditorDialog, {
-      props: { visible: false, memoryId: 'm7', tagOptions: ['t1'] },
+      props: { visible: false, memoryId: 'm7', tagOptions: ['t1'], scopeOptions, requiredScopes: ['score'] },
       attachTo: document.body,
     })
     await wrapper.setProps({ visible: true })
@@ -219,8 +263,47 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
+  it('creating: a required scope must be declared with a value before save unlocks', async () => {
+    const writes = routeFetch([
+      { match: '/api/memories', method: 'POST', body: { id: 'm9', updated: '2026-10-04 08:00' } },
+    ])
+    const wrapper = await openDialog(null, { tagOptions: [], requiredScopes: ['score'] })
+    await new DOMWrapper(summaryInput()).setValue('scoped fact')
+    // A summary alone is not enough: the store requires a declaration
+    expect(saveButton().disabled).toBe(true)
+    expect(dialogEl().querySelector('.required-hint')?.textContent).toContain('score')
+    // The declaration is a value on the scope
+    const vm = wrapper.vm as unknown as { form: MemoryDraft }
+    vm.form.attributes.score = '3'
+    await flushPromises()
+    expect(saveButton().disabled).toBe(false)
+    expect(dialogEl().querySelector('.required-hint')).toBeNull()
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    expect(writes[0].attributes).toEqual({ score: '3' })
+    expect(writes[0].tags).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('creating: declaring a required scope as none submits the null declaration', async () => {
+    const writes = routeFetch([
+      { match: '/api/memories', method: 'POST', body: { id: 'm9', updated: '2026-10-04 08:00' } },
+    ])
+    const wrapper = await openDialog(null, { tagOptions: [], requiredScopes: ['score'] })
+    await new DOMWrapper(summaryInput()).setValue('scoped fact')
+    expect(saveButton().disabled).toBe(true)
+    const vm = wrapper.vm as unknown as { form: MemoryDraft }
+    vm.form.attributes.score = null
+    await flushPromises()
+    expect(saveButton().disabled).toBe(false)
+    await new DOMWrapper(saveButton()).trigger('click')
+    await flushPromises()
+    expect(writes[0].attributes).toEqual({ score: null })
+    wrapper.unmount()
+  })
+
   it('creating: titled 新建记忆, a summary alone unlocks save (content is optional)', async () => {
-    const wrapper = await openDialog(null)
+    const wrapper = await openDialog(null, { requiredScopes: undefined, scopeOptions: [] })
     expect(dialogTitle().textContent).toContain('新建记忆')
     expect(deleteButton()).toBeNull()
     // Starts in the source editor and fetches nothing
@@ -236,14 +319,14 @@ describe('MemoryEditorDialog', () => {
   })
 
   it('a failed fetch closes the dialog and never leaves a savable empty form', async () => {
-    // The memory detail is what fails here (the key-registry probe failing is non-fatal by design)
+    // The memory detail is what fails here (the tag-registry probe failing is non-fatal by design)
     vi.mocked(globalThis.fetch).mockImplementation((input: RequestInfo | URL) => {
       const u = String(input)
       if (u.includes('/api/memories/')) return Promise.resolve(jsonResponse({ error: 'not found' }, 404))
       return Promise.resolve(jsonResponse(fullMemory))
     })
     const wrapper = mount(MemoryEditorDialog, {
-      props: { visible: false, memoryId: 'm7', tagOptions: ['t1'] },
+      props: { visible: false, memoryId: 'm7', tagOptions: ['t1'], scopeOptions, requiredScopes: ['score'] },
       attachTo: document.body,
     })
     await wrapper.setProps({ visible: true })
@@ -254,6 +337,10 @@ describe('MemoryEditorDialog', () => {
   })
 
   it('the title-row delete button confirms and emits deleted', async () => {
+    routeFetch([
+      { match: '/api/memories/m7', method: 'GET', body: fullMemory },
+      { match: '/api/memories/m7', method: 'DELETE', body: null },
+    ])
     const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => Promise.resolve(true) as never)
     const wrapper = await openDialog('m7')
     expect(deleteButton()).toBeTruthy()
@@ -270,20 +357,6 @@ describe('MemoryEditorDialog', () => {
     wrapper.unmount()
   })
 
-  /** Route fetch by URL substring + method for create/merge flows */
-  function routeFetch(routes: Array<{ match: string; method?: string; body: unknown }>) {
-    vi.mocked(globalThis.fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
-      const method = String(init?.method ?? 'GET').toUpperCase()
-      for (const r of routes) {
-        if (url.includes(r.match) && (r.method === undefined || method === r.method)) {
-          return Promise.resolve(jsonResponse(r.body))
-        }
-      }
-      return Promise.resolve(jsonResponse({}))
-    })
-  }
-
   it('creating: a similar_to hint offers the merge; accepting absorbs the new memory', async () => {
     routeFetch([
       {
@@ -294,7 +367,7 @@ describe('MemoryEditorDialog', () => {
       { match: '/api/memories/merge', method: 'POST', body: {} },
     ])
     const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => Promise.resolve(true) as never)
-    const wrapper = await openDialog(null)
+    const wrapper = await openDialog(null, { scopeOptions: [], requiredScopes: [] })
     await new DOMWrapper(summaryInput()).setValue('新摘要')
     await saveButton().click()
     await flushPromises()
@@ -313,7 +386,7 @@ describe('MemoryEditorDialog', () => {
   it('creating: declining the merge hint keeps both memories', async () => {
     routeFetch([{ match: '/api/memories', method: 'POST', body: { id: 'm9', updated: 'x', duplicate_of: ['m3'] } }])
     const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => Promise.reject('cancel') as never)
-    const wrapper = await openDialog(null)
+    const wrapper = await openDialog(null, { scopeOptions: [], requiredScopes: [] })
     await new DOMWrapper(summaryInput()).setValue('新摘要')
     await saveButton().click()
     await flushPromises()
@@ -326,7 +399,10 @@ describe('MemoryEditorDialog', () => {
   })
 
   it('the title-row merge button prompts for a source id and merges into the edited memory', async () => {
-    routeFetch([{ match: '/api/memories/merge', method: 'POST', body: {} }])
+    routeFetch([
+      { match: '/api/memories/m7', method: 'GET', body: fullMemory },
+      { match: '/api/memories/merge', method: 'POST', body: {} },
+    ])
     const promptSpy = vi
       .spyOn(ElMessageBox, 'prompt')
       .mockImplementation(() => Promise.resolve({ value: 'm12' }) as never)

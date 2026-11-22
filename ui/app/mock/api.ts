@@ -8,10 +8,17 @@ import type { Connect, Plugin } from 'vite'
 const now = (): number => Math.floor(Date.now() / 1000)
 const DAY = 86_400
 
+/** `scope::value` 的作用域半段；裸名返回 null */
+const scopeOf = (name: string): string | null => {
+  const i = name.indexOf('::')
+  return i > 0 ? name.slice(0, i) : null
+}
+
 interface MockMemory {
   id: number
   summary: string
   content: string
+  /** 全名列表：裸名（rust）或带作用域（system::pc1sw0），一条记忆每个作用域至多一个 */
   tags: string[]
   created_at: number
   updated_at: number
@@ -25,7 +32,7 @@ const memories: MockMemory[] = [
     summary: '项目结构约定',
     content:
       '# 模块划分\n\n- `src/tools/defs.rs` 是对 agent 的**契约**，唯一权威来源\n- SQL 一律外置到 `sql/*.sql`，Rust 代码不出现 SQL 文本\n- 迁移脚本在 `migrations/`，build.rs 编译期登记\n\n> 改契约前先读 AGENTS.md 的架构不变量。',
-    tags: ['rust', '架构', 'project:agent-memory'],
+    tags: ['rust', '架构', 'project::agent-memory'],
     created_at: t - 30 * DAY,
     updated_at: t - 2 * DAY,
   },
@@ -34,7 +41,7 @@ const memories: MockMemory[] = [
     summary: 'MCP protocol versions',
     content:
       '## Protocol compatibility\n\nWe support `2024-11-05`, `2025-03-26` and `2025-06-18`.\n\n- id boundary format is strictly `"m{n}"`\n- notifications never get a response',
-    tags: ['mcp', 'rust', 'project:agent-memory', 'score:3'],
+    tags: ['mcp', 'rust', 'project::agent-memory', 'score::3'],
     created_at: t - 25 * DAY,
     updated_at: t - 3 * DAY,
   },
@@ -42,8 +49,8 @@ const memories: MockMemory[] = [
     id: 3,
     summary: '组件库面板设计',
     content:
-      '# 工作台组件\n\n1. `TagsSidebar`：左侧标签侧栏，点击弹 `TagDialog`\n2. `MemoriesPanel`：卡片列表，整卡点击弹记忆弹窗\n3. `AdminPanel`：身份、鉴权开关、提示词、备份（挂在管理弹窗里）\n\n概况是弹窗 `OpsDialog`：点击顶栏标题打开，每次打开重拉数据。样式全部引用 `--el-*` 变量，跟随宿主主题。',
-    tags: ['前端', '设计', 'project:ui', 'phase:design', 'phase:review'],
+      '# 工作台组件\n\n1. `TagsSidebar`：左侧标签侧栏，按作用域分组，点击弹 `TagDialog` / `ScopeDialog`\n2. `MemoriesPanel`：卡片列表，整卡点击弹记忆弹窗\n3. `AdminPanel`：身份、鉴权开关、提示词、备份（挂在管理弹窗里）\n\n概况是弹窗 `OpsDialog`：点击顶栏标题打开，每次打开重拉数据。样式全部引用 `--el-*` 变量，跟随宿主主题。',
+    tags: ['前端', '设计', 'project::ui', 'phase::design', 'phase::review'],
     created_at: t - 20 * DAY,
     updated_at: t - 1 * DAY,
   },
@@ -51,7 +58,7 @@ const memories: MockMemory[] = [
     id: 4,
     summary: 'SQLite WAL 事务纪律',
     content: '读写分离：读请求 `BEGIN DEFERRED`（一致性快照、不抢写锁），写请求 `BEGIN IMMEDIATE`（一开始就取写锁）。',
-    tags: ['rust', '架构', 'project:agent-memory'],
+    tags: ['rust', '架构', 'project::agent-memory'],
     created_at: t - 18 * DAY,
     updated_at: t - 4 * DAY,
   },
@@ -59,12 +66,23 @@ const memories: MockMemory[] = [
     id: 5,
     summary: '发布前检查清单',
     content: '1. `cargo test` 全绿\n2. `cargo clippy --all-targets` 零告警\n3. `npm run typecheck` 通过',
-    tags: ['流程', '测试', 'score:5'],
+    tags: ['流程', '测试', 'score::5'],
     created_at: t - 8 * DAY,
     updated_at: t - 10 * 3600,
   },
 ]
-const tags = new Map(
+interface MockTag {
+  description: string
+  created_at: number
+}
+interface MockScope {
+  description: string
+  created_at: number
+  /** 必填：每次写入记忆都必须声明（真实服务端存生效时间，这里只留布尔） */
+  required?: boolean
+}
+// 词汇表按真实服务端形状存全名：作用域是独立实体，`scope::value` 是一个词条
+const tags = new Map<string, MockTag>(
   [
     ['rust', 'Rust 后端与工具链'],
     ['架构', '模块划分与不变量'],
@@ -72,8 +90,24 @@ const tags = new Map(
     ['前端', 'Vue3 组件库与站点'],
     ['设计', '交互与视觉决定'],
     ['测试', '单元与端到端'],
+    ['流程', '发布与协作约定'],
+    ['project::agent-memory', '本仓库'],
+    ['project::ui', '管理界面'],
+    ['phase::design', '设计阶段'],
+    ['phase::review', '评审阶段'],
+    ['score::3', '常规优先级'],
+    ['score::5', '紧急优先级'],
   ].map(([name, description]) => [name, { description, created_at: t - 30 * DAY }]),
 )
+const scopes = new Map<string, MockScope>(
+  [
+    ['project', '项目归属'],
+    ['phase', '工作阶段'],
+    // 必填作用域示例：编辑器的“新建记忆”会要求声明它（取值或“不取值”）
+    ['score', '优先级分值'],
+  ].map(([name, description]) => [name, { description, created_at: t - 30 * DAY }]),
+)
+scopes.get('score')!.required = true
 const predicates: Array<{ name: string; predicate: string; description: string }> = []
 const settings = {
   auth_required: false,
@@ -99,20 +133,16 @@ const compactTime = (ts: number): string => {
   const p = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
-// 稀疏属性视图（与真实服务端的 attributes_view 一致）：键值来自 `key:value` 标签，
-// 能解析为规范数的值渲染成 JSON 数字，单值是标量、多值是数组；无属性则整个省略
+// 稀疏作用域取值视图（与真实服务端的 attributes_view 一致）：键是作用域，值来自
+// `scope::value` 的取值半段；能解析为规范数的值渲染成 JSON 数字。无取值则整个省略
+// （mock 不持久化“声明不取值”，读回即无声明——真实服务端按必填生效时间区分存量）
 const attributesOf = (m: MockMemory): Record<string, unknown> => {
   const out: Record<string, unknown> = {}
   for (const tag of m.tags) {
-    const i = tag.indexOf(':')
-    if (i <= 0) continue
-    const key = tag.slice(0, i)
-    const raw = tag.slice(i + 1)
-    const numeric = /^-?(0|[1-9]\d*)(\.\d+)?([eE]-?\d+)?$/.test(raw) ? Number(raw) : raw
-    const current = out[key]
-    if (current === undefined) out[key] = numeric
-    else if (Array.isArray(current)) current.push(numeric)
-    else out[key] = [current, numeric]
+    const scope = scopeOf(tag)
+    if (scope === null) continue
+    const raw = tag.slice(scope.length + 2)
+    out[scope] = /^-?(0|[1-9]\d*)(\.\d+)?([eE]-?\d+)?$/.test(raw) ? Number(raw) : raw
   }
   return out
 }
@@ -143,76 +173,87 @@ const summaryView = (m: MockMemory) =>
     },
     m,
   )
-// 标签对象（{key: value|null}）→ 记忆的标签集：null 即裸标签，其余拼接 `key:value`。
-// 一个键在一条记忆里只有一个值：同键旧标签（裸的或带值的）先摘除，即 add_tags 的 upsert 语义。
-// 词汇表按真实服务端形状存裸名：边 `key:value` 同时登记 key 与 value 两个词条
+// 词汇表按真实服务端形状存全名；作用域词条不因打标签隐式创建（scope_set 显式建）
 function ensureTag(name: string): void {
   if (!tags.has(name)) tags.set(name, { description: '', created_at: now() })
 }
-function applyTagsObject(m: MockMemory, object: Record<string, unknown>): void {
-  for (const [rawKey, value] of Object.entries(object)) {
-    const key = rawKey.trim()
-    if (!key) continue
-    m.tags = m.tags.filter((x) => {
-      const i = x.indexOf(':')
-      return (i > 0 ? x.slice(0, i) : x) !== key
-    })
-    ensureTag(key)
-    if (value === null) {
-      m.tags.push(key)
-    } else {
-      m.tags.push(`${key}:${String(value)}`)
-      ensureTag(String(value))
-    }
+// 写入的两个容器（与真实服务端同形）：tags 列出裸标签，attributes 给出作用域取值，
+// attributes 里的 null 表示该记忆在此作用域下不取任何标签（mock 只摘掉现有取值，
+// 不记住声明）。一个作用域在一条记忆里至多一个取值：写入前先摘掉旧取值。
+function entityOf(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  return String(value)
+}
+// 整组替换（新建时使用）
+function setTagsFromWrite(m: MockMemory, bare: unknown, attributes: unknown): void {
+  m.tags = []
+  applyTagsWrite(m, bare, attributes)
+}
+// 逐项写入（新建与更新共用）：裸名先摘后写，作用域取值整段替换
+function applyTagsWrite(m: MockMemory, bare: unknown, attributes: unknown): void {
+  for (const raw of Array.isArray(bare) ? bare : []) {
+    const name = String(raw).trim()
+    if (!name || scopeOf(name) !== null) continue
+    m.tags = m.tags.filter((x) => x !== name)
+    ensureTag(name)
+    m.tags.push(name)
+  }
+  const attrs = attributes as Record<string, unknown> | null | undefined
+  if (!attrs || typeof attrs !== 'object') return
+  for (const [rawScope, value] of Object.entries(attrs)) {
+    const scope = rawScope.trim()
+    if (!scope) continue
+    const valueText = entityOf(value)
+    m.tags = m.tags.filter((x) => scopeOf(x) !== scope)
+    if (valueText === null) continue
+    const name = `${scope}::${valueText}`
+    ensureTag(name)
+    m.tags.push(name)
   }
 }
-// 逐条统计每个裸名在记忆里的角色：出现过的记忆（计数）、是否以裸标签/边源身份出现（own）、
-// 是否被边指向（targeted）以及指向它的键——与真实服务端 tag_view_all/tag_target_keys 对应
+// 每个词条的记忆数；作用域另计携带数与词条数——与真实服务端 tag_view_all/scope_view_all 对应
 const tagStats = () => {
-  const stats = new Map<string, { mems: Set<number>; own: boolean; targeted: boolean; keys: Set<string> }>()
-  const touch = (name: string) => {
-    let s = stats.get(name)
-    if (!s) {
-      s = { mems: new Set(), own: false, targeted: false, keys: new Set() }
-      stats.set(name, s)
-    }
-    return s
-  }
+  const counts = new Map<string, Set<number>>()
   for (const m of memories) {
     for (const tag of m.tags) {
-      const i = tag.indexOf(':')
-      if (i <= 0) {
-        const s = touch(tag)
-        s.mems.add(m.id)
-        s.own = true
-      } else {
-        const key = tag.slice(0, i)
-        const value = tag.slice(i + 1)
-        const sk = touch(key)
-        sk.mems.add(m.id)
-        sk.own = true
-        const sv = touch(value)
-        sv.mems.add(m.id)
-        sv.targeted = true
-        sv.keys.add(key)
-      }
+      const set = counts.get(tag) ?? new Set<number>()
+      set.add(m.id)
+      counts.set(tag, set)
     }
   }
-  return stats
+  return counts
 }
-// 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、target_only/keys 仅在
-// 适用时出现。默认集只含组织用标签（裸用或作边源），all=true 才带仅作边目标的词条
-const tagViews = (all = false) => {
-  const stats = tagStats()
-  for (const name of stats.keys()) ensureTag(name)
-  return [...stats.entries()]
-    .filter(([, s]) => all || s.own || !s.targeted)
-    .map(([name, s]) => {
-      const view: Record<string, unknown> = { name, count: s.mems.size }
+// 稀疏形状与真实服务端一致（见 ui/lib/src/types.ts）：空描述整个省略、required 仅在
+// 必填作用域上出现；filter 按名字做大小写不敏感的子串过滤（真实服务端是正则，UI 不传）
+const tagViews = (filter?: string | null) => {
+  const counts = tagStats()
+  for (const name of counts.keys()) ensureTag(name)
+  const q = (filter ?? '').toLowerCase()
+  return [...counts.entries()]
+    .filter(([name]) => !q || name.toLowerCase().includes(q))
+    .map(([name, mems]) => {
+      const view: Record<string, unknown> = { name, count: mems.size }
       const description = tags.get(name)?.description
       if (description) view.description = description
-      if (s.targeted && !s.own) view.target_only = true
-      if (s.keys.size > 0) view.keys = [...s.keys].sort()
+      const scope = scopeOf(name)
+      if (scope !== null) view.scope = scope
+      if (name === 'convention') view.reserved = true
+      return view
+    })
+    .sort((a, b) => (b.count as number) - (a.count as number) || String(a.name).localeCompare(String(b.name)))
+}
+const scopeViews = (filter?: string | null) => {
+  const counts = tagStats()
+  const q = (filter ?? '').toLowerCase()
+  return [...scopes.entries()]
+    .filter(([name]) => !q || name.toLowerCase().includes(q))
+    .map(([name, scope]) => {
+      const values = [...counts.keys()].filter((tag) => scopeOf(tag) === name)
+      const mems = new Set<number>()
+      for (const value of values) for (const id of counts.get(value) ?? []) mems.add(id)
+      const view: Record<string, unknown> = { name, count: mems.size, tag_count: values.length }
+      if (scope.description) view.description = scope.description
+      if (scope.required) view.required = true
       return view
     })
     .sort((a, b) => (b.count as number) - (a.count as number) || String(a.name).localeCompare(String(b.name)))
@@ -256,7 +297,7 @@ function readBody(req: Connect.IncomingMessage): Promise<Record<string, unknown>
 }
 
 async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<void> {
-  const segs = url.pathname.split('/').filter(Boolean)
+  const segs = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
   const offset = Number(url.searchParams.get('offset') ?? 0) || 0
   const limit = Number(url.searchParams.get('limit') ?? 20) || 20
 
@@ -321,7 +362,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
           summary: m.summary,
           score: 1,
           snippet: snippet(m.content, query),
-          updated_at: m.updated_at,
+          updated: compactTime(m.updated_at),
         })),
       })
     } else {
@@ -347,10 +388,7 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
       updated_at: ts,
     }
     memories.push(memory)
-    // 标签对象 {key: value|null}：null 即裸标签，其余拼 `key:value`
-    if (body.tags && typeof body.tags === 'object') {
-      applyTagsObject(memory, body.tags as Record<string, unknown>)
-    }
+    setTagsFromWrite(memory, body.tags, body.attributes)
     sendJson(res, 200, fullView(memory))
     return
   }
@@ -367,19 +405,11 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     const body = await readBody(req)
     if (typeof body.summary === 'string') memory.summary = body.summary
     if (typeof body.content === 'string') memory.content = body.content
-    // 增量语义与真实服务端一致（add 先插入、remove 后整行删除，同键双写时 remove 赢）：
-    // remove_tags 按键名删除，add_tags 逐键 upsert（同键旧值先摘除）
-    const add = body.add_tags as Record<string, unknown> | undefined
-    if (add && typeof add === 'object') {
-      applyTagsObject(memory, add)
-    }
+    // 增量语义与真实服务端一致：先写 tags/attributes 的声明，再按全名删除（同名双写时删除赢）
+    applyTagsWrite(memory, body.tags, body.attributes)
     const removes = Array.isArray(body.remove_tags) ? body.remove_tags.map(String) : []
     if (removes.length > 0) {
-      memory.tags = memory.tags.filter((x) => {
-        const i = x.indexOf(':')
-        const key = i > 0 ? x.slice(0, i) : x
-        return !removes.includes(key)
-      })
+      memory.tags = memory.tags.filter((x) => !removes.includes(x))
     }
     memory.updated_at = now()
     sendJson(res, 200, fullView(memory))
@@ -391,14 +421,24 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     return
   }
 
-  // 标签：默认只列组织用标签，all=true 带上仅作边目标的词条（与真实服务端一致）
+  // 标签与作用域：两个命名空间并排返回，filter 同时收窄两者（与真实服务端 tag_list 一致）
   if (segs[1] === 'tags' && segs.length === 2 && method === 'GET') {
-    sendJson(res, 200, { tags: tagViews(url.searchParams.get('all') === 'true') })
+    sendJson(res, 200, {
+      tags: tagViews(url.searchParams.get('filter')),
+      scopes: scopeViews(url.searchParams.get('filter')),
+    })
     return
   }
   if (segs[1] === 'tags' && segs.length === 2 && method === 'POST') {
     const body = await readBody(req)
-    tags.set(String(body.name ?? ''), { description: String(body.description ?? ''), created_at: now() })
+    const name = String(body.name ?? '')
+    // 带作用域的名字要求作用域已存在（tagging 从不隐式发明作用域）
+    const scope = scopeOf(name)
+    if (scope !== null && !scopes.has(scope)) {
+      sendJson(res, 400, { error: `scope '${scope}' does not exist` })
+      return
+    }
+    tags.set(name, { description: String(body.description ?? ''), created_at: now() })
     sendJson(res, 200, null)
     return
   }
@@ -415,17 +455,9 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
       const oldName = segs[2] as string
       tags.delete(oldName)
       tags.set(newName, tag)
-      // 改名跟随标签的每个角色：裸名、边源（name:v）与边目标（k:name）
+      // 改名跟随词条本身：每条记忆里的旧全名换成新全名
       for (const m of memories) {
-        m.tags = m.tags.map((x) => {
-          const i = x.indexOf(':')
-          if (i <= 0) return x === oldName ? newName : x
-          const key = x.slice(0, i)
-          const value = x.slice(i + 1)
-          if (key === oldName) return `${newName}:${value}`
-          if (value === oldName) return `${key}:${newName}`
-          return x
-        })
+        m.tags = m.tags.map((x) => (x === oldName ? newName : x))
       }
     }
     sendJson(res, 200, null)
@@ -434,17 +466,75 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
   if (segs[1] === 'tags' && segs.length === 3 && tag && method === 'DELETE') {
     const name = segs[2] as string
     tags.delete(name)
-    // detach：边随源/目标一起消失；purge：任何角色携带该标签的记忆整个删除
-    const carries = (m: MockMemory) =>
-      m.tags.some((x) => x === name || x.startsWith(`${name}:`) || x.endsWith(`:${name}`))
+    // detach：从所有记忆摘除该词条；purge：携带该词条的记忆整个删除
     if (url.searchParams.get('mode') === 'purge') {
-      for (const m of [...memories]) if (carries(m)) memories.splice(memories.indexOf(m), 1)
+      for (const m of [...memories]) if (m.tags.includes(name)) memories.splice(memories.indexOf(m), 1)
     } else {
       for (const m of memories) {
-        m.tags = m.tags.filter((x) => x !== name && !x.startsWith(`${name}:`) && !x.endsWith(`:${name}`))
+        m.tags = m.tags.filter((x) => x !== name)
       }
     }
     sendJson(res, 200, null)
+    return
+  }
+
+  // 作用域：GET 与 /api/tags 同形（两个命名空间并排）；POST/PUT 走 scope_set 语义
+  // （不存在即创建，存在即更新描述与必填标记）
+  if (segs[1] === 'scopes' && segs.length === 2 && method === 'GET') {
+    sendJson(res, 200, {
+      tags: tagViews(url.searchParams.get('filter')),
+      scopes: scopeViews(url.searchParams.get('filter')),
+    })
+    return
+  }
+  if (segs[1] === 'scopes' && segs.length === 2 && method === 'POST') {
+    const body = await readBody(req)
+    const name = String(body.name ?? '')
+    if (!name || scopeOf(name) !== null) {
+      sendJson(res, 400, { error: 'scope name must be one identifier word' })
+      return
+    }
+    if (!scopes.has(name)) {
+      scopes.set(name, {
+        description: String(body.description ?? ''),
+        created_at: now(),
+        required: body.required === true ? true : undefined,
+      })
+      sendJson(res, 200, { created: true })
+      return
+    }
+    const scope = scopes.get(name)!
+    let descriptionUpdated = false
+    let requiredUpdated = false
+    if (typeof body.description === 'string' && body.description !== scope.description) {
+      scope.description = body.description
+      descriptionUpdated = true
+    }
+    if (typeof body.required === 'boolean' && body.required !== (scope.required === true)) {
+      scope.required = body.required ? true : undefined
+      requiredUpdated = true
+    }
+    sendJson(res, 200, { description_updated: descriptionUpdated, required_updated: requiredUpdated })
+    return
+  }
+  const scope = segs[1] === 'scopes' ? scopes.get(segs[2] ?? '') : undefined
+  if (segs[1] === 'scopes' && segs.length === 3 && !scope) {
+    sendJson(res, 404, { error: 'scope not found' })
+    return
+  }
+  if (segs[1] === 'scopes' && segs.length === 3 && scope && method === 'PUT') {
+    const body = await readBody(req)
+    let descriptionUpdated = false
+    let requiredUpdated = false
+    if (typeof body.description === 'string' && body.description !== scope.description) {
+      scope.description = body.description
+      descriptionUpdated = true
+    }
+    if (typeof body.required === 'boolean' && body.required !== (scope.required === true)) {
+      scope.required = body.required ? true : undefined
+      requiredUpdated = true
+    }
+    sendJson(res, 200, { description_updated: descriptionUpdated, required_updated: requiredUpdated })
     return
   }
 
@@ -515,6 +605,12 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     sendJson(res, 200, {
       exported_at: now(),
       // 导出保持主数据形状（epoch 秒），对齐真实服务的备份格式（memory_view 才做本地渲染）
+      // 必填约定随作用域携带生效时间；mock 只存布尔，用创建时刻顶替
+      scopes: [...scopes.entries()].map(([name, scope]) => ({
+        name,
+        description: scope.description,
+        ...(scope.required ? { required_since: scope.created_at } : {}),
+      })),
       tags: [...tags.entries()].map(([name, tag]) => ({ name, description: tag.description })),
       memories: memories.map((m) => ({
         summary: m.summary,
@@ -527,7 +623,12 @@ async function handle(req: Connect.IncomingMessage, res: ServerResponse, url: UR
     return
   }
   if (segs[1] === 'import' && method === 'POST') {
-    sendJson(res, 200, { imported_memories: 0, imported_tags: 0, skipped_memories: 0 })
+    sendJson(res, 200, {
+      imported_memories: 0,
+      imported_tags: 0,
+      skipped_memories: 0,
+      unclassified_memories: 0,
+    })
     return
   }
   if (segs[1] === 'embeddings' && method === 'POST') {

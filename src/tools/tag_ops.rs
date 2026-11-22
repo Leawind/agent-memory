@@ -1,6 +1,8 @@
-//! Tag management: create/read/update/delete (data operations are delegated to the store's SQL).
+//! Tag and scope management: create/read/update/delete (data operations are delegated to the
+//! store's SQL). A tag name is bare (`rust`) or scoped (`system::pc1sw0`); the scope is an entity
+//! of its own, created explicitly by `scope_set` — tagging never invents one.
 
-use crate::model::normalize_tag_name;
+use crate::model::{normalize_ident_word, normalize_tag_name};
 use crate::store::Store;
 use crate::tools::params::{opt_bool, opt_regex, opt_str, req_str, validate_description};
 use crate::tools::ToolError;
@@ -8,6 +10,8 @@ use serde_json::{json, Map, Value};
 
 pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let name = normalize_tag_name(&req_str(args, "name")?)?;
+    // The shape is validated above; a scoped name additionally needs its scope to exist, which the
+    // store refuses by name (a bare name never consults the scopes: the namespaces are separate).
     let description = match opt_str(args, "description")? {
         Some(d) => validate_description(&d)?,
         None => String::new(),
@@ -30,54 +34,17 @@ pub fn tag_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
 
 pub fn tag_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let filter = opt_regex(args, "filter").map_err(ToolError::invalid)?;
-    let all = opt_bool(args, "all")
-        .map_err(ToolError::invalid)?
-        .unwrap_or(false);
-    // Keys of every edge-pointed tag (target name -> sorted source names), attached below as
-    // the sparse `keys` field — the grouping data for faces that display `key:value` values
-    // nested under their key.
-    let keys_by_target = st.tag_target_keys()?;
-    let mut views = st.tag_views()?;
-    // Default set: the organizing tags — those used as edge sources or bare. A tag whose only
-    // presence is being pointed at is a destination, not a signpost, and stays out of the
-    // default navigation list; `all` or an explicit filter requests everything.
-    if filter.is_none() && !all {
-        views.retain(|(_, target_only)| !target_only);
-    }
-    let mut tags: Vec<Value> = views
-        .into_iter()
-        .map(|(mut view, target_only)| {
-            // Sparse role marker: faces need it to tell a value-only entry (nested under its
-            // keys) from a tag that also organizes on its own (listed top-level too)
-            if target_only {
-                view["target_only"] = json!(true);
-            }
-            if let Some(keys) = keys_by_target.get(view["name"].as_str().unwrap_or_default()) {
-                view["keys"] = json!(keys);
-            }
-            view
-        })
-        .collect();
+    // Two namespaces side by side: tags in browse order (count desc, name asc, as the store returns
+    // them) and scopes in the store's own order. No role split survives in the new model, so there
+    // is no `all` switch and no total_* echoes (the arrays already say how many there are).
+    let mut tags = st.tag_views()?;
+    let mut scopes = st.scope_views()?;
+    // The filter narrows both lists by name, case-insensitively (like every other matcher).
     if let Some(re) = &filter {
         tags.retain(|t| re.is_match(t["name"].as_str().unwrap_or_default()));
+        scopes.retain(|s| re.is_match(s["name"].as_str().unwrap_or_default()));
     }
-    // The reserved tag always has a row (seeded at open), so it flows through like any other
-    // name — the filter applies to it unchanged. Restore the documented browse order
-    // (count desc, name asc).
-    fn sort_key(v: &Value) -> (u64, &str) {
-        (
-            v["count"].as_u64().unwrap_or(0),
-            v["name"].as_str().unwrap_or_default(),
-        )
-    }
-    tags.sort_by(|a, b| {
-        let (count_a, name_a) = sort_key(a);
-        let (count_b, name_b) = sort_key(b);
-        count_b.cmp(&count_a).then(name_a.cmp(name_b))
-    });
-    // No total_* echoes: total_tags duplicates the array length and the store-wide memory count
-    // is the stats tool's job, not something a tag browser acts on.
-    Ok(json!({ "tags": tags }))
+    Ok(json!({ "tags": tags, "scopes": scopes }))
 }
 
 pub fn tag_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -106,6 +73,8 @@ pub fn tag_update(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
             return Err(ToolError::invalid(format!("tag '{new}' already exists")));
         }
     }
+    // The requirement is a property of the scope, not of the tag, so a rename keeps it in place
+    // whatever scope the tag moves to or from.
     let (renamed, description_updated) =
         st.tag_update(&name, new_name.as_deref(), description.as_deref())?;
     // Echo-free: the final name and description are the caller's own inputs (name / new_name /
@@ -155,4 +124,33 @@ pub fn tag_delete(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolEr
             Ok(json!({ "memories_deleted": memories_deleted }))
         }
     }
+}
+
+/// Create a scope, or update the existing one's description and its "required on every write"
+/// contract. A scope name is one identifier word, so `::` cannot appear in it (that separator
+/// belongs to the tag names pointing into the scope).
+pub fn scope_set(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let name = normalize_ident_word(&req_str(args, "name")?, "scope name")?;
+    let description = match opt_str(args, "description")? {
+        Some(d) => Some(validate_description(&d)?),
+        None => None,
+    };
+    let required = opt_bool(args, "required")?;
+    if !st.scope_exists(&name)? {
+        st.scope_create(&name, description.as_deref().unwrap_or_default())?;
+        // A fresh scope starts out not required; a requested requirement takes effect at once, so
+        // the flag is never silently dropped. Echo-free: the create is the news.
+        if let Some(flag) = required {
+            st.scope_update(&name, None, Some(flag))?;
+        }
+        return Ok(json!({ "created": true }));
+    }
+    // Never an upsert: the scope exists, so this reports the halves that were written. The
+    // requirement starts at this moment, leaving older memories as unclassified stock.
+    let (description_updated, required_updated) =
+        st.scope_update(&name, description.as_deref(), required)?;
+    Ok(json!({
+        "description_updated": description_updated,
+        "required_updated": required_updated,
+    }))
 }

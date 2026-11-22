@@ -83,7 +83,7 @@ fn legacy_client_full_flow() {
     // The full tool surface works with no envelope at all
     let (status, resp) = legacy_post(port, &rpc(json!(3), "tools/list", json!({})), &[]);
     assert_eq!(status, 200);
-    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 18);
 
     // A client built on the official Rust SDK stamps a progress token into every request's `_meta`,
     // and such a client also sends the legacy version header after the handshake. `_meta` is
@@ -99,7 +99,7 @@ fn legacy_client_full_flow() {
         &[("MCP-Protocol-Version", "2025-06-18")],
     );
     assert_eq!(status, 200, "{resp}");
-    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 18);
 
     let (status, resp) = legacy_post(
         port,

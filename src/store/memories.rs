@@ -1,6 +1,6 @@
 //! Memory data operations: insert / query / paged browsing / update / delete.
 
-use crate::model::Memory;
+use crate::model::{tag_scope_of, Memory};
 use crate::sql;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
@@ -65,13 +65,13 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// Insert a memory and link the given (source tag id, target tag id) rows (the handler
-    /// resolves ids via `resolve_tags` first).
+    /// Insert a memory and link the given tag ids (the handler resolves ids via `resolve_tags`
+    /// first).
     pub fn insert_memory(
         &self,
         summary: &str,
         content: &str,
-        links: &[(i64, Option<i64>)],
+        tag_ids: &[i64],
         created_at: u64,
         updated_at: u64,
     ) -> Result<i64, String> {
@@ -82,14 +82,14 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
         let id = self.conn.last_insert_rowid();
-        self.set_memory_tags(id, links)?;
+        self.set_memory_tags(id, tag_ids)?;
         Ok(id)
     }
 
     /// Display tags for a set of memory ids, grouped by internal id — the batch variant of the
-    /// per-memory tag query (one query for the whole set instead of one per row; bare tags
-    /// as-is, edges composed `source:target`). `None` loads every row (the in-memory
-    /// searcher's full pass); `Some(&[])` selects nothing.
+    /// per-memory tag query (one query for the whole set instead of one per row; the stored name
+    /// is the display name). `None` loads every row (the in-memory searcher's full pass);
+    /// `Some(&[])` selects nothing.
     fn tags_by_memory(&self, ids: Option<&[i64]>) -> Result<HashMap<i64, Vec<String>>, String> {
         let id_set = ids.map(|ids| serde_json::json!(ids).to_string());
         let mut stmt = self
@@ -98,21 +98,13 @@ impl Store {
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![id_set], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
             })
             .map_err(|e| e.to_string())?;
         let mut by_memory: HashMap<i64, Vec<String>> = HashMap::new();
         for row in rows {
-            let (mid, source, target) = row.map_err(|e| e.to_string())?;
-            let display = match target {
-                Some(v) => crate::model::compose_edge(&source, &v),
-                None => source,
-            };
-            by_memory.entry(mid).or_default().push(display);
+            let (mid, name) = row.map_err(|e| e.to_string())?;
+            by_memory.entry(mid).or_default().push(name);
         }
         Ok(by_memory)
     }
@@ -244,15 +236,15 @@ impl Store {
     /// *content* timeline: it is written only when summary/content change (inside
     /// MEMORY_UPDATE_FIELDS), so curating tags never pushes an old memory back to the top of the
     /// default newest-first browse — the field values agents read did not move.
-    /// Tags are added/removed by internal tag id (add is resolved by the handler via `resolve_tags`
-    /// first, remove via `tag_ids_by_names` — nonexistent names are skipped silently). A removed
-    /// tag disappears from the memory in every role: its own row and every edge pointing at it.
+    /// Tags are added/removed by internal tag id (the handler resolves them first; unknown
+    /// names are skipped silently). Adding a tag replaces whatever tag the memory carries in the
+    /// same scope: a memory holds at most one value per scope.
     pub fn update_memory(
         &self,
         id: i64,
         summary: Option<&str>,
         content: Option<&str>,
-        add_links: &[(i64, Option<i64>)],
+        add_tag_ids: &[i64],
         remove_tag_ids: &[i64],
     ) -> Result<bool, String> {
         if !self.memory_exists(id)? {
@@ -262,29 +254,34 @@ impl Store {
             ));
         }
         let mut changed = false;
-        // Annotations as a comparable row set: adds upsert the source's edge, removals drop
-        // rows (contract: add_tags runs before remove_tags, so a tag in both lists ends up removed).
-        let rows_before = self.tag_rows_for(id)?;
-        let mut rows: Vec<(i64, Option<i64>)> = rows_before
-            .iter()
-            .map(|r| (r.tag_id, r.target_id))
+        let mut before: Vec<i64> = self
+            .tag_rows_for(id)?
+            .into_iter()
+            .map(|row| row.tag_id)
             .collect();
-        let before = {
-            let mut sorted = rows.clone();
-            sorted.sort();
-            sorted
-        };
-        for (tag_id, target_id) in add_links {
-            match rows.iter_mut().find(|(rid, _)| rid == tag_id) {
-                Some(row) => row.1 = *target_id,
-                None => rows.push((*tag_id, *target_id)),
+        before.sort_unstable();
+        let mut rows = before.clone();
+        // A scope holds one value: an added tag displaces the tag already in its scope, so the
+        // caller states the new value without having to know the old one.
+        let names = self.tag_id_names()?;
+        for tag_id in add_tag_ids {
+            if let Some(scope) = names.get(tag_id).and_then(|name| tag_scope_of(name)) {
+                let scope = scope.to_string();
+                rows.retain(|rid| {
+                    names
+                        .get(rid)
+                        .and_then(|name| tag_scope_of(name))
+                        .map(str::to_string)
+                        != Some(scope.clone())
+                });
+            }
+            if !rows.contains(tag_id) {
+                rows.push(*tag_id);
             }
         }
-        rows.retain(|(rid, target_id)| {
-            !remove_tag_ids.contains(rid) && !remove_tag_ids.contains(&target_id.unwrap_or(0))
-        });
+        rows.retain(|tag_id| !remove_tag_ids.contains(tag_id));
         let mut after = rows.clone();
-        after.sort();
+        after.sort_unstable();
         changed |= before != after;
         if summary.is_some() || content.is_some() {
             self.conn
@@ -337,17 +334,23 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Test helper: resolve tag edges and insert a memory (the production path resolves ids in the handler).
+    /// Test helper: create the scopes a tag list needs, resolve the tags and insert a memory
+    /// (the production path resolves ids in the handler).
     fn insert_with_tags(st: &Store, summary: &str, content: &str, tags: &[&str], at: u64) -> i64 {
-        let edges: Vec<crate::model::TagEdge> = tags
-            .iter()
-            .map(|t| match t.split_once(':') {
-                Some((s, v)) => (s.to_string(), Some(v.to_string())),
-                None => (t.to_string(), None),
-            })
-            .collect();
-        let links = st.resolve_tags(&edges, true).unwrap().links;
+        let links = tag_ids(st, tags);
         st.insert_memory(summary, content, &links, at, at).unwrap()
+    }
+
+    fn tag_ids(st: &Store, tags: &[&str]) -> Vec<i64> {
+        for tag in tags {
+            if let Some(scope) = tag_scope_of(tag) {
+                if !st.scope_exists(scope).unwrap() {
+                    st.scope_create(scope, "").unwrap();
+                }
+            }
+        }
+        let names: Vec<String> = tags.iter().map(|tag| (*tag).to_string()).collect();
+        st.resolve_tags(&names, true).unwrap().links
     }
 
     /// get_memories returns found memories in request order, reports missing ids, and keeps
@@ -358,14 +361,14 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         let a = insert_with_tags(&st, "a", "ca", &["rust"], 1);
-        let b = insert_with_tags(&st, "b", "cb", &["project:nmmt"], 2);
+        let b = insert_with_tags(&st, "b", "cb", &["project::nmmt"], 2);
         let (found, missing) = st.get_memories(&[b, 999, a, b]).unwrap();
         assert_eq!(missing, vec!["m999".to_string()]);
         assert_eq!(
             found.iter().map(|m| m.summary.as_str()).collect::<Vec<_>>(),
             vec!["b", "a", "b"]
         );
-        assert_eq!(found[0].tags, vec!["project:nmmt".to_string()]);
+        assert_eq!(found[0].tags, vec!["project::nmmt".to_string()]);
         assert_eq!(found[1].tags, vec!["rust".to_string()]);
         let (found, missing) = st.get_memories(&[]).unwrap();
         assert!(found.is_empty() && missing.is_empty());
@@ -393,10 +396,10 @@ mod tests {
         assert_eq!(all[0].tags, vec!["notes".to_string(), "rust".to_string()]);
 
         // Update: change fields + add/remove tags (name → id resolution goes through the same path as the handler)
-        let add = st.resolve_tags(&[("study".into(), None)], true).unwrap();
+        let add = tag_ids(&st, &["study"]);
         let remove = st.tag_ids_by_names(&["notes".into()]).unwrap();
         let changed = st
-            .update_memory(id, Some("new summary"), None, &add.links, &remove)
+            .update_memory(id, Some("new summary"), None, &add, &remove)
             .unwrap();
         assert!(changed);
         let (found, missing) = st.get_memories(&[id]).unwrap();
@@ -522,7 +525,7 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Contract (defs.rs): add_tags runs before remove_tags;
+    /// Contract (defs.rs): tags/attributes run before remove_tags;
     /// when the same tag appears in both lists the final result is removal.
     #[test]
     fn update_memory_add_before_remove_ends_removed() {
@@ -530,37 +533,29 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         let id = insert_with_tags(&st, "s", "c", &["a"], 1);
-        let add = st
-            .resolve_tags(&[("a".into(), None), ("b".into(), None)], true)
-            .unwrap();
+        let add = tag_ids(&st, &["a", "b"]);
         let remove = st.tag_ids_by_names(&["a".into()]).unwrap();
-        st.update_memory(id, None, None, &add.links, &remove)
-            .unwrap();
+        st.update_memory(id, None, None, &add, &remove).unwrap();
         let (found, _) = st.get_memories(&[id]).unwrap();
         assert_eq!(found[0].tags, vec!["b".to_string()]);
         cleanup(&path);
     }
 
-    /// Removing a tag drops it from the memory in every role: its own row and every edge
-    /// pointing at it.
+    /// Removing a tag drops that membership alone: a memory that also carries the same value
+    /// under another scope keeps it.
     #[test]
-    fn update_memory_removes_a_tag_in_every_role() {
-        let path = temp_db("remove-any-role");
+    fn update_memory_removes_only_the_named_tag() {
+        let path = temp_db("remove-tag");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
-        // m1: nmmt is a target twice and bare nowhere; m2: nmmt bare; m3: nmmt a source
-        let m1 = insert_with_tags(&st, "m1", "c", &["project:nmmt", "topic:nmmt"], 1);
+        let m1 = insert_with_tags(&st, "m1", "c", &["project::nmmt", "topic::nmmt"], 1);
         let m2 = insert_with_tags(&st, "m2", "c", &["nmmt", "keep"], 1);
-        let m3 = insert_with_tags(&st, "m3", "c", &["nmmt:rust"], 1);
 
-        let remove = st.tag_ids_by_names(&["nmmt".into()]).unwrap();
+        let remove = st.tag_ids_by_names(&["project::nmmt".into()]).unwrap();
         st.update_memory(m1, None, None, &[], &remove).unwrap();
-        st.update_memory(m2, None, None, &[], &remove).unwrap();
-        st.update_memory(m3, None, None, &[], &remove).unwrap();
-        let (found, _) = st.get_memories(&[m1, m2, m3]).unwrap();
-        assert_eq!(found[0].tags, Vec::<String>::new());
-        assert_eq!(found[1].tags, vec!["keep".to_string()]);
-        assert_eq!(found[2].tags, Vec::<String>::new());
+        let (found, _) = st.get_memories(&[m1, m2]).unwrap();
+        assert_eq!(found[0].tags, vec!["topic::nmmt".to_string()]);
+        assert_eq!(found[1].tags, vec!["keep".to_string(), "nmmt".to_string()]);
         cleanup(&path);
     }
 
@@ -577,8 +572,8 @@ mod tests {
 
         // Tag-only change on the older memory: changed, but its updated_at is untouched, so the
         // default updated_at-desc listing keeps the genuinely newer memory first
-        let add = st.resolve_tags(&[("b".into(), None)], true).unwrap();
-        let changed = st.update_memory(old, None, None, &add.links, &[]).unwrap();
+        let add = tag_ids(&st, &["b"]);
+        let changed = st.update_memory(old, None, None, &add, &[]).unwrap();
         assert!(changed);
         let (_, page) = st
             .list_memories(Default::default(), "updated_at", false, 0, 10)
@@ -595,10 +590,8 @@ mod tests {
 
         // ...and a no-op change (existing tag re-added) touches nothing at all
         let (before, _) = st.get_memories(&[fresh]).unwrap();
-        let existing = st.resolve_tags(&[("a".into(), None)], true).unwrap();
-        let changed = st
-            .update_memory(fresh, None, None, &existing.links, &[])
-            .unwrap();
+        let existing = tag_ids(&st, &["a"]);
+        let changed = st.update_memory(fresh, None, None, &existing, &[]).unwrap();
         assert!(!changed);
         let (after, _) = st.get_memories(&[fresh]).unwrap();
         assert_eq!(before[0].updated_at, after[0].updated_at);

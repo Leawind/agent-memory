@@ -9,24 +9,32 @@ import type {
   MemoryUpdateResp,
 } from '../types'
 
-/** One tags object entry: identifier word, number, or null for a bare tag */
-export type TagValue = string | number | null
+/** One scoped value: the value half of a composed tag name (a string), or a number the server
+ *  canonicalizes into the same name */
+export type TagValue = string | number
 
-/** Input for creating a memory: the tags object maps each tag key to its value (null = bare tag) */
+/** Input for creating a memory: two containers over the one tag vocabulary. 'tags' lists bare
+ *  tags, 'attributes' maps a scope to its value (`{"system": "pc1sw0"}` composes the tag
+ *  system::pc1sw0); a scope lives in exactly one of them. A scope the store requires on every
+ *  write must appear in 'attributes' — with a value, or with null meaning the memory takes no
+ *  tag in it. */
 export interface MemoryCreateInput {
   summary: string
   /** Optional body: an empty string stores a summary-only memory */
   content: string
-  tags: Record<string, TagValue>
+  tags?: string[]
+  attributes?: Record<string, TagValue | null>
   /** The panel's tag select is allow-create: names the user typed are deliberate, so auto-create them */
   create_missing_tags?: boolean
 }
 
-/** Input for editing a memory: incremental — add_tags upserts keys, remove_tags drops keys by name */
+/** Input for editing a memory: incremental — 'tags' adds bare tags, 'attributes' upserts scoped
+ *  values (null clears a required scope), remove_tags drops tags by full name */
 export interface MemoryUpdateInput {
   summary?: string
   content?: string
-  add_tags?: Record<string, TagValue>
+  tags?: string[]
+  attributes?: Record<string, TagValue | null>
   remove_tags?: string[]
   /** Same semantics as in MemoryCreateInput */
   create_missing_tags?: boolean

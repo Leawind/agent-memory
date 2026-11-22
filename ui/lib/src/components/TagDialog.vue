@@ -111,7 +111,7 @@ import { useApiClient } from '../api/client'
 import { createTag, deleteTag, updateTag } from '../api/tags'
 import type { TagDeleteMode } from '../api/tags'
 import FormDialog from './FormDialog.vue'
-import { validTagName } from '../tagNames'
+import { validFullTagName } from '../tagNames'
 import { t } from '../i18n'
 import { useDialogEdgeResize } from '../composables/useDialogEdgeResize'
 import type { TagView } from '../types'
@@ -145,9 +145,10 @@ const form = reactive({ name: '', description: '' })
 const original = reactive({ name: '', description: '', count: 0 })
 
 const dirty = computed(() => form.name.trim() !== original.name || form.description !== original.description)
-// Illegal names are flagged as they are typed, not on the server round-trip
+// Illegal names are flagged as they are typed, not on the server round-trip; a name may be
+// bare (`rust`) or scoped (`system::pc1sw0`) — the scope must already exist server-side
 const nameError = computed(() =>
-  form.name.trim() !== '' && !validTagName(form.name) ? t('tags.invalidNameFmt', { name: form.name.trim() }) : '',
+  form.name.trim() !== '' && !validFullTagName(form.name) ? t('tags.invalidNameFmt', { name: form.name.trim() }) : '',
 )
 const canSave = computed(() => !saving.value && !nameError.value && form.name.trim() !== '' && dirty.value)
 

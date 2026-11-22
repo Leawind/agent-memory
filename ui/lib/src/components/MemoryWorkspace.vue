@@ -6,7 +6,9 @@
         :active="panelExpr"
         @select="toggleFilter"
         @edit="openTag"
+        @edit-scope="openScope"
         @create="createTag"
+        @create-scope="createScope"
         @predicates="predicateVisible = true"
         @clear="clearFilter"
       />
@@ -40,6 +42,15 @@
       @saved="onTagChanged"
       @deleted="onTagChanged"
     />
+    <!-- Scope dialog: opened from a scope header's edit affordance or the sidebar's folder
+         button (create). The required contract shapes the memory editor's create gate, so the
+         panel refreshes alongside the sidebar -->
+    <ScopeDialog
+      :visible="scopeDialogVisible"
+      :scope="editingScope"
+      @update:visible="scopeDialogVisible = $event"
+      @saved="onScopeChanged"
+    />
     <PredicateDialog
       v-model:visible="predicateVisible"
       @changed="onTagChanged"
@@ -51,10 +62,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useContainerWidth } from '../composables/useContainerWidth'
-import type { TagView } from '../types'
+import type { ScopeView, TagView } from '../types'
 import MemoriesPanel from './MemoriesPanel.vue'
 import TagsSidebar from './TagsSidebar.vue'
 import TagDialog from './TagDialog.vue'
+import ScopeDialog from './ScopeDialog.vue'
 import PredicateDialog from './PredicateDialog.vue'
 const predicateVisible = ref(false)
 
@@ -127,11 +139,25 @@ function createTag(): void {
   tagDialogVisible.value = true
 }
 
+// ---- Scope dialog state ----
+const scopeDialogVisible = ref(false)
+const editingScope = ref<ScopeView | null>(null)
+
+function openScope(scope: ScopeView): void {
+  editingScope.value = scope
+  scopeDialogVisible.value = true
+}
+
+function createScope(): void {
+  editingScope.value = null
+  scopeDialogVisible.value = true
+}
+
 // ---- Sidebar click = filter: clicking a tag narrows the list to it (clicking the active
 // one clears); the panel owns the expression, the sidebar only mirrors it for highlighting.
-// The sidebar computes the expression per row: a tag's own name, or `key=value` for a value
-// nested under a key (the exact-edge atom, since a bare value name cannot carry the key). ----
-function toggleFilter(_tag: TagView, expr: string): void {
+// The sidebar computes the expression per row: a tag's own name (bare or scope::value), or
+// the scope::* wildcard for a scope header. ----
+function toggleFilter(expr: string): void {
   panel.value?.toggleTagFilter(expr)
 }
 
@@ -152,6 +178,12 @@ function refreshSidebar(): void {
 
 function onTagChanged(): void {
   editingTag.value = null
+  refreshSidebar()
+  panel.value?.refresh()
+}
+
+function onScopeChanged(): void {
+  editingScope.value = null
   refreshSidebar()
   panel.value?.refresh()
 }

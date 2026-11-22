@@ -8,7 +8,7 @@ fn setup(label: &str) -> std::path::PathBuf {
         std::process::id(),
         crate::model::now()
     ));
-    execute_with_db(&path,&IdentityCtx::open_mode(),MEMORY_CREATE,&json!({"summary":"private body sentinel", "content":"DO NOT DISCLOSE", "tags":{"a":null},"create_missing_tags":true})).unwrap();
+    execute_with_db(&path,&IdentityCtx::open_mode(),MEMORY_CREATE,&json!({"summary":"private body sentinel", "content":"DO NOT DISCLOSE", "tags": ["a"],"create_missing_tags":true})).unwrap();
     for name in ["b", "c"] {
         execute_with_db(
             &path,
@@ -133,7 +133,7 @@ fn decay_rules_match_tags_and_survive_export_import() {
         &path,
         &ctx,
         MEMORY_CREATE,
-        &json!({"summary":"temp note", "tags":{"temp":"x"},"create_missing_tags":true}),
+        &json!({"summary":"temp note", "attributes": {"temp": "x"},"create_missing_tags":true}),
     )
     .unwrap();
     store::with_db_in(&path, store::TxMode::Write, |st| -> Result<(), String> {

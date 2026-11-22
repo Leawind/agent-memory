@@ -81,12 +81,12 @@ fn mcp_endpoint_end_to_end() {
     assert_eq!(status, 202);
     assert_eq!(body, Value::Null);
 
-    // tools/list carries static caching hints (the tool surface never changes at runtime)
+    // tools/list advertises no TTL: the write contract can change with the store configuration
     let tools = mcp_rpc(port, json!(2), "tools/list", json!({}));
     assert_eq!(tools["result"]["resultType"], "complete");
-    assert_eq!(tools["result"]["ttlMs"], 3_600_000);
+    assert_eq!(tools["result"]["ttlMs"], 0);
     assert_eq!(tools["result"]["cacheScope"], "public");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 18);
 
     // Full agent flow: create -> search (progressive disclosure, no content leak) -> fetch full text
     let created = mcp_rpc(
@@ -97,7 +97,7 @@ fn mcp_endpoint_end_to_end() {
             "name": "memory_create", "arguments": {
                 "summary": "项目使用 Rust 实现 agent 记忆系统",
                 "content": "仓库位于 D:\\Workspace，SQLite 做持久化，搜索无需分词。",
-                "tags": {"项目": null, "rust": null}, "create_missing_tags": true
+                "tags": ["项目", "rust"], "create_missing_tags": true
             }
         }),
     );

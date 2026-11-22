@@ -7,6 +7,9 @@ use std::collections::{HashMap, HashSet};
 
 use super::Store;
 
+/// One scope row of the dump: id, name, description, created_at, required_since.
+type ScopeRow = (i64, String, String, i64, Option<i64>);
+
 /// One named hygiene check. `id` is a stable machine identifier (the UI localizes it);
 /// `issues` holds raw operator-facing lines, printed verbatim by the CLI.
 pub struct HygieneCheck {
@@ -46,6 +49,9 @@ pub struct ImportReport {
     pub memories: usize,
     pub tags: usize,
     pub skipped: usize,
+    /// Imported memories that do not declare every tag the store requires on every write: they
+    /// arrive unclassified (import never rewrites content or invents declarations).
+    pub unclassified: usize,
 }
 
 impl Store {
@@ -441,20 +447,49 @@ impl Store {
         }))
     }
 
-    /// Export content: full memories + the tag table, independent of the storage's internal schema (cross-platform migration can go through here too).
+    /// Raw scope rows for the dump (id, name, description, created_at, required_since), id
+    /// ascending: the export writes them verbatim, and the import reads the store's scope
+    /// inventory — required cutoffs included — from here.
+    fn scope_rows(&self) -> Result<Vec<ScopeRow>, String> {
+        let mut st = self
+            .conn
+            .prepare_cached(sql::MEMORY_DUMP_SCOPES)
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Export content: full memories + the tag and scope tables, independent of the storage's
+    /// internal schema (cross-platform migration can go through here too).
     ///
-    /// Shape: `tags` / `memories` are both objects keyed by id — tag keys are the decimal string of the internal
-    /// auto-increment id, memory keys are `m<N>` (consistent with `format_id`); a memory's `tags` array
-    /// references tags by id string. Only primary data is included (names/descriptions/content/timestamps), not
-    /// derived info such as memory_count, last_used_at or total counts (all derivable from the file itself).
-    /// Import renumbers ids; the id keys act only as reference tokens within the file.
+    /// Shape: `scopes` / `tags` / `memories` are all objects keyed by id — scope and tag keys are
+    /// the decimal string of the internal auto-increment id, memory keys are `m<N>` (consistent
+    /// with `format_id`); a memory's `tags` array references tags by id number. A tag's `scope`
+    /// is its own name's prefix (omitted for bare tags), a scope's `required_since` is omitted
+    /// while the scope does not apply to every write. Only primary data is included, not derived
+    /// info such as memory_count, last_used_at or total counts (all derivable from the file
+    /// itself). Import renumbers ids; the id keys act only as reference tokens within the file.
     ///
-    /// With `filter`, only memories whose display tag names satisfy the expression are exported,
-    /// together with the closure of the tags their annotations reference; the dump then carries
-    /// data only — predicate definitions and the lifecycle policy are configuration and stay
-    /// out. A full export (no filter) keeps the complete shape.
+    /// With `filter`, only memories whose tag names satisfy the expression are exported, together
+    /// with the tags their annotations reference and the scopes those tags belong to; the dump
+    /// then carries data only — predicate definitions and the lifecycle policy are configuration
+    /// and stay out. A full export (no filter) keeps the complete shape.
     pub fn export_dump(&self, filter: Option<&TagExpr>) -> Result<Value, String> {
-        // All tag rows; a filtered export keeps only the closure collected below.
+        // All scope rows; a filtered export keeps only the referenced ones.
+        let all_scopes = self.scope_rows()?;
+
+        // All tag rows; a tag's scope rides its own name, so no join is needed.
         let mut all_tags: Vec<(i64, String, String, i64)> = Vec::new();
         let mut st = self
             .conn
@@ -474,28 +509,21 @@ impl Store {
             all_tags.push(row.map_err(|e| e.to_string())?);
         }
 
-        // Memory ↔ tag annotations as (memory id, source tag id, target tag id) pairs — the
-        // target half rides the annotation row (null for bare tags), memory_id then tag_id ascending.
-        let mut pairs: Vec<(i64, i64, Option<i64>)> = Vec::new();
+        // Memory ↔ tag links as (memory id, tag id) pairs, both ascending.
+        let mut pairs: Vec<(i64, i64)> = Vec::new();
         let mut st = self
             .conn
             .prepare_cached(sql::MEMORY_TAG_ID_PAIRS)
             .map_err(|e| e.to_string())?;
         let pair_rows = st
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, Option<i64>>(2)?,
-                ))
-            })
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
             .map_err(|e| e.to_string())?;
         for pair in pair_rows {
             pairs.push(pair.map_err(|e| e.to_string())?);
         }
 
-        // Memory rows collected first: matching needs each memory's display tag names, which
-        // are composed from the pairs and the tag rows above.
+        // Memory rows collected first: matching needs each memory's tag names, which are the
+        // stored names themselves.
         let mut rows: Vec<(i64, String, String, i64, i64)> = Vec::new();
         let mut st = self
             .conn
@@ -516,8 +544,8 @@ impl Store {
             rows.push(row.map_err(|e| e.to_string())?);
         }
 
-        // Matched memory ids when filtering, evaluated on the same display forms the
-        // list/search paths see.
+        // Matched memory ids when filtering, evaluated on the same names the list/search paths
+        // see (the stored name is the display name).
         let matched: Option<HashSet<i64>> = match filter {
             None => None,
             Some(expr) => {
@@ -526,15 +554,14 @@ impl Store {
                     .map(|(id, name, ..)| (*id, name.as_str()))
                     .collect();
                 let mut display: HashMap<i64, Vec<String>> = HashMap::new();
-                for (memory_id, tag_id, target_id) in &pairs {
-                    let source = names
+                for (memory_id, tag_id) in &pairs {
+                    let name = names
                         .get(tag_id)
                         .ok_or("corrupt store: annotation references unknown tag")?;
-                    let composed = match target_id.map(|t| names.get(&t)) {
-                        Some(Some(target)) => crate::model::compose_edge(source, target),
-                        Some(None) | None => (*source).to_string(),
-                    };
-                    display.entry(*memory_id).or_default().push(composed);
+                    display
+                        .entry(*memory_id)
+                        .or_default()
+                        .push((*name).to_string());
                 }
                 Some(
                     rows.iter()
@@ -547,11 +574,12 @@ impl Store {
             }
         };
 
-        // Annotation refs for the exported memories; a filtered export also collects the tag
-        // closure (source halves and edge targets of matched annotations only).
+        // Tag refs for the exported memories; a filtered export also collects the tag closure,
+        // and the scopes those tags name make up the scope closure (a scope never rides along
+        // unreferenced).
         let mut refs: HashMap<i64, Vec<Value>> = HashMap::new();
         let mut closure: HashSet<i64> = HashSet::new();
-        for (memory_id, tag_id, target_id) in pairs {
+        for (memory_id, tag_id) in pairs {
             if matched
                 .as_ref()
                 .is_some_and(|set| !set.contains(&memory_id))
@@ -559,30 +587,45 @@ impl Store {
                 continue;
             }
             closure.insert(tag_id);
-            if let Some(t) = target_id {
-                closure.insert(t);
-            }
-            refs.entry(memory_id).or_default().push(json!([
-                tag_id.to_string(),
-                target_id
-                    .map(|t| Value::String(t.to_string()))
-                    .unwrap_or(Value::Null),
-            ]));
+            refs.entry(memory_id).or_default().push(json!(tag_id));
         }
 
+        let mut used_scopes: HashSet<String> = HashSet::new();
         let mut tags = Map::new();
         for (id, name, description, created_at) in all_tags {
             if matched.is_some() && !closure.contains(&id) {
                 continue;
             }
-            tags.insert(
-                id.to_string(),
-                json!({
-                    "name": name,
-                    "description": description,
-                    "created_at": created_at,
-                }),
-            );
+            let scope = crate::model::tag_scope_of(&name).map(str::to_string);
+            if let Some(scope) = &scope {
+                used_scopes.insert(scope.clone());
+            }
+            let mut tag = json!({
+                "name": name,
+                "description": description,
+                "created_at": created_at,
+            });
+            if let Some(scope) = scope {
+                tag["scope"] = json!(scope);
+            }
+            tags.insert(id.to_string(), tag);
+        }
+
+        let mut scopes = Map::new();
+        for (id, name, description, created_at, required_since) in all_scopes {
+            if matched.is_some() && !used_scopes.contains(&name) {
+                continue;
+            }
+            let mut scope = json!({
+                "name": name,
+                "description": description,
+                "created_at": created_at,
+            });
+            // The write contract is data: a restore must not silently lift it
+            if let Some(since) = required_since {
+                scope["required_since"] = json!(since);
+            }
+            scopes.insert(id.to_string(), scope);
         }
 
         let mut memories = Map::new();
@@ -606,6 +649,7 @@ impl Store {
         }
         let mut dump = json!({
             "exported_at": crate::model::now(),
+            "scopes": Value::Object(scopes),
             "tags": Value::Object(tags),
             "memories": Value::Object(memories),
         });
@@ -616,14 +660,20 @@ impl Store {
         Ok(dump)
     }
 
-    /// Restore or merge data from JSON produced by `export_dump`. Restore mode (default) targets an
-    /// empty database — import is a "restore/migration", not a merge, to avoid ambiguity with existing
-    /// data's ids and tag descriptions. Merge mode (`options.merge`) instead imports into a populated
-    /// target: verbatim-duplicate memories are skipped, present tag rows stay untouched, and the
-    /// file's predicates / lifecycle policy are ignored.
+    /// Restore or merge data from JSON produced by `export_dump` (a 0.3.x legacy export is
+    /// accepted too: it carries no `scopes` map and its memories tag with source/target id
+    /// pairs, which `modernize_legacy_dump` converts in memory first). Restore mode (default)
+    /// targets an empty database — import is a "restore/migration", not a merge, to avoid
+    /// ambiguity with existing data's ids and tag descriptions. Merge mode (`options.merge`)
+    /// instead imports into a populated target: verbatim-duplicate memories are skipped,
+    /// present tag and scope rows stay untouched, and the file's predicates / lifecycle policy
+    /// are ignored.
     /// Memories keep their exported created_at / updated_at; ids are not preserved (renumbered),
     /// and the id keys in the export file exist only to express memory→tag references — referencing a tag id
-    /// absent from the export errors out outright. Legacy array-shaped exports are always rejected; no compatibility shims.
+    /// absent from the export errors out outright. A scope's `required_since` only lands on
+    /// scopes the import itself creates; an import never invents tag declarations, so a memory
+    /// created before the store's latest required cutoff that carries no tag in any required
+    /// scope is reported as unclassified instead.
     pub fn import_dump(
         &self,
         dump: &Value,
@@ -637,10 +687,24 @@ impl Store {
             if empty["memories"].as_u64().unwrap_or(0) != 0
                 || unreserved_tags != 0
                 || !self.predicate_rows()?.is_empty()
+                || !self.scope_rows()?.is_empty()
             {
                 return Err("target database is not empty; import is a restore, use merge mode for an incremental import or point --db at a fresh database".into());
             }
         }
+        // 0.3.x backups predate scopes (no `scopes` map): convert one in memory so the common
+        // path below only ever speaks the current format.
+        let converted;
+        let dump = if dump.get("scopes").is_none() {
+            converted = modernize_legacy_dump(dump)?;
+            &converted
+        } else {
+            dump
+        };
+        let scopes = dump
+            .get("scopes")
+            .and_then(Value::as_object)
+            .ok_or("invalid export: 'scopes' must be an object keyed by scope id")?;
         let tags = dump
             .get("tags")
             .and_then(Value::as_object)
@@ -651,7 +715,15 @@ impl Store {
             .ok_or("invalid export: 'memories' must be an object keyed by memory id")?;
 
         // Id keys are renumbered on import but still act as reference tokens, so first validate strictly against the export format:
-        // tag keys are positive-integer decimal strings, memory keys are "m<N>".
+        // scope and tag keys are positive-integer decimal strings, memory keys are "m<N>".
+        for key in scopes.keys() {
+            let valid = key.parse::<u64>().map(|n| n > 0).unwrap_or(false);
+            if !valid {
+                return Err(format!(
+                    "invalid export: scope key '{key}' is not a positive integer id"
+                ));
+            }
+        }
         for key in tags.keys() {
             let valid = key.parse::<u64>().map(|n| n > 0).unwrap_or(false);
             if !valid {
@@ -668,10 +740,41 @@ impl Store {
             }
         }
 
-        // Normalize dump tag names up front (duplicates within the export file are rejected too —
-        // name is unique in the database): the name map feeds both tag creation and the import
-        // filter's dump-local vocabulary. Dump tag names are vocabulary names; both edge halves
-        // reference this same table.
+        // Normalize dump scope and tag names up front (duplicates within the export file are
+        // rejected too — names are unique in the database): the name maps feed both row creation
+        // and the import filter's dump-local vocabulary. A tag's `scope` field must agree with
+        // its own name's prefix and name a scope present in the file.
+        let mut scope_name_by_key: HashMap<&str, String> = HashMap::with_capacity(scopes.len());
+        let mut scope_desc_by_key: HashMap<&str, String> = HashMap::with_capacity(scopes.len());
+        let mut scope_since_by_key: HashMap<&str, i64> = HashMap::new();
+        let mut seen_scopes = HashSet::with_capacity(scopes.len());
+        for (key, s) in scopes {
+            let name = s
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or("invalid export: scope without name")?;
+            let name = crate::model::normalize_ident_word(name, "scope name")?;
+            if !seen_scopes.insert(name.clone()) {
+                return Err(format!("invalid export: duplicate scope name '{name}'"));
+            }
+            let description = validate_max_len(
+                s.get("description").and_then(Value::as_str).unwrap_or(""),
+                "scope description",
+                crate::model::MAX_TAG_DESC_CHARS,
+            )?;
+            // The write contract travels with the scope: its cutoff is what keeps a restored
+            // store's classified/unclassified boundary stable. A merge never rewrites
+            // vocabulary, so it only lands on scopes the merge itself creates.
+            if let Some(since) = s.get("required_since").and_then(Value::as_i64) {
+                if since > 0 {
+                    scope_since_by_key.insert(key.as_str(), since);
+                }
+            }
+            scope_name_by_key.insert(key.as_str(), name);
+            scope_desc_by_key.insert(key.as_str(), description);
+        }
+        let scope_names: HashSet<String> = scope_name_by_key.values().cloned().collect();
+
         let mut name_by_key: HashMap<&str, String> = HashMap::with_capacity(tags.len());
         let mut description_by_key: HashMap<&str, String> = HashMap::with_capacity(tags.len());
         let mut seen_names = HashSet::with_capacity(tags.len());
@@ -680,13 +783,38 @@ impl Store {
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or("invalid export: tag without name")?;
-            let description = t.get("description").and_then(Value::as_str).unwrap_or("");
             let name = crate::model::normalize_tag_name(name)?;
+            match t.get("scope") {
+                None | Some(Value::Null) => {
+                    if crate::model::tag_scope_of(&name).is_some() {
+                        return Err(format!(
+                            "invalid export: scoped tag '{name}' carries no 'scope' field"
+                        ));
+                    }
+                }
+                Some(Value::String(scope)) => {
+                    if Some(scope.as_str()) != crate::model::tag_scope_of(&name) {
+                        return Err(format!(
+                            "invalid export: tag '{name}' declares scope '{scope}', which its own name does not carry"
+                        ));
+                    }
+                    if !scope_names.contains(scope) {
+                        return Err(format!(
+                            "invalid export: tag '{name}' references scope '{scope}' absent from the export"
+                        ));
+                    }
+                }
+                Some(other) => {
+                    return Err(format!(
+                        "invalid export: tag '{name}' has a non-string scope: {other}"
+                    ));
+                }
+            }
             if !seen_names.insert(name.clone()) {
                 return Err(format!("invalid export: duplicate tag name '{name}'"));
             }
             let description = validate_max_len(
-                description,
+                t.get("description").and_then(Value::as_str).unwrap_or(""),
                 "tag description",
                 crate::model::MAX_TAG_DESC_CHARS,
             )?;
@@ -694,9 +822,9 @@ impl Store {
             description_by_key.insert(key.as_str(), description);
         }
 
-        // Optional import filter, evaluated inside the dump: a memory is kept when its display
-        // tag names (composed from the file's own vocabulary) satisfy the expression. This runs
-        // before any write, so a bad filter leaves the store untouched.
+        // Optional import filter, evaluated inside the dump: a memory is kept when its tag names
+        // (the file's own vocabulary) satisfy the expression. This runs before any write, so a
+        // bad filter leaves the store untouched.
         let keep: Option<HashSet<&str>> = match options.predicate {
             None => None,
             Some(raw) => {
@@ -714,24 +842,22 @@ impl Store {
                             .collect()
                     })
                     .unwrap_or_default();
-                let expr = super::predicates::resolve_dump_filter(raw, &vocabulary, &predicates)?;
+                let expr = super::predicates::resolve_dump_filter(
+                    raw,
+                    &vocabulary,
+                    &scope_names,
+                    &predicates,
+                )?;
                 let mut keep = HashSet::with_capacity(memories.len());
                 for (key, m) in memories {
-                    let display = parse_memory_tag_pairs(key, m)?
+                    let display = parse_memory_tag_ids(key, m)?
                         .into_iter()
-                        .map(|(source, target)| {
-                            let source = name_by_key.get(source).ok_or_else(|| {
-                                format!("invalid export: memory {key} references unknown tag id '{source}'")
-                            })?;
-                            match target {
-                                None => Ok(source.clone()),
-                                Some(target) => {
-                                    let target = name_by_key.get(target).ok_or_else(|| {
-                                        format!("invalid export: memory {key} references unknown target tag id '{target}'")
-                                    })?;
-                                    Ok(crate::model::compose_edge(source, target))
-                                }
-                            }
+                        .map(|id| {
+                            name_by_key.get(id.as_str()).cloned().ok_or_else(|| {
+                                format!(
+                                    "invalid export: memory {key} references unknown tag id '{id}'"
+                                )
+                            })
                         })
                         .collect::<Result<Vec<_>, String>>()?;
                     if expr.eval(&display) {
@@ -741,6 +867,20 @@ impl Store {
                 Some(keep)
             }
         };
+
+        // Create scopes first — a scoped tag cannot exist without its scope. Present scopes are
+        // reused untouched: a merge never rewrites the target's vocabulary or its write
+        // contract, so the file's required_since only lands on scopes this import creates.
+        for key in scopes.keys() {
+            let name = &scope_name_by_key[key.as_str()];
+            if self.scope_exists(name)? {
+                continue;
+            }
+            self.scope_create(name, &scope_desc_by_key[key.as_str()])?;
+            if let Some(since) = scope_since_by_key.get(key.as_str()) {
+                self.scope_set_required_since(name, *since)?;
+            }
+        }
 
         // Create tags with an export tag id → new database id mapping for translating memory
         // references. Present rows are reused as-is: the reserved tag is seeded at open in every
@@ -781,6 +921,24 @@ impl Store {
         }
         let mut inserted = 0usize;
         let mut skipped = 0usize;
+        let mut unclassified = 0usize;
+        // The store's write contract at this point (the file's scopes have materialized above):
+        // the latest required cutoff decides which imported memories count as unclassified.
+        let required: Vec<(String, i64)> = self
+            .scope_rows()?
+            .into_iter()
+            .filter_map(|(_, name, _, _, since)| since.map(|since| (name, since)))
+            .collect();
+        let required_scope_names: HashSet<&str> =
+            required.iter().map(|(name, _)| name.as_str()).collect();
+        let latest_since = required.iter().map(|(_, since)| *since).max();
+        // Each linkable tag's scope, by database id — the unclassified probe reads the scope off
+        // the tag's own name.
+        let mut scope_of_tag: HashMap<i64, Option<&str>> =
+            HashMap::with_capacity(tag_id_by_key.len());
+        for (key, id) in &tag_id_by_key {
+            scope_of_tag.insert(*id, crate::model::tag_scope_of(&name_by_key[*key]));
+        }
         for (key, m) in memories {
             if keep.as_ref().is_some_and(|set| !set.contains(key.as_str())) {
                 continue;
@@ -807,20 +965,30 @@ impl Store {
                 .get("updated_at")
                 .and_then(Value::as_u64)
                 .unwrap_or(created_at);
-            let mut links: Vec<(i64, Option<i64>)> = Vec::new();
-            for (s, target) in parse_memory_tag_pairs(key, m)? {
-                let id = tag_id_by_key.get(s).ok_or_else(|| {
-                    format!("invalid export: memory {key} references unknown tag id '{s}'")
+            let mut tag_ids: Vec<i64> = Vec::new();
+            for id in parse_memory_tag_ids(key, m)? {
+                let id = tag_id_by_key.get(id.as_str()).ok_or_else(|| {
+                    format!("invalid export: memory {key} references unknown tag id '{id}'")
                 })?;
-                let target_id = match target {
-                    None => None,
-                    Some(text) => Some(*tag_id_by_key.get(text).ok_or_else(|| {
-                        format!("invalid export: memory {key} references unknown target tag id '{text}'")
-                    })?),
-                };
-                links.push((*id, target_id));
+                if !tag_ids.contains(id) {
+                    tag_ids.push(*id);
+                }
             }
-            let id = self.insert_memory(&summary, &content, &links, created_at, updated_at)?;
+            // An imported memory carries whatever the file carries: created before the store's
+            // latest required cutoff and holding no tag in any required scope, it is reported
+            // unclassified — never invented.
+            if let Some(cutoff) = latest_since {
+                let declared = tag_ids.iter().any(|id| {
+                    scope_of_tag
+                        .get(id)
+                        .and_then(|scope| *scope)
+                        .is_some_and(|scope| required_scope_names.contains(scope))
+                });
+                if (created_at as i64) < cutoff && !declared {
+                    unclassified += 1;
+                }
+            }
+            let id = self.insert_memory(&summary, &content, &tag_ids, created_at, updated_at)?;
             if let Some(value) = m.get("access") {
                 let history = serde_json::from_value(value.clone())
                     .map_err(|e| format!("invalid exported access history: {e}"))?;
@@ -834,13 +1002,31 @@ impl Store {
             memories: inserted,
             tags: created_tags,
             skipped,
+            unclassified,
         })
     }
 }
 
-/// Parse one memory's tag pairs in the export-file shape: `[source tag id, target tag id|null]`
-/// strings, both halves referencing the file's tags map.
-fn parse_memory_tag_pairs<'a>(
+/// Parse one memory's tag references in the export-file shape: tag id numbers referencing the
+/// file's tags map.
+fn parse_memory_tag_ids(key: &str, m: &Value) -> Result<Vec<String>, String> {
+    let Some(tag_refs) = m.get("tags").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(tag_refs.len());
+    for r in tag_refs {
+        let id = r
+            .as_u64()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| format!("invalid export: memory {key} has a non-integer tag id: {r}"))?;
+        out.push(id.to_string());
+    }
+    Ok(out)
+}
+
+/// Parse one memory's tag pairs in the legacy (0.3.x) export shape: `[source tag id, target tag
+/// id|null]` strings, both halves referencing the file's tags map.
+fn parse_legacy_tag_pairs<'a>(
     key: &str,
     m: &'a Value,
 ) -> Result<Vec<(&'a str, Option<&'a str>)>, String> {
@@ -866,6 +1052,230 @@ fn parse_memory_tag_pairs<'a>(
             }
         };
         out.push((s, target));
+    }
+    Ok(out)
+}
+
+/// Convert a 0.3.x export in memory: the legacy file has no `scopes` map and a memory's `tags`
+/// are `[source tag id, target tag id|null]` pairs. A pair with a target becomes the scoped tag
+/// `source::target` (the scope is created when missing, taking the source tag's description and
+/// its requirement); a same-memory scope collision keeps the smallest target id and demotes the
+/// rest to the target's bare name (the migration's rule). Every legacy tag row stays a bare tag
+/// too — scopes and tags are separate namespaces, one name may live in both.
+fn modernize_legacy_dump(dump: &Value) -> Result<Value, String> {
+    let tags = dump
+        .get("tags")
+        .and_then(Value::as_object)
+        .ok_or("invalid export: 'tags' must be an object keyed by tag id")?;
+    let memories = dump
+        .get("memories")
+        .and_then(Value::as_object)
+        .ok_or("invalid export: 'memories' must be an object keyed by memory id")?;
+
+    // Legacy tag rows, normalized. Keys must be positive integers: the converted memory refs are
+    // id numbers, so a non-numeric key could not be referenced (the common path rejects it too —
+    // fail here with the same wording).
+    let mut id_by_key: HashMap<&str, i64> = HashMap::with_capacity(tags.len());
+    let mut name_by_key: HashMap<&str, String> = HashMap::with_capacity(tags.len());
+    let mut desc_by_key: HashMap<&str, String> = HashMap::with_capacity(tags.len());
+    let mut since_by_key: HashMap<&str, i64> = HashMap::new();
+    for (key, t) in tags {
+        let id: i64 = key
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0)
+            .map(|n| n as i64)
+            .ok_or_else(|| {
+                format!("invalid export: tag key '{key}' is not a positive integer id")
+            })?;
+        let name = t
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or("invalid export: tag without name")?;
+        let name = crate::model::normalize_tag_name(name)?;
+        id_by_key.insert(key.as_str(), id);
+        name_by_key.insert(key.as_str(), name);
+        desc_by_key.insert(
+            key.as_str(),
+            t.get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        );
+        if let Some(since) = t.get("required_since").and_then(Value::as_i64) {
+            if since > 0 {
+                since_by_key.insert(key.as_str(), since);
+            }
+        }
+    }
+
+    // Every memory's pairs, validated in the legacy shape (unknown ids error here, before
+    // anything is written).
+    let mut pairs_by_memory: HashMap<&str, Vec<(&str, Option<&str>)>> =
+        HashMap::with_capacity(memories.len());
+    for (key, m) in memories {
+        for (source, target) in parse_legacy_tag_pairs(key, m)? {
+            if !name_by_key.contains_key(source) {
+                return Err(format!(
+                    "invalid export: memory {key} references unknown tag id '{source}'"
+                ));
+            }
+            if let Some(target) = target {
+                if !name_by_key.contains_key(target) {
+                    return Err(format!(
+                        "invalid export: memory {key} references unknown target tag id '{target}'"
+                    ));
+                }
+            }
+            pairs_by_memory
+                .entry(key.as_str())
+                .or_default()
+                .push((source, target));
+        }
+    }
+
+    // Scopes come from two places: names a pair uses as its source, and names carrying the
+    // legacy requirement — the scope takes the tag's description and required_since.
+    let mut scope_keys: Vec<&str> = Vec::new();
+    {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for pairs in pairs_by_memory.values() {
+            for (source, target) in pairs {
+                if target.is_some() && seen.insert(source) {
+                    scope_keys.push(source);
+                }
+            }
+        }
+        for key in tags.keys() {
+            if since_by_key.contains_key(key.as_str()) && seen.insert(key.as_str()) {
+                scope_keys.push(key.as_str());
+            }
+        }
+    }
+    let mut scopes = Map::new();
+    let mut scope_name_by_legacy_key: HashMap<&str, String> = HashMap::new();
+    for (index, key) in scope_keys.iter().enumerate() {
+        let name = name_by_key[*key].clone();
+        let mut scope = json!({
+            "name": name.clone(),
+            "description": desc_by_key[*key].clone(),
+            "created_at": tags[*key].get("created_at").cloned().unwrap_or(json!(0)),
+        });
+        if let Some(since) = since_by_key.get(*key) {
+            scope["required_since"] = json!(*since);
+        }
+        scopes.insert((index + 1).to_string(), scope);
+        scope_name_by_legacy_key.insert(*key, name);
+    }
+
+    // Converted tags: legacy rows stay bare under their own keys; scoped tags take fresh keys
+    // after the legacy ids (both only act as reference tokens inside the file).
+    let mut out_tags = Map::new();
+    for (key, t) in tags {
+        // The requirement moved to the scope, so it is deliberately dropped here.
+        out_tags.insert(
+            key.clone(),
+            json!({
+                "name": name_by_key[key.as_str()],
+                "description": desc_by_key[key.as_str()],
+                "created_at": t.get("created_at").cloned().unwrap_or(json!(0)),
+            }),
+        );
+    }
+    let mut next_id: i64 = id_by_key.values().copied().max().unwrap_or(0) + 1;
+    let mut scoped_id_by_parts: HashMap<(&str, &str), i64> = HashMap::new();
+
+    let mut out_memories = Map::new();
+    for (mkey, m) in memories {
+        let pairs: &[(&str, Option<&str>)] = pairs_by_memory
+            .get(mkey.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        // One value per scope: the smallest target id wins, the rest demote to the target's bare
+        // name (the migration's rule).
+        let mut min_target: HashMap<&str, (&str, i64)> = HashMap::new();
+        for (source, target) in pairs {
+            let Some(target) = *target else { continue };
+            let target_id = target.parse::<i64>().unwrap_or(0);
+            match min_target.get(source) {
+                Some((_, current)) if *current <= target_id => {}
+                _ => {
+                    min_target.insert(source, (target, target_id));
+                }
+            }
+        }
+        let mut refs: Vec<i64> = Vec::new();
+        for (source, target) in pairs {
+            let tag_id = match *target {
+                None => id_by_key[source],
+                Some(target) => {
+                    if min_target
+                        .get(source)
+                        .is_some_and(|(winner, _)| *winner == target)
+                    {
+                        // The scoped tag is created on first use, keeping one row per distinct
+                        // (source, target) across the whole file.
+                        match scoped_id_by_parts.get(&(*source, target)) {
+                            Some(id) => *id,
+                            None => {
+                                let scope = scope_name_by_legacy_key[source].clone();
+                                let name =
+                                    crate::model::compose_tag_name(&scope, &name_by_key[target]);
+                                out_tags.insert(
+                                    next_id.to_string(),
+                                    json!({
+                                        "name": name,
+                                        "scope": scope,
+                                        "description": "",
+                                        "created_at": crate::model::now(),
+                                    }),
+                                );
+                                scoped_id_by_parts.insert((*source, target), next_id);
+                                let id = next_id;
+                                next_id += 1;
+                                id
+                            }
+                        }
+                    } else {
+                        id_by_key[target]
+                    }
+                }
+            };
+            if !refs.contains(&tag_id) {
+                refs.push(tag_id);
+            }
+        }
+        let mut entry = json!({
+            "summary": m.get("summary").cloned().unwrap_or(Value::Null),
+            "content": m.get("content").cloned().unwrap_or(Value::Null),
+            "tags": refs,
+            "created_at": m.get("created_at").cloned().unwrap_or(json!(0)),
+            "updated_at": m
+                .get("updated_at")
+                .or_else(|| m.get("created_at"))
+                .cloned()
+                .unwrap_or(json!(0)),
+        });
+        if let Some(access) = m.get("access") {
+            entry["access"] = access.clone();
+        }
+        out_memories.insert(mkey.clone(), entry);
+    }
+
+    let mut out = json!({
+        "exported_at": dump
+            .get("exported_at")
+            .cloned()
+            .unwrap_or(json!(crate::model::now())),
+        "scopes": Value::Object(scopes),
+        "tags": Value::Object(out_tags),
+        "memories": Value::Object(out_memories),
+    });
+    if let Some(predicates) = dump.get("predicates") {
+        out["predicates"] = predicates.clone();
+    }
+    if let Some(policy) = dump.get("lifecycle_policy") {
+        out["lifecycle_policy"] = policy.clone();
     }
     Ok(out)
 }
@@ -952,11 +1362,7 @@ mod tests {
 
         // With foreign keys off, inject orphan references, reverse orphans, case conflicts and an empty title
         st.conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
-        let rust_id = st
-            .resolve_tags(&[("rust".into(), None)], true)
-            .unwrap()
-            .links[0]
-            .0;
+        let rust_id = st.resolve_tags(&["rust".to_string()], true).unwrap().links[0];
         // Orphan reference: a link row pointing at nonexistent tag id 999
         st.conn
             .execute(
@@ -1123,25 +1529,27 @@ mod tests {
         cleanup(&path);
         let st = Store::open(&path).unwrap();
         st.tag_create("t", "desc").unwrap();
-        let links = st.resolve_tags(&[("t".into(), None)], true).unwrap().links;
-        let tag_key = links[0].0.to_string();
-        st.insert_memory("s", "body", &links, 1, 1).unwrap();
+        let tag_id = st.resolve_tags(&["t".to_string()], true).unwrap().links[0];
+        let tag_key = tag_id.to_string();
+        st.insert_memory("s", "body", &[tag_id], 1, 1).unwrap();
         let dump = st.export_dump(None).unwrap();
 
         // Derived info never enters the export (all of it is derivable from the export file itself)
         assert!(dump.get("total_memories").is_none());
         assert!(dump.get("total_tags").is_none());
-        // tags keyed by internal auto-increment id, primary data only
-        let tag = &dump["tags"][&tag_key];
+        // scopes and tags keyed by internal auto-increment id, primary data only
+        assert!(dump["scopes"].as_object().unwrap().is_empty());
+        let tag = &dump["tags"][tag_key.as_str()];
         assert_eq!(tag["name"], "t");
         assert_eq!(tag["description"], "desc");
         assert!(tag.get("memory_count").is_none());
         assert!(tag.get("last_used_at").is_none());
-        // memories keyed by "m<N>", tag references as [tag id string, value] pairs
+        assert!(tag.get("scope").is_none());
+        // memories keyed by "m<N>", tag references as id numbers
         let memory = &dump["memories"]["m1"];
         assert_eq!(memory["summary"], "s");
         assert_eq!(memory["content"], "body");
-        assert_eq!(memory["tags"], json!([[tag_key, null]]));
+        assert_eq!(memory["tags"], json!([tag_id]));
         assert_eq!(memory["created_at"], 1);
         assert_eq!(memory["updated_at"], 1);
         assert!(dump["exported_at"].as_u64().is_some());
@@ -1152,40 +1560,56 @@ mod tests {
         cleanup(&path);
     }
 
-    /// The unified tag vocabulary rides the dump and the restore: without it a restored store cannot
-    /// resolve `key=value` queries or render typed attributes for the `key:value` display forms.
+    /// Scopes and scoped tags ride the dump and the restore: without them a restored store could
+    /// neither resolve `scope::value` queries nor render typed attributes.
     #[test]
-    fn export_import_round_trips_value_tags_and_queries() {
-        let src = temp_db("keys-export-src");
-        let dst = temp_db("keys-export-dst");
+    fn export_import_round_trips_scoped_tags_and_queries() {
+        let src = temp_db("scoped-export-src");
+        let dst = temp_db("scoped-export-dst");
         cleanup(&src);
         cleanup(&dst);
         let dump = {
             let st = Store::open(&src).unwrap();
-            let edges: Vec<crate::model::TagEdge> = vec![
-                ("project".to_string(), Some("apollo".to_string())),
-                ("count".to_string(), Some("3".to_string())),
-            ];
-            let links = st.resolve_tags(&edges, true).unwrap().links;
+            st.scope_create("project", "").unwrap();
+            st.scope_create("count", "typed counter").unwrap();
+            let links = st
+                .resolve_tags(
+                    &["project::apollo".to_string(), "count::3".to_string()],
+                    true,
+                )
+                .unwrap()
+                .links;
             st.insert_memory("s", "body", &links, 1, 1).unwrap();
             st.export_dump(None).unwrap()
         };
-        // The dump carries raw (source id, target id) pairs with the promoted target tags as
-        // vocabulary rows; display composition happens on read
+        // The dump carries one scope row per scope, one tag row per name, and memory refs as id
+        // numbers
+        let scope_names: HashSet<String> = dump["scopes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|s| s["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            scope_names,
+            HashSet::from(["project".to_string(), "count".to_string()])
+        );
+        let tag_names: HashSet<String> = dump["tags"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        // The reserved fixture travels with the vocabulary; the stored names are the composed
+        // ones, never a bare scope name.
+        assert!(tag_names.contains("project::apollo") && tag_names.contains("count::3"));
+        assert!(!tag_names.contains("project"), "a scope name is not a tag");
         let memory_tags = dump["memories"]["m1"]["tags"].as_array().unwrap();
         assert_eq!(memory_tags.len(), 2);
-        for pair in memory_tags {
-            let pair = pair.as_array().unwrap();
-            assert_eq!(pair.len(), 2);
-            assert!(
-                pair[0].is_string() && pair[1].is_string(),
-                "ids travel as strings: {pair:?}"
-            );
-            assert!(dump["tags"][pair[0].as_str().unwrap()].is_object());
-            assert!(
-                dump["tags"][pair[1].as_str().unwrap()].is_object(),
-                "targets are vocabulary rows too: {pair:?}"
-            );
+        for id in memory_tags {
+            assert!(id.is_u64(), "ids travel as numbers: {id:?}");
+            let key = id.to_string();
+            assert!(dump["tags"][key.as_str()].is_object());
         }
 
         Store::open(&dst)
@@ -1196,14 +1620,12 @@ mod tests {
         let memory = &st.get_memories(&[1]).unwrap().0[0];
         assert_eq!(
             memory.tags,
-            vec!["count:3".to_string(), "project:apollo".to_string()]
+            vec!["count::3".to_string(), "project::apollo".to_string()]
         );
         assert_eq!(st.attributes_view(memory).unwrap()["count"], 3);
-        // The restored store resolves keyed queries
-        let expr = st
-            .bind_query_atoms(crate::tag_expr::parse("project=apollo").unwrap())
-            .unwrap();
-        assert_eq!(expr.tag_names(), vec!["project:apollo"]);
+        // The restored store resolves scoped queries
+        let expr = st.resolve_query_expr("project::apollo").unwrap();
+        assert!(expr.eval(&memory.tags));
         cleanup(&src);
         cleanup(&dst);
     }
@@ -1216,8 +1638,9 @@ mod tests {
         cleanup(&dst);
         let dump = {
             let st = Store::open(&src).unwrap();
+            st.scope_create("topic", "").unwrap();
             st.tag_create("t", "带描述的标签").unwrap();
-            let links = st.resolve_tags(&[("t".into(), None)], true).unwrap().links;
+            let links = st.resolve_tags(&["t".to_string()], true).unwrap().links;
             st.insert_memory("s1", "body1", &links, 100, 200).unwrap();
             st.insert_memory("s2", "body2", &[], 300, 400).unwrap();
             st.export_dump(None).unwrap()
@@ -1237,6 +1660,7 @@ mod tests {
         assert_eq!(all[0].updated_at, 200);
         assert_eq!(all[0].tags, vec!["t".to_string()]);
         assert_eq!(st.tag_view("t").unwrap()["description"], "带描述的标签");
+        assert!(st.scope_exists("topic").unwrap());
 
         // Non-empty target database → rejected, with the merge mode named as the alternative
         let err = Store::open(&dst)
@@ -1292,8 +1716,9 @@ mod tests {
         cleanup(&dst);
     }
 
-    /// Import honors the same contract as the API: blank titles, overlong tag names, non-string/unknown tag references,
-    /// invalid id keys and duplicate tag names within the file are all rejected. Each case gets its own empty database (in the production
+    /// Import honors the same contract as the API: blank titles, overlong tag names, non-numeric
+    /// or unknown tag references, scope inconsistencies, invalid id keys and duplicate names
+    /// within the file are all rejected. Each case gets its own empty database (in the production
     /// path import runs in a single write transaction and rolls back wholesale on failure — the rollback itself is covered by the dedicated test below).
     #[test]
     fn import_dump_rejects_contract_violations() {
@@ -1301,55 +1726,71 @@ mod tests {
             // Blank title
             (
                 "blank-summary",
-                json!({"tags": {}, "memories": {"m1": {"summary": "   ", "content": "c"}}}),
+                json!({"scopes": {}, "tags": {}, "memories": {"m1": {"summary": "   ", "content": "c"}}}),
                 "must not be empty",
             ),
             // Overlong tag name (>100 characters)
             (
                 "oversized-tag",
-                json!({"tags": {"1": {"name": "x".repeat(101)}}, "memories": {}}),
+                json!({"scopes": {}, "tags": {"1": {"name": "x".repeat(101)}}, "memories": {}}),
                 "too long",
             ),
-            // A memory's tag reference is not a [source tag id, target tag id] pair
+            // A memory's tag reference is a tag id number, not a legacy pair
             (
-                "non-pair-ref",
-                json!({"tags": {}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [42]}}}),
-                "must be [source tag id, target tag id] pairs",
+                "non-number-ref",
+                json!({"scopes": {}, "tags": {}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [["1", null]]}}}),
+                "non-integer tag id",
             ),
-            // The target half of a pair is a string or null
-            (
-                "non-string-value",
-                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [["1", 3]]}}}),
-                "non-string target tag id",
-            ),
-            // The target half references a tag absent from the export → error (strict about values)
-            (
-                "unknown-target-ref",
-                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [["1", "2"]]}}}),
-                "references unknown target tag id '2'",
-            ),
-            // References a tag id absent from the export → error (strict about values)
+            // The tag id references a row absent from the export → error (strict about references)
             (
                 "unknown-ref",
-                json!({"tags": {"1": {"name": "t", "description": ""}}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [["2", null]]}}}),
+                json!({"scopes": {}, "tags": {}, "memories": {"m1": {"summary": "s", "content": "c", "tags": [2]}}}),
                 "unknown tag id '2'",
             ),
-            // Invalid id keys: a tag key that is not a positive integer, a memory key missing the m prefix
+            // A scoped tag whose scope is absent from the export's scopes map
+            (
+                "unknown-scope-ref",
+                json!({"scopes": {}, "tags": {"1": {"name": "system::pc1sw0", "scope": "system"}}, "memories": {}}),
+                "absent from the export",
+            ),
+            // A scoped tag without its scope field
+            (
+                "scoped-without-scope-field",
+                json!({"scopes": {"1": {"name": "system"}}, "tags": {"2": {"name": "system::pc1sw0"}}, "memories": {}}),
+                "carries no 'scope' field",
+            ),
+            // A tag's scope field disagrees with its own name's prefix
+            (
+                "scope-mismatch",
+                json!({"scopes": {"1": {"name": "system"}}, "tags": {"2": {"name": "system::pc1sw0", "scope": "topic"}}, "memories": {}}),
+                "which its own name does not carry",
+            ),
+            // Invalid id keys: scope/tag keys that are not positive integers, a memory key missing the m prefix
+            (
+                "bad-scope-key",
+                json!({"scopes": {"s1": {"name": "system"}}, "tags": {}, "memories": {}}),
+                "scope key 's1' is not a positive integer",
+            ),
             (
                 "bad-tag-key",
-                json!({"tags": {"t1": {"name": "t", "description": ""}}, "memories": {}}),
+                json!({"scopes": {}, "tags": {"t1": {"name": "t"}}, "memories": {}}),
                 "tag key 't1' is not a positive integer",
             ),
             (
                 "bad-memory-key",
-                json!({"tags": {}, "memories": {"1": {"summary": "s", "content": "c"}}}),
+                json!({"scopes": {}, "tags": {}, "memories": {"1": {"summary": "s", "content": "c"}}}),
                 "memory key '1' does not follow",
             ),
-            // Duplicate tag names within the export file → error (name is unique in the database)
+            // Duplicate names within the export file → error (names are unique in the database)
             (
                 "duplicate-tag",
-                json!({"tags": {"1": {"name": "t", "description": ""}, "2": {"name": "t", "description": "other"}}, "memories": {}}),
+                json!({"scopes": {}, "tags": {"1": {"name": "t"}, "2": {"name": "t"}}, "memories": {}}),
                 "duplicate tag name 't'",
+            ),
+            (
+                "duplicate-scope",
+                json!({"scopes": {"1": {"name": "s"}, "2": {"name": "s"}}, "tags": {}, "memories": {}}),
+                "duplicate scope name 's'",
             ),
         ];
         for (slug, dump, expect) in &cases {
@@ -1364,18 +1805,19 @@ mod tests {
         }
     }
 
-    /// In the production path import runs in a single write transaction: a mid-way failure rolls back the tags already
-    /// created along with everything else — no half-imported data remains.
+    /// In the production path import runs in a single write transaction: a mid-way failure rolls back the tags and
+    /// scopes already created along with everything else — no half-imported data remains.
     #[test]
     fn import_dump_failure_rolls_back_whole_transaction() {
         let path = temp_db("import-rollback");
         cleanup(&path);
         let dump = json!({
+            "scopes": {"1": {"name": "topic", "description": ""}},
             "tags": {
                 "1": {"name": "kept", "description": ""},
-                "2": {"name": "other", "description": ""},
+                "2": {"name": "topic::other", "scope": "topic", "description": ""},
             },
-            "memories": {"m1": {"summary": "s", "content": "c", "tags": [["3", null]]}},
+            "memories": {"m1": {"summary": "s", "content": "c", "tags": [3]}},
         });
         let err = crate::store::with_db_in(&path, crate::store::TxMode::Write, |st: &Store| {
             st.import_dump(&dump, &ImportOptions::RESTORE).map(|_| ())
@@ -1383,25 +1825,25 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("unknown tag id '3'"), "got: {err}");
         let st = Store::open(&path).unwrap();
-        // Only the seeded reserved tag remains — the import's own tags rolled back
+        // Only the seeded reserved tag remains — the import's own tags and scope rolled back
         assert_eq!(st.tag_count_unreserved().unwrap(), 0, "tags must roll back");
+        assert!(!st.scope_exists("topic").unwrap(), "scopes must roll back");
         assert_eq!(st.stats().unwrap()["memories"], 0);
         cleanup(&path);
     }
 
-    /// A filter narrows the dump to matching memories plus their tag closure, and drops the
-    /// configuration facets; the unfiltered export keeps the complete shape.
+    /// A filter narrows the dump to matching memories plus their tag closure and the scopes
+    /// those tags belong to, and drops the configuration facets; the unfiltered export keeps
+    /// the complete shape.
     #[test]
     fn export_dump_filters_by_predicate_and_carries_data_only() {
         let path = temp_db("export-filter");
         cleanup(&path);
         let st = Store::open(&path).unwrap();
+        st.scope_create("project", "").unwrap();
         let links = st
             .resolve_tags(
-                &[
-                    ("project".to_string(), Some("apollo".to_string())),
-                    ("unrelated".to_string(), None),
-                ],
+                &["project::apollo".to_string(), "unrelated".to_string()],
                 true,
             )
             .unwrap()
@@ -1410,7 +1852,7 @@ mod tests {
             .unwrap();
         st.insert_memory("other note", "body b", &links[1..], 2, 2)
             .unwrap();
-        let expr = st.resolve_query_expr("project=apollo").unwrap();
+        let expr = st.resolve_query_expr("project::apollo").unwrap();
         let dump = st.export_dump(Some(&expr)).unwrap();
         let memories = dump["memories"].as_object().unwrap();
         assert_eq!(memories.len(), 1);
@@ -1421,15 +1863,21 @@ mod tests {
             .values()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        // The tag closure carries both edge halves, nothing else
-        assert_eq!(
-            names,
-            HashSet::from(["project".to_string(), "apollo".to_string()])
-        );
+        // The tag closure carries the matched memory's tag, nothing else
+        assert_eq!(names, HashSet::from(["project::apollo".to_string()]));
+        // The scope closure carries only scopes the exported tags belong to
+        let scope_names: HashSet<String> = dump["scopes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|s| s["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(scope_names, HashSet::from(["project".to_string()]));
         assert!(dump.get("predicates").is_none());
         assert!(dump.get("lifecycle_policy").is_none());
         let full = st.export_dump(None).unwrap();
         assert_eq!(full["memories"].as_object().unwrap().len(), 2);
+        assert_eq!(full["scopes"].as_object().unwrap().len(), 1);
         assert!(full.get("predicates").is_some());
         assert!(full.get("lifecycle_policy").is_some());
         cleanup(&path);
@@ -1445,11 +1893,17 @@ mod tests {
         cleanup(&dst);
         let dump = {
             let st = Store::open(&src).unwrap();
+            st.scope_create("topic", "").unwrap();
             st.tag_create("t", "dump description").unwrap();
             st.tag_create("fresh", "").unwrap();
-            let links = st.resolve_tags(&[("t".into(), None)], true).unwrap().links;
-            st.insert_memory("s1", "body1", &links, 100, 200).unwrap();
-            st.insert_memory("new", "new body", &[], 300, 400).unwrap();
+            let links = st
+                .resolve_tags(&["t".to_string(), "topic::news".to_string()], true)
+                .unwrap()
+                .links;
+            st.insert_memory("s1", "body1", &links[..1], 100, 200)
+                .unwrap();
+            st.insert_memory("new", "new body", &links[1..], 300, 400)
+                .unwrap();
             st.predicate_set("active", "t", "").unwrap();
             st.export_dump(None).unwrap()
         };
@@ -1472,21 +1926,128 @@ mod tests {
             .unwrap();
         assert_eq!(report.memories, 1);
         assert_eq!(report.skipped, 1);
-        assert_eq!(report.tags, 1);
+        assert_eq!(report.tags, 2);
         let st = Store::open(&dst).unwrap();
         assert_eq!(st.stats().unwrap()["memories"], 2);
-        // Existing tag description untouched; the new tag arrived
+        // Existing tag description untouched; the new tags arrived
         assert_eq!(
             st.tag_view("t").unwrap()["description"],
             "target description"
         );
         assert!(st.tag_view("fresh").is_ok());
-        // The new memory kept its dump timestamps
+        // The new memory kept its dump timestamps and its scoped tag
         let all = st.all_memories().unwrap();
         let new_memory = all.iter().find(|m| m.summary == "new").unwrap();
         assert_eq!((new_memory.created_at, new_memory.updated_at), (300, 400));
+        assert_eq!(new_memory.tags, vec!["topic::news".to_string()]);
         // Configuration in the file is ignored on merge
         assert!(st.predicate_rows().unwrap().is_empty());
+        cleanup(&src);
+        cleanup(&dst);
+    }
+
+    /// The write contract is part of the backup: a restore keeps the scope's requirement and its
+    /// cutoff, so the boundary between declared and unclassified memories survives disaster
+    /// recovery instead of moving to the restore moment (or vanishing with the scope).
+    #[test]
+    fn export_import_round_trips_the_required_contract() {
+        let src = temp_db("required-export-src");
+        let dst = temp_db("required-export-dst");
+        cleanup(&src);
+        cleanup(&dst);
+        let dump = {
+            let st = Store::open(&src).unwrap();
+            st.scope_create("country", "where the memory is about")
+                .unwrap();
+            let links = st
+                .resolve_tags(&["country::cn".to_string()], true)
+                .unwrap()
+                .links;
+            st.insert_memory("declared", "b", &links, 1_700_000_100, 1_700_000_100)
+                .unwrap();
+            st.scope_set_required_since("country", 1_700_000_000)
+                .unwrap();
+            st.export_dump(None).unwrap()
+        };
+        let scope_of = |dump: &Value| {
+            dump["scopes"]
+                .as_object()
+                .unwrap()
+                .values()
+                .find(|s| s["name"] == "country")
+                .cloned()
+                .expect("scope exported")
+        };
+        assert_eq!(scope_of(&dump)["required_since"], json!(1_700_000_000_i64));
+
+        let report = Store::open(&dst)
+            .unwrap()
+            .import_dump(&dump, &ImportOptions::RESTORE)
+            .unwrap();
+        // The requirement materialized with the scope, so the declared memory is classified
+        assert_eq!(report.unclassified, 0);
+        let st = Store::open(&dst).unwrap();
+        assert_eq!(st.required_scopes().unwrap(), vec!["country".to_string()]);
+        let reexported = st.export_dump(None).unwrap();
+        assert_eq!(
+            scope_of(&reexported)["required_since"],
+            json!(1_700_000_000_i64),
+            "the cutoff rides the backup instead of being restamped"
+        );
+        cleanup(&src);
+        cleanup(&dst);
+    }
+
+    /// Import never invents declarations: an imported memory created before the store's latest
+    /// required cutoff that carries no tag in any required scope is reported unclassified rather
+    /// than rejected (the data arrives as it is, and the report is what makes the gap visible).
+    #[test]
+    fn merge_import_reports_memories_missing_required_scopes() {
+        let src = temp_db("required-import-src");
+        let dst = temp_db("required-import-dst");
+        cleanup(&src);
+        cleanup(&dst);
+        let dump = {
+            let st = Store::open(&src).unwrap();
+            st.scope_create("country", "").unwrap();
+            let declared = st
+                .resolve_tags(&["country::cn".to_string()], true)
+                .unwrap()
+                .links;
+            st.insert_memory("declared", "b1", &declared, 100, 100)
+                .unwrap();
+            st.scope_create("topic", "").unwrap();
+            let framed = st
+                .resolve_tags(&["topic::misc".to_string()], true)
+                .unwrap()
+                .links;
+            st.insert_memory("other scope", "b4", &framed, 200, 200)
+                .unwrap();
+            st.insert_memory("undeclared", "b2", &[], 2, 2).unwrap();
+            // Created after the target's cutoff: the write contract does not reach back to it
+            st.insert_memory("young undeclared", "b3", &[], 900, 900)
+                .unwrap();
+            st.export_dump(None).unwrap()
+        };
+        {
+            let st = Store::open(&dst).unwrap();
+            st.scope_create("country", "").unwrap();
+            st.scope_set_required_since("country", 500).unwrap();
+        }
+        let report = Store::open(&dst)
+            .unwrap()
+            .import_dump(
+                &dump,
+                &ImportOptions {
+                    merge: true,
+                    predicate: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.memories, 4);
+        // declared (100 < 500, carries country::cn) is classified; the other two pre-cutoff
+        // memories hold no tag in a required scope; the young one is past the cutoff
+        assert_eq!(report.unclassified, 2);
         cleanup(&src);
         cleanup(&dst);
     }
@@ -1500,15 +2061,17 @@ mod tests {
         cleanup(&dst);
         let dump = json!({
             "exported_at": 1,
-            "tags": {
+            "scopes": {
                 "1": {"name": "project", "description": ""},
-                "2": {"name": "apollo", "description": ""},
+            },
+            "tags": {
+                "2": {"name": "project::apollo", "scope": "project", "description": ""},
                 "3": {"name": "other", "description": ""},
             },
-            "predicates": [{"name": "active", "predicate": "project", "description": ""}],
+            "predicates": [{"name": "active", "predicate": "project::apollo", "description": ""}],
             "memories": {
-                "m1": {"summary": "hit", "content": "c1", "tags": [["1", "2"]]},
-                "m2": {"summary": "miss", "content": "c2", "tags": [["3", null]]},
+                "m1": {"summary": "hit", "content": "c1", "tags": [2]},
+                "m2": {"summary": "miss", "content": "c2", "tags": [3]},
             }
         });
         let report = Store::open(&dst)
@@ -1526,9 +2089,10 @@ mod tests {
         let all = st.all_memories().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].summary, "hit");
-        assert_eq!(all[0].tags, vec!["project:apollo".to_string()]);
+        assert_eq!(all[0].tags, vec!["project::apollo".to_string()]);
         // The file's vocabulary materializes even where its memories were filtered out
         assert!(st.tag_view("other").is_ok());
+        assert!(st.scope_exists("project").unwrap());
 
         // An unknown leaf is a hard error (a typo must not silently import nothing)
         let fresh = temp_db("import-filter-fresh");
@@ -1543,8 +2107,73 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(err.contains("unknown tags in tag_expr"), "got: {err}");
+        assert!(err.contains("unknown names in tag_expr"), "got: {err}");
         cleanup(&dst);
         cleanup(&fresh);
+    }
+
+    /// A 0.3.x backup (no `scopes` map, pair-shaped memory tags) converts on import: pairs with
+    /// targets become scoped tags under the source's name (the scope is created when missing),
+    /// a same-memory scope collision keeps the smallest target id and demotes the losers to the
+    /// target's bare name, and a legacy tag's required_since becomes its scope's requirement.
+    #[test]
+    fn import_converts_legacy_pair_backup() {
+        let dst = temp_db("import-legacy-pairs");
+        cleanup(&dst);
+        let legacy = json!({
+            "exported_at": 1,
+            "tags": {
+                "1": {"name": "system", "description": "host tag", "created_at": 1},
+                "2": {"name": "pc1sw0", "description": "", "created_at": 1},
+                "3": {"name": "pc2sl0", "description": "", "created_at": 1},
+                "4": {"name": "rust", "description": "", "created_at": 1, "required_since": 500},
+                "5": {"name": "cargo", "description": "", "created_at": 1},
+            },
+            "memories": {
+                "m1": {"summary": "host a", "content": "c", "created_at": 10, "updated_at": 20,
+                       "tags": [["1", "2"]]},
+                "m2": {"summary": "collision", "content": "c", "created_at": 600, "updated_at": 600,
+                       "tags": [["1", "2"], ["1", "3"]]},
+                "m3": {"summary": "bare stays", "content": "c", "created_at": 5, "updated_at": 5,
+                       "tags": [["5", null]]},
+                "m4": {"summary": "required edge", "content": "c", "created_at": 700, "updated_at": 700,
+                       "tags": [["4", "5"]]},
+            },
+        });
+        let report = Store::open(&dst)
+            .unwrap()
+            .import_dump(&legacy, &ImportOptions::RESTORE)
+            .unwrap();
+        let st = Store::open(&dst).unwrap();
+        let all = st.all_memories().unwrap();
+        let by_summary = |s: &str| all.iter().find(|m| m.summary == s).unwrap();
+        assert_eq!(
+            by_summary("host a").tags,
+            vec!["system::pc1sw0".to_string()]
+        );
+        // Same memory, same source: the smallest target id wins the scope, pc2sl0 demotes to a
+        // bare tag
+        let mut collision = by_summary("collision").tags.clone();
+        collision.sort();
+        assert_eq!(
+            collision,
+            vec!["pc2sl0".to_string(), "system::pc1sw0".to_string()]
+        );
+        assert_eq!(by_summary("bare stays").tags, vec!["cargo".to_string()]);
+        assert_eq!(
+            by_summary("required edge").tags,
+            vec!["rust::cargo".to_string()]
+        );
+        // The legacy requirement became the scope's cutoff: the pre-cutoff memories without a
+        // rust-scoped tag count unclassified, the post-cutoff one does not
+        assert_eq!(report.memories, 4);
+        assert_eq!(report.unclassified, 2);
+        assert_eq!(st.required_scopes().unwrap(), vec!["rust".to_string()]);
+        // The system scope arrived from the pairs; legacy tag rows stay bare tags alongside
+        // their scope roles
+        assert!(st.scope_exists("system").unwrap());
+        assert_eq!(st.tag_view("system").unwrap()["description"], "host tag");
+        assert!(st.tag_view("pc2sl0").is_ok());
+        cleanup(&dst);
     }
 }

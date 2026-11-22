@@ -238,9 +238,9 @@ fn semantic_tag_filter_applies_before_recall_limit() {
                     "summary": summary,
                     "content": content,
                     "tags": if selected {
-                        serde_json::json!({"selected": null})
+                        serde_json::json!(["selected"])
                     } else {
-                        serde_json::json!({})
+                        serde_json::json!([])
                     },
                     "create_missing_tags": true
                 })

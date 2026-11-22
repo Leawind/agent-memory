@@ -25,7 +25,7 @@ fn decay_policy_validation_and_backup() {
             Some(json!({
                 "summary": "scratch note",
                 "content": "body",
-                "tags": {"draft": null, "scratch": null},
+                "tags": ["draft", "scratch"],
                 "create_missing_tags": true
             }))
         )

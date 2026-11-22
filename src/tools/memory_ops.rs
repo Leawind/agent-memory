@@ -2,7 +2,7 @@
 
 use crate::auth::IdentityCtx;
 use crate::model::{
-    normalize_id, normalize_tag_edges, normalize_tag_name, now, TagEdge, RESERVED_TAG,
+    normalize_id, normalize_tag_name, normalize_tag_write, now, TagWrite, RESERVED_TAG,
 };
 use crate::search;
 use crate::store::{ListFilter, Store};
@@ -41,6 +41,53 @@ fn attach_attributes(st: &Store, m: &crate::model::Memory, view: &mut Value) -> 
     Ok(())
 }
 
+/// Read one write's tag declaration. The two containers name one vocabulary: `tags` lists the
+/// tags that carry no value, `attributes` maps a tag to its value; a tag lives in exactly one of
+/// them. Tags in the store's write contract must be declared in `attributes` — a value, or null
+/// recording that the memory takes no value on that tag. `require_all` is the fresh-memory rule:
+/// every contracted tag must be declared, so a generic memory says so instead of leaving it out.
+fn read_tag_write(
+    st: &Store,
+    args: &Map<String, Value>,
+    require_all: bool,
+) -> Result<(TagWrite, Vec<String>), ToolError> {
+    let bare = opt_str_list(args, "tags")?.unwrap_or_default();
+    let attributes = match args.get("attributes") {
+        None | Some(Value::Null) => Map::new(),
+        Some(Value::Object(object)) => object.clone(),
+        Some(other) => {
+            return Err(ToolError::invalid(format!(
+                "attributes must be an object mapping tag names to values (string, number or null), got {other}"
+            )))
+        }
+    };
+    let required = st.required_scopes()?;
+    let write = normalize_tag_write(&bare, &attributes, &required, require_all)
+        .map_err(ToolError::invalid)?;
+    // A required scope's values are shared vocabulary, not free text: a typo would fork the value
+    // space, so the tag must already exist rather than being auto-created on the way in.
+    for name in &write.tags {
+        let Some(scope) = crate::model::tag_scope_of(name) else {
+            continue;
+        };
+        if !required.iter().any(|r| r == scope) {
+            continue;
+        }
+        if st.tag_exists(name)? {
+            continue;
+        }
+        let hint = match st.find_tag_case_insensitive(name)? {
+            Some(similar) => format!(" (did you mean '{similar}'?)"),
+            None => String::new(),
+        };
+        return Err(ToolError::invalid(format!(
+            "value '{}' of required scope '{scope}' is not an existing tag{hint}; create it with tag_create first",
+            crate::model::tag_value_of(name)
+        )));
+    }
+    Ok((write, required))
+}
+
 pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let summary = validate_summary(&req_str(args, "summary")?)?;
     // Content is optional: a summary-only memory stores an empty body (whitespace counts as none)
@@ -48,23 +95,13 @@ pub fn memory_create(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(c) if !c.trim().is_empty() => validate_content(&c)?,
         _ => String::new(),
     };
-    // One tags object: entries map a source tag to its target (string or number) or null for a
-    // bare tag. Source uniqueness is structural (JSON object); role exclusivity is checked here
-    // at the name level (no nesting, no self-edges).
-    let edges: Vec<TagEdge> = match args.get("tags") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::Object(object)) => normalize_tag_edges(object).map_err(ToolError::invalid)?,
-        Some(other) => {
-            return Err(ToolError::invalid(format!(
-                "tags must be an object mapping source tag names to targets (string, number or null), got {other}"
-            )))
-        }
-    };
+    // Fresh memory: every contracted tag must be declared (a value, or null for "no value").
+    let (write, _required) = read_tag_write(st, args, true)?;
     // Default off: unknown tags are an error listing similar existing ones, keeping the taxonomy
     // from rotting through casual tagging; the agent opts into auto-creation explicitly.
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
 
-    let linkage = st.resolve_tags(&edges, create_missing)?;
+    let linkage = st.resolve_tags(&write.tags, create_missing)?;
 
     // Duplicate detection (deterministic rule: titles exactly equal after normalization). Computed before insertion so the memory cannot match itself.
     // The goal is not to block storage but to remind the agent: with an identical-title memory already present, memory_update is the right call.
@@ -473,43 +510,69 @@ pub fn memory_update(st: &Store, args: &Map<String, Value>) -> Result<Value, Too
         Some(_) => Some(String::new()),
         None => None,
     };
-    // Incremental tag edits: `add_tags` maps sources to targets (upserting the source's edge on
-    // the memory), `remove_tags` lists tag names whose annotations are dropped in every role —
-    // the name identifies the tag wherever it sits (source, target or bare). Restating
-    // untouched tags is never needed.
-    let add_tags: Option<Vec<TagEdge>> = match args.get("add_tags") {
-        None | Some(Value::Null) => None,
-        Some(Value::Object(object)) => {
-            Some(normalize_tag_edges(object).map_err(ToolError::invalid)?)
-        }
-        Some(other) => {
-            return Err(ToolError::invalid(format!(
-                "add_tags must be an object mapping source tag names to targets (string, number or null), got {other}"
-            )))
-        }
-    };
+    // Incremental tag edits use the same two containers as a create: `tags` adds tags that carry
+    // no value, `attributes` sets (or, with a contracted tag, clears by null) a tag's value, and
+    // `remove_tags` drops tags in every role. Restating untouched tags is never needed.
+    let (tag_write, required) = read_tag_write(st, args, false)?;
     let remove_tags = match opt_str_list(args, "remove_tags")? {
         Some(l) => Some(normalize_tag_name_list(&l)?),
         None => None,
     };
+    if let Some(names) = &remove_tags {
+        for name in names {
+            match crate::model::tag_scope_of(name) {
+                None => {
+                    if st.scope_exists(name)? {
+                        return Err(ToolError::invalid(format!(
+                            "'{name}' is a scope, not a tag: remove a specific tag, or declare null in attributes to record that the memory takes no value in it"
+                        )));
+                    }
+                }
+                Some(scope) => {
+                    if required.iter().any(|r| r == scope) {
+                        return Err(ToolError::invalid(format!(
+                            "tag '{name}' belongs to scope '{scope}', which is declared on every write and cannot be removed by name; declare null in attributes to record that the memory takes no value in it"
+                        )));
+                    }
+                }
+            }
+        }
+    }
     let create_missing = opt_bool(args, "create_missing_tags")?.unwrap_or(false);
-    if summary.is_none() && content.is_none() && add_tags.is_none() && remove_tags.is_none() {
+    if summary.is_none()
+        && content.is_none()
+        && tag_write.tags.is_empty()
+        && tag_write.cleared.is_empty()
+        && remove_tags.is_none()
+    {
         return Err(ToolError::invalid(
-            "nothing to update: provide summary, content, add_tags and/or remove_tags",
+            "nothing to update: provide summary, content, tags, attributes and/or remove_tags",
         ));
     }
 
     // Resolve tags first (the tags table is what changes), then update the memory — the order matches the error messages.
     let mut linkage_opt = None;
-    let mut add_links: Vec<(i64, Option<i64>)> = Vec::new();
-    if let Some(add) = &add_tags {
-        let linkage = st.resolve_tags(add, create_missing)?;
+    let mut add_links: Vec<i64> = Vec::new();
+    if !tag_write.tags.is_empty() {
+        let linkage = st.resolve_tags(&tag_write.tags, create_missing)?;
         add_links = linkage.links.clone();
         linkage_opt = Some(linkage);
     }
     let mut remove_ids: Vec<i64> = Vec::new();
     if let Some(remove) = &remove_tags {
         remove_ids = st.tag_ids_by_names(remove)?;
+    }
+    // A null declaration clears whatever tag the memory carries in that scope: the declaration
+    // itself stores nothing, so the removal is how it lands on a memory that already has one.
+    if !tag_write.cleared.is_empty() {
+        for row in st.tag_rows_for(id)? {
+            let Some(scope) = crate::model::tag_scope_of(&row.name) else {
+                continue;
+            };
+            if tag_write.cleared.iter().any(|cleared| cleared == scope) {
+                remove_ids.push(row.tag_id);
+            }
+        }
     }
 
     if !st.memory_exists(id)? {
@@ -733,45 +796,61 @@ pub fn memory_merge(
         )));
     }
 
+    // A required scope states what the memory applies to. Merging two memories that disagree
+    // about it would silently rewrite the surviving memory's scope, so the union below would be
+    // a lie: refuse and let the caller align them first.
+    let required = st.required_scopes()?;
+    if !required.is_empty() {
+        let target_attributes = st.attributes_view(&target)?;
+        let source_attributes = st.attributes_view(&source)?;
+        for name in &required {
+            let target_value = target_attributes.get(name.as_str());
+            let source_value = source_attributes.get(name.as_str());
+            if target_value != source_value {
+                let show = |value: Option<&Value>| match value {
+                    Some(value) => value.to_string(),
+                    None => "none".to_string(),
+                };
+                return Err(ToolError::invalid(format!(
+                    "required scope '{name}' differs between the memories (target: {}, source: {}); align them with memory_update before merging",
+                    show(target_value),
+                    show(source_value)
+                )));
+            }
+        }
+    }
+
     let merged_content = explicit_content
         .clone()
         .unwrap_or_else(|| format!("{}\n\n{}", target.content, source.content));
     validate_content(&merged_content)?;
-    // Source annotations join the target; a source tag the target already carries stays as it
-    // is (the target is the surviving identity) and lands in tags_conflicted. No auto-creation —
-    // both memories' tags already exist by definition.
-    let source_rows = st.tag_rows_for(source_id)?;
-    let mut rows: Vec<(i64, Option<i64>)> = st
-        .tag_rows_for(target_id)?
-        .into_iter()
-        .map(|r| (r.tag_id, r.target_id))
-        .collect();
-    let target_tag_ids: Vec<i64> = rows.iter().map(|(rid, _)| *rid).collect();
+    // Source tags join the target. A tag both sides already carry lands in tags_conflicted, and
+    // so does a source tag whose scope the target already fills (the target is the surviving
+    // identity, and a memory carries at most one tag per scope). No auto-creation — both
+    // memories' tags already exist by definition.
+    let target_rows = st.tag_rows_for(target_id)?;
+    let mut names: Vec<String> = target_rows.iter().map(|r| r.name.clone()).collect();
+    let mut tag_ids: Vec<i64> = target_rows.iter().map(|r| r.tag_id).collect();
     let mut conflicted: Vec<String> = Vec::new();
-    for row in source_rows {
-        if target_tag_ids.contains(&row.tag_id) {
-            conflicted.push(row.source);
+    for row in st.tag_rows_for(source_id)? {
+        let scope_taken = match crate::model::tag_scope_of(&row.name) {
+            Some(scope) => names
+                .iter()
+                .any(|name| crate::model::tag_scope_of(name) == Some(scope)),
+            None => false,
+        };
+        if tag_ids.contains(&row.tag_id) || scope_taken {
+            conflicted.push(row.name);
         } else {
-            rows.push((row.tag_id, row.target_id));
+            tag_ids.push(row.tag_id);
+            names.push(row.name);
         }
     }
-    // The union can collide across roles (e.g. the source carries 'nmmt' bare while the target
-    // has 'project:nmmt'): resolve deterministically with the schema migration's rules — first
-    // drop edges pointing at tags that carry their own edge row (nesting, self-edges included),
-    // then drop bare rows of tags that are still targets (presence survives via the edge).
-    let sources: std::collections::HashSet<i64> = rows
-        .iter()
-        .filter(|(_, t)| t.is_some())
-        .map(|(r, _)| *r)
-        .collect();
-    rows.retain(|(_, t)| !(t.is_some() && sources.contains(&t.unwrap())));
-    let targets: std::collections::HashSet<i64> = rows.iter().filter_map(|(_, t)| *t).collect();
-    rows.retain(|(rid, t)| !(t.is_none() && targets.contains(rid)));
     st.update_memory(
         target_id,
         summary.as_deref(),
         Some(&merged_content),
-        &rows,
+        &tag_ids,
         &[],
     )?;
     let (deleted, _) = st.delete_memories(&[source_id])?;

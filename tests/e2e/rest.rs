@@ -4,6 +4,96 @@ use serde_json::Value;
 
 use crate::common::{cleanup, encodeURIComponent, json_body, request, temp_db, HttpProc};
 
+/// The scope contract over REST: scopes are created and edited through their own routes, a
+/// required scope gates every memory write, and an explicit null is the way to say a memory
+/// carries no tag in that scope.
+#[test]
+fn scopes_carry_the_write_contract_over_rest() {
+    let db = temp_db("rest-scopes");
+    cleanup(&db);
+    let server = HttpProc::start(&db, "rest-scopes");
+    let port = server.port;
+
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/scopes",
+        Some(r#"{"name":"system","description":"the box a fact is about"}"#),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(json_body(&body)["created"], true);
+    for value in ["pc1sw0", "lp2sw0"] {
+        let (status, _, _) = request(
+            port,
+            "POST",
+            "/api/tags",
+            Some(&format!(r#"{{"name":"system::{value}"}}"#)),
+        );
+        assert_eq!(status, 200);
+    }
+
+    // Before the requirement, an undeclared memory is accepted
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary":"before"}"#),
+    );
+    assert_eq!(status, 200);
+
+    let (status, body, _) = request(
+        port,
+        "PUT",
+        "/api/scopes/system",
+        Some(r#"{"required":true}"#),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(json_body(&body)["required_updated"], true);
+
+    // From here on a memory must declare the scope, with a value or with null
+    let (status, body, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary":"missing"}"#),
+    );
+    assert_eq!(status, 400);
+    assert!(json_body(&body)["error"]
+        .as_str()
+        .unwrap()
+        .contains("required scopes"));
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary":"declared","attributes":{"system":"pc1sw0"}}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, _, _) = request(
+        port,
+        "POST",
+        "/api/memories",
+        Some(r#"{"summary":"generic","attributes":{"system":null}}"#),
+    );
+    assert_eq!(status, 200);
+
+    // The listing reports the scope and its requirement
+    let (status, body, _) = request(port, "GET", "/api/scopes", None);
+    assert_eq!(status, 200);
+    let listed = json_body(&body);
+    let system = listed["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scope| scope["name"] == "system")
+        .expect("scope listed");
+    assert_eq!(system["required"], true);
+    assert_eq!(system["count"], 1);
+
+    drop(server);
+    cleanup(&db);
+}
+
 #[test]
 fn rest_api_end_to_end() {
     let db = temp_db("rest");
@@ -73,7 +163,7 @@ fn rest_api_end_to_end() {
         "POST",
         "/api/memories",
         Some(
-            r#"{"summary": "用户偏好深色主题", "content": "2026-09 确认", "tags": {"项目A": null, "偏好": null}, "create_missing_tags": true}"#,
+            r#"{"summary": "用户偏好深色主题", "content": "2026-09 确认", "tags": ["项目A", "偏好"], "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -131,7 +221,7 @@ fn rest_api_end_to_end() {
         "PUT",
         &format!("/api/memories/{mem_id}"),
         Some(
-            r#"{"summary": "用户偏好浅色主题", "remove_tags": ["偏好"], "add_tags": {"外观": null}, "create_missing_tags": true}"#,
+            r#"{"summary": "用户偏好浅色主题", "remove_tags": ["偏好"], "tags": ["外观"], "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200);
@@ -183,7 +273,7 @@ fn rest_api_end_to_end() {
         "POST",
         "/api/memories",
         Some(
-            r#"{"summary": "临时记忆", "content": "x", "tags": {"临时": null}, "create_missing_tags": true}"#,
+            r#"{"summary": "临时记忆", "content": "x", "tags": ["临时"], "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200);
@@ -327,7 +417,7 @@ fn rest_tags_all_lists_target_only_tags_with_keys() {
         "POST",
         "/api/memories",
         Some(
-            r#"{"summary": "带边记忆", "content": "c", "tags": {"project": "nmmt"}, "create_missing_tags": true}"#,
+            r#"{"summary": "带作用域记忆", "content": "c", "attributes": {"project": "nmmt"}, "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -336,12 +426,12 @@ fn rest_tags_all_lists_target_only_tags_with_keys() {
         "POST",
         "/api/memories",
         Some(
-            r#"{"summary": "裸标签记忆", "content": "c", "tags": {"rust": null}, "create_missing_tags": true}"#,
+            r#"{"summary": "裸标签记忆", "content": "c", "tags": ["rust"], "create_missing_tags": true}"#,
         ),
     );
     assert_eq!(status, 200);
 
-    // Default: the target-only value stays hidden
+    // Tags come back as stored names; scopes are listed alongside them with their membership
     let (status, body, _) = request(port, "GET", "/api/tags", None);
     assert_eq!(status, 200);
     let listed = json_body(&body);
@@ -351,29 +441,21 @@ fn rest_tags_all_lists_target_only_tags_with_keys() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert!(names.contains(&"project") && names.contains(&"rust"));
-    assert!(!names.contains(&"nmmt"));
+    assert!(names.contains(&"project::nmmt") && names.contains(&"rust"));
+    assert!(!names.contains(&"nmmt"), "a value is part of the name");
+    let scopes = listed["scopes"].as_array().unwrap();
+    let project = scopes
+        .iter()
+        .find(|scope| scope["name"] == "project")
+        .expect("the scope is listed");
+    assert_eq!(project["count"], 1);
+    assert_eq!(project["tag_count"], 1);
 
-    // all=true: the value joins with the keys pointing at it
-    let (status, body, _) = request(port, "GET", "/api/tags?all=true", None);
+    // A filter narrows the tag list
+    let (status, body, _) = request(port, "GET", "/api/tags?filter=rust", None);
     assert_eq!(status, 200);
     let listed = json_body(&body);
-    let tags = listed["tags"].as_array().unwrap();
-    let nmmt = tags
-        .iter()
-        .find(|t| t["name"] == "nmmt")
-        .expect("target-only tag listed with all=true");
-    assert_eq!(nmmt["keys"], serde_json::json!(["project"]));
-
-    // A non-"true" value does not opt in
-    let (status, body, _) = request(port, "GET", "/api/tags?all=1", None);
-    assert_eq!(status, 200);
-    let listed = json_body(&body);
-    assert!(!listed["tags"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|t| t["name"] == "nmmt"));
+    assert_eq!(listed["tags"].as_array().unwrap().len(), 1);
 
     drop(server);
     cleanup(&db);

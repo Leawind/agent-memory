@@ -1,7 +1,6 @@
 <template>
   <div class="am-tags-sidebar">
-    <!-- Header: label + count + quiet icon tools (tag predicates, create). The advanced
-         predicate editor used to be a full-width button that read like a page tab. -->
+    <!-- Header: label + count + quiet icon tools (tag predicates, scopes, create tag). -->
     <div class="sb-head">
       <span class="sb-title">{{ t('tags.title') }}</span>
       <span class="sb-count">{{ rows.length }}</span>
@@ -9,6 +8,11 @@
         <el-tooltip :content="t('predicates.title')" placement="bottom" :enterable="false">
           <button type="button" class="sb-tool" :aria-label="t('predicates.title')" @click="emit('predicates')">
             <el-icon :size="14"><Operation /></el-icon>
+          </button>
+        </el-tooltip>
+        <el-tooltip :content="t('scopes.create')" placement="bottom" :enterable="false">
+          <button type="button" class="sb-tool" :aria-label="t('scopes.create')" @click="emit('createScope')">
+            <el-icon :size="14"><FolderAdd /></el-icon>
           </button>
         </el-tooltip>
         <el-tooltip :content="t('tags.create')" placement="bottom" :enterable="false">
@@ -25,71 +29,116 @@
         <span class="sb-all-name">{{ t('tags.all') }}</span>
       </button>
       <p v-if="!loading && rows.length === 0" class="sb-none">{{ t('tags.none') }}</p>
-      <template v-for="group in groups" :key="group.tag.name">
+      <!-- Bare tags first: their own name is the filter expression -->
+      <button
+        v-for="tag in bareTags"
+        :key="tag.name"
+        type="button"
+        class="sb-item"
+        :class="{ 'is-active': isActive(tag.name) }"
+        @click="emit('select', tag.name)"
+      >
+        <span class="sb-item-top">
+          <span class="sb-twist sb-twist-empty" aria-hidden="true"></span>
+          <span class="sb-name">{{ tag.name }}</span>
+          <el-tooltip v-if="tag.reserved" :content="t('tags.reservedHint')" placement="top" :enterable="false">
+            <el-tag size="small" type="warning" class="sb-reserved">{{ t('tags.reserved') }}</el-tag>
+          </el-tooltip>
+          <span class="sb-item-count" :title="t('tags.title')">{{ tag.count }}</span>
+          <!-- Edit lives on a hover-revealed affordance: the row's own click is the filter
+               toggle, so renaming/deleting gets a smaller, separate target (span + role so a
+               real button is never nested inside this row button) -->
+          <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+            <span
+              class="sb-edit"
+              role="button"
+              :aria-label="t('common.edit')"
+              @click.stop="emit('edit', tag)"
+              @keydown.enter.stop.prevent="emit('edit', tag)"
+            >
+              <el-icon><Edit /></el-icon>
+            </span>
+          </el-tooltip>
+        </span>
+        <span v-if="tag.description" class="sb-desc">{{ tag.description }}</span>
+      </button>
+      <!-- Then one section per scope: the header filters by the scope wildcard, its values
+           (prefix stripped) nest below, collapsed by default -->
+      <template v-for="group in scopeGroups" :key="group.scope.name">
         <button
           type="button"
-          class="sb-item"
+          class="sb-item sb-scope"
           :class="{ 'is-active': isActive(group.expr) }"
-          @click="emit('select', group.tag, group.expr)"
+          @click="emit('select', group.expr)"
         >
           <span class="sb-item-top">
-            <!-- Expand toggle for keys with values: a span + role (a real button can never nest
-                 inside this row button); the twist slot keeps every row's name aligned -->
             <span
               v-if="group.values.length > 0"
               class="sb-twist"
-              :class="{ 'is-open': isExpanded(group.tag.name) }"
+              :class="{ 'is-open': isExpanded(group.scope.name) }"
               role="button"
               :aria-label="t('tags.toggleValues')"
-              :aria-expanded="isExpanded(group.tag.name)"
+              :aria-expanded="isExpanded(group.scope.name)"
               tabindex="0"
-              @click.stop="toggleExpanded(group.tag.name)"
-              @keydown.enter.stop.prevent="toggleExpanded(group.tag.name)"
-              @keydown.space.stop.prevent="toggleExpanded(group.tag.name)"
+              @click.stop="toggleExpanded(group.scope.name)"
+              @keydown.enter.stop.prevent="toggleExpanded(group.scope.name)"
+              @keydown.space.stop.prevent="toggleExpanded(group.scope.name)"
             >
               <el-icon :size="12"><CaretRight /></el-icon>
             </span>
             <span v-else class="sb-twist sb-twist-empty" aria-hidden="true"></span>
-            <span class="sb-name">{{ group.tag.name }}</span>
-            <el-tooltip v-if="group.tag.reserved" :content="t('tags.reservedHint')" placement="top" :enterable="false">
-              <el-tag size="small" type="warning" class="sb-reserved">{{ t('tags.reserved') }}</el-tag>
+            <span class="sb-name">{{ group.scope.name }}</span>
+            <el-tooltip
+              v-if="group.scope.required"
+              :content="t('scopes.requiredHint')"
+              placement="top"
+              :enterable="false"
+            >
+              <el-tag size="small" type="info" class="sb-required">{{ t('scopes.required') }}</el-tag>
             </el-tooltip>
-            <span class="sb-item-count" :title="t('tags.title')">{{ group.tag.count }}</span>
-            <!-- Edit lives on a hover-revealed affordance: the row's own click is the filter
-                 toggle, so renaming/deleting gets a smaller, separate target (span + role so a
-                 real button is never nested inside this row button) -->
+            <span class="sb-item-count" :title="t('tags.title')">{{ group.scope.count }}</span>
             <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
               <span
                 class="sb-edit"
                 role="button"
                 :aria-label="t('common.edit')"
-                @click.stop="emit('edit', group.tag)"
-                @keydown.enter.stop.prevent="emit('edit', group.tag)"
+                @click.stop="emit('editScope', group.scope)"
+                @keydown.enter.stop.prevent="emit('editScope', group.scope)"
               >
                 <el-icon><Edit /></el-icon>
               </span>
             </el-tooltip>
           </span>
-          <span v-if="group.tag.description" class="sb-desc">{{ group.tag.description }}</span>
+          <span v-if="group.scope.description" class="sb-desc">{{ group.scope.description }}</span>
         </button>
-        <!-- Value rows: the attribute values (`key:value` edges) nested under their key,
-             shown only while the key is expanded. The key prefix is dropped (the nesting
-             already says it); the title keeps the full form on hover. Clicking one filters
-             by the edge itself (`key=value`); their lifecycle belongs to the edges, so no
-             edit affordance. -->
-        <template v-if="group.values.length > 0 && isExpanded(group.tag.name)">
+        <!-- Value rows: the scope's tags (`scope::value`) nested under their scope, shown only
+             while it is expanded. The prefix is dropped (the nesting already says it); the
+             title keeps the full name on hover. Clicking one filters by the tag itself; the
+             edit affordance opens the tag dialog on the full name. -->
+        <template v-if="group.values.length > 0 && isExpanded(group.scope.name)">
           <button
             v-for="value in group.values"
-            :key="value.expr"
+            :key="value.name"
             type="button"
             class="sb-item sb-value"
-            :class="{ 'is-active': isActive(value.expr) }"
-            :title="`${group.tag.name}:${value.tag.name}`"
-            @click="emit('select', value.tag, value.expr)"
+            :class="{ 'is-active': isActive(value.name) }"
+            :title="value.name"
+            @click="emit('select', value.name)"
           >
             <span class="sb-item-top">
-              <span class="sb-name">{{ value.tag.name }}</span>
-              <span class="sb-item-count" :title="t('tags.title')">{{ value.tag.count }}</span>
+              <span class="sb-name">{{ valueLabel(group.scope.name, value.name) }}</span>
+              <span class="sb-item-count" :title="t('tags.title')">{{ value.count }}</span>
+              <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
+                <span
+                  class="sb-edit"
+                  role="button"
+                  :aria-label="t('common.edit')"
+                  @click.stop="emit('edit', value)"
+                  @keydown.enter.stop.prevent="emit('edit', value)"
+                >
+                  <el-icon><Edit /></el-icon>
+                </span>
+              </el-tooltip>
             </span>
           </button>
         </template>
@@ -100,79 +149,78 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CaretRight, Collection, Edit, Operation, Plus } from '@element-plus/icons-vue'
+import { CaretRight, Collection, Edit, FolderAdd, Operation, Plus } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 import { toastError } from '../toast'
 import { useTags } from '../composables/useTags'
-import type { TagView } from '../types'
+import type { ScopeView, TagView } from '../types'
 
-/** One attribute value nested under its key: the value tag plus the `key=value` expression
- *  that filters by the displayed `key:value` edge (a bare name cannot carry the key). */
-interface ValueRow {
-  tag: TagView
+/** One scope section: the scope plus the tags living under it (`scope::value` full names). */
+interface ScopeGroup {
+  scope: ScopeView
+  /** The scope wildcard atom, the expression its header filters by */
   expr: string
+  values: TagView[]
 }
 
-/** A sidebar entry: the tag itself, the expression its click filters by, and the values
- *  nested under it when edges point from it at other tags. */
-interface GroupRow {
-  tag: TagView
-  expr: string
-  values: ValueRow[]
-}
-
-/** Sidebar listing every tag vertically (Modrinth discover-style): name + description +
- * memory count. Clicking an entry asks the parent to filter the list by it; editing
- * (rename/description/delete) goes through the hover-revealed edit affordance. The parent
- * feeds the current expression back as `active` to highlight the filtered row. Tags that
- * other tags point at (attribute values) are not their own entries: they nest, collapsed
- * by default, under each key that points at them (TagView.keys). */
+/** Sidebar listing the whole vocabulary vertically (Modrinth discover-style): bare tags as their
+ *  own entries, then one section per scope — the header filters by the `scope::*` wildcard and
+ *  the scope's values nest below it, collapsed by default, prefix stripped. Clicking an entry
+ *  asks the parent to filter the list by it; editing (rename/description/delete) goes through
+ *  the hover-revealed edit affordance (a scope's opens the scope dialog, a tag's the tag
+ *  dialog). The parent feeds the current expression back as `active` to highlight the filtered
+ *  row. */
 const props = defineProps<{
   /** The panel's current tag expression; a row is active when the expression matches exactly */
   active?: string
 }>()
 
 const emit = defineEmits<{
-  /** select carries the tag and the exact filter expression (a value's is `key=value`) */
-  select: [tag: TagView, expr: string]
+  /** select carries the exact filter expression: a tag's own name, or a scope's `scope::*` */
+  select: [expr: string]
   edit: [tag: TagView]
+  editScope: [scope: ScopeView]
   create: []
+  createScope: []
   predicates: []
   /** The "all memories" row: clear the tag expression */
   clear: []
 }>()
 
-const { rows, loading, reload } = useTags()
+const { rows, scopes, loading, reload } = useTags()
 
 // Most-used first, ties broken by name — a stable order independent of server-side ordering
-const sorted = computed(() => [...rows.value].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)))
+const byUse = (a: TagView, b: TagView) => b.count - a.count || a.name.localeCompare(b.name)
 
-// The tree: top-level entries are the tags with a presence of their own (bare or edge
-// source); a value-only tag lives inside its keys' value lists. A tag both pointed at and
-// organizing appears top-level and as a value.
-const groups = computed<GroupRow[]>(() =>
-  sorted.value
-    .filter((tag) => !tag.target_only)
-    .map((tag) => ({
-      tag,
-      expr: tag.name,
-      values: sorted.value
-        .filter((v) => v.keys?.includes(tag.name))
-        .map((v) => ({ tag: v, expr: `${tag.name}=${v.name}` })),
+const bareTags = computed(() => rows.value.filter((tag) => !tag.scope).sort(byUse))
+
+const scopeGroups = computed<ScopeGroup[]>(() =>
+  scopes.value
+    .map((scope) => ({ scope, byCount: scope.count, byName: scope.name }))
+    .sort((a, b) => b.byCount - a.byCount || a.byName.localeCompare(b.byName))
+    .map(({ scope }) => ({
+      scope,
+      expr: `${scope.name}::*`,
+      values: rows.value.filter((tag) => tag.scope === scope.name).sort(byUse),
     })),
 )
 
-// Value lists start collapsed: the sidebar stays scannable, values are a drill-down
-const expandedKeys = ref<Set<string>>(new Set())
-
-function isExpanded(key: string): boolean {
-  return expandedKeys.value.has(key)
+/** The nesting already carries the scope: the value row shows the bare value half */
+function valueLabel(scope: string, name: string): string {
+  return name.startsWith(`${scope}::`) ? name.slice(scope.length + 2) : name
 }
 
-function toggleExpanded(key: string): void {
-  const next = new Set(expandedKeys.value)
-  if (!next.delete(key)) next.add(key)
-  expandedKeys.value = next
+// Value lists start collapsed: the sidebar stays scannable, values are a drill-down
+const expandedScopes = ref<Set<string>>(new Set())
+
+function isExpanded(scope: string): boolean {
+  return expandedScopes.value.has(scope)
+}
+
+function toggleExpanded(scope: string): void {
+  const next = new Set(expandedScopes.value)
+  if (!next.delete(scope)) next.add(scope)
+  expandedScopes.value = next
 }
 
 const isFiltering = computed(() => (props.active ?? '').trim() !== '')
@@ -299,8 +347,8 @@ defineExpose({
   font-weight: 500;
 }
 
-/* Tag entry: twist slot + name + reserved badge + count on the first line, description
-   below. A plain button styled as a quiet list row (Modrinth filter-entry look). */
+/* Tag entry: twist slot + name + badges + count on the first line, description below. A plain
+   button styled as a quiet list row (Modrinth filter-entry look). */
 .sb-item {
   display: flex;
   flex-direction: column;
@@ -330,7 +378,7 @@ defineExpose({
   gap: 6px;
   min-width: 0;
 }
-/* Expand toggle (keys with values) / its empty placeholder (the rest): fixed width so the
+/* Expand toggle (scopes with values) / its empty placeholder (the rest): fixed width so the
    names line up across rows; the caret turns down while expanded */
 .sb-twist {
   display: inline-flex;
@@ -357,7 +405,8 @@ defineExpose({
   font-weight: 500;
   color: var(--el-text-color-primary);
 }
-.sb-reserved {
+.sb-reserved,
+.sb-required {
   flex-shrink: 0;
 }
 .sb-item-count {
@@ -367,7 +416,7 @@ defineExpose({
   font-variant-numeric: tabular-nums;
   color: var(--el-text-color-secondary);
 }
-/* Hover-revealed edit affordance (opens the tag dialog); keeps its slot so the count
+/* Hover-revealed edit affordance (opens the tag/scope dialog); keeps its slot so the count
    never shifts when it fades in */
 .sb-edit {
   display: inline-flex;
@@ -400,9 +449,9 @@ defineExpose({
   word-break: break-word;
 }
 
-/* Value row: the NAME nests one full indent step (twist slot + gap) deeper than its key's
-   name — the key name sits at 10 + 14 + 6 = 30px, so 30px here would align values with keys.
-   The count stays right-aligned (margin-left auto) and does not move. */
+/* Value row: the NAME nests one full indent step (twist slot + gap) deeper than its scope's
+   name — the scope name sits at 10 + 14 + 6 = 30px, so 30px here would align values with
+   scopes. The count stays right-aligned (margin-left auto) and does not move. */
 .sb-value {
   padding-left: 50px;
 }

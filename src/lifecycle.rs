@@ -1,6 +1,6 @@
 //! Freshness decay is a ranking-only prior over memories; it never hides or recalls content.
 
-use crate::tag_expr::{TagAtom, TagExpr};
+use crate::tag_expr::TagExpr;
 use serde::{Deserialize, Serialize};
 
 /// Upper bound for stored epoch-second timestamps (access events and aggregates).
@@ -67,16 +67,8 @@ impl Policy {
             return Err("lifecycle RRF weights must be between 0 and 5".into());
         }
         for rule in &policy.rules {
-            let expr = crate::tag_expr::parse_rule(&rule.predicate)
+            crate::tag_expr::parse_rule(&rule.predicate)
                 .map_err(|e| format!("invalid decay rule {:?}: {e}", rule.predicate))?;
-            let mut keyed = false;
-            expr.visit_atoms(&mut |atom| keyed |= matches!(atom, TagAtom::KeyEq { .. }));
-            if keyed {
-                return Err(format!(
-                    "invalid decay rule {:?}: edge comparisons (key=value) are query-only; use tag names, /regex/ or @named references",
-                    rule.predicate
-                ));
-            }
         }
         Ok(policy)
     }

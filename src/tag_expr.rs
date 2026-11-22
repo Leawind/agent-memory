@@ -1,37 +1,42 @@
 //! Tag set algebra: parse and evaluate boolean expressions over tag names.
 //!
 //! Every tag is a set of memories, so a tag expression is a set expression: `(a&b)|c` selects
-//! memories carrying both `a` and `b`, or carrying `c`. A bare word matches presence in any
-//! state — the tag may sit on the memory bare, as an edge source (`w:…`) or as an edge target
-//! (`…:w`); the store rewrites existing names to a presence regex before evaluation. Grammar
-//! (precedence `!` > `&` > `|`, parentheses group, `&&` / `||` accepted as aliases):
+//! memories carrying both `a` and `b`, or carrying `c`. A leaf names tags exactly — bare
+//! (`rust`) or scoped (`system::pc1sw0`) — and passes only when the memory carries that name;
+//! `scope::*` widens it to every name in that scope, so `system::*` means "carries some value in
+//! system". Grammar (precedence `!` > `&` > `|`, parentheses group, `&&` / `||` accepted as
+//! aliases):
 //!
 //! ```text
 //! expr    := or
 //! or      := and ("|" | "||" and)*
 //! and     := unary ("&" | "&&" unary)*
 //! unary   := ("!" unary) | primary
-//! primary := "(" expr ")" | "mutex(" expr ("," expr)+ ")" | tag | regex | keyed
-//! tag     := quoted | bare
+//! primary := "(" expr ")" | "mutex(" expr ("," expr)+ ")" | named | tag | regex
+//! named   := "@" word
+//! tag     := quoted | word | word "::" "*"
+//! word    := 1+ chars outside whitespace, parentheses, "&|!=", quotes and "*"
 //! quoted  := '"' (escape | char)* '"' | "'" (escape | char)* "'"
-//! bare    := 1+ chars outside whitespace, parentheses, "&|!=!", quotes
 //! regex   := "/" (escape | char)* "/"
-//! keyed   := bare "=" (bare | quoted)
 //! ```
 //!
-//! A regex atom passes when ANY of the memory's tag display names matches (Rust regex syntax,
-//! case sensitive by default — inline flags like `(?i)` work). A `/` opens a regex only at a token
-//! boundary; inside a bare word it stays literal, so `proj/alpha` is still one tag name. Inside
-//! a regex, `\/` escapes the delimiter and every other backslash sequence passes through to the
-//! regex engine untouched (`\d`, `\\`, ...).
+//! A word holds at most one `::` separator, and both halves must be identifier words
+//! (`model::normalize_tag_name`): a lone `:` and a `*` that does not spell out a scope wildcard
+//! are syntax errors. Quoting escapes the expression operators only — the text still goes
+//! through the tag-name rule, so a quoted name is never a wildcard.
 //!
-//! Parsing is pure syntax; leaf names are validated against the store by the caller (unknown
-//! names are an error with a did-you-mean hint, mirroring tag linking on writes). Regex atoms
-//! carry no names and match dynamically. A `keyed` atom is syntax only: the store rewrites it
-//! to the displayed `source:target` edge leaf (canonical number, or the target verbatim) before
-//! use, and named-predicate definitions reject it as query-only. Targets never need quoting for
-//! special characters — tag names are identifier words or numbers, so the bare form is total.
+//! A regex atom passes when ANY of the memory's tag names matches (Rust regex syntax, case
+//! sensitive by default — inline flags like `(?i)` work). A `/` opens a regex only at a token
+//! boundary; inside a word it stays an ordinary character, which the name rule then rejects.
+//! Inside a regex, `\/` escapes the delimiter and every other backslash sequence passes through
+//! to the regex engine untouched (`\d`, `\\`, ...).
+//!
+//! Parsing is pure syntax; the caller validates the leaves against the store (unknown names are
+//! an error with a did-you-mean hint, mirroring tag linking on writes). `tag_names` reports the
+//! exact names a query needs, `scope_names` the scopes its wildcards need. Regex atoms carry no
+//! names and match dynamically.
 
+use crate::model::{normalize_ident_word, normalize_tag_name, tag_scope_of};
 use crate::predicate::Predicate;
 
 pub type TagExpr = Predicate<TagAtom>;
@@ -39,27 +44,24 @@ pub type TagExpr = Predicate<TagAtom>;
 /// Query atoms use names; persisted predicate definitions bind literal atoms to stable ids.
 #[derive(Debug, Clone)]
 pub enum TagAtom {
+    /// An exact tag name, bare (`rust`) or scoped (`system::pc1sw0`).
     Tag(String),
+    /// The scope half of `scope::*`: matches any name in that scope and nothing else.
+    Scope(String),
     Named(String),
     Regex(Box<regex::Regex>),
-    /// `key=value` from the query text; the store rewrites it to the displayed `source:target`
-    /// edge leaf (a number canonicalizes).
-    KeyEq {
-        key: String,
-        value: String,
-    },
 }
 
 impl TagExpr {
-    /// Evaluate against one memory's tag set: a leaf passes when the set carries the name, a
-    /// regex when any name matches.
+    /// Evaluate against one memory's tag set: a leaf passes when the set carries the name (or,
+    /// for a scope wildcard, a name in that scope), a regex when any name matches.
     pub fn eval(&self, tags: &[String]) -> bool {
         self.eval_with(&|atom| match atom {
             TagAtom::Tag(name) => tags.iter().any(|t| t == name),
+            TagAtom::Scope(scope) => tags
+                .iter()
+                .any(|t| tag_scope_of(t.as_str()) == Some(scope.as_str())),
             TagAtom::Regex(re) => tags.iter().any(|t| re.is_match(t)),
-            TagAtom::KeyEq { .. } => {
-                unreachable!("keyed atoms must be rewritten to tag leaves before evaluation")
-            }
             TagAtom::Named(_) => {
                 unreachable!("named predicates must be resolved before evaluation")
             }
@@ -79,6 +81,20 @@ impl TagExpr {
         });
         out
     }
+
+    /// Leaf scope names in first-appearance order, deduplicated (the store checks they exist).
+    /// Only a scope wildcard carries one.
+    pub fn scope_names(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        self.visit_atoms(&mut |atom| {
+            if let TagAtom::Scope(scope) = atom {
+                if !out.contains(&scope.as_str()) {
+                    out.push(scope.as_str());
+                }
+            }
+        });
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,8 +105,9 @@ enum Tok {
     Pipe,
     Bang,
     Comma,
-    Eq,
     Tag(String),
+    Scope(String),
+    Named(String),
     Regex(String),
 }
 
@@ -155,7 +172,12 @@ fn tokenize(input: &str) -> Result<Vec<(Tok, usize)>, String> {
             }
             '!' => out.push((Tok::Bang, pos)),
             ',' => out.push((Tok::Comma, pos)),
-            '=' => out.push((Tok::Eq, pos)),
+            '=' => {
+                // Values live in scopes now; '=' only ever reaches here from a name word
+                return Err(format!(
+                    "unexpected '=' at position {pos}: a tag value is written 'scope::value'"
+                ));
+            }
             '"' | '\'' => {
                 let quote = c;
                 let mut name = String::new();
@@ -181,15 +203,16 @@ fn tokenize(input: &str) -> Result<Vec<(Tok, usize)>, String> {
                         Some(&ch) => name.push(ch),
                     }
                 }
-                if name.is_empty() {
+                if name.trim().is_empty() {
                     return Err(format!("empty quoted tag name at position {pos}"));
                 }
-                out.push((Tok::Tag(name), pos));
+                // Quoting escapes the operators, not the name rule: the text is still one name
+                out.push((Tok::Tag(normalize_tag_name(&name)?), pos));
             }
             c if c.is_whitespace() => {}
             '/' => {
-                // A slash at a token boundary opens a regex atom; inside a bare word (handled
-                // below) it stays literal, so 'proj/alpha' still parses as one tag name
+                // A slash at a token boundary opens a regex atom; inside a word (handled below)
+                // it stays ordinary, so it never splits a name
                 i += 1; // skip the opening delimiter
                 let mut pattern = String::new();
                 let mut closed = false;
@@ -235,22 +258,93 @@ fn tokenize(input: &str) -> Result<Vec<(Tok, usize)>, String> {
                 out.push((Tok::Regex(pattern), pos));
             }
             _ => {
-                let mut name = String::new();
+                // One name word: whitespace and the operators end it, so a glued operator is a
+                // syntax error rather than part of the name
+                let mut word: Vec<(usize, char)> = Vec::new();
                 while i < chars.len() {
                     let ch = chars[i];
                     if ch.is_whitespace() || "(),&|!=\"'".contains(ch) {
                         break;
                     }
-                    name.push(ch);
+                    word.push((i, ch));
                     i += 1;
                 }
                 i -= 1;
-                out.push((Tok::Tag(name), pos));
+                out.push(name_token(&word)?);
             }
         }
         i += 1;
     }
     Ok(out)
+}
+
+/// Classify one name word: `@name` references a predicate, `scope::*` is a scope wildcard, and
+/// anything else is an exact tag name. Both halves of a scoped name are identifier words.
+fn name_token(word: &[(usize, char)]) -> Result<(Tok, usize), String> {
+    let start = word[0].0 + 1;
+    let text: String = word.iter().map(|(_, c)| *c).collect();
+    if let Some(reference) = text.strip_prefix('@') {
+        if reference.is_empty() {
+            return Err(format!("empty named predicate at position {start}"));
+        }
+        return Ok((Tok::Named(normalize_tag_name(reference)?), start));
+    }
+    // One '::' pair at most, and a '*' only where it spells out the wildcard value
+    let mut separator: Option<usize> = None;
+    let mut i = 0;
+    while i < word.len() {
+        let at = word[i].0 + 1;
+        match word[i].1 {
+            '*' => {
+                let closes_wildcard =
+                    i + 1 == word.len() && i >= 2 && word[i - 1].1 == ':' && word[i - 2].1 == ':';
+                if !closes_wildcard {
+                    return Err(format!(
+                        "unexpected '*' at position {at}: '*' is the value of a scope wildcard"
+                    ));
+                }
+                i += 1;
+            }
+            ':' => {
+                if !matches!(word.get(i + 1), Some((_, ':'))) {
+                    return Err(format!(
+                        "unexpected ':' at position {at}: write a scoped name as 'scope::value'"
+                    ));
+                }
+                if separator.is_some() {
+                    return Err(format!(
+                        "unexpected '::' at position {at}: a tag name holds at most one '::'"
+                    ));
+                }
+                separator = Some(i);
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    let Some(split_at) = separator else {
+        return Ok((Tok::Tag(normalize_tag_name(&text)?), start));
+    };
+    let scope: String = word[..split_at].iter().map(|(_, c)| *c).collect();
+    let separator_at = word[split_at].0 + 1;
+    if scope.is_empty() {
+        return Err(format!(
+            "missing scope name before '::' at position {separator_at}"
+        ));
+    }
+    let value: String = word[split_at + 2..].iter().map(|(_, c)| *c).collect();
+    if value.is_empty() {
+        return Err(format!(
+            "missing value after '::' at position {separator_at}"
+        ));
+    }
+    if value == "*" {
+        return Ok((
+            Tok::Scope(normalize_ident_word(&scope, "tag scope")?),
+            start,
+        ));
+    }
+    Ok((Tok::Tag(normalize_tag_name(&text)?), start))
 }
 
 fn describe(tok: &Tok) -> String {
@@ -261,8 +355,9 @@ fn describe(tok: &Tok) -> String {
         Tok::Pipe => "'|'".to_string(),
         Tok::Bang => "'!'".to_string(),
         Tok::Comma => "','".to_string(),
-        Tok::Eq => "'='".to_string(),
         Tok::Tag(name) => format!("tag '{name}'"),
+        Tok::Scope(scope) => format!("scope wildcard '{scope}::*'"),
+        Tok::Named(name) => format!("named predicate '@{name}'"),
         Tok::Regex(pattern) => format!("regular expression '/{pattern}/'"),
     }
 }
@@ -355,35 +450,9 @@ impl Parser {
                     _ => Err(format!("missing ')' for mutex at position {pos}")),
                 }
             }
-            Tok::Tag(name) if name.starts_with('@') => {
-                let reference = &name[1..];
-                crate::model::normalize_tag_name(reference)?;
-                Ok(TagExpr::Atom(TagAtom::Named(reference.to_string())))
-            }
-            Tok::Tag(name) => {
-                // `key=value` hangs off a plain tag token; the store rewrites the pair to the
-                // displayed `source:target` edge leaf
-                if matches!(self.peek(), Some((Tok::Eq, _))) {
-                    self.pos += 1;
-                    let value = match self.next() {
-                        Some((Tok::Tag(v), _)) => v,
-                        Some((tok, vpos)) => {
-                            return Err(format!(
-                                "unexpected {} at position {vpos}: a value after '=' was expected",
-                                describe(&tok)
-                            ))
-                        }
-                        None => {
-                            return Err(
-                                "unexpected end of expression: a value after '=' was expected"
-                                    .into(),
-                            )
-                        }
-                    };
-                    return Ok(TagExpr::Atom(TagAtom::KeyEq { key: name, value }));
-                }
-                Ok(TagExpr::Atom(TagAtom::Tag(name)))
-            }
+            Tok::Tag(name) => Ok(TagExpr::Atom(TagAtom::Tag(name))),
+            Tok::Scope(scope) => Ok(TagExpr::Atom(TagAtom::Scope(scope))),
+            Tok::Named(name) => Ok(TagExpr::Atom(TagAtom::Named(name))),
             Tok::Regex(pattern) => {
                 let re = regex::Regex::new(&pattern).map_err(|e| {
                     format!("invalid regular expression '/{pattern}/' at position {pos}: {e}")
@@ -456,32 +525,136 @@ mod tests {
         assert!(eval("!!a", &["a"]));
     }
 
+    /// An exact name matches itself and nothing else: a scoped name does not widen to its scope,
+    /// and a bare name never matches a scoped one.
     #[test]
-    fn quoted_and_unicode_names() {
-        // Names containing operators, whitespace or quotes need quoting; escapes keep literals
-        assert!(eval("'rust & life'|x", &["rust & life"]));
-        assert!(eval("\"项目 管理\"|x", &["项目 管理"]));
-        assert!(eval("'it\\'s'|x", &["it's"]));
-        assert!(eval("'a\\\\b'|x", &["a\\b"]));
+    fn exact_names_match_only_themselves() {
+        assert!(eval("rust", &["rust"]));
+        assert!(!eval("rust", &["rusty"]));
+        assert!(eval("a::b", &["a::b"]));
+        assert!(!eval("a::b", &["a::c"]));
+        assert!(!eval("a::b", &["a"]));
+        assert!(!eval("a", &["a::b"]));
+        // A bare name never matches the value half of a scoped name
+        assert!(!eval("a", &["b::a"]));
+        // !a::b is decided on that exact name
+        assert!(eval("!a::b", &["a::c"]));
+        assert!(!eval("!a::b", &["a::b"]));
+        assert!(eval("a::b&!a::c", &["a::b"]));
+    }
+
+    /// `scope::*` matches every name in that scope: not the bare scope tag, not another scope,
+    /// and not a longer name that merely starts with the same letters.
+    #[test]
+    fn scope_wildcards_match_one_scope() {
+        assert!(eval("a::*", &["a::b"]));
+        assert!(eval("a::*", &["a::c", "x"]));
+        assert!(!eval("a::*", &["b::a"]));
+        assert!(!eval("a::*", &["a"]));
+        assert!(!eval("a::*", &["ab::c"]));
+        assert!(!eval("a::*", &[]));
+        // Negation covers the whole scope at once
+        assert!(eval("!a::*", &["a"]));
+        assert!(eval("!a::*", &["b::a"]));
+        assert!(!eval("!a::*", &["a::b"]));
+        // Composes with the algebra like any other operand
+        assert!(eval("a::*&!a::skip", &["a::keep", "b::skip"]));
+        assert!(!eval("a::*&!a::skip", &["a::skip"]));
+        assert!(eval("a::*|b::x", &["b::x"]));
+    }
+
+    /// Quoting escapes the expression operators; the quoted text is still one tag name, so it is
+    /// normalized like any other and never spells a wildcard.
+    #[test]
+    fn quoted_names_are_names_and_never_wildcards() {
+        assert!(eval("'rust'|x", &["rust"]));
+        assert!(eval("\"rust\"", &["rust"]));
+        assert!(eval("'a::b'", &["a::b"]));
         assert!(eval("中文|rust", &["中文"]));
+        assert!(eval("'项目A.1'", &["项目A.1"]));
+        // Surrounding whitespace trims away, as for any tag name
+        assert!(eval("' rust '", &["rust"]));
+        // A quoted wildcard is an invalid name, not a wildcard
+        assert!(parse("'a::*'").is_err());
+        // Names are identifier words: quoting cannot smuggle in a delimiter or an operator
+        assert!(parse("'rust & life'").is_err());
+        assert!(parse("'a/b'").is_err());
+        assert!(parse("'a:b'").is_err());
         // Unterminated or empty quotes are syntax errors
         assert!(parse("'rust").is_err());
         assert!(parse("''").is_err());
+        assert!(parse("'  '").is_err());
+    }
+
+    /// Scoped names are the only place a ':' may appear, and '*' only where it is the wildcard.
+    #[test]
+    fn scoped_name_syntax_errors() {
+        let err = parse("a:b").unwrap_err();
+        assert!(
+            err.contains("at position 2") && err.contains("'scope::value'"),
+            "got: {err}"
+        );
+        let err = parse("a::b::c").unwrap_err();
+        assert!(
+            err.contains("at most one '::'") && err.contains("at position 5"),
+            "got: {err}"
+        );
+        let err = parse("a::").unwrap_err();
+        assert!(
+            err.contains("missing value after '::'") && err.contains("at position 2"),
+            "got: {err}"
+        );
+        let err = parse("::*").unwrap_err();
+        assert!(
+            err.contains("missing scope name before '::'") && err.contains("at position 1"),
+            "got: {err}"
+        );
+        for input in ["*", "a*", "a::*b", "a::b*"] {
+            let err = parse(input).unwrap_err();
+            assert!(
+                err.contains("'*' is the value of a scope wildcard"),
+                "{input}: got {err}"
+            );
+        }
+        // '=' belongs to no part of the grammar any more
+        let err = parse("a=b").unwrap_err();
+        assert!(
+            err.contains("at position 2") && err.contains("'scope::value'"),
+            "got: {err}"
+        );
+        assert!(parse("=x").unwrap_err().contains("at position 1"));
+        // A scoped name is an identifier word on both sides
+        assert!(parse("a::-b").is_err());
+        assert!(parse("-a::b").is_err());
+    }
+
+    /// `@name` stays a predicate reference: resolved before evaluation, never a tag name.
+    #[test]
+    fn named_references_resolve_before_evaluation() {
+        let expr = parse("@Archived|x").unwrap();
+        assert_eq!(expr.tag_names(), vec!["x"]);
+        let expr = parse("@Archived").unwrap();
+        assert!(matches!(expr, TagExpr::Atom(TagAtom::Named(name)) if name == "Archived"));
+        assert!(parse("@").is_err());
+        assert!(parse("@a b").is_err());
     }
 
     /// Regex atoms: pass when ANY of the memory's tag names matches; a slash opens a regex only
-    /// at a token boundary, so slashes inside bare words stay literal tag characters.
+    /// at a token boundary, so a slash inside a word stays ordinary.
     #[test]
     fn regex_atoms() {
-        assert!(eval("/^proj/", &["proj/alpha"]));
+        assert!(eval("/^proj/", &["proj-alpha"]));
         assert!(!eval("/^proj/", &["web"]));
         // Any-tag OR: one matching name suffices
-        assert!(eval("/^proj/", &["web", "proj/beta"]));
+        assert!(eval("/^proj/", &["web", "proj-beta"]));
+        // Scoped names match through the separator like any other text
+        assert!(eval("/^system::/", &["system::pc1"]));
+        assert!(!eval("/^system::/", &["lang::rust"]));
         // Composes with the algebra like any other operand
-        assert!(eval("/^proj/&!misc", &["proj/alpha"]));
-        assert!(!eval("/^proj/&!misc", &["proj/alpha", "misc"]));
+        assert!(eval("/^proj/&!misc", &["proj-alpha"]));
+        assert!(!eval("/^proj/&!misc", &["proj-alpha", "misc"]));
         assert!(eval("a|/b+/", &["bbb"]));
-        assert!(eval("x&/^项目/", &["x", "项目 管理"]));
+        assert!(eval("x&/^项目/", &["x", "项目管理"]));
         // Escaped delimiter matches a literal slash; other backslash sequences reach the engine
         assert!(eval("/a\\/b/", &["a/b"]));
         assert!(eval("/\\d/", &["v2-x"]));
@@ -489,9 +662,8 @@ mod tests {
         // Case-sensitive by default; inline flags opt into case folding
         assert!(!eval("/rust/", &["RUST"]));
         assert!(eval("/(?i)rust/", &["RUST"]));
-        // A slash inside a bare word stays a tag character (one leaf, not a regex)
-        let expr = parse("proj/alpha").unwrap();
-        assert_eq!(expr.tag_names(), vec!["proj/alpha"]);
+        // A slash inside a word stays one name, which the name rule then rejects
+        assert!(parse("proj/alpha").is_err());
         // Unterminated, empty and invalid regexes carry positions
         let err = parse("/abc").unwrap_err();
         assert!(
@@ -508,43 +680,6 @@ mod tests {
             err.contains("invalid regular expression '/([/' at position 1"),
             "got: {err}"
         );
-    }
-
-    #[test]
-    fn keyed_atoms_carry_source_and_target_for_the_store_rewrite() {
-        // Keyed atoms are pure syntax: the store rewrites them to `source:target` display
-        // leaves (covered by the store tests). A bare name stays a Tag atom.
-        let parsed = parse("project=agent-memory&!hidden").unwrap();
-        let mut pairs = Vec::new();
-        parsed.visit_atoms(&mut |a| {
-            if let TagAtom::KeyEq { key, value } = a {
-                pairs.push((key.clone(), value.clone()));
-            }
-        });
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(
-            pairs[0],
-            ("project".to_string(), "agent-memory".to_string())
-        );
-        assert!(parse("url").unwrap().eval_with(&|atom| matches!(
-            atom,
-            TagAtom::Tag(name) if name == "url"
-        )));
-        // Composes with the algebra like any operand; a quoted value is one token
-        let parsed = parse("key='a b'|key=c").unwrap();
-        let mut count = 0;
-        parsed.visit_atoms(&mut |a| {
-            if let TagAtom::KeyEq { value, .. } = a {
-                count += 1;
-                if count == 1 {
-                    assert_eq!(value, "a b");
-                }
-            }
-        });
-        assert_eq!(count, 2);
-        // Missing value and lone '=' are syntax errors
-        assert!(parse("url=").is_err());
-        assert!(parse("=x").is_err());
     }
 
     #[test]
@@ -572,8 +707,24 @@ mod tests {
     fn leaf_names_are_unique_in_order() {
         let expr = parse("b&(a|b)&!c").unwrap();
         assert_eq!(expr.tag_names(), vec!["b", "a", "c"]);
-        // Regex atoms match dynamically: no literal leaves
-        assert_eq!(parse("/^x/&a").unwrap().tag_names(), vec!["a"]);
+        // A scoped name is one exact leaf
+        let expr = parse("a::b&(a|a::b)").unwrap();
+        assert_eq!(expr.tag_names(), vec!["a::b", "a"]);
+        // Wildcards and regex atoms match dynamically: no literal leaves
+        assert_eq!(parse("a::*&/^x/&b").unwrap().tag_names(), vec!["b"]);
+    }
+
+    /// Scope wildcards report the scopes the store must check, in first-appearance order.
+    #[test]
+    fn scope_names_are_unique_in_order() {
+        let expr = parse("b::*&(a::*|b::*)&!c").unwrap();
+        assert_eq!(expr.scope_names(), vec!["b", "a"]);
+        assert_eq!(expr.tag_names(), vec!["c"]);
+        // An exact scoped name is a full name, not a scope
+        let expr = parse("a::b|!c::*").unwrap();
+        assert_eq!(expr.tag_names(), vec!["a::b"]);
+        assert_eq!(expr.scope_names(), vec!["c"]);
+        assert!(parse("/^x/&y").unwrap().scope_names().is_empty());
     }
 
     #[test]
@@ -595,6 +746,9 @@ mod tests {
             parse("mutex(a&b,c)").unwrap().tag_names(),
             vec!["a", "b", "c"]
         );
+        // A scope wildcard is one operand like any other
+        assert!(eval("mutex(a::*,b)", &["b"]));
+        assert!(!eval("mutex(a::*,b)", &["a::x", "b"]));
         assert!(eval("mutex", &["mutex"]));
         for input in ["mutex()", "mutex(a)", "mutex(a,)", "mutex(a,b", "a,b"] {
             assert!(parse(input).is_err(), "{input}");

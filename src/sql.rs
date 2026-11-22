@@ -17,12 +17,26 @@ pub const TAG_ALL_NAMES: &str = include_str!("../sql/tag_all_names.sql");
 pub const TAG_BY_NAME: &str = include_str!("../sql/tag_by_name.sql");
 pub const TAG_VIEW: &str = include_str!("../sql/tag_view.sql");
 pub const TAG_VIEW_ALL: &str = include_str!("../sql/tag_view_all.sql");
-pub const TAG_TARGET_KEYS: &str = include_str!("../sql/tag_target_keys.sql");
 pub const TAG_SET_NAME: &str = include_str!("../sql/tag_set_name.sql");
 pub const TAG_SET_DESCRIPTION: &str = include_str!("../sql/tag_set_description.sql");
 pub const TAG_DELETE: &str = include_str!("../sql/tag_delete.sql");
 pub const TAG_MEMORY_COUNT: &str = include_str!("../sql/tag_memory_count.sql");
 pub const TAG_EXPORT_ALL: &str = include_str!("../sql/tag_export_all.sql");
+pub const TAG_SCOPE_REQUIREMENT: &str = include_str!("../sql/tag_scope_requirement.sql");
+pub const TAG_SCOPE_NAMES_FOR_IDS: &str = include_str!("../sql/tag_scope_names_for_ids.sql");
+
+// Scopes are entities of their own: a tag name's prefix, holding the description and the
+// "required on every write" contract.
+pub const SCOPE_EXISTS: &str = include_str!("../sql/scope_exists.sql");
+pub const SCOPE_BY_NAME: &str = include_str!("../sql/scope_by_name.sql");
+pub const SCOPE_ALL_NAMES: &str = include_str!("../sql/scope_all_names.sql");
+pub const SCOPE_ENSURE: &str = include_str!("../sql/scope_ensure.sql");
+pub const SCOPE_CREATE: &str = include_str!("../sql/scope_create.sql");
+pub const SCOPE_SET_DESCRIPTION: &str = include_str!("../sql/scope_set_description.sql");
+pub const SCOPE_SET_REQUIRED: &str = include_str!("../sql/scope_set_required.sql");
+pub const SCOPE_SET_REQUIRED_SINCE: &str = include_str!("../sql/scope_set_required_since.sql");
+pub const SCOPE_REQUIRED_ALL: &str = include_str!("../sql/scope_required_all.sql");
+pub const SCOPE_VIEW_ALL: &str = include_str!("../sql/scope_view_all.sql");
 
 pub const MEMORY_IDS_WITH_TAG: &str = include_str!("../sql/memory_ids_with_tag.sql");
 pub const PURGE_MEMORIES_WITH_TAG: &str = include_str!("../sql/purge_memories_with_tag.sql");
@@ -33,6 +47,7 @@ pub const MEMORY_BY_IDS: &str = include_str!("../sql/memory_by_ids.sql");
 pub const MEMORY_EXISTS: &str = include_str!("../sql/memory_exists.sql");
 pub const MEMORY_ID_BY_TEXT: &str = include_str!("../sql/memory_id_by_text.sql");
 pub const MEMORY_TAG_ORIGINS: &str = include_str!("../sql/memory_tag_origins.sql");
+pub const MEMORY_DUMP_SCOPES: &str = include_str!("../sql/memory_dump_scopes.sql");
 pub const MEMORY_ALL: &str = include_str!("../sql/memory_all.sql");
 pub const MEMORY_TAG_PAIRS: &str = include_str!("../sql/memory_tag_pairs.sql");
 pub const MEMORY_TAG_ID_PAIRS: &str = include_str!("../sql/memory_tag_id_pairs.sql");
@@ -136,14 +151,26 @@ mod tests {
             ("TAG_BY_NAME", TAG_BY_NAME),
             ("TAG_VIEW", TAG_VIEW),
             ("TAG_VIEW_ALL", TAG_VIEW_ALL),
-            ("TAG_TARGET_KEYS", TAG_TARGET_KEYS),
             ("TAG_SET_NAME", TAG_SET_NAME),
             ("TAG_SET_DESCRIPTION", TAG_SET_DESCRIPTION),
             ("TAG_DELETE", TAG_DELETE),
             ("TAG_MEMORY_COUNT", TAG_MEMORY_COUNT),
             ("TAG_EXPORT_ALL", TAG_EXPORT_ALL),
+            ("TAG_SCOPE_REQUIREMENT", TAG_SCOPE_REQUIREMENT),
+            ("TAG_SCOPE_NAMES_FOR_IDS", TAG_SCOPE_NAMES_FOR_IDS),
+            ("SCOPE_EXISTS", SCOPE_EXISTS),
+            ("SCOPE_BY_NAME", SCOPE_BY_NAME),
+            ("SCOPE_ALL_NAMES", SCOPE_ALL_NAMES),
+            ("SCOPE_ENSURE", SCOPE_ENSURE),
+            ("SCOPE_CREATE", SCOPE_CREATE),
+            ("SCOPE_SET_DESCRIPTION", SCOPE_SET_DESCRIPTION),
+            ("SCOPE_SET_REQUIRED", SCOPE_SET_REQUIRED),
+            ("SCOPE_SET_REQUIRED_SINCE", SCOPE_SET_REQUIRED_SINCE),
+            ("SCOPE_REQUIRED_ALL", SCOPE_REQUIRED_ALL),
+            ("SCOPE_VIEW_ALL", SCOPE_VIEW_ALL),
             ("MEMORY_IDS_WITH_TAG", MEMORY_IDS_WITH_TAG),
             ("PURGE_MEMORIES_WITH_TAG", PURGE_MEMORIES_WITH_TAG),
+            ("MEMORY_DUMP_SCOPES", MEMORY_DUMP_SCOPES),
             ("MEMORY_INSERT", MEMORY_INSERT),
             ("MEMORY_LINK_TAG", MEMORY_LINK_TAG),
             ("MEMORY_CLEAR_TAGS", MEMORY_CLEAR_TAGS),

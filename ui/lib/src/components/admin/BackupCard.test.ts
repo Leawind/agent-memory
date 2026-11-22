@@ -28,18 +28,20 @@ beforeEach(() => {
 describe('BackupCard', () => {
   it('loads tag names for completion and exports the typed predicate as a query param', async () => {
     const fetchMock = vi.fn((url: string | URL, init?: RequestInit) =>
-      jsonResponse({ tags: [{ name: 'proj' }, { name: 'one' }] }),
+      jsonResponse({ tags: [{ name: 'project::one' }] }),
     )
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountCard()
     await flushPromises()
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tags?all=true'), expect.anything())
+    // The listing is the plain tag list now (scoped names included; no all switch anymore)
+    const listCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/tags'))
+    expect(String(listCall![0])).not.toContain('all=')
     const exportRow = wrapper.findAll('.row')[0]!
-    await exportRow.find('input').setValue('proj=one')
+    await exportRow.find('input').setValue('project::one')
     await exportRow.find('button').trigger('click')
     await flushPromises()
     const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/export'))
-    expect(String(call![0])).toContain('/api/export?predicate=proj%3Done')
+    expect(String(call![0])).toContain(`/api/export?predicate=${encodeURIComponent('project::one')}`)
     // An empty box exports the full backup: no query string at all
     await exportRow.find('input').setValue('')
     await exportRow.find('button').trigger('click')

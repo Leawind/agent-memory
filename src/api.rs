@@ -19,7 +19,8 @@ use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
 use crate::store::{self, TxMode};
 use crate::tools::{
     self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_MERGE,
-    MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
+    MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, SCOPE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST,
+    TAG_UPDATE,
 };
 use crate::util::percent_decode_lenient;
 use serde_json::{json, Map, Value};
@@ -150,6 +151,7 @@ pub fn handle(
                                 "imported_memories": report.memories,
                                 "imported_tags": report.tags,
                                 "skipped_memories": report.skipped,
+                                "unclassified_memories": report.unclassified,
                             }),
                         )
                     })
@@ -703,11 +705,6 @@ pub fn handle(
                 if let Some(f) = query_get(query, "filter") {
                     args.insert("filter".into(), json!(f));
                 }
-                // Same flag shape as the delete preview: only the exact "true" opts in, so a
-                // stray value can't silently widen the listing
-                if query_get(query, "all").is_some_and(|v| v == "true") {
-                    args.insert("all".into(), json!(true));
-                }
                 tool_call(db_path, ctx, TAG_LIST, &Value::Object(args))
             }
             ("POST", ["tags"]) => {
@@ -734,6 +731,22 @@ pub fn handle(
                     args["dry_run"] = json!(true);
                 }
                 tool_call(db_path, ctx, TAG_DELETE, &args)
+            }
+            ("GET", ["scopes"]) => tool_call(db_path, ctx, TAG_LIST, &json!({})),
+            ("PUT", ["scopes", scope_name]) => {
+                let args = args_from_body()?;
+                let mut full = Map::new();
+                full.insert("name".into(), json!(scope_name));
+                for (k, v) in args {
+                    if k == "description" || k == "required" {
+                        full.insert(k, v);
+                    }
+                }
+                tool_call(db_path, ctx, SCOPE_SET, &Value::Object(full))
+            }
+            ("POST", ["scopes"]) => {
+                let args = args_from_body()?;
+                tool_call(db_path, ctx, SCOPE_SET, &Value::Object(args))
             }
             ("GET", ["memories"]) => {
                 let args = list_or_search_args(query);

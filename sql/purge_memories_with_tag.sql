@@ -1,4 +1,3 @@
 DELETE FROM memories
 WHERE id IN (SELECT memory_id FROM memory_tags
-             WHERE tag_id = (SELECT id FROM tags WHERE name = ?1)
-                OR target_tag_id = (SELECT id FROM tags WHERE name = ?1))
+             WHERE tag_id = (SELECT id FROM tags WHERE name = ?1))

@@ -680,7 +680,7 @@ mod tests {
         };
         let evs = events_for(
             "memory_update",
-            json!({"id": "m1", "add_tags": ["b"]}),
+            json!({"id": "m1", "tags": ["b"]}),
             json!({"updated": true, "tags_autocreated": ["b"]}),
             &pre,
             &tags(&["a", "b"]),

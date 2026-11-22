@@ -1,22 +1,30 @@
-// Tag state: list and CRUD. Failed actions throw an Error; the caller layer shows the toast uniformly.
+// Tag and scope state: the two lists plus CRUD. Failed actions throw an Error; the caller layer
+// shows the toast uniformly.
 import { onMounted, ref } from 'vue'
 import { useApiClient } from '../api/client'
-import { createTag, deleteTag, listTags, updateTag } from '../api/tags'
+import {
+  createScope as apiCreateScope,
+  createTag,
+  deleteTag,
+  listTags,
+  updateScope as apiUpdateScope,
+  updateTag,
+} from '../api/tags'
 import type { TagDeleteMode } from '../api/tags'
-import type { TagView } from '../types'
+import type { ScopeView, TagView } from '../types'
 
 export function useTags() {
   const client = useApiClient()
   const rows = ref<TagView[]>([])
+  const scopes = ref<ScopeView[]>([])
   const loading = ref(false)
 
   async function reload() {
     loading.value = true
     try {
-      // all=true: the sidebar shows every tag — attribute values (edge targets) nest under
-      // their keys (TagView.keys), so they must be in the payload
-      const data = await listTags(client, undefined, true)
+      const data = await listTags(client)
       rows.value = data.tags ?? []
+      scopes.value = data.scopes ?? []
     } finally {
       loading.value = false
     }
@@ -37,11 +45,21 @@ export function useTags() {
     await reload()
   }
 
+  async function createScope(name: string, description: string, required?: boolean) {
+    await apiCreateScope(client, name, description, required)
+    await reload()
+  }
+
+  async function updateScope(name: string, description?: string, required?: boolean) {
+    await apiUpdateScope(client, name, description, required)
+    await reload()
+  }
+
   onMounted(() => {
     void reload().catch(() => {}) // first-load errors are toasted by the caller (wrapped at the caller layer)
   })
 
-  return { rows, loading, reload, create, rename, remove }
+  return { rows, scopes, loading, reload, create, rename, remove, createScope, updateScope }
 }
 
 export type TagsStore = ReturnType<typeof useTags>

@@ -8,7 +8,8 @@
 //! only renders, it never re-derives data.
 //!
 //! Row grammar (one record per line, newline is the record separator):
-//! - `tag_list`      → `<count> <[*]name>[: <description>]`
+//! - `tag_list`      → tag rows `<count> <[*]name>[: <description>]`, then a `scopes:` header and
+//!   scope rows `<count> <[!]name>[: <description>][ (N tags)]`
 //! - `memory_list`   → header `total: N | offset: N`, rows `<id> [<tags>] <updated> <summary>`
 //! - `memory_search` → header `total_matches: N | offset: N | returned: N | mode: <mode>`,
 //!   optional flag lines (`keyword_matches` / `semantic_fallback` / `semantic` / `reranked_by` /
@@ -35,9 +36,13 @@ pub fn tool_text(tool: &str, v: &Value) -> String {
     rendered.unwrap_or_else(|| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()))
 }
 
-/// `<count> <[*]name>[: <description>]` per line; the description is omitted when empty or absent.
+/// Tag rows `<count> <[*]name>[: <description>]` where `*` marks the reserved tag, then a `scopes:`
+/// header and scope rows `<count> <[!]name>[: <description>][ (N tags)]` where `!` marks a scope
+/// required on every write and the parenthetical appears only once a scope holds several tags.
+/// The header prints even with no scopes below it: "none" is an answer, not an omission.
 fn render_tag_list(v: &Value) -> Option<String> {
     let tags = v.get("tags")?.as_array()?;
+    let scopes = v.get("scopes")?.as_array()?;
     let mut out = String::new();
     for t in tags {
         let count = t.get("count")?.as_u64()?;
@@ -48,15 +53,38 @@ fn render_tag_list(v: &Value) -> Option<String> {
             out.push('*');
         }
         out.push_str(&quote_name(name));
-        if let Some(desc) = t.get("description").and_then(Value::as_str) {
-            if !desc.is_empty() {
-                out.push_str(": ");
-                out.push_str(&escape_text(desc));
+        push_description(&mut out, t);
+        out.push('\n');
+    }
+    out.push_str("scopes:\n");
+    for s in scopes {
+        let count = s.get("count")?.as_u64()?;
+        let name = s.get("name")?.as_str()?;
+        out.push_str(&count.to_string());
+        out.push(' ');
+        if s.get("required").and_then(Value::as_bool).unwrap_or(false) {
+            out.push('!');
+        }
+        out.push_str(&quote_name(name));
+        push_description(&mut out, s);
+        if let Some(tag_count) = s.get("tag_count").and_then(Value::as_u64) {
+            if tag_count > 1 {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!(" ({tag_count} tags)"));
             }
         }
         out.push('\n');
     }
     Some(out)
+}
+
+/// `: <description>` — the shared tail of a tag and a scope row, omitted when the view carries none.
+fn push_description(out: &mut String, view: &Value) {
+    if let Some(desc) = view.get("description").and_then(Value::as_str) {
+        if !desc.is_empty() {
+            out.push_str(": ");
+            out.push_str(&escape_text(desc));
+        }
+    }
 }
 
 /// Header `total: N | offset: N`, then `<id> [<tags>] <updated> <summary>` per line.
@@ -251,30 +279,52 @@ mod tests {
     }
 
     #[test]
-    fn tag_list_lines_are_sparse() {
-        let v = json!({"tags": [
-            {"count": 3, "description": "参考知识", "name": "doc"},
-            {"count": 1, "name": "git"},
-            {"count": 0, "reserved": true, "name": "convention", "description": "Reserved tag: anchors"},
-        ]});
+    fn tag_list_renders_tags_then_scopes() {
+        let v = json!({
+            "tags": [
+                {"count": 3, "description": "参考知识", "name": "doc"},
+                {"count": 1, "name": "git"},
+                {"count": 0, "reserved": true, "name": "convention", "description": "Reserved tag: anchors"},
+                {"count": 2, "name": "system::pc1sw0", "scope": "system"},
+            ],
+            "scopes": [
+                {"count": 4, "tag_count": 2, "required": true, "description": "machines", "name": "system"},
+                {"count": 1, "tag_count": 1, "name": "project"},
+                {"count": 0, "tag_count": 0, "name": "unused"},
+            ],
+        });
         assert_eq!(
             tool_text(TAG_LIST, &v),
             "3 doc: 参考知识\n\
              1 git\n\
-             0 *convention: Reserved tag: anchors\n"
+             0 *convention: Reserved tag: anchors\n\
+             2 system::pc1sw0\n\
+             scopes:\n\
+             4 !system: machines (2 tags)\n\
+             1 project\n\
+             0 unused\n"
         );
     }
 
     #[test]
+    fn tag_list_without_scopes_still_prints_the_section_header() {
+        let v = json!({"tags": [{"count": 1, "name": "git"}], "scopes": []});
+        assert_eq!(tool_text(TAG_LIST, &v), "1 git\nscopes:\n");
+    }
+
+    #[test]
     fn tag_names_outside_the_bare_grammar_are_quoted() {
-        let v = json!({"tags": [
-            {"count": 2, "name": "rust & life"},
-            {"count": 1, "name": "a,b"},
-            {"count": 1, "name": "say \"hi\""},
-            {"count": 1, "name": "it's"},
-            {"count": 1, "name": "back\\slash"},
-            {"count": 1, "name": "proj/alpha"},
-        ]});
+        let v = json!({
+            "tags": [
+                {"count": 2, "name": "rust & life"},
+                {"count": 1, "name": "a,b"},
+                {"count": 1, "name": "say \"hi\""},
+                {"count": 1, "name": "it's"},
+                {"count": 1, "name": "back\\slash"},
+                {"count": 1, "name": "proj/alpha"},
+            ],
+            "scopes": [],
+        });
         assert_eq!(
             tool_text(TAG_LIST, &v),
             "2 'rust & life'\n\
@@ -282,14 +332,21 @@ mod tests {
              1 \"say \\\"hi\\\"\"\n\
              1 \"it's\"\n\
              1 \"back\\\\slash\"\n\
-             1 proj/alpha\n"
+             1 proj/alpha\n\
+             scopes:\n"
         );
     }
 
     #[test]
     fn tag_description_newlines_stay_inside_the_line() {
-        let v = json!({"tags": [{"count": 1, "name": "x", "description": "one\ntwo\r\nthree"}]});
-        assert_eq!(tool_text(TAG_LIST, &v), "1 x: one\\ntwo\\r\\nthree\n");
+        let v = json!({
+            "tags": [{"count": 1, "name": "x", "description": "one\ntwo\r\nthree"}],
+            "scopes": [{"count": 1, "tag_count": 3, "name": "s", "description": "a\nb"}],
+        });
+        assert_eq!(
+            tool_text(TAG_LIST, &v),
+            "1 x: one\\ntwo\\r\\nthree\nscopes:\n1 s: a\\nb (3 tags)\n"
+        );
     }
 
     #[test]

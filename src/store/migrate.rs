@@ -86,6 +86,14 @@ mod tests {
             st.conn
                 .execute_batch(
                     "DROP TABLE memory_tags;
+                     DROP TABLE tags;
+                     DROP TABLE tag_scopes;
+                     CREATE TABLE tags (
+                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                         name TEXT NOT NULL UNIQUE,
+                         description TEXT NOT NULL DEFAULT '',
+                         created_at INTEGER NOT NULL
+                     );
                      CREATE TABLE memory_tags (
                          memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
                          tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
@@ -114,36 +122,113 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, super::MIGRATIONS.len() as i64);
-        // Every former value is a vocabulary entry now, sharing its row with the same-named key
-        let id_of = |name: &str| -> i64 {
-            st.tag_ids_by_names(&[name.to_string()])
+        // After the scoped-tags migration a surviving edge is one tag name, and the promoted
+        // value word is no longer a role of its own.
+        let names = |memory: i64| -> Vec<String> {
+            let mut names: Vec<String> = st
+                .tag_rows_for(memory)
                 .unwrap()
                 .into_iter()
-                .next()
-                .unwrap()
+                .map(|r| r.name)
+                .collect();
+            names.sort();
+            names
         };
-        assert_eq!(id_of("shared"), id_of("shared"));
-        let shared = id_of("shared");
-        let rows = |memory: i64| -> Vec<(i64, Option<i64>)> {
-            st.tag_rows_for(memory)
-                .unwrap()
-                .into_iter()
-                .map(|r| (r.tag_id, r.target_id))
-                .collect()
-        };
-        let project = id_of("project");
-        let topic = id_of("topic");
-        // m1: both edges point at the same promoted tag
         assert_eq!(
-            rows(1),
-            vec![(project, Some(shared)), (topic, Some(shared))]
+            names(1),
+            vec!["project::shared".to_string(), "topic::shared".to_string()]
         );
-        // m2: the bare row of the targeted tag died, the edge survived
-        assert_eq!(rows(2), vec![(topic, Some(shared))]);
-        // m3: both edges of the mutual nesting pair died (each targets a source)
-        assert_eq!(rows(3), Vec::<(i64, Option<i64>)>::new());
-        // m4: the self-edge died entirely
-        assert_eq!(rows(4), Vec::<(i64, Option<i64>)>::new());
+        assert_eq!(names(2), vec!["topic::shared".to_string()]);
+        assert!(names(3).is_empty());
+        assert!(names(4).is_empty());
+        assert!(st.scope_exists("project").unwrap());
+        assert!(st.scope_exists("topic").unwrap());
+        cleanup(&path);
+    }
+
+    /// Migration 8 (scoped tags) end to end: a database in the pre-scope shape gets a scope for
+    /// every name used as an edge source and for every required name, each edge becomes one
+    /// scoped tag carrying the former value's description, bare tags survive, and vocabulary
+    /// entries that only carried a role in the old model disappear.
+    #[test]
+    fn migration_8_turns_edges_into_scoped_tags() {
+        let path = temp_db("migration-8");
+        cleanup(&path);
+        {
+            let st = Store::open(&path).unwrap();
+            st.conn
+                .execute_batch(
+                    "DROP TABLE memory_tags;
+                     DROP TABLE tags;
+                     DROP TABLE tag_scopes;
+                     CREATE TABLE tags (
+                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                         name TEXT NOT NULL UNIQUE,
+                         description TEXT NOT NULL DEFAULT '',
+                         created_at INTEGER NOT NULL,
+                         required_since INTEGER
+                     );
+                     CREATE TABLE memory_tags (
+                         memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                         tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                         target_tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
+                         PRIMARY KEY (memory_id, tag_id)
+                     );
+                     INSERT INTO tags(name, description, created_at, required_since) VALUES
+                         ('system', 'the box a fact is about', 1, 10),
+                         ('rust', 'language', 1, NULL),
+                         ('pc1', 'workstation', 1, NULL),
+                         ('lp2', '', 1, NULL),
+                         ('country', 'where', 1, 20),
+                         ('project', 'work', 1, NULL),
+                         ('nmmt', 'the mod', 1, NULL);
+                     INSERT INTO memories(summary, content, created_at, updated_at) VALUES
+                         ('m1', '', 1, 1), ('m2', '', 1, 1);
+                     INSERT INTO memory_tags VALUES
+                         (1, (SELECT id FROM tags WHERE name='system'), (SELECT id FROM tags WHERE name='pc1')),
+                         (1, (SELECT id FROM tags WHERE name='rust'), NULL),
+                         (1, (SELECT id FROM tags WHERE name='project'), (SELECT id FROM tags WHERE name='nmmt')),
+                         (2, (SELECT id FROM tags WHERE name='system'), (SELECT id FROM tags WHERE name='lp2')),
+                         (2, (SELECT id FROM tags WHERE name='nmmt'), NULL);
+                     PRAGMA user_version = 7;",
+                )
+                .unwrap();
+        }
+        let st = Store::open(&path).unwrap();
+        // Required names and edge sources both became scopes, each carrying the old cut-off.
+        assert_eq!(
+            st.required_scopes().unwrap(),
+            vec!["country".to_string(), "system".to_string()]
+        );
+        let names = |memory: i64| -> Vec<String> {
+            let mut names: Vec<String> = st
+                .tag_rows_for(memory)
+                .unwrap()
+                .into_iter()
+                .map(|r| r.name)
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            names(1),
+            vec![
+                "project::nmmt".to_string(),
+                "rust".to_string(),
+                "system::pc1".to_string()
+            ]
+        );
+        assert_eq!(
+            names(2),
+            vec!["nmmt".to_string(), "system::lp2".to_string()]
+        );
+        // The value word keeps the tag it described, so the scoped tag inherits it.
+        let view = st.tag_view("system::pc1").unwrap();
+        assert_eq!(view["description"], "workstation");
+        // A name nothing carries any more stops being a tag; the scope keeps its description.
+        assert!(!st.tag_exists("pc1").unwrap());
+        assert!(!st.tag_exists("country").unwrap());
+        assert!(st.tag_exists("nmmt").unwrap(), "a bare use keeps the tag");
         cleanup(&path);
     }
 }

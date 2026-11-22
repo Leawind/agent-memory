@@ -1,22 +1,26 @@
-// TagsSidebar mount test: vertical tag list with descriptions, click-to-filter select,
-// hover-revealed edit affordance, active-row highlight, keyed values nested under their
-// key (collapsed by default, expandable, `key=value` filter expressions)
+// TagsSidebar mount test: bare tags as their own entries, scope sections with the required
+// badge, values nested under their scope (collapsed by default, expandable, prefix stripped),
+// click-to-filter expressions (a tag's name or a scope's ::* wildcard), hover-revealed edit
+// affordances (tag dialog for tags, scope dialog for scopes), active-row highlight
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import TagsSidebar from './TagsSidebar.vue'
 
 const tagsPayload = {
   tags: [
-    { name: 'score', count: 6 },
+    // Bare tags stand on their own; undescribed tags omit description entirely (sparse shape)
     { name: 'rust', count: 5, description: '语言' },
-    // Undescribed tags omit description entirely (sparse agent-facing shape)
     { name: 'convention', count: 4, description: '常驻约定', reserved: true },
-    // Pointed at by score but also organizing on its own: top-level AND a value under score
-    { name: 'nmmt', count: 3, keys: ['score'] },
     { name: 'infra', count: 2 },
-    // Value-only tags: nest under score, never their own top-level entry
-    { name: '5', count: 1, keys: ['score'], target_only: true },
-    { name: '3', count: 1, keys: ['score'], target_only: true },
+    // Scoped tags: the scope half rides along; they never stand alone in the sidebar
+    { name: 'score::3', count: 3, scope: 'score' },
+    { name: 'score::5', count: 1, scope: 'score' },
+    { name: 'phase::design', count: 2, scope: 'phase' },
+  ],
+  scopes: [
+    { name: 'score', count: 4, tag_count: 2, required: true, description: '分值' },
+    { name: 'phase', count: 2, tag_count: 1 },
+    { name: 'unused', count: 0, tag_count: 0 },
   ],
 }
 
@@ -32,89 +36,108 @@ describe('TagsSidebar', () => {
     )
   })
 
-  it('renders every top-level tag with its description and memory count', async () => {
+  it('renders bare tags on their own and scope sections with the required badge', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
     const html = wrapper.html()
-    expect(html).toContain('score')
     expect(html).toContain('rust')
     expect(html).toContain('语言')
     expect(html).toContain('infra')
-    expect(html).toContain('convention')
     // Reserved badge is surfaced on the reserved tag
     expect(html).toContain('保留')
-    // Header count reflects the tag total (values included)
-    expect(wrapper.find('.sb-count').text()).toBe('7')
-    // Five top-level rows; value-only tags are not their own entries
-    expect(wrapper.findAll('.sb-item')).toHaveLength(5)
-    // Values start collapsed: no value row is rendered at all
+    // The required scope carries the badge; the plain scope does not
+    const scoreHeader = wrapper.findAll('.sb-scope')[0]
+    expect(scoreHeader.text()).toContain('score')
+    expect(scoreHeader.text()).toContain('必填')
+    expect(scoreHeader.find('.sb-desc').text()).toBe('分值')
+    expect(wrapper.findAll('.sb-scope')[1].text()).not.toContain('必填')
+    // Header count reflects the tag total (scoped tags included)
+    expect(wrapper.find('.sb-count').text()).toBe('6')
+    // Three bare rows + three scope headers; values start collapsed (no value row at all)
+    expect(wrapper.findAll('.sb-item')).toHaveLength(6)
     expect(wrapper.findAll('.sb-value')).toHaveLength(0)
     wrapper.unmount()
   })
 
-  it('keeps value lists collapsed by default and expands on the twist', async () => {
+  it('nests a scope’s values under it, collapsed by default, prefix stripped', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
-    // Sorted by count desc: score (6) first; it carries three values (nmmt, 3, 5)
-    const scoreRow = wrapper.findAll('.sb-item')[0]
-    expect(scoreRow.text()).toContain('score')
-    expect(wrapper.findAll('.sb-value')).toHaveLength(0)
-
-    const twist = scoreRow.find('.sb-twist')
-    expect(twist.exists()).toBe(true)
+    // Sorted by use: rust (5), convention (4), infra (2); scopes: score (4) then phase (2)
+    const items = wrapper.findAll('.sb-item')
+    expect(items[3].classes()).toContain('sb-scope')
+    const scoreHeader = items[3]
+    const twist = scoreHeader.find('.sb-twist')
     expect(twist.attributes('aria-expanded')).toBe('false')
     // The twist swallows the click: it must not also act as a row (filter) click
     await twist.trigger('click')
     expect(wrapper.emitted('select')).toBeUndefined()
-
     await flushPromises()
     expect(twist.attributes('aria-expanded')).toBe('true')
+
     const values = wrapper.findAll('.sb-value')
-    expect(values).toHaveLength(3)
-    // The key prefix is dropped — nesting under the key already says it; the full
-    // `key:value` form stays available as the row's hover title
-    expect(values[0].text()).toContain('nmmt')
-    expect(values[1].text()).toContain('3')
-    expect(values[2].text()).toContain('5')
-    expect(values[2].attributes('title')).toBe('score:5')
-    // The dual-role tag keeps its own top-level row besides the nested one
-    expect(wrapper.text()).toContain('nmmt')
+    expect(values).toHaveLength(2)
+    // The scope prefix is dropped — nesting under the scope already says it; the full
+    // `scope::value` name stays available as the row's hover title
+    expect(values[0].text()).toContain('3')
+    expect(values[1].text()).toContain('5')
+    expect(values[1].attributes('title')).toBe('score::5')
+    // A scope without any value keeps the empty twist placeholder and stays header-only
+    const unusedHeader = wrapper.findAll('.sb-scope')[2]
+    expect(unusedHeader.text()).toContain('unused')
+    expect(unusedHeader.find('.sb-twist-empty').exists()).toBe(true)
 
     // Second click collapses again
-    await scoreRow.find('.sb-twist').trigger('click')
+    await scoreHeader.find('.sb-twist').trigger('click')
     expect(wrapper.findAll('.sb-value')).toHaveLength(0)
     wrapper.unmount()
   })
 
-  it('emits select with the clicked tag and its filter expression', async () => {
+  it('emits select with the row’s expression: a tag name, a scope::value, or the scope wildcard', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
-    // Top-level row: the tag's own name is the expression
-    await wrapper.findAll('.sb-item')[1].trigger('click') // rust (5)
-    expect(wrapper.emitted('select')![0]).toEqual([{ name: 'rust', count: 5, description: '语言' }, 'rust'])
+    const items = wrapper.findAll('.sb-item')
 
-    // Value row: the exact-edge atom `key=value`
-    await wrapper.findAll('.sb-item')[0].find('.sb-twist').trigger('click')
-    await wrapper.findAll('.sb-value')[2].trigger('click') // score:5
-    expect(wrapper.emitted('select')![1]).toEqual([
-      { name: '5', count: 1, keys: ['score'], target_only: true },
-      'score=5',
-    ])
+    // Bare row: the tag's own name is the expression
+    await items[0].trigger('click') // rust
+    expect(wrapper.emitted('select')![0]).toEqual(['rust'])
+
+    // Scope header: the ::* wildcard
+    await items[3].trigger('click') // score
+    expect(wrapper.emitted('select')![1]).toEqual(['score::*'])
+
+    // Value row: the exact scoped tag name
+    await items[3].find('.sb-twist').trigger('click')
+    await wrapper.findAll('.sb-value')[1].trigger('click') // score::5
+    expect(wrapper.emitted('select')![2]).toEqual(['score::5'])
     wrapper.unmount()
   })
 
-  it('emits edit from the row affordance without selecting', async () => {
+  it('edit affordances open the tag dialog for tags and the scope dialog for scopes', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
-    const first = wrapper.findAll('.sb-item')[0]
-    // The edit affordance swallows the click: it must not also act as a row (filter) click
-    await first.find('.sb-edit').trigger('click')
-    expect(wrapper.emitted('edit')![0]).toEqual([{ name: 'score', count: 6 }])
+    const items = wrapper.findAll('.sb-item')
+
+    // The affordance swallows the click: it must not also act as a row (filter) click
+    await items[0].find('.sb-edit').trigger('click') // rust
+    expect(wrapper.emitted('edit')![0]).toEqual([{ name: 'rust', count: 5, description: '语言' }])
     expect(wrapper.emitted('select')).toBeUndefined()
+
+    // A scope header's affordance carries the scope instead
+    await items[3].find('.sb-edit').trigger('click') // score
+    expect(wrapper.emitted('editScope')![0]).toEqual([
+      { name: 'score', count: 4, tag_count: 2, required: true, description: '分值' },
+    ])
+
+    // A value row's affordance opens the tag dialog on the full scoped name
+    await items[3].find('.sb-twist').trigger('click')
+    const valueRow = wrapper.findAll('.sb-value')[0]
+    expect(valueRow.find('.sb-edit').exists()).toBe(true)
+    await valueRow.find('.sb-edit').trigger('click')
+    expect(wrapper.emitted('edit')![1]).toEqual([{ name: 'score::3', count: 3, scope: 'score' }])
     wrapper.unmount()
   })
 
@@ -123,27 +146,35 @@ describe('TagsSidebar', () => {
     await flushPromises()
     await flushPromises()
     const items = wrapper.findAll('.sb-item')
-    expect(items[1].classes()).toContain('is-active') // rust
-    expect(items[0].classes()).not.toContain('is-active')
+    expect(items[0].classes()).toContain('is-active') // rust
+    expect(items[3].classes()).not.toContain('is-active')
 
-    // A value's expression is `key=value`; the row only exists while expanded
-    await wrapper.setProps({ active: 'score=5' })
-    await wrapper.findAll('.sb-item')[0].find('.sb-twist').trigger('click')
+    // A scope header goes active on its wildcard; its values only while expanded
+    await wrapper.setProps({ active: 'score::*' })
+    expect(wrapper.findAll('.sb-item')[3].classes()).toContain('is-active')
+    await wrapper.setProps({ active: 'score::5' })
+    await wrapper.findAll('.sb-item')[3].find('.sb-twist').trigger('click')
     const values = wrapper.findAll('.sb-value')
-    expect(values[2].classes()).toContain('is-active')
+    expect(values[1].classes()).toContain('is-active')
     expect(values[0].classes()).not.toContain('is-active')
     wrapper.unmount()
   })
 
-  it('emits create from the header plus button', async () => {
+  it('emits create/create-scope from the header tools and predicates from the first', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await wrapper.find('.sb-add').trigger('click')
     expect(wrapper.emitted('create')).toHaveLength(1)
+    const tools = wrapper.findAll('.sb-tool')
+    expect(tools).toHaveLength(3)
+    await tools[0].trigger('click')
+    expect(wrapper.emitted('predicates')).toHaveLength(1)
+    await tools[1].trigger('click')
+    expect(wrapper.emitted('createScope')).toHaveLength(1)
     wrapper.unmount()
   })
 
-  it('has an all-memories reset row and quiet header tools', async () => {
+  it('has an all-memories reset row that hands the highlight back when a filter applies', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     await flushPromises()
@@ -158,16 +189,10 @@ describe('TagsSidebar', () => {
     await wrapper.setProps({ active: ' rust ' })
     expect(wrapper.find('.sb-all').classes()).not.toContain('is-active')
     expect(wrapper.find('.sb-item.is-active').exists()).toBe(true)
-
-    // Two quiet tools: tag predicates, then create
-    const tools = wrapper.findAll('.sb-tool')
-    expect(tools).toHaveLength(2)
-    await tools[0].trigger('click')
-    expect(wrapper.emitted('predicates')).toHaveLength(1)
     wrapper.unmount()
   })
 
-  it('refresh() refetches the tag list including edge-target-only values', async () => {
+  it('refresh() refetches the tag list (no all switch anymore)', async () => {
     const wrapper = mount(TagsSidebar)
     await flushPromises()
     const fetchMock = vi.mocked(globalThis.fetch)
@@ -175,7 +200,7 @@ describe('TagsSidebar', () => {
     await (wrapper.vm as unknown as { refresh: () => Promise<void> }).refresh()
     const url = String(fetchMock.mock.calls[0]![0])
     expect(url.startsWith('/api/tags')).toBe(true)
-    expect(url).toContain('all=true')
+    expect(url).not.toContain('all=')
     wrapper.unmount()
   })
 })

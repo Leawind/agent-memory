@@ -24,13 +24,16 @@ describe('i18n messages', () => {
     }
   })
 
-  it('renders the unified tag vocabulary guidance in both languages', () => {
+  it('renders the scoped vocabulary guidance in both languages', () => {
     for (const locale of ['zh', 'en'] as const) {
       setMemoryUILocale(locale)
-      // The editor placeholder carries the edge-token example (page copy stays out of the dialog)
-      expect(t('editor.tagsPlaceholder')).toContain('project:nmmt')
-      expect(t('editor.tagKeyExistsFmt', { key: 'p' })).toContain('p')
+      // The expression help carries the scoped atoms, and the scope dialog its contract copy
       expect(t('memories.tagExprHelp')).toContain('&')
+      expect(t('memories.tagExprHelp')).toContain('::')
+      expect(t('editor.tagScopedError')).toContain('::')
+      expect(t('editor.noScopeValue')).not.toBe('')
+      expect(t('scopes.requiredLabel')).not.toBe('')
+      expect(t('tags.invalidNameFmt', { name: 'x' })).toContain('::')
     }
     setMemoryUILocale('zh')
   })

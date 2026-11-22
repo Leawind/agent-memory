@@ -16,6 +16,7 @@ export { default as MemoryWorkspace } from './components/MemoryWorkspace.vue'
 export { default as MemoriesPanel } from './components/MemoriesPanel.vue'
 export { default as TagsSidebar } from './components/TagsSidebar.vue'
 export { default as TagDialog } from './components/TagDialog.vue'
+export { default as ScopeDialog } from './components/ScopeDialog.vue'
 export { default as OpsDialog } from './components/OpsDialog.vue'
 export { default as AdminPanel } from './components/AdminPanel.vue'
 export { default as MemoryEditorDialog } from './components/MemoryEditorDialog.vue'
@@ -28,8 +29,9 @@ export type { ApiClient } from './api/client'
 export { renderMarkdown } from './markdown'
 export { formatTime, formatSize } from './format'
 export { buildMemoriesQuery, isSearchMode } from './query'
-export { validTagName, validTagValue, MAX_TAG_NAME_CHARS } from './tagNames'
+export { validTagName, validFullTagName, parseScopedName, MAX_TAG_NAME_CHARS } from './tagNames'
 export { useMemories } from './composables/useMemories'
+export type { MemoryDraft, ScopeColumn } from './composables/useMemories'
 export { useTags } from './composables/useTags'
 export { useOps } from './composables/useOps'
 export { useAdmin } from './composables/useAdmin'
@@ -48,6 +50,7 @@ export type {
   StatsInfo,
   TagListResp,
   TagView,
+  ScopeView,
   WhoAmI,
 } from './types'
 

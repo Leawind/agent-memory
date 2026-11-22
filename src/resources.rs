@@ -91,10 +91,7 @@ pub fn list(store_path: &Path, ctx: &IdentityCtx, cursor: Option<&str>) -> Resou
             let mut entries: Vec<Value> = st
                 .tag_views()?
                 .into_iter()
-                // The catalog advertises the default (organizing) set, same as tag_list;
-                // target-only tags stay reachable through their known uri.
-                .filter(|(_, target_only)| !target_only)
-                .filter_map(|(view, _)| tag_entry(&view))
+                .filter_map(|view| tag_entry(&view))
                 .collect();
             // The resident convention surfaces individually so hosts can pin and subscribe to it.
             // A big-but-safe page bound: convention memories are few by design (resident rules),
@@ -432,7 +429,7 @@ mod tests {
         store::with_db_in(path, TxMode::Write, |st| -> Result<(), String> {
             st.tag_create("rust", "Rust language")?;
             st.tag_create("项目", "")?;
-            let rust_links = st.resolve_tags(&[("rust".into(), None)], true)?.links;
+            let rust_links = st.resolve_tags(&["rust".to_string()], true)?.links;
             st.insert_memory(
                 "Borrow checker",
                 "The borrow checker forbids aliasing + mutation.",
@@ -440,7 +437,7 @@ mod tests {
                 10,
                 20,
             )?;
-            let conv_links = st.resolve_tags(&[(RESERVED_TAG.into(), None)], true)?.links;
+            let conv_links = st.resolve_tags(&[RESERVED_TAG.to_string()], true)?.links;
             st.insert_memory(
                 "Commit rules",
                 "Summary in one line; tags lowercase.",
@@ -594,7 +591,7 @@ mod tests {
 
         // Page size honored: seed more convention memories than one page holds
         store::with_db_in(&path, TxMode::Write, |st| -> Result<(), String> {
-            let links = st.resolve_tags(&[(RESERVED_TAG.into(), None)], true)?.links;
+            let links = st.resolve_tags(&[RESERVED_TAG.to_string()], true)?.links;
             for i in 0..60 {
                 st.insert_memory(&format!("conv {i}"), "body", &links, i as u64, i as u64)?;
             }

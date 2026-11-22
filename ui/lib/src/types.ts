@@ -1,8 +1,10 @@
 // Type definitions for server responses and entities (fields map 1:1 to what /api actually returns)
 
-/** Structured attributes of one memory (sparse: omitted entirely when the memory carries none).
- *  Enum values arrive as strings, number values as JSON numbers; a multi-valued key arrives as an array. */
-export type MemoryAttributes = Record<string, string | number | Array<string | number>>
+/** Scoped values of one memory (sparse: omitted entirely when the memory carries none). A key is
+ *  a scope name; a string value is the value half of the composed tag name (`system::pc1sw0` →
+ *  "pc1sw0"), numeric spellings canonicalize to JSON numbers. null declares that the memory takes
+ *  no tag in that scope — legal only on a scope required on every write. */
+export type MemoryAttributes = Record<string, string | number | null>
 
 export interface MemorySummary {
   id: string
@@ -48,16 +50,30 @@ export interface TagView {
   count: number
   /** Omitted when the tag has no description */
   description?: string
+  /** The scope half when the name is scoped (`system::pc1sw0` → `system`); absent on bare tags */
+  scope?: string
   /** Present (true) only on the reserved tag (convention), which can be neither renamed nor deleted; the panel hides those actions */
   reserved?: true
-  /** Present (true) when the tag's only presence is being pointed at (the value half of key:value edges); such tags nest under their keys instead of standing on their own */
-  target_only?: true
-  /** Tags whose `key:value` edges point at this tag, sorted; present only when at least one edge points at it */
-  keys?: string[]
+}
+
+/** One scope — the `system` in `system::pc1sw0`: a vocabulary of scoped values with its own
+ *  description and write contract. */
+export interface ScopeView {
+  name: string
+  /** Memories carrying at least one tag under this scope */
+  count: number
+  /** Distinct tags under this scope */
+  tag_count: number
+  /** Omitted when the scope has no description */
+  description?: string
+  /** Present (true) when every new memory must declare this scope (a value, or null for none) */
+  required?: true
 }
 
 export interface TagListResp {
   tags: TagView[]
+  /** Both namespaces side by side; GET /api/scopes answers with the same whole shape */
+  scopes: ScopeView[]
 }
 
 export interface MemoryListResp {
@@ -301,6 +317,8 @@ export interface ImportResp {
   imported_tags: number
   /** Present in merge mode: memories skipped because the target already carries them verbatim */
   skipped_memories: number
+  /** Merge mode into a store with required scopes: memories that arrived without the declaration */
+  unclassified_memories?: number
 }
 
 export interface NamedPredicate {

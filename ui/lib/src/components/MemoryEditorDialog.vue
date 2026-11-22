@@ -109,10 +109,42 @@
               {{ tagQueryEntry.label }}
             </span>
           </el-option>
-          <!-- One tag vocabulary: plain names and edge tokens (source:target) live side by
-               side; the save maps the chips onto the wire's tags object -->
           <el-option v-for="tag in filteredTagOptions" :key="tag" :label="tag" :value="tag" />
         </el-select>
+      </el-form-item>
+      <el-form-item v-if="scopeRows.length > 0">
+        <template #label>
+          <div class="content-label">
+            <span>{{ t('editor.scopeValuesLabel') }}</span>
+          </div>
+        </template>
+        <!-- One row per scope: at most one value each. A required scope is declared on every
+             write — its select offers the explicit no-value entry and cannot be cleared, only
+             switched; an optional scope clears to no declaration at all. -->
+        <div class="scope-rows">
+          <div v-for="scope in scopeRows" :key="scope.name" class="scope-row">
+            <span class="scope-name">{{ scope.name }}</span>
+            <el-tooltip v-if="scope.required" :content="t('scopes.requiredHint')" placement="top" :enterable="false">
+              <el-tag size="small" type="info" class="scope-required">{{ t('scopes.required') }}</el-tag>
+            </el-tooltip>
+            <el-select
+              :model-value="attrModel(scope.name)"
+              filterable
+              :clearable="!scope.required"
+              :placeholder="t('editor.scopePlaceholder')"
+              class="scope-select"
+              @update:model-value="setAttr(scope.name, $event)"
+            >
+              <el-option v-if="scope.required" :value="NO_VALUE" :label="t('editor.noScopeValue')" />
+              <el-option v-for="value in scope.values" :key="value" :label="value" :value="value" />
+            </el-select>
+          </div>
+        </div>
+        <!-- A required scope is a declaration, not a label: the create must state each one, and
+             the names still missing are called out here -->
+        <div v-if="!memoryId && missingRequired.length > 0" class="required-hint" role="status">
+          {{ t('editor.requiredMissingFmt', { scopes: missingRequired.join(', ') }) }}
+        </div>
       </el-form-item>
       <el-form-item>
         <template #label>
@@ -144,9 +176,9 @@ import { Connection, Delete } from '@element-plus/icons-vue'
 import { toastError, toastSuccess } from '../toast'
 import { useApiClient } from '../api/client'
 import { createMemory, deleteMemory, getMemory, mergeMemory, updateMemory } from '../api/memories'
-import { validTagName, validTagValue } from '../tagNames'
-import type { MemoryCreateResp } from '../types'
-import type { MemoryDraft } from '../composables/useMemories'
+import { validTagName, parseScopedName } from '../tagNames'
+import type { MemoryCreateResp, MemoryFull } from '../types'
+import type { MemoryDraft, ScopeColumn } from '../composables/useMemories'
 import MarkdownView from './MarkdownView.vue'
 import MarkdownModeToggle from './MarkdownModeToggle.vue'
 import { useDialogEdgeResize } from '../composables/useDialogEdgeResize'
@@ -156,7 +188,12 @@ const props = defineProps<{
   visible: boolean
   /** The memory id being edited; null means creating new */
   memoryId: string | null
+  /** Bare tag names offered as chips (scoped names belong to the scope rows below) */
   tagOptions: string[]
+  /** Scope columns: the required write contract and each scope's known values */
+  scopeOptions?: ScopeColumn[]
+  /** Scopes the store requires on every write: a new memory must declare each one (value or none) */
+  requiredScopes?: string[]
   /** Initial dialog width; the panel passes a narrower value in narrow containers */
   width?: string
 }>()
@@ -179,40 +216,58 @@ const summaryInput = ref<InputInstance | null>(null)
 // Fetching the full memory on open; while true the (still empty) form must not be savable
 const loading = ref(false)
 // Content editor view: edit the source or preview the rendered Markdown
-const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [] })
+const form = ref<MemoryDraft>({ id: null, summary: '', content: '', tags: [], attributes: {} })
 // Snapshot of the loaded memory: the save button stays disabled until the form differs
-const original = ref({ summary: '', content: '', tags: [] as string[] })
+const original = ref({
+  summary: '',
+  content: '',
+  tags: [] as string[],
+  attributes: {} as Record<string, string | null>,
+})
 
-// One tag vocabulary: a token with a colon is an edge `source:target` (a source carries one
-// edge per memory), a plain token a bare tag. Chips are the editing form; the save maps them
-// onto the wire's tags object.
-function edgeToken(tag: string): Array<string> | null {
-  const i = tag.indexOf(':')
-  if (i <= 0) return null
-  return [tag.slice(0, i), tag.slice(i + 1)]
+// ---- Scope rows: the known columns, plus any scope the loaded memory already declares ----
+
+/** Sentinel select value for the explicit "takes no tag in this scope" declaration — a control
+ *  value that can never collide with a tag name. */
+const NO_VALUE = '\u0000'
+
+const scopeRows = computed<ScopeColumn[]>(() => {
+  const columns = props.scopeOptions ?? []
+  const known = new Set(columns.map((c) => c.name))
+  const extras = Object.keys(form.value.attributes)
+    .filter((name) => !known.has(name))
+    .map((name) => ({ name, required: (props.requiredScopes ?? []).includes(name), values: [] }))
+  return [...columns, ...extras]
+})
+
+/** The select's model: '' = no declaration, the sentinel = the null declaration, else the value */
+function attrModel(scope: string): string {
+  const value = form.value.attributes[scope]
+  return value === undefined ? '' : value === null ? NO_VALUE : value
 }
 
-/** Chip set → per-source target text (null for bare tags), the diff basis of an edit. */
-function tagMap(tags: Iterable<string>): Map<string, string | null> {
-  const map = new Map<string, string | null>()
-  for (const tag of tags) {
-    const pair = edgeToken(tag)
-    if (pair) map.set(pair[0], pair[1])
-    else map.set(tag, null)
+function setAttr(scope: string, value: string): void {
+  const attributes = { ...form.value.attributes }
+  if (value === '') delete attributes[scope]
+  else attributes[scope] = value === NO_VALUE ? null : value
+  form.value = { ...form.value, attributes }
+}
+
+/** Scope declarations of a loaded memory: values from the scoped names among its tags, nulls
+ *  from an attributes view that carries them. */
+function attributesOf(full: MemoryFull): Record<string, string | null> {
+  const out: Record<string, string | null> = {}
+  for (const name of full.tags) {
+    const scoped = parseScopedName(name)
+    if (scoped) out[scoped.scope] = scoped.value
   }
-  return map
+  for (const [scope, value] of Object.entries(full.attributes ?? {})) {
+    if (value === null) out[scope] = null
+  }
+  return out
 }
 
-/** Wire shape of one value: numbers stay JSON numbers so the server stores their canonical form. */
-function tagWireValue(value: string | null): string | number | null {
-  if (value === null) return null
-  return value !== '' && Number.isFinite(Number(value)) ? Number(value) : value
-}
-
-const stableTagMap = (tags: Iterable<string>) =>
-  JSON.stringify([...tagMap(tags).entries()].sort(([a], [b]) => a.localeCompare(b)))
-
-// ---- Tag entry: the typed query drives a controlled dropdown entry ----
+// ---- Bare tag entry: the typed query drives a controlled dropdown entry ----
 const tagQuery = ref('')
 
 function onTagQuery(q: string): void {
@@ -235,18 +290,11 @@ const filteredTagOptions = computed(() => {
   return q ? props.tagOptions.filter((tag) => tag.toLowerCase().includes(q)) : props.tagOptions
 })
 
-/** Why the typed token cannot land: malformed `source:target`, an illegal source or target, or
- * a duplicate (a source already carrying an edge, or a bare tag already present — re-adding
- * would toggle it off). An empty problem means the token may be added. */
+/** Why the typed token cannot land: a scoped name (those belong to the scope rows), an illegal
+ *  name, or a duplicate (re-adding would toggle it off). An empty problem means the token may
+ *  be added. */
 function judgeTagToken(token: string): { problem: string; detail: string } {
-  if (token.includes(':')) {
-    const pair = edgeToken(token)
-    if (pair === null || pair[0].trim() === '' || pair[1].trim() === '') return { problem: 'token', detail: token }
-    if (!validTagName(pair[0])) return { problem: 'name', detail: pair[0].trim() }
-    if (!validTagValue(pair[1])) return { problem: 'value', detail: pair[1].trim() }
-    if (tagMap(form.value.tags).has(pair[0].trim())) return { problem: 'keydup', detail: pair[0].trim() }
-    return { problem: '', detail: '' }
-  }
+  if (token.includes('::')) return { problem: 'scoped', detail: token }
   if (!validTagName(token)) return { problem: 'name', detail: token.trim() }
   if (form.value.tags.includes(token)) return { problem: 'tagdup', detail: token.trim() }
   return { problem: '', detail: '' }
@@ -258,34 +306,39 @@ const tagQueryEntry = computed(() => {
   if (!token || props.tagOptions.includes(token)) return null
   const { problem, detail } = judgeTagToken(token)
   const label =
-    problem === 'token'
-      ? t('editor.tagTokenError')
+    problem === 'scoped'
+      ? t('editor.tagScopedError')
       : problem === 'name'
         ? t('tags.invalidNameFmt', { name: detail })
-        : problem === 'value'
-          ? t('editor.tagValueErrorFmt', { value: detail })
-          : problem === 'keydup'
-            ? t('editor.tagKeyExistsFmt', { key: detail })
-            : problem === 'tagdup'
-              ? t('editor.tagExistsFmt', { name: detail })
-              : t('editor.tagAddFmt', { token })
+        : problem === 'tagdup'
+          ? t('editor.tagExistsFmt', { name: detail })
+          : t('editor.tagAddFmt', { token })
   return { token, label, problem }
 })
 
-const tagsDirty = computed(() => stableTagMap(form.value.tags) !== stableTagMap(original.value.tags))
+// ---- Dirty tracking over both containers ----
+
+const stableTags = (tags: string[]) => JSON.stringify([...tags].sort())
+const stableAttrs = (attrs: Record<string, string | null>) =>
+  JSON.stringify(Object.entries(attrs).sort(([a], [b]) => a.localeCompare(b)))
 
 const dirty = computed(() => {
   if (!props.memoryId) return false
   const f = form.value
   const o = original.value
   if (f.summary !== o.summary || f.content !== o.content) return true
-  return tagsDirty.value
+  if (stableTags(f.tags) !== stableTags(o.tags)) return true
+  return stableAttrs(f.attributes) !== stableAttrs(o.attributes)
 })
+
+/** Required scopes this draft does not declare yet: every one of them needs a value (or the
+ *  explicit none) on a create. */
+const missingRequired = computed(() => (props.requiredScopes ?? []).filter((name) => !(name in form.value.attributes)))
 
 const canSave = computed(() => {
   if (loading.value) return false
-  // Creating needs a summary only: content is optional (summary-only memories are valid)
-  if (!props.memoryId) return form.value.summary.trim() !== ''
+  // Creating needs a summary, and a declaration for every required scope
+  if (!props.memoryId) return form.value.summary.trim() !== '' && missingRequired.value.length === 0
   return dirty.value
 })
 
@@ -296,15 +349,27 @@ watch(
     // Editing an existing memory opens rendered; creating starts in the source editor
     contentTab.value = props.memoryId ? 'preview' : 'edit'
     // Reset optimistically so a slow fetch never shows the previously edited memory's data
-    form.value = { id: null, summary: '', content: '', tags: [] }
-    original.value = { summary: '', content: '', tags: [] }
+    form.value = { id: null, summary: '', content: '', tags: [], attributes: {} }
+    original.value = { summary: '', content: '', tags: [], attributes: {} }
     if (props.memoryId) {
       loading.value = true
       try {
         const full = await getMemory(client, props.memoryId)
-        // All tags live in one vocabulary: plain names and edges are chips alike
-        form.value = { id: full.id, summary: full.summary, content: full.content, tags: [...full.tags] }
-        original.value = { summary: full.summary, content: full.content, tags: [...full.tags] }
+        // The two containers: bare names are chips, scoped names land in their scope rows
+        const attributes = attributesOf(full)
+        form.value = {
+          id: full.id,
+          summary: full.summary,
+          content: full.content,
+          tags: full.tags.filter((name) => !parseScopedName(name)),
+          attributes,
+        }
+        original.value = {
+          summary: full.summary,
+          content: full.content,
+          tags: [...form.value.tags],
+          attributes: { ...attributes },
+        }
       } catch (e: unknown) {
         toastError(e instanceof Error ? e.message : String(e))
         emit('update:visible', false)
@@ -324,30 +389,41 @@ async function save() {
   saving.value = true
   try {
     if (form.value.id) {
-      // Editing: a per-key diff — added keys and value changes upsert through add_tags, missing
-      // keys drop through remove_tags by name. Untouched tags never travel.
-      const before = tagMap(original.value.tags)
-      const after = tagMap(form.value.tags)
-      const add: Record<string, string | number | null> = {}
-      for (const [key, value] of after) {
-        if (before.get(key) !== value) add[key] = tagWireValue(value)
+      // Editing: an incremental diff over the two containers — a new bare tag travels in tags, a
+      // changed scope value in attributes, a dropped tag through remove_tags by full name.
+      // Untouched tags never travel.
+      const before = original.value
+      const after = form.value
+      const addedBare = after.tags.filter((tag) => !before.tags.includes(tag))
+      const removes = before.tags.filter((tag) => !after.tags.includes(tag))
+      const changed: Record<string, string | null> = {}
+      for (const [scope, value] of Object.entries(after.attributes)) {
+        if (before.attributes[scope] === value) continue
+        changed[scope] = value
       }
-      const remove: string[] = [...before.keys()].filter((key) => !after.has(key))
+      for (const [scope, prev] of Object.entries(before.attributes)) {
+        if (scope in after.attributes) continue
+        // Dropping a required scope's value is the explicit "this memory takes no tag in it"
+        // declaration (a removal would leave the memory undeclared and is refused); other
+        // dropped scopes are plain removals by full tag name.
+        if ((props.requiredScopes ?? []).includes(scope)) changed[scope] = null
+        else if (prev !== null) removes.push(`${scope}::${prev}`)
+      }
       await updateMemory(client, form.value.id, {
         summary: form.value.summary,
         content: form.value.content,
-        ...(Object.keys(add).length > 0 ? { add_tags: add } : {}),
-        ...(remove.length > 0 ? { remove_tags: remove } : {}),
+        ...(addedBare.length > 0 ? { tags: addedBare } : {}),
+        ...(Object.keys(changed).length > 0 ? { attributes: changed } : {}),
+        ...(removes.length > 0 ? { remove_tags: removes } : {}),
         create_missing_tags: true,
       })
       toastSuccess(t('editor.updated'))
     } else {
-      const tags: Record<string, string | number | null> = {}
-      for (const [key, value] of tagMap(form.value.tags)) tags[key] = tagWireValue(value)
       const resp = await createMemory(client, {
         summary: form.value.summary,
         content: form.value.content,
-        tags,
+        ...(form.value.tags.length > 0 ? { tags: [...form.value.tags] } : {}),
+        ...(Object.keys(form.value.attributes).length > 0 ? { attributes: { ...form.value.attributes } } : {}),
         create_missing_tags: true,
       })
       toastSuccess(t('editor.created'))
@@ -478,6 +554,40 @@ function blockWhileSaving(done: () => void): void {
 }
 .tags-select {
   width: 100%;
+}
+.scope-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scope-name {
+  flex-shrink: 0;
+  min-width: 64px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+.scope-required {
+  flex-shrink: 0;
+}
+.scope-select {
+  flex: 1;
+  min-width: 0;
+}
+.required-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-color-danger);
 }
 .content-preview {
   width: 100%;

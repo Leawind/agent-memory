@@ -111,7 +111,7 @@ mod tests {
         let path = temp_db("tx");
         cleanup(&path);
         let r: Result<(), String> = with_db_in(&path, TxMode::Write, |st| {
-            let links = st.resolve_tags(&[("t".into(), None)], true)?.links;
+            let links = st.resolve_tags(&["t".to_string()], true)?.links;
             st.insert_memory("s", "c", &links, 1, 1)?;
             Err("boom".into())
         });

@@ -28,11 +28,12 @@ use std::path::Path;
 pub use defs::{
     tool_definitions, GET_STARTED, MEMORY_CREATE, MEMORY_DELETE, MEMORY_EDIT, MEMORY_GET,
     MEMORY_LIST, MEMORY_MERGE, MEMORY_SEARCH, MEMORY_UPDATE, MEMORY_USE, PREDICATE_DELETE,
-    PREDICATE_LIST, PREDICATE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE, TOOL_NAMES,
+    PREDICATE_LIST, PREDICATE_SET, SCOPE_SET, TAG_CREATE, TAG_DELETE, TAG_LIST, TAG_UPDATE,
+    TOOL_NAMES,
 };
 pub use render::tool_text;
 
-pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. memory_search takes terms, not questions: two to five distinctive words a memory would contain, identifiers as written in code, Chinese as it would appear in a memory - question and function words match most of the store and swamp the ranking. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'), and a tag name is one identifier word: letters, digits, '_', '-' or '.' (Unicode), no spaces, colons, quotes or expression operators. Tags form one unified vocabulary you curate; a memory carries tags either bare ('rust') or as an edge written 'source:target' ('project:nmmt' is an edge from tag project to tag nmmt — any tag can be an edge target, and the same tag can sit under several sources). memory_create's tags object maps each source tag to its target (an identifier word or a number; numbers canonicalize, so 1 and 1.0 are the same name) or to null for a bare tag; a source has exactly one edge per memory, and a tag cannot be both an edge source and an edge target on one memory (no nesting). In tag_expr a bare word matches presence in any state and 'key=value' matches an edge exactly. memory_update adds tags through the same object shape (add_tags, upserting a source's edge) and removes them by name in every role (remove_tags) — never restate untouched tags. Booleans are not targets — presence flags are bare tags, and free text belongs in content, not tags; reuse tags instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
+pub const INSTRUCTIONS: &str = "Persistent long-term memory store. Each memory has: tags (a taxonomy YOU curate), a one-line summary, and full content. Progressive disclosure: memory_search / memory_list return only ids, tags and summaries; call memory_get on just the ids worth reading to reveal full content. memory_search takes terms, not questions: two to five distinctive words a memory would contain, identifiers as written in code, Chinese as it would appear in a memory - question and function words match most of the store and swamp the ranking. Timestamps are rendered as the server's local wall clock ('YYYY-MM-DD HH:MM') and recorded automatically — summaries carry only 'updated'; never state creation time inside content. Write content as concise Markdown; avoid bold formatting. Save durable knowledge (decisions, facts, preferences, project context) with memory_create; write precise, self-contained summaries so future scans stay cheap; prefer memory_update over re-storing near-duplicates; to change a small part of a memory's content, prefer memory_edit (exact string replacement) over restating the whole body; never reference other memories by id — ids are unstable (delete/merge removes them, export/import renumbers them), so link memories by tag or searchable keyword instead; keep tags tidy with the tag_* tools; prefer singular tag names ('convention', not 'conventions'). Tags form one flat namespace you curate: a tag name is bare ('rust') or scoped ('system::pc1sw0'), both halves identifier words of letters, digits, '_', '-' or '.' (Unicode) joined by at most one '::'. A scope is a named dimension with its own values: 'system::pc1sw0' and 'system::pc1sw1' are two values of the scope 'system' — scopes are created with scope_set, their values are ordinary tags created with tag_create, and one memory carries at most one value per scope. A write states tags in two containers: 'tags' lists bare tags only, 'attributes' maps a scope to the value the memory takes in it (an identifier word or a number; numbers canonicalize, so 1 and 1.0 are the same name). In 'attributes', null declares that the memory takes no value in that scope; only a scope this store requires on every write accepts that declaration, and every such scope must be declared on memory_create (the tool schema names them) — state a value or state null, never leave it out. In tag_expr an atom is a tag name (bare or 'scope::value'), 'scope::*' for any value of a scope, /regex/ over tag names, or @name for a named predicate, combined with '&', '|' and '!' plus parentheses. memory_update uses the same two containers incrementally (tags adds bare tags, attributes upserts a scope's value) and removes tags by name (remove_tags) — never restate untouched tags; a tag of a required scope cannot be removed by name, only declared null. Presence flags are bare tags — booleans are not values, and free text belongs in content, not tags; reuse tags instead of inventing near-synonyms. The 'convention' tag is reserved for operator-curated standing rules: those memories are the store's resident conventions (also exposed as memory:// resources) — read them before your first write and follow them. Access is permission-gated per caller identity: when a call fails with a permission error, report it to the user instead of retrying.";
 
 /// Tool-layer errors: classified by kind, never by text; the REST layer maps kinds to HTTP status codes
 /// (NotFound → 404, Invalid → 400, Forbidden → 403), while the MCP layer always echoes the message as an
@@ -176,6 +177,7 @@ pub fn execute(
         })),
         defs::TAG_CREATE => tag_ops::tag_create(st, map),
         defs::TAG_LIST => tag_ops::tag_list(st, map),
+        defs::SCOPE_SET => tag_ops::scope_set(st, map),
         PREDICATE_LIST => st.predicate_list().map_err(ToolError::from),
         PREDICATE_SET => predicate_ops::set(st, map),
         PREDICATE_DELETE => predicate_ops::delete(st, map),
@@ -254,14 +256,15 @@ fn reserved_tag_guard(
             }
         }
         defs::MEMORY_CREATE => {
-            if involves_reserved(args, &["tags"]) && !ctx.can(Cap::Admin) {
+            if involves_reserved(args, &["tags", "attributes"]) && !ctx.can(Cap::Admin) {
                 return Err(ToolError::forbidden(format!(
                     "attaching the reserved tag '{RESERVED_TAG}' to a memory requires the 'admin' permission (the resident convention is operator-curated)"
                 )));
             }
         }
         defs::MEMORY_UPDATE
-            if involves_reserved(args, &["add_tags", "remove_tags"]) && !ctx.can(Cap::Admin) =>
+            if involves_reserved(args, &["tags", "attributes", "remove_tags"])
+                && !ctx.can(Cap::Admin) =>
         {
             return Err(ToolError::forbidden(format!(
                 "attaching or detaching the reserved tag '{RESERVED_TAG}' requires the 'admin' permission (the resident convention is operator-curated)"
@@ -372,7 +375,7 @@ mod tests {
             json!({
                 "summary": "Rust borrow checker notes",
                 "content": "The borrow checker forbids simultaneous aliasing and mutation.",
-                "tags": {"rust": null, "notes": null},
+                "tags": ["rust", "notes"],
                 "create_missing_tags": true
             }),
         )
@@ -411,13 +414,13 @@ mod tests {
         let upd = call(
             &path,
             "memory_update",
-            json!({"id": id, "add_tags": {"study": null}, "remove_tags": ["notes"], "create_missing_tags": true}),
+            json!({"id": id, "tags": ["study"], "remove_tags": ["notes"], "create_missing_tags": true}),
         )
         .unwrap();
         // The final tag set is no longer echoed: verify the add/remove landed via memory_get
         let got = call(&path, "memory_get", json!({"ids": [id]})).unwrap();
         assert_eq!(got["memories"][0]["tags"].as_array().unwrap().len(), 2);
-        // The three-way classification only describes tags passed to add_tags this time (rust is not in the list, so not classified)
+        // The three-way classification only describes tags passed this time (rust is not in the list, so not classified)
         assert_eq!(upd["tags_autocreated"], json!(["study"]));
         assert!(upd.get("tags_reused").is_none());
         assert!(upd.get("tags_missing_description").is_none());
@@ -573,7 +576,7 @@ mod tests {
         let first = call(
             &path,
             "memory_create",
-            json!({"summary": "a", "content": "ca", "tags": {"described": null, "fresh": null}, "create_missing_tags": true}),
+            json!({"summary": "a", "content": "ca", "tags": ["described", "fresh"], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(first["tags_autocreated"], json!(["fresh"]));
@@ -585,7 +588,7 @@ mod tests {
         let second = call(
             &path,
             "memory_create",
-            json!({"summary": "b", "content": "cb", "tags": {"described": null, "fresh": null}, "create_missing_tags": true}),
+            json!({"summary": "b", "content": "cb", "tags": ["described", "fresh"], "create_missing_tags": true}),
         )
         .unwrap();
         assert!(second.get("tags_autocreated").is_none());
@@ -646,7 +649,7 @@ mod tests {
             &path,
             "memory_create",
             json!({
-                "summary": "s", "content": "c", "tags": {"rust": null}
+                "summary": "s", "content": "c", "tags": ["rust"]
             }),
         )
         .unwrap();
@@ -692,19 +695,19 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "a", "content": "ca", "tags": {"x": null}, "create_missing_tags": true}),
+            json!({"summary": "a", "content": "ca", "tags": ["x"], "create_missing_tags": true}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "b", "content": "cb", "tags": {"x": null, "keep": null}, "create_missing_tags": true}),
+            json!({"summary": "b", "content": "cb", "tags": ["x", "keep"], "create_missing_tags": true}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "c", "content": "cc", "tags": {"keep": null}, "create_missing_tags": true}),
+            json!({"summary": "c", "content": "cc", "tags": ["keep"], "create_missing_tags": true}),
         )
         .unwrap();
 
@@ -724,13 +727,13 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "a", "content": "ca", "tags": {"x": null}, "create_missing_tags": true}),
+            json!({"summary": "a", "content": "ca", "tags": ["x"], "create_missing_tags": true}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "b", "content": "cb", "tags": {"x": null, "keep": null}, "create_missing_tags": true}),
+            json!({"summary": "b", "content": "cb", "tags": ["x", "keep"], "create_missing_tags": true}),
         )
         .unwrap();
 
@@ -833,13 +836,13 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "alpha note", "content": "c", "tags": {"proj-alpha": null}}),
+            json!({"summary": "alpha note", "content": "c", "tags": ["proj-alpha"]}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "misc note", "content": "c", "tags": {"misc": null}}),
+            json!({"summary": "misc note", "content": "c", "tags": ["misc"]}),
         )
         .unwrap();
 
@@ -896,7 +899,7 @@ mod tests {
             call(
                 &path,
                 "memory_create",
-                json!({"summary": format!("item {}", i), "content": "shared keyword", "tags": {}}),
+                json!({"summary": format!("item {}", i), "content": "shared keyword", "tags": []}),
             )
             .unwrap();
         }
@@ -1049,7 +1052,7 @@ mod tests {
         let tag_only = call(
             &path,
             "memory_update",
-            json!({"id": "m2", "add_tags": {"solo": null}, "create_missing_tags": true}),
+            json!({"id": "m2", "tags": ["solo"], "create_missing_tags": true}),
         )
         .unwrap();
         assert!(tag_only.get("referenced_by").is_none(), "got: {tag_only:?}");
@@ -1107,25 +1110,25 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "one", "content": "c", "tags": {"rust": null}}),
+            json!({"summary": "one", "content": "c", "tags": ["rust"]}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "two", "content": "c", "tags": {"web": null}}),
+            json!({"summary": "two", "content": "c", "tags": ["web"]}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "three", "content": "c", "tags": {"rust": null, "web": null}}),
+            json!({"summary": "three", "content": "c", "tags": ["rust", "web"]}),
         )
         .unwrap();
         call(
             &path,
             "memory_create",
-            json!({"summary": "four", "content": "c", "tags": {"notes": null}}),
+            json!({"summary": "four", "content": "c", "tags": ["notes"]}),
         )
         .unwrap();
 
@@ -1198,7 +1201,7 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "只此一句摘要", "tags": {"t": null}, "create_missing_tags": true}),
+            json!({"summary": "只此一句摘要", "tags": ["t"], "create_missing_tags": true}),
         )
         .unwrap();
         let got = call(&path, "memory_get", json!({"ids": ["m1"]})).unwrap();
@@ -1261,7 +1264,7 @@ mod tests {
         let err = call(
             &path,
             "memory_search",
-            json!({"query": "x", "tags": {"rust": null}}),
+            json!({"query": "x", "tags": ["rust"]}),
         )
         .unwrap_err();
         assert!(err.to_string().contains("'tags'"), "got: {err}");
@@ -1291,7 +1294,7 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "s", "content": "c", "tags": {"rust": null}, "create_missing_tags": true}),
+            json!({"summary": "s", "content": "c", "tags": ["rust"], "create_missing_tags": true}),
         )
         .unwrap();
 
@@ -1449,7 +1452,7 @@ mod tests {
             &path,
             &writer,
             "memory_create",
-            json!({"summary": "s", "content": "c", "tags": {RESERVED_TAG: null, "ok": null}}),
+            json!({"summary": "s", "content": "c", "tags": [RESERVED_TAG, "ok"]}),
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
@@ -1497,7 +1500,7 @@ mod tests {
             &path,
             &admin_caps,
             "memory_create",
-            json!({"summary": "rule", "content": "c", "tags": {RESERVED_TAG: null}}),
+            json!({"summary": "rule", "content": "c", "tags": [RESERVED_TAG]}),
         )
         .unwrap();
         let id = created["id"].as_str().unwrap().to_string();
@@ -1514,7 +1517,7 @@ mod tests {
             &path,
             &writer,
             "memory_update",
-            json!({"id": id, "add_tags": { (format!("  {RESERVED_TAG} ")): null }}),
+            json!({"id": id, "attributes": { (format!("  {RESERVED_TAG} ")): "x" }}),
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::Forbidden(_)), "got: {err:?}");
@@ -1524,7 +1527,7 @@ mod tests {
             &path,
             &admin_caps,
             "memory_update",
-            json!({"id": id, "add_tags": {"notes": null}, "remove_tags": [RESERVED_TAG], "create_missing_tags": true}),
+            json!({"id": id, "tags": ["notes"], "remove_tags": [RESERVED_TAG], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(ok["updated"], true);
@@ -1576,7 +1579,7 @@ mod tests {
             &path,
             &admin_caps,
             "memory_create",
-            json!({"summary": "rule", "content": "c", "tags": {RESERVED_TAG: null}}),
+            json!({"summary": "rule", "content": "c", "tags": [RESERVED_TAG]}),
         )
         .unwrap();
         let listed = call(&path, "tag_list", json!({})).unwrap();
@@ -1595,80 +1598,55 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Edge-target-only tags (attribute values) stay out of the default listing but join it
-    /// under all=true, each carrying the sorted keys of the edges pointing at it — the data
-    /// navigation faces need to nest `key:value` values under their key.
+    /// Browsing the vocabulary: tags and scopes come back together, a scoped tag carries its
+    /// scope, and a scope reports how many memories carry any of its tags.
     #[test]
-    fn tag_list_all_includes_target_only_tags_with_their_keys() {
-        let path = temp_db("tag-list-all");
+    fn tag_list_reports_tags_and_scopes() {
+        let path = temp_db("tag-list-scopes");
         call(
             &path,
-            "memory_create",
+            MEMORY_CREATE,
             json!({
                 "summary": "a", "content": "ca",
-                "tags": {"project": "nmmt", "topic": "nmmt"},
+                "attributes": {"project": "nmmt", "topic": "nmmt"},
                 "create_missing_tags": true
             }),
         )
         .unwrap();
         call(
             &path,
-            "memory_create",
-            json!({"summary": "b", "content": "cb", "tags": {"rust": null}, "create_missing_tags": true}),
+            MEMORY_CREATE,
+            json!({
+                "summary": "b", "content": "cb",
+                "attributes": {"project": "agent-memory"}, "tags": ["rust"],
+                "create_missing_tags": true
+            }),
         )
         .unwrap();
 
-        // Default set: organizing tags only — the target-only value is not listed
-        let rows = call(&path, "tag_list", json!({})).unwrap()["tags"]
-            .as_array()
-            .unwrap()
-            .clone();
-        let names: Vec<&str> = rows.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert!(names.contains(&"project") && names.contains(&"topic") && names.contains(&"rust"));
-        assert!(
-            !names.contains(&"nmmt"),
-            "target-only tag hidden by default"
-        );
-
-        // all=true: the value joins the list with the keys pointing at it (sorted, sparse
-        // elsewhere — organizing tags carry no keys field)
-        let rows = call(&path, "tag_list", json!({"all": true})).unwrap()["tags"]
-            .as_array()
-            .unwrap()
-            .clone();
-        let nmmt = rows
+        let listed = call(&path, TAG_LIST, json!({})).unwrap();
+        let tags = listed["tags"].as_array().unwrap();
+        let names: Vec<&str> = tags
             .iter()
-            .find(|t| t["name"] == "nmmt")
-            .expect("target-only tag listed under all=true");
-        assert_eq!(nmmt["keys"], json!(["project", "topic"]));
-        assert_eq!(nmmt["target_only"], true);
-        assert!(
-            nmmt.get("description").is_none(),
-            "undescribed stays sparse"
-        );
-        let rust = rows.iter().find(|t| t["name"] == "rust").unwrap();
-        assert!(
-            rust.get("keys").is_none(),
-            "keys attach only to edge targets"
-        );
-        assert!(rust.get("target_only").is_none());
+            .map(|tag| tag["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"project::nmmt") && names.contains(&"rust"));
+        let project = tags
+            .iter()
+            .find(|tag| tag["name"] == "project::nmmt")
+            .unwrap();
+        assert_eq!(project["scope"], "project");
+        assert_eq!(project["count"], 1);
 
-        // A tag both pointed at and organizing stays in the default set yet keeps its keys,
-        // without the target-only marker (faces list it top-level as well as nested)
-        call(
-            &path,
-            "memory_create",
-            json!({"summary": "c", "content": "cc", "tags": {"nmmt": "leaf"}, "create_missing_tags": true}),
-        )
-        .unwrap();
-        let rows = call(&path, "tag_list", json!({})).unwrap()["tags"]
-            .as_array()
-            .unwrap()
-            .clone();
-        let nmmt = rows.iter().find(|t| t["name"] == "nmmt").unwrap();
-        assert_eq!(nmmt["keys"], json!(["project", "topic"]));
-        assert!(nmmt.get("target_only").is_none());
+        let scopes = listed["scopes"].as_array().unwrap();
+        let project_scope = scopes.iter().find(|s| s["name"] == "project").unwrap();
+        assert_eq!(project_scope["count"], 2);
+        assert_eq!(project_scope["tag_count"], 2);
+        assert!(project_scope.get("required").is_none());
 
+        // A filter narrows both lists.
+        let filtered = call(&path, TAG_LIST, json!({"filter": "rust"})).unwrap();
+        assert_eq!(filtered["tags"].as_array().unwrap().len(), 1);
         cleanup(&path);
     }
 
@@ -1684,7 +1662,7 @@ mod tests {
         let err = call(
             &path,
             "memory_create",
-            json!({"summary": "s", "content": "c", "tags": {"META": null}}),
+            json!({"summary": "s", "content": "c", "tags": ["META"]}),
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::Invalid(_)), "got: {err:?}");
@@ -1708,16 +1686,16 @@ mod tests {
         let ok = call(
             &path,
             "memory_create",
-            json!({"summary": "s", "content": "c", "tags": {"META": null}, "create_missing_tags": true}),
+            json!({"summary": "s", "content": "c", "tags": ["META"], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(ok["tags_autocreated"], json!(["META"]));
 
-        // memory_update's add_tags path follows the same rule
+        // memory_update's attributes path follows the same rule
         let err = call(
             &path,
             "memory_update",
-            json!({"id": "m1", "add_tags": {"totally-new": null}}),
+            json!({"id": "m1", "tags": ["totally-new"]}),
         )
         .unwrap_err();
         assert!(
@@ -1727,7 +1705,7 @@ mod tests {
         let ok = call(
             &path,
             "memory_update",
-            json!({"id": "m1", "add_tags": {"totally-new": null}, "create_missing_tags": true}),
+            json!({"id": "m1", "tags": ["totally-new"], "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(ok["tags_autocreated"], json!(["totally-new"]));
@@ -1736,7 +1714,7 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "s2", "content": "c2", "tags": {"meta": null}}),
+            json!({"summary": "s2", "content": "c2", "tags": ["meta"]}),
         )
         .unwrap();
 
@@ -1751,7 +1729,7 @@ mod tests {
         let first = call(
             &path,
             "memory_create",
-            json!({"summary": "Deploy runbook", "content": "step one", "tags": {"ops": null}, "create_missing_tags": true}),
+            json!({"summary": "Deploy runbook", "content": "step one", "tags": ["ops"], "create_missing_tags": true}),
         )
         .unwrap();
         let target = first["id"].as_str().unwrap().to_string();
@@ -1765,7 +1743,7 @@ mod tests {
         let second = call(
             &path,
             "memory_create",
-            json!({"summary": "deploy runbook v2", "content": "step two", "tags": {"ops": null, "release": null}, "create_missing_tags": true}),
+            json!({"summary": "deploy runbook v2", "content": "step two", "tags": ["ops", "release"], "create_missing_tags": true}),
         )
         .unwrap();
         let source = second["id"].as_str().unwrap().to_string();
@@ -1862,8 +1840,8 @@ mod tests {
                 .unwrap()
                 .to_string()
         };
-        let a = mk("a", json!({"ops": null}));
-        let b = mk("b", json!({"ops": null}));
+        let a = mk("a", json!(["ops"]));
+        let b = mk("b", json!(["ops"]));
 
         // Update-only cannot merge (it would smuggle a delete)
         let err = call_as(
@@ -1890,8 +1868,8 @@ mod tests {
 
         // Conventions memories need admin even with update + delete
         let admin = Cap::ALL;
-        let conv = mk("rule", json!({RESERVED_TAG: null}));
-        let other = mk("plain", json!({}));
+        let conv = mk("rule", json!([RESERVED_TAG]));
+        let other = mk("plain", json!([]));
         let err = call_as(
             &path,
             &both,
@@ -1928,7 +1906,7 @@ mod tests {
             json!({
                 "summary": "Deploy runbook",
                 "content": "step one: build\nstep two: test\nstep three: release",
-                "tags": {"ops": null},
+                "tags": ["ops"],
                 "create_missing_tags": true
             }),
         )
@@ -2147,7 +2125,7 @@ mod tests {
             &path,
             &Cap::ALL,
             "memory_create",
-            json!({"summary": "rule", "content": "always lint", "tags": {RESERVED_TAG: null}, "create_missing_tags": true}),
+            json!({"summary": "rule", "content": "always lint", "tags": [RESERVED_TAG], "create_missing_tags": true}),
         )
         .unwrap();
         let id = created["id"].as_str().unwrap().to_string();
@@ -2170,14 +2148,14 @@ mod tests {
         call(
             &path,
             "memory_create",
-            json!({"summary": "Rust notes", "content": "v1", "tags": {}}),
+            json!({"summary": "Rust notes", "content": "v1", "tags": []}),
         )
         .unwrap();
         // Same title after normalization (case-insensitive) → hint about the existing entry
         let second = call(
             &path,
             "memory_create",
-            json!({"summary": "rust NOTES", "content": "v2", "tags": {}}),
+            json!({"summary": "rust NOTES", "content": "v2", "tags": []}),
         )
         .unwrap();
         let dups = second["duplicate_of"].as_array().unwrap();
@@ -2200,7 +2178,7 @@ mod tests {
         let c = call(
             &path,
             "memory_create",
-            json!({"summary": "first", "content": "one", "tags": {}}),
+            json!({"summary": "first", "content": "one", "tags": []}),
         )
         .unwrap();
         let id = c["id"].as_str().unwrap().to_string();
@@ -2208,7 +2186,7 @@ mod tests {
         let c2 = call(
             &path,
             "memory_create",
-            json!({"summary": "second", "content": "two", "tags": {}}),
+            json!({"summary": "second", "content": "two", "tags": []}),
         )
         .unwrap();
         assert_ne!(c2["id"].as_str().unwrap(), id);
@@ -2223,7 +2201,7 @@ mod tests {
             MEMORY_CREATE,
             json!({
                 "summary": "kv memory",
-                "tags": {"rust": null, "project": "agent-memory", "count": 2},
+                "tags": ["rust"], "attributes": {"project": "agent-memory", "count": 2},
                 "create_missing_tags": true
             }),
         )
@@ -2240,12 +2218,12 @@ mod tests {
         autocreated.sort();
         assert_eq!(
             autocreated,
-            vec!["2", "agent-memory", "count", "project", "rust"]
+            vec!["count::2", "project::agent-memory", "rust"]
         );
         let id = created["id"].as_str().unwrap().to_string();
         // Edges read back as 'source:target' display forms; the typed attributes view renders numbers
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
-        for value in ["project:agent-memory", "count:2"] {
+        for value in ["project::agent-memory", "count::2"] {
             assert!(
                 got["tags"].as_array().unwrap().iter().any(|t| t == value),
                 "{value} in tags: {got}"
@@ -2253,11 +2231,11 @@ mod tests {
         }
         assert_eq!(got["attributes"]["project"], "agent-memory");
         assert_eq!(got["attributes"]["count"], 2);
-        // add_tags upserts one key's value without touching the others
+        // attributes upserts one key's value without touching the others
         let updated = call(
             &path,
             MEMORY_UPDATE,
-            json!({"id": id, "add_tags": {"project": "other"}, "create_missing_tags": true}),
+            json!({"id": id, "attributes": {"project": "other"}, "create_missing_tags": true}),
         )
         .unwrap();
         assert_eq!(updated["updated"], true);
@@ -2266,19 +2244,19 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|t| t == "project:other"));
+            .any(|t| t == "project::other"));
         assert!(!got["tags"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|t| t == "project:agent-memory"));
+            .any(|t| t == "project::agent-memory"));
         assert_eq!(got["attributes"]["count"], 2, "untouched key survives");
         assert_eq!(got["tags"].as_array().unwrap().len(), 3);
         // remove_tags drops whole keys by name
         call(
             &path,
             MEMORY_UPDATE,
-            json!({"id": id, "remove_tags": ["count", "project"]}),
+            json!({"id": id, "remove_tags": ["count::2", "project::other"]}),
         )
         .unwrap();
         let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap()["memories"][0].clone();
@@ -2288,25 +2266,29 @@ mod tests {
         let err = call(
             &path,
             MEMORY_UPDATE,
-            json!({"id": id, "add_tags": {"project": ["a", "b"]}}),
+            json!({"id": id, "attributes": {"project": ["a", "b"]}}),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("must map to"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("must be a string, a number or null"),
+            "{err}"
+        );
         let err = call(
             &path,
             MEMORY_UPDATE,
-            json!({"id": id, "add_tags": {"count": "has space"}}),
+            json!({"id": id, "attributes": {"count": "has space"}}),
         )
         .unwrap_err();
         assert!(err.to_string().contains("identifier word"), "{err}");
-        // Source names cannot carry the composed form (targets are the object values)
+        // A scoped tag is declared through attributes; listing it as a name is refused.
         let err = call(
             &path,
             MEMORY_CREATE,
-            json!({"summary": "s", "tags": {"project:alpha": null}}),
+            json!({"summary": "s", "tags": ["project::alpha"]}),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("invalid tag name"), "{err}");
+        assert!(err.to_string().contains("carries a value"), "{err}");
         cleanup(&path);
     }
 
@@ -2320,7 +2302,7 @@ mod tests {
             call(
                 &path,
                 MEMORY_CREATE,
-                json!({"summary": summary, "tags": attrs, "create_missing_tags": true}),
+                json!({"summary": summary, "attributes": attrs, "create_missing_tags": true}),
             )
             .unwrap();
         }
@@ -2328,16 +2310,219 @@ mod tests {
             call(&path, MEMORY_LIST, json!({"tag_expr": expr})).unwrap()["total"].clone()
         };
         // enum equality and existence
-        assert_eq!(list("project=one"), 1);
-        assert_eq!(list("project"), 2);
+        assert_eq!(list("project::one"), 1);
+        assert_eq!(list("project::*"), 2);
         // number equality canonicalizes (3.0 finds the stored 3); number-key existence
-        assert_eq!(list("count=3.0"), 1);
-        assert_eq!(list("count"), 1);
+        assert_eq!(list("count::3"), 1);
+        assert_eq!(list("count::*"), 1);
         // composes with the algebra; values are per-memory data — a typo'd value simply matches
         // nothing, an unknown key gets the tag did-you-mean path
-        assert_eq!(list("project=one&count=3"), 1);
-        assert_eq!(list("project=three"), 0);
-        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "nokey=1"})).is_err());
+        assert_eq!(list("project::one&count::3"), 1);
+        assert_eq!(list("project::three"), 0);
+        assert!(call(&path, MEMORY_LIST, json!({"tag_expr": "nokey::1"})).is_err());
+        cleanup(&path);
+    }
+
+    /// The write contract: a scope the operator marks as required must be declared on every fresh
+    /// memory — with a value tag, or with null meaning the memory takes no value in it — and no
+    /// shortcut in the write path may bypass the declaration.
+    #[test]
+    fn required_scopes_must_be_declared_on_create() {
+        let path = temp_db("required-create");
+        call(&path, SCOPE_SET, json!({"name": "country"})).unwrap();
+        for value in ["cn", "us"] {
+            call(
+                &path,
+                TAG_CREATE,
+                json!({"name": format!("country::{value}")}),
+            )
+            .unwrap();
+        }
+        // Before the flag, the declaration is optional: the contract starts at a point in time
+        call(&path, MEMORY_CREATE, json!({"summary": "before"})).unwrap();
+        let updated = call(
+            &path,
+            SCOPE_SET,
+            json!({"name": "country", "required": true}),
+        )
+        .unwrap();
+        assert_eq!(updated["required_updated"], true);
+        // ... and repeated calls are no-ops rather than errors
+        let again = call(
+            &path,
+            SCOPE_SET,
+            json!({"name": "country", "required": true}),
+        )
+        .unwrap();
+        assert_eq!(again["required_updated"], false);
+
+        // Leaving it out is the one thing the contract forbids
+        let err = call(&path, MEMORY_CREATE, json!({"summary": "no declaration"})).unwrap_err();
+        assert!(err.to_string().contains("country"), "got: {err}");
+        assert!(
+            err.to_string().contains("null"),
+            "the error teaches both forms: {err}"
+        );
+        // A bare tag is not a declaration: the value (or its absence) must be stated in attributes
+        let err = call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "bare", "tags": ["country"]}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("attributes"), "got: {err}");
+        // null records "this memory is not about one country"
+        let generic = call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "generic", "attributes": {"country": null}}),
+        )
+        .unwrap();
+        assert!(generic["id"].as_str().is_some());
+        // A value must be existing vocabulary: auto-creation would fork the value space, so
+        // create_missing_tags does not reach it
+        for create_missing in [false, true] {
+            let err = call(
+                &path,
+                MEMORY_CREATE,
+                json!({
+                    "summary": "typo",
+                    "attributes": {"country": "zz"},
+                    "create_missing_tags": create_missing
+                }),
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("not an existing tag"),
+                "got: {err}"
+            );
+        }
+        let scoped = call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "scoped", "attributes": {"country": "cn"}}),
+        )
+        .unwrap();
+        let got = call(&path, MEMORY_GET, json!({"ids": [scoped["id"]]})).unwrap();
+        assert_eq!(got["memories"][0]["attributes"]["country"], "cn");
+        assert_eq!(
+            got["memories"][0]["tags"],
+            json!(["country::cn"]),
+            "the declaration composes the scoped tag name"
+        );
+        // The declaration rides the tag vocabulary, so it filters like any other tag
+        let list = call(&path, MEMORY_LIST, json!({"tag_expr": "country::cn"})).unwrap();
+        assert_eq!(list["total"], 1);
+        let list = call(&path, MEMORY_LIST, json!({"tag_expr": "country::*"})).unwrap();
+        assert_eq!(list["total"], 1);
+        cleanup(&path);
+    }
+
+    /// Once written, a value of a required scope cannot be dropped by name (that would leave the
+    /// memory undeclared); the explicit null declaration clears it, and the value tag cannot be
+    /// deleted while the contract stands.
+    #[test]
+    fn required_scopes_guard_updates_and_deletion() {
+        let path = temp_db("required-lifecycle");
+        call(&path, SCOPE_SET, json!({"name": "country"})).unwrap();
+        call(&path, TAG_CREATE, json!({"name": "country::cn"})).unwrap();
+        call(
+            &path,
+            SCOPE_SET,
+            json!({"name": "country", "required": true}),
+        )
+        .unwrap();
+        let created = call(
+            &path,
+            MEMORY_CREATE,
+            json!({"summary": "scoped", "attributes": {"country": "cn"}}),
+        )
+        .unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+
+        let err = call(
+            &path,
+            MEMORY_UPDATE,
+            json!({"id": id, "remove_tags": ["country::cn"]}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cannot be removed"), "got: {err}");
+        // null is how a memory stops being about one country
+        let cleared = call(
+            &path,
+            MEMORY_UPDATE,
+            json!({"id": id, "attributes": {"country": null}}),
+        )
+        .unwrap();
+        assert_eq!(cleared["updated"], true);
+        let got = call(&path, MEMORY_GET, json!({"ids": [id]})).unwrap();
+        assert!(got["memories"][0].get("attributes").is_none());
+
+        // Deleting the value tag would silently end the contract
+        let err = call(&path, TAG_DELETE, json!({"name": "country::cn"})).unwrap_err();
+        assert!(
+            err.to_string().contains("must be declared on every write"),
+            "got: {err}"
+        );
+        // Clearing the flag first is the deliberate way out
+        call(
+            &path,
+            SCOPE_SET,
+            json!({"name": "country", "required": false}),
+        )
+        .unwrap();
+        call(&path, TAG_DELETE, json!({"name": "country::cn"})).unwrap();
+        // A fresh memory now carries no obligation
+        call(&path, MEMORY_CREATE, json!({"summary": "free"})).unwrap();
+        cleanup(&path);
+    }
+
+    /// Merging is the one write that unites two memories: if they disagree about a required
+    /// scope, the surviving memory's scope would silently change, so the merge is refused.
+    #[test]
+    fn merge_refuses_disagreeing_required_scopes() {
+        let path = temp_db("required-merge");
+        call(
+            &path,
+            SCOPE_SET,
+            json!({"name": "country", "required": true}),
+        )
+        .unwrap();
+        for value in ["cn", "us"] {
+            call(
+                &path,
+                TAG_CREATE,
+                json!({"name": format!("country::{value}")}),
+            )
+            .unwrap();
+        }
+        let make = |summary: &str, country: Value| {
+            call(
+                &path,
+                MEMORY_CREATE,
+                json!({"summary": summary, "attributes": {"country": country}}),
+            )
+            .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let cn_a = make("cn a", json!("cn"));
+        let cn_b = make("cn b", json!("cn"));
+        let us = make("us", json!("us"));
+        let generic = make("generic", json!(null));
+
+        let err = call(&path, MEMORY_MERGE, json!({"target": cn_a, "source": us})).unwrap_err();
+        assert!(err.to_string().contains("differs"), "got: {err}");
+        let err = call(
+            &path,
+            MEMORY_MERGE,
+            json!({"target": cn_a, "source": generic}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("differs"), "got: {err}");
+        // Agreement merges as usual
+        call(&path, MEMORY_MERGE, json!({"target": cn_a, "source": cn_b})).unwrap();
         cleanup(&path);
     }
 }

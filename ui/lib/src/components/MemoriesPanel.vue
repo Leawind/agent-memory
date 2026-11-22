@@ -124,7 +124,9 @@
       <MemoryEditorDialog
         v-model:visible="editorVisible"
         :memory-id="editingId"
-        :tag-options="tagOptions"
+        :tag-options="bareTagOptions"
+        :scope-options="scopeOptions"
+        :required-scopes="requiredScopes"
         :width="narrow ? '96%' : '960px'"
         @saved="onMutated"
         @deleted="onMutated"
@@ -177,6 +179,9 @@ const {
   keywordMatches,
   loading,
   tagOptions,
+  bareTagOptions,
+  requiredScopes,
+  scopeOptions,
   tagDescriptions,
   searching,
   semanticReady,
@@ -323,8 +328,8 @@ function onMutated() {
 // Sidebar tag click lands here (through the workspace): the expression becomes the whole
 // value — a click is a deliberate single-tag view, not an edit of whatever expression was
 // typed. Clicking the already-active row clears the filter. Applied immediately: the tag
-// is known to exist. The sidebar sends a tag's own name for top-level rows and the exact
-// `key=value` edge atom for a value nested under a key.
+// is known to exist. The sidebar sends a tag's own name (bare or `scope::value`) for rows
+// and the `scope::*` wildcard for a scope header.
 function toggleTagFilter(name: string) {
   tagExpr.value = tagExpr.value.trim() === name ? '' : name
   run(onSearch)

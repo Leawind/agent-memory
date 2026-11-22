@@ -178,13 +178,25 @@ fn apply_migration_to_schema(sql_text: &str, out: &mut HashMap<String, Vec<Strin
                 out.insert(name, columns);
             }
         } else if let Some(rest) = upper.strip_prefix("ALTER TABLE") {
-            // ALTER TABLE <name> RENAME TO <new>
+            // ALTER TABLE <name> RENAME TO <new> | ADD [COLUMN] <column> <type> ...
             let words: Vec<&str> = rest.split_whitespace().collect();
             if words.len() == 4 && words[1] == "RENAME" {
                 let from = words[0].trim_matches('"').to_ascii_lowercase();
                 let to = words[3].trim_matches('"').to_ascii_lowercase();
                 if let Some(columns) = out.remove(&from) {
                     out.insert(to, columns);
+                }
+            } else if words.len() >= 4 && words[1] == "ADD" {
+                // Added columns carry no constraint of their own here (nullable additions only),
+                // so the name is all the expected shape needs.
+                let table = words[0].trim_matches('"').to_ascii_lowercase();
+                let column = if words[2] == "COLUMN" {
+                    words.get(3)
+                } else {
+                    words.get(2)
+                };
+                if let (Some(column), Some(columns)) = (column, out.get_mut(&table)) {
+                    columns.push(column.trim_matches('"').to_ascii_lowercase());
                 }
             }
         } else if let Some(rest) = upper.strip_prefix("DROP TABLE") {

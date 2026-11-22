@@ -64,7 +64,7 @@ const tagNames = ref<string[]>([])
 
 onMounted(async () => {
   try {
-    const resp = await listTags(client, undefined, true)
+    const resp = await listTags(client)
     tagNames.value = resp.tags.map((tag) => tag.name)
   } catch {
     tagNames.value = []
@@ -80,12 +80,19 @@ function onImportFile(e: Event) {
   if (!file) return
   importFile(file, { merge: merge.value, predicate: importPredicate.value || undefined })
     .then((imported) => {
-      const key = imported.skipped_memories > 0 ? 'access.importedSkipped' : 'access.imported'
+      const unclassified = imported.unclassified_memories ?? 0
+      const key =
+        unclassified > 0
+          ? 'access.importedUnclassified'
+          : imported.skipped_memories > 0
+            ? 'access.importedSkipped'
+            : 'access.imported'
       toastSuccess(
         t(key, {
           memories: imported.imported_memories,
           tags: imported.imported_tags,
           skipped: imported.skipped_memories,
+          unclassified,
         }),
       )
     })
