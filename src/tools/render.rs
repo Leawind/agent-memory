@@ -87,16 +87,27 @@ fn push_description(out: &mut String, view: &Value) {
     }
 }
 
-/// Header `total: N | offset: N`, then `<id> [<tags>] <updated> <summary>` per line.
+/// Header `total: N | offset: N`, an optional `filter: <expr>` line when the identity's default
+/// filtered the page, then `<id> [<tags>] <updated> <summary>` per line.
 fn render_memory_list(v: &Value) -> Option<String> {
     let total = v.get("total")?.as_u64()?;
     let offset = v.get("offset")?.as_u64()?;
     let memories = v.get("memories")?.as_array()?;
     let mut out = format!("total: {total} | offset: {offset}\n");
+    push_filter_line(&mut out, v);
     for m in memories {
         push_memory_row(&mut out, m, None)?;
     }
     Some(out)
+}
+
+/// The implicit tag filter a bound identity runs under, when it is not the caller's own choice.
+fn push_filter_line(out: &mut String, v: &Value) {
+    if let Some(filter) = v.get("filter").and_then(Value::as_str) {
+        out.push_str("filter: ");
+        out.push_str(filter);
+        out.push('\n');
+    }
 }
 
 /// Header `total_matches: N | offset: N | returned: N | mode: <mode>`, then the optional flag
@@ -111,6 +122,7 @@ fn render_memory_search(v: &Value) -> Option<String> {
     let mut out = format!(
         "total_matches: {total} | offset: {offset} | returned: {returned} | mode: {mode}\n"
     );
+    push_filter_line(&mut out, v);
     if let Some(cursor) = v.get("cursor").and_then(Value::as_str) {
         out.push_str("cursor: ");
         out.push_str(cursor);

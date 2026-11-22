@@ -152,6 +152,8 @@ agent-memory --db /srv/agent-memory/memory.db serve --host 0.0.0.0 --port 9000
 
 鉴权开启后，`/mcp` 和 `/api` 都必须携带 `Authorization: Bearer <token>`。可以为无 token 的请求单独配置一组匿名能力（例如只读）；没有配置时无 token 一律 401。丢失唯一的管理员 token 时，可以用 `agent-memory token reset` 重置最早创建的管理员身份。
 
+身份可以绑定一个带作用域的标签（如 `system::pc1sw0`），表示“这个身份的调用者是谁”。绑定之后，它的列表与搜索在没有给出 `tag_expr` 时只看“自己 + 共享”：该标签的持有者，以及在同一作用域下没有标签的记忆；结果头部用 `filter:` 说明实际生效的表达式。调用者显式给出 `tag_expr` 时以它为准，按 id 读取也不过滤，所以知道 id 仍能读到默认视图之外的记忆。未绑定的身份（含管理员）看到全部。
+
 ### 备份与体检
 
 全部数据在一个 SQLite 文件里。停止服务后复制这个文件，就能把整个库搬到另一台机器。

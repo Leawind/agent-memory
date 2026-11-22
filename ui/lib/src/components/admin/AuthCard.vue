@@ -56,6 +56,7 @@
       <div v-for="row in identities" :key="row.name" class="id-card">
         <div class="id-card-head">
           <span class="id-card-name">{{ row.name }}</span>
+          <code v-if="row.tag" class="token-text">{{ row.tag }}</code>
           <span class="id-card-actions">
             <el-tooltip :content="t('common.edit')" placement="top" :enterable="false">
               <el-button link type="primary" :icon="Edit" :aria-label="t('common.edit')" @click="emit('edit', row)" />
@@ -97,6 +98,12 @@
     </div>
     <el-table v-else-if="identities.length > 0" :data="identities">
       <el-table-column prop="name" :label="t('access.colName')" min-width="120" />
+      <el-table-column :label="t('access.colTag')" min-width="140">
+        <template #default="{ row }">
+          <code v-if="row.tag" class="token-text">{{ row.tag }}</code>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('access.colPermissions')" min-width="240">
         <template #default="{ row }">
           <el-tag

@@ -15,7 +15,9 @@
 //! by the HTTP layer and passed in.
 
 use crate::auth::{Cap, IdentityCtx, Permissions};
-use crate::model::{normalize_identity_name, MAX_INSTRUCTIONS_CHARS};
+use crate::model::{
+    normalize_identity_name, normalize_tag_name, tag_scope_of, MAX_INSTRUCTIONS_CHARS,
+};
 use crate::store::{self, TxMode};
 use crate::tools::{
     self, ToolError, MEMORY_CREATE, MEMORY_DELETE, MEMORY_GET, MEMORY_LIST, MEMORY_MERGE,
@@ -195,8 +197,9 @@ pub fn handle(
                 };
                 let perms = Permissions::from_json(args.get("permissions").unwrap_or(&Value::Null))
                     .map_err(ToolError::invalid)?;
+                let tag = identity_tag(args.get("tag"))?;
                 store::with_db_in(db_path, TxMode::Write, |st| {
-                    st.identity_create(&name, &perms)
+                    st.identity_create(&name, &perms, tag.as_deref())
                         .map_err(ToolError::from)
                         .map(|(token, mut view)| {
                             // token plaintext appears only in the create response; the DB stores a hash
@@ -219,12 +222,22 @@ pub fn handle(
                 let args = args_from_body()?;
                 let perms = Permissions::from_json(args.get("permissions").unwrap_or(&Value::Null))
                     .map_err(ToolError::invalid)?;
+                // Absent leaves the binding alone; null clears it
+                let tag_update = if args.contains_key("tag") {
+                    Some(identity_tag(args.get("tag"))?)
+                } else {
+                    None
+                };
                 store::with_db_in(db_path, TxMode::Write, |st| {
                     if !st
                         .identity_set_permissions(name, &perms)
                         .map_err(ToolError::from)?
                     {
                         return Err(ToolError::not_found(format!("identity '{name}' not found")));
+                    }
+                    if let Some(tag) = &tag_update {
+                        st.identity_set_tag(name, tag.as_deref())
+                            .map_err(ToolError::from)?;
                     }
                     // Echo-free like the other write endpoints: the permissions were just stated
                     // by the caller — the refreshed row comes from the list the UI reloads
@@ -1228,6 +1241,27 @@ fn list_or_search_args(query: &str) -> Value {
         }
     }
     Value::Object(args)
+}
+
+/// An identity's bound tag: the scoped tag the caller is (`system::pc1sw0`), or null to leave
+/// reads unfiltered. A bare tag cannot serve as a binding — "shared plus mine" needs a scope whose
+/// absence carries meaning.
+fn identity_tag(value: Option<&Value>) -> Result<Option<String>, ToolError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(raw)) => {
+            let name = normalize_tag_name(raw).map_err(ToolError::invalid)?;
+            if tag_scope_of(&name).is_none() {
+                return Err(ToolError::invalid(format!(
+                    "'{name}' is a bare tag; an identity binds to a scoped name such as 'system::pc1sw0'"
+                )));
+            }
+            Ok(Some(name))
+        }
+        Some(other) => Err(ToolError::invalid(format!(
+            "tag must be a string or null, got {other}"
+        ))),
+    }
 }
 
 pub(crate) fn query_get(query: &str, key: &str) -> Option<String> {

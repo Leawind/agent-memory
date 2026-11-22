@@ -1,1 +1,1 @@
-SELECT id, name, permissions FROM identities WHERE token_hash = ?1;
+SELECT id, name, permissions, tag FROM identities WHERE token_hash = ?1;

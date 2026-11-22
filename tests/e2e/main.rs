@@ -20,6 +20,7 @@ mod mcp;
 mod predicates;
 mod resources;
 mod rest;
+mod scope_filter;
 mod semantic;
 mod shared;
 mod snapshots;

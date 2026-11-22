@@ -37,10 +37,12 @@ fn predicate_management_is_independent_of_admin() {
         let (a, _) = st.identity_create(
             "alice",
             &Permissions::from_json(&json!({"read":true,"admin":true}))?,
+            None,
         )?;
         let (b, _) = st.identity_create(
             "bob",
             &Permissions::from_json(&json!({"read":true,"predicate_manage":true}))?,
+            None,
         )?;
         Ok((
             st.identity_ctx_by_token(&a)?.unwrap(),

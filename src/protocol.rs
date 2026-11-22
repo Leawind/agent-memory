@@ -742,7 +742,7 @@ mod tests {
         // still follows last
         store::with_db_in(&store, store::TxMode::Write, |st| -> Result<(), String> {
             st.settings_put("instructions", "这是团队共享记忆库，提交前先检索。")?;
-            let (token, _) = st.identity_create("alice", &crate::auth::Permissions::all())?;
+            let (token, _) = st.identity_create("alice", &crate::auth::Permissions::all(), None)?;
             ALICE_TOKEN.with(|cell| *cell.borrow_mut() = Some(token));
             Ok(())
         })

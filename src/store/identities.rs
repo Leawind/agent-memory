@@ -32,6 +32,7 @@ impl Store {
         &self,
         name: &str,
         permissions: &crate::auth::Permissions,
+        tag: Option<&str>,
     ) -> Result<(String, Value), String> {
         let token = self.generate_token()?;
         let (hash, hint) = token_hash_and_hint(&token);
@@ -39,7 +40,7 @@ impl Store {
         self.conn
             .execute(
                 sql::IDENTITY_INSERT,
-                params![name, hash, hint, stored, crate::model::now() as i64],
+                params![name, hash, hint, stored, crate::model::now() as i64, tag],
             )
             .map(|_| ())
             .map_err(|e| {
@@ -67,12 +68,13 @@ impl Store {
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
             ))
         });
         match row {
-            Ok((id, name, perms_json)) => {
+            Ok((id, name, perms_json, tag)) => {
                 let perms = parse_stored_permissions(&perms_json)?;
-                let mut ctx = crate::auth::IdentityCtx::new(&name, perms);
+                let mut ctx = crate::auth::IdentityCtx::new(&name, perms).with_tag(tag);
                 ctx.identity_id = Some(id);
                 Ok(Some(ctx))
             }
@@ -94,17 +96,19 @@ impl Store {
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?,
+                    r.get::<_, Option<String>>(4)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
-            let (name, token, perms_json, created_at) = row.map_err(|e| e.to_string())?;
+            let (name, token, perms_json, created_at, tag) = row.map_err(|e| e.to_string())?;
             let perms = parse_stored_permissions(&perms_json)?;
             Ok(json!({
                 "name": name,
                 "token_hint": token,
                 "permissions": perms.to_json(),
                 "created_at": created_at,
+                "tag": tag,
             }))
         })
         .collect()
@@ -125,6 +129,15 @@ impl Store {
         let n = self
             .conn
             .execute(sql::IDENTITY_UPDATE_PERMISSIONS, params![stored, name])
+            .map_err(|e| e.to_string())?;
+        Ok(n > 0)
+    }
+
+    /// Bind the identity to a scoped tag (a caller's own value), or clear the binding with None.
+    pub fn identity_set_tag(&self, name: &str, tag: Option<&str>) -> Result<bool, String> {
+        let n = self
+            .conn
+            .execute(sql::IDENTITY_UPDATE_TAG, params![tag, name])
             .map_err(|e| e.to_string())?;
         Ok(n > 0)
     }
@@ -200,17 +213,22 @@ mod tests {
         assert!(st.identity_list().unwrap().is_empty());
 
         let (token, view) = st
-            .identity_create("alice", &crate::auth::Permissions::all())
+            .identity_create(
+                "alice",
+                &crate::auth::Permissions::all(),
+                Some("system::pc1sw0"),
+            )
             .unwrap();
         assert_token_format(&token);
         assert_eq!(view["name"], "alice");
         assert_eq!(view["permissions"]["admin"], true);
+        assert_eq!(view["tag"], "system::pc1sw0");
         // No plaintext in the database: the view carries only the suffix hint, and the hash cannot be reversed into the token
         assert_eq!(view["token_hint"], &token[token.len() - 4..]);
         assert!(serde_json::to_string(&view).unwrap().find(&token).is_none());
         // Duplicate names error out
         assert!(st
-            .identity_create("alice", &crate::auth::Permissions::default())
+            .identity_create("alice", &crate::auth::Permissions::default(), None)
             .is_err());
 
         // token → identity context
@@ -218,6 +236,10 @@ mod tests {
         assert_eq!(ctx.name, "alice");
         assert!(ctx.can(crate::auth::Cap::Admin));
         assert_eq!(ctx.mode, crate::auth::Mode::Token);
+        // The binding survives the round trip and can be cleared
+        assert_eq!(ctx.tag.as_deref(), Some("system::pc1sw0"));
+        st.identity_set_tag("alice", None).unwrap();
+        assert_eq!(st.identity_ctx_by_token(&token).unwrap().unwrap().tag, None);
         // Unknown token → None
         assert!(st.identity_ctx_by_token("nope").unwrap().is_none());
 

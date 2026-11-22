@@ -19,6 +19,8 @@ export interface IdentityRow {
   token_hint: string
   permissions: Record<string, boolean>
   created_at: number
+  /** The scoped tag this caller is; reads default to it plus memories carrying no tag in its scope */
+  tag: string | null
 }
 
 export type PresetKey = 'admin' | 'member' | 'viewer' | 'custom'

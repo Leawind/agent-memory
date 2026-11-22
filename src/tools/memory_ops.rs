@@ -31,6 +31,30 @@ fn opt_tag_expr(st: &Store, args: &Map<String, Value>) -> Result<Option<TagExpr>
     Ok(expr)
 }
 
+/// The tag filter a read actually runs under, plus the expression text when the filter is the
+/// identity's default. An explicit tag_expr replaces the default outright: a caller bound to a
+/// scoped tag sees that tag's holder plus memories carrying no tag in its scope, and an explicit
+/// expression is how it asks about anything else.
+fn read_tag_expr(
+    st: &Store,
+    ctx: &IdentityCtx,
+    args: &Map<String, Value>,
+) -> Result<(Option<TagExpr>, Option<String>), ToolError> {
+    if let Some(expr) = opt_tag_expr(st, args)? {
+        return Ok((Some(expr), None));
+    }
+    let Some(binding) = ctx.tag.as_deref() else {
+        return Ok((None, None));
+    };
+    let (expr, text) = crate::tag_expr::shared_or_own(binding).ok_or_else(|| {
+        ToolError::invalid(format!(
+            "identity '{}' is bound to '{binding}', which is not a scoped tag name (ask the server operator to fix the binding)",
+            ctx.name
+        ))
+    })?;
+    Ok((Some(expr), Some(text)))
+}
+
 /// Attach the typed `attributes` view (derived from the edges' target names) to a memory view,
 /// only when the memory carries at least one edge — sparse by default.
 fn attach_attributes(st: &Store, m: &crate::model::Memory, view: &mut Value) -> Result<(), String> {
@@ -165,7 +189,11 @@ pub fn memory_use(
     Ok(json!({"recorded": recorded, "reinforced": reinforced}))
 }
 
-pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolError> {
+pub fn memory_list(
+    st: &Store,
+    ctx: &IdentityCtx,
+    args: &Map<String, Value>,
+) -> Result<Value, ToolError> {
     let sort_opt = opt_str(args, "sort")?;
     // 'id' is the creation order (ids are monotonic at insert), so there is no separate
     // created_at sort key — and the summary rows do not carry a creation timestamp at all
@@ -193,7 +221,7 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
     // Tag expression: resolved against the full store into a memory-id set (JSON array text),
     // handed to the same static SQL as the exact-tag filter — both AND together. Regex atoms
     // evaluate per memory tag set right here (SQL has no regex capability).
-    let tag_expr = opt_tag_expr(st, args)?;
+    let (tag_expr, default_filter) = read_tag_expr(st, ctx, args)?;
     let id_set = match &tag_expr {
         Some(expr) => {
             let memories = st.all_memories()?;
@@ -225,7 +253,12 @@ pub fn memory_list(st: &Store, args: &Map<String, Value>) -> Result<Value, ToolE
         })
         .collect::<Result<_, String>>()?;
 
-    Ok(json!({"total": total, "offset": offset, "limit": limit, "memories": memories}))
+    let mut out = json!({"total": total, "offset": offset, "limit": limit, "memories": memories});
+    // Which implicit filter ran: without this line an empty page looks like an empty store
+    if let Some(filter) = &default_filter {
+        out["filter"] = json!(filter);
+    }
+    Ok(out)
 }
 
 pub fn memory_search(
@@ -237,7 +270,16 @@ pub fn memory_search(
     if query.trim().is_empty() {
         return Err(ToolError::invalid("query must not be empty"));
     }
-    let tag_expr = opt_tag_expr(st, args)?;
+    let (tag_expr, default_filter) = read_tag_expr(st, ctx, args)?;
+    // What the query ran under, and what the snapshot cursor is keyed by: an explicit expression,
+    // or the identity's default.
+    let filter_text = match &default_filter {
+        Some(text) => text.clone(),
+        None => opt_str(args, "tag_expr")?
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    };
     let limit = opt_u64(args, "limit")?.unwrap_or(10).clamp(1, 50);
     let offset = opt_u64(args, "offset")?.unwrap_or(0);
     enum SearchMode {
@@ -259,7 +301,7 @@ pub fn memory_search(
     let scope = crate::search_snapshot::scope(
         st,
         ctx,
-        &json!({"query":query,"tag_expr":opt_str(args,"tag_expr")?.unwrap_or_default().trim(),"mode":opt_str(args,"mode")?.unwrap_or_else(|| "auto".into())}),
+        &json!({"query":query,"tag_expr":filter_text,"mode":opt_str(args,"mode")?.unwrap_or_else(|| "auto".into())}),
     );
     let revision = st.search_revision()?;
     if let Some(cursor) = opt_str(args, "cursor")? {
@@ -427,6 +469,9 @@ pub fn memory_search(
     out["hint"] = json!(
             "Summaries + snippets only (progressive disclosure). Call memory_get with the ids worth reading to reveal full content."
     );
+    if let Some(filter) = &default_filter {
+        out["filter"] = json!(filter);
+    }
     if total == 0 {
         out["note"] = json!(
             "no memory matched any query term; try different or broader terms (matching is case-insensitive, and a Chinese term tolerates a few missing characters)"

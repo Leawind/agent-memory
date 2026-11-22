@@ -85,7 +85,8 @@ mod tests {
             //   m4: self-edge (value equals its own key) → the row dies
             st.conn
                 .execute_batch(
-                    "DROP TABLE memory_tags;
+                    "ALTER TABLE identities DROP COLUMN tag;
+                     DROP TABLE memory_tags;
                      DROP TABLE tags;
                      DROP TABLE tag_scopes;
                      CREATE TABLE tags (
@@ -158,7 +159,8 @@ mod tests {
             let st = Store::open(&path).unwrap();
             st.conn
                 .execute_batch(
-                    "DROP TABLE memory_tags;
+                    "ALTER TABLE identities DROP COLUMN tag;
+                     DROP TABLE memory_tags;
                      DROP TABLE tags;
                      DROP TABLE tag_scopes;
                      CREATE TABLE tags (

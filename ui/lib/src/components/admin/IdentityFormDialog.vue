@@ -11,6 +11,9 @@
     <el-form-item v-if="!editing" :label="t('access.nameLabel')">
       <el-input v-model="form.name" :placeholder="t('access.namePlaceholder')" />
     </el-form-item>
+    <el-form-item :label="t('access.tagLabel')">
+      <el-input v-model="form.tag" :placeholder="t('access.tagPlaceholder')" clearable />
+    </el-form-item>
     <el-form-item :label="t('access.permsLabel')">
       <CapsEditor v-model:caps="form.caps" v-model:preset="preset" />
     </el-form-item>
@@ -44,15 +47,17 @@ const visible = ref(false)
 const submitting = ref(false)
 const editing = ref<IdentityRow | null>(null)
 const preset = ref<PresetKey>('custom')
-const form = reactive<{ name: string; caps: Record<string, boolean> }>({
+const form = reactive<{ name: string; caps: Record<string, boolean>; tag: string }>({
   name: '',
   caps: emptyCaps(),
+  tag: '',
 })
 
 function openCreate(): void {
   editing.value = null
   form.name = ''
   Object.assign(form.caps, emptyCaps())
+  form.tag = ''
   preset.value = 'member'
   visible.value = true
 }
@@ -61,6 +66,7 @@ function openEdit(row: IdentityRow): void {
   editing.value = row
   form.name = row.name
   for (const c of CAPS) form.caps[c.key] = row.permissions?.[c.key] === true
+  form.tag = row.tag ?? ''
   preset.value = 'custom'
   visible.value = true
 }
@@ -73,7 +79,10 @@ defineExpose({ openCreate, openEdit })
 const dirty = computed(() => {
   const row = editing.value
   if (!row) return form.name.trim() !== ''
-  return CAPS.some((c) => (row.permissions?.[c.key] === true) !== (form.caps[c.key] === true))
+  return (
+    CAPS.some((c) => (row.permissions?.[c.key] === true) !== (form.caps[c.key] === true)) ||
+    (row.tag ?? '') !== form.tag.trim()
+  )
 })
 
 async function submit(): Promise<void> {
@@ -82,7 +91,12 @@ async function submit(): Promise<void> {
   try {
     if (editing.value) {
       const name = editing.value.name
-      await run(() => api.put(`/api/identities/${encodeURIComponent(name)}`, { permissions: { ...form.caps } }))
+      await run(() =>
+        api.put(`/api/identities/${encodeURIComponent(name)}`, {
+          permissions: { ...form.caps },
+          tag: form.tag.trim() || null,
+        }),
+      )
       toastSuccess(t('access.saved'))
       emit('saved')
     } else {
@@ -90,6 +104,7 @@ async function submit(): Promise<void> {
         api.post<IdentityRow & { token?: string }>('/api/identities', {
           name: form.name,
           permissions: { ...form.caps },
+          tag: form.tag.trim() || null,
         }),
       )
       if (created?.token) {

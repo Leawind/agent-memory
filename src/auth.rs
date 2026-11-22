@@ -143,6 +143,9 @@ pub struct IdentityCtx {
     pub name: String,
     pub permissions: Permissions,
     pub mode: Mode,
+    /// The scoped tag this caller *is* (`system::pc1sw0`), if the operator bound one: lists and
+    /// searches then default to its holder plus memories carrying no tag in its scope.
+    pub tag: Option<String>,
 }
 
 impl IdentityCtx {
@@ -154,6 +157,7 @@ impl IdentityCtx {
             name: "local".into(),
             permissions: Permissions::all(),
             mode: Mode::Open,
+            tag: None,
         }
     }
 
@@ -165,6 +169,7 @@ impl IdentityCtx {
             name: "anonymous".into(),
             permissions,
             mode: Mode::Anonymous,
+            tag: None,
         }
     }
 
@@ -174,7 +179,15 @@ impl IdentityCtx {
             name: name.to_string(),
             permissions,
             mode: Mode::Token,
+            tag: None,
         }
+    }
+
+    /// Bind the context to the scoped tag the caller is, so reads default to its holder plus the
+    /// memories that carry no tag in its scope.
+    pub fn with_tag(mut self, tag: Option<String>) -> Self {
+        self.tag = tag;
+        self
     }
 
     pub fn can(&self, cap: Cap) -> bool {
@@ -214,12 +227,16 @@ impl IdentityCtx {
 
     /// The self-description summary returned to the agent in initialize.
     pub fn summary(&self) -> Value {
-        json!({
+        let mut out = json!({
             "name": self.name,
             "identity_id": self.identity_id,
             "mode": self.mode.as_str(),
             "permissions": self.permissions.to_json(),
-        })
+        });
+        if let Some(tag) = &self.tag {
+            out["tag"] = json!(tag);
+        }
+        out
     }
 
     /// A human-readable line appended to the initialize instructions.
@@ -235,7 +252,17 @@ impl IdentityCtx {
                 "Access mode: open (no identities configured); all permissions granted.".to_string()
             }
             Mode::Anonymous => format!("Access mode: anonymous (no token); permissions: {list}."),
-            Mode::Token => format!("Caller identity: {}; permissions: {list}.", self.name),
+            Mode::Token => {
+                let bound = self.tag.as_ref().map_or(String::new(), |tag| {
+                    format!(
+                        " Bound tag: {tag}; lists and searches default to its holder plus memories with no tag in its scope."
+                    )
+                });
+                format!(
+                    "Caller identity: {}; permissions: {list}.{bound}",
+                    self.name
+                )
+            }
         }
     }
 }

@@ -100,6 +100,7 @@ pub const IDENTITY_DELETE: &str = include_str!("../sql/identity_delete.sql");
 pub const IDENTITY_UPDATE_PERMISSIONS: &str =
     include_str!("../sql/identity_update_permissions.sql");
 pub const IDENTITY_UPDATE_TOKEN: &str = include_str!("../sql/identity_update_token.sql");
+pub const IDENTITY_UPDATE_TAG: &str = include_str!("../sql/identity_update_tag.sql");
 pub const IDENTITY_ANY_ADMIN: &str = include_str!("../sql/identity_any_admin.sql");
 pub const SETTINGS_GET: &str = include_str!("../sql/settings_get.sql");
 pub const SETTINGS_PUT: &str = include_str!("../sql/settings_put.sql");
@@ -232,6 +233,7 @@ mod tests {
             ("IDENTITY_DELETE", IDENTITY_DELETE),
             ("IDENTITY_UPDATE_PERMISSIONS", IDENTITY_UPDATE_PERMISSIONS),
             ("IDENTITY_UPDATE_TOKEN", IDENTITY_UPDATE_TOKEN),
+            ("IDENTITY_UPDATE_TAG", IDENTITY_UPDATE_TAG),
             ("IDENTITY_ANY_ADMIN", IDENTITY_ANY_ADMIN),
             ("SETTINGS_GET", SETTINGS_GET),
             ("SETTINGS_PUT", SETTINGS_PUT),

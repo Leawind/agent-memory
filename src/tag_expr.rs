@@ -121,6 +121,16 @@ pub fn parse_rule(input: &str) -> Result<TagExpr, String> {
     parse_bounded(input, 32768)
 }
 
+/// The default read filter for a caller bound to `tag`: the memories carrying that name, plus the
+/// memories carrying no tag in its scope ("shared"). The binding is a scoped name, so both halves
+/// exist and the expression needs no store lookup. Also returns the source text, which is what a
+/// response reports back to the caller it filtered.
+pub fn shared_or_own(tag: &str) -> Option<(TagExpr, String)> {
+    let scope = tag_scope_of(tag)?;
+    let text = format!("!{scope}::*|{tag}");
+    parse(&text).ok().map(|expr| (expr, text))
+}
+
 fn parse_bounded(input: &str, max_chars: usize) -> Result<TagExpr, String> {
     if input.chars().count() > max_chars {
         return Err(format!("expression exceeds {max_chars} characters"));
@@ -762,5 +772,18 @@ mod tests {
         assert!(parse(&format!("{}a{}", "(".repeat(65), ")".repeat(65))).is_err());
         assert!(parse(&vec!["a"; 130].join("|")).is_err());
         assert!(parse(&format!("{}a", "!".repeat(32))).is_ok());
+    }
+
+    #[test]
+    fn shared_or_own_selects_the_binding_and_the_tagless_side() {
+        let (expr, text) = shared_or_own("system::pc1sw0").unwrap();
+        assert_eq!(text, "!system::*|system::pc1sw0");
+        assert!(expr.eval(&["system::pc1sw0".to_string()]));
+        assert!(expr.eval(&[]));
+        // Bare tags say nothing about the scope, so they are shared
+        assert!(expr.eval(&["rust".to_string()]));
+        assert!(!expr.eval(&["system::lp2sw0".to_string()]));
+        // A bare name has no scope to be absent from, so it cannot bind
+        assert!(shared_or_own("rust").is_none());
     }
 }
